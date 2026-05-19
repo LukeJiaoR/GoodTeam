@@ -75,6 +75,16 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
   --role-model qa=gemini:gemini-2.5-flash
 ```
 
+Preview the model matrix and planned artifact paths without writing state or artifacts:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
+  --workspace /tmp/goodteam-os-run \
+  --model-profile cheap \
+  --role-model architect=claude:opusplan \
+  --dry-run
+```
+
 The chosen profile and role model matrix are saved into `state/current.json`, so the dashboard and future resume logic can observe the exact model choices for that run.
 
 ## tmux

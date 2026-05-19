@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--model-config", type=Path, default=Path("models.yaml"))
     start.add_argument("--model-profile", default="balanced")
     start.add_argument("--role-model", action="append", default=[])
+    start.add_argument("--dry-run", action="store_true")
 
     serve_command = subparsers.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -42,6 +43,15 @@ def main(argv: list[str] | None = None) -> int:
             load_model_profile(args.model_config, args.model_profile),
             args.role_model,
         )
+        if args.dry_run:
+            planned_prd = args.workspace / "artifacts" / "runs" / state.run_id / "prd" / "prd.md"
+            state.current_node = "prd_review_gate"
+            state.next_node = "await_prd_approval"
+            payload = asdict(state)
+            payload["dry_run"] = True
+            payload["planned_artifacts"] = {"prd": str(planned_prd)}
+            print(json.dumps(payload, indent=2))
+            return 0
         result = run_until_next_gate(state=state, workspace=args.workspace)
         state_store = StateStore(root=args.workspace)
         state_store.write_current(result)
