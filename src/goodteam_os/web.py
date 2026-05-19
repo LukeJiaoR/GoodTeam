@@ -5,6 +5,58 @@ from pathlib import Path
 from goodteam_os.state import AgileDevState, StateStore, create_initial_state
 
 
+ROLE_DEFINITIONS = [
+    {
+        "name": "Orchestrator / PM",
+        "artifact": "state",
+        "description": "Owns graph routing, checkpoints, approvals, and handoff discipline.",
+        "next_action": "Keep workflow paused until the current gate changes.",
+    },
+    {
+        "name": "Research",
+        "artifact": "research_report",
+        "description": "Finds market, user, competitor, and risk context when the ticket needs discovery.",
+        "next_action": "Run only when the idea lacks enough product context.",
+    },
+    {
+        "name": "Product / Requirement",
+        "artifact": "prd",
+        "description": "Turns the idea into PRD, scope, user stories, and acceptance criteria.",
+        "next_action": "Request approval or changes on the generated PRD.",
+    },
+    {
+        "name": "Architect",
+        "artifact": "rfc",
+        "description": "Produces RFC, API contract, data model, migration, rollback, and testing strategy.",
+        "next_action": "Wait for approved PRD before drafting RFC",
+    },
+    {
+        "name": "Review",
+        "artifact": "review_report",
+        "description": "Checks product, architecture, security, UX, and contract risk.",
+        "next_action": "Review RFC after architecture output exists.",
+    },
+    {
+        "name": "Planner",
+        "artifact": "task_breakdown",
+        "description": "Splits approved design into 0.5 to 2 day Plane-ready work items.",
+        "next_action": "Wait for approved RFC and review report.",
+    },
+    {
+        "name": "Implementation",
+        "artifact": "implementation_handoff",
+        "description": "Hands scoped work to FE, BE, Codex, Gemini, or Claude workers.",
+        "next_action": "Wait for planner output before dispatching workers.",
+    },
+    {
+        "name": "QA / Release / Memory",
+        "artifact": "qa_report",
+        "description": "Owns test plan, QA report, release checklist, rollback note, and memory update.",
+        "next_action": "Wait for implementation result artifacts.",
+    },
+]
+
+
 def resolve_dashboard_state(workspace: Path) -> AgileDevState:
     current = StateStore(workspace).read_current()
     if current is not None:
@@ -19,6 +71,33 @@ def resolve_dashboard_state(workspace: Path) -> AgileDevState:
     return state
 
 
+def build_role_observations(state: AgileDevState) -> list[dict[str, str]]:
+    observations = []
+    for role in ROLE_DEFINITIONS:
+        artifact = role["artifact"]
+        status = "Queued"
+        if artifact == "state":
+            status = "Active" if state.current_node != "idle" else "Idle"
+        elif artifact in state.artifacts:
+            status = "Artifact ready"
+        if role["name"] == "Product / Requirement" and state.next_node == "await_prd_approval":
+            status = "Waiting for approval"
+        if role["name"] == "Architect" and state.current_node == "architect":
+            status = "Active"
+
+        observations.append(
+            {
+                "name": role["name"],
+                "artifact": artifact,
+                "status": status,
+                "description": role["description"],
+                "next_action": role["next_action"],
+                "artifact_path": state.artifacts.get(artifact, ""),
+            }
+        )
+    return observations
+
+
 def render_dashboard(state: AgileDevState) -> str:
     artifact_items = "\n".join(
         f"<li><span>{escape(name.upper())}</span><code>{escape(path)}</code></li>"
@@ -30,6 +109,23 @@ def render_dashboard(state: AgileDevState) -> str:
     approval_items = "\n".join(
         f"<li><span>{escape(name)}</span><strong>{escape(str(decision))}</strong></li>"
         for name, decision in state.approvals.items()
+    )
+    role_cards = "\n".join(
+        f"""
+        <article class="role-card">
+          <div class="role-topline">
+            <h3>{escape(role["name"])}</h3>
+            <span class="role-status">{escape(role["status"])}</span>
+          </div>
+          <p>{escape(role["description"])}</p>
+          <dl class="role-meta">
+            <dt>Artifact</dt><dd>{escape(role["artifact"])}</dd>
+            <dt>Next</dt><dd>{escape(role["next_action"])}</dd>
+          </dl>
+          {f'<code>{escape(role["artifact_path"])}</code>' if role["artifact_path"] else ''}
+        </article>
+        """
+        for role in build_role_observations(state)
     )
 
     return f"""<!doctype html>
@@ -113,6 +209,50 @@ def render_dashboard(state: AgileDevState) -> str:
     .hero {{
       background: linear-gradient(135deg, var(--panel), var(--panel-2));
     }}
+    .wide {{
+      grid-column: 1 / -1;
+    }}
+    .roles {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .role-card {{
+      border: 1px solid var(--line);
+      background: #111318;
+      padding: 14px;
+      min-height: 190px;
+    }}
+    .role-topline {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }}
+    h3 {{
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }}
+    .role-status {{
+      border: 1px solid var(--line);
+      color: var(--accent);
+      padding: 4px 6px;
+      font-size: 11px;
+      white-space: nowrap;
+    }}
+    .role-card p {{
+      color: var(--muted);
+      line-height: 1.45;
+      margin: 12px 0;
+      font-size: 13px;
+    }}
+    .role-meta {{
+      grid-template-columns: 74px 1fr;
+      gap: 7px 10px;
+      font-size: 12px;
+    }}
     .idea {{
       font-size: 20px;
       line-height: 1.45;
@@ -171,9 +311,13 @@ def render_dashboard(state: AgileDevState) -> str:
       header, .grid {{ display: block; }}
       .status {{ margin-top: 16px; }}
       section {{ margin-top: 16px; }}
+      .roles {{ grid-template-columns: 1fr; }}
       dl {{ grid-template-columns: 1fr; }}
       li {{ display: block; }}
       code {{ display: block; text-align: left; margin-top: 6px; }}
+    }}
+    @media (min-width: 761px) and (max-width: 1040px) {{
+      .roles {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
   </style>
 </head>
@@ -212,6 +356,10 @@ def render_dashboard(state: AgileDevState) -> str:
       <section>
         <h2>Approvals</h2>
         <ul>{approval_items}</ul>
+      </section>
+      <section class="wide">
+        <h2>Role Observability</h2>
+        <div class="roles">{role_cards}</div>
       </section>
     </div>
   </main>
