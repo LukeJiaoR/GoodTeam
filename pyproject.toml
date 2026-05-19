@@ -1,0 +1,21 @@
+[project]
+name = "goodteam-os"
+version = "0.1.0"
+description = "LangGraph-based AI Native agile development team system"
+requires-python = ">=3.11"
+dependencies = [
+  "langgraph>=0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.5.0"
+]
+
+[project.scripts]
+goodteam-os = "goodteam_os.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
