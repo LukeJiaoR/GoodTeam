@@ -47,6 +47,45 @@ Open the dashboard at:
 http://localhost:8788/
 ```
 
+## Model Profiles
+
+Default role-to-model routing lives in `models.yaml`.
+
+Start with a preset profile:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
+  --workspace /tmp/goodteam-os-run \
+  --model-profile balanced
+```
+
+Available V1 profiles:
+
+- `balanced`
+- `cheap`
+- `max_quality`
+
+Override one role for a single run:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
+  --workspace /tmp/goodteam-os-run \
+  --model-profile cheap \
+  --role-model architect=claude:opusplan \
+  --role-model qa=gemini:gemini-2.5-flash
+```
+
+The chosen profile and role model matrix are saved into `state/current.json`, so the dashboard and future resume logic can observe the exact model choices for that run.
+
+## tmux
+
+`tmux` is not required, but it is the preferred way to keep the dashboard attached once installed:
+
+```bash
+tmux new -s goodteam-dashboard
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --workspace /tmp/goodteam-os-run --port 8788
+```
+
 ## Boundary
 
 This repo must not read Codex local MCP credentials at runtime. Plane credentials for future adapters should come from environment variables or a secret manager.

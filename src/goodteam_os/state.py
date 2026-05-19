@@ -22,6 +22,8 @@ class AgileDevState:
     artifacts: dict[str, str] = field(default_factory=dict)
     approvals: dict[str, ApprovalDecision] = field(default_factory=dict)
     blockers: list[str] = field(default_factory=list)
+    model_profile: str = "balanced"
+    role_models: dict[str, dict[str, str]] = field(default_factory=dict)
     current_node: str = "start"
     next_node: str = "product_requirement"
 
@@ -62,6 +64,8 @@ class StateStore:
         data["approvals"] = {
             key: ApprovalDecision(value) for key, value in data.get("approvals", {}).items()
         }
+        data.setdefault("model_profile", "balanced")
+        data.setdefault("role_models", {})
         return AgileDevState(**data)
 
     def _write(self, path: Path, state: AgileDevState) -> None:

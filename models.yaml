@@ -1,0 +1,178 @@
+profiles:
+  balanced:
+    orchestrator:
+      primary: codex:gpt-5.2
+      fallback: claude:sonnet
+      mode: short-context
+    research:
+      primary: gemini:gemini-2.5-pro
+      assistant: deepseek:deepseek-chat
+      mode: long-context
+    product_requirement:
+      primary: claude:opus
+      draft: deepseek:deepseek-chat
+      mode: spec-writing
+    architect:
+      primary: claude:opusplan
+      reviewer: openai:gpt-5.2-pro
+      mode: high-reasoning
+    review:
+      primary: claude:opus
+      reviewer: openai:gpt-5.2-pro
+      mode: adversarial-review
+    planner:
+      primary: deepseek:deepseek-chat
+      reviewer: claude:sonnet
+      mode: structured-breakdown
+    ui:
+      primary: gemini:gemini-2.5-pro
+      fallback: claude:sonnet
+      mode: multimodal
+    implementation:
+      primary: codex:gpt-5.2-codex
+      fallback: gemini:gemini-2.5-pro
+      assistant: deepseek:deepseek-coder
+      mode: worker-dispatch
+    frontend:
+      primary: gemini:gemini-2.5-pro
+      fallback: claude:sonnet
+      mode: implementation
+    backend:
+      primary: codex:gpt-5.2-codex
+      assistant: deepseek:deepseek-coder
+      mode: implementation
+    qa:
+      primary: deepseek:deepseek-reasoner
+      fallback: gemini:gemini-2.5-flash
+      mode: test-design
+    code_review:
+      first_pass: deepseek:deepseek-coder
+      primary: codex:gpt-5.2-codex
+      architecture_review: claude:opus
+      mode: multi-pass-review
+    release:
+      primary: claude:sonnet
+      checklist: deepseek:deepseek-chat
+      mode: release-control
+    retro_memory:
+      primary: deepseek:deepseek-chat
+      reviewer: claude:haiku
+      mode: memory-writing
+  cheap:
+    orchestrator:
+      primary: codex:gpt-5.2
+      fallback: claude:sonnet
+      mode: short-context
+    research:
+      primary: deepseek:deepseek-chat
+      fallback: gemini:gemini-2.5-flash
+      mode: cost-efficient
+    product_requirement:
+      primary: deepseek:deepseek-chat
+      reviewer: claude:sonnet
+      mode: draft-first
+    architect:
+      primary: deepseek:deepseek-reasoner
+      reviewer: claude:opusplan
+      mode: draft-plus-review
+    review:
+      primary: deepseek:deepseek-reasoner
+      reviewer: claude:sonnet
+      mode: first-pass-review
+    planner:
+      primary: deepseek:deepseek-chat
+      reviewer: claude:sonnet
+      mode: structured-breakdown
+    ui:
+      primary: gemini:gemini-2.5-flash
+      fallback: claude:sonnet
+      mode: lightweight-ui
+    implementation:
+      primary: codex:gpt-5.2-codex
+      fallback: gemini:gemini-2.5-flash
+      assistant: deepseek:deepseek-coder
+      mode: worker-dispatch
+    frontend:
+      primary: gemini:gemini-2.5-flash
+      fallback: claude:sonnet
+      mode: implementation
+    backend:
+      primary: codex:gpt-5.2-codex
+      assistant: deepseek:deepseek-coder
+      mode: implementation
+    qa:
+      primary: deepseek:deepseek-reasoner
+      fallback: gemini:gemini-2.5-flash
+      mode: test-design
+    code_review:
+      first_pass: deepseek:deepseek-coder
+      primary: codex:gpt-5.2-codex
+      mode: multi-pass-review
+    release:
+      primary: deepseek:deepseek-chat
+      reviewer: claude:sonnet
+      mode: checklist
+    retro_memory:
+      primary: deepseek:deepseek-chat
+      reviewer: claude:haiku
+      mode: memory-writing
+  max_quality:
+    orchestrator:
+      primary: codex:gpt-5.2
+      fallback: claude:sonnet
+      escalation: gemini:gemini-2.5-pro
+      mode: short-context-with-global-planning-escalation
+    research:
+      primary: gemini:gemini-2.5-pro
+      assistant: deepseek:deepseek-chat
+      mode: long-context
+    product_requirement:
+      primary: claude:opus
+      draft: deepseek:deepseek-chat
+      mode: spec-writing
+    architect:
+      primary: claude:opusplan
+      reviewer: openai:gpt-5.2-pro
+      mode: high-reasoning
+    review:
+      primary: claude:opus
+      reviewer: openai:gpt-5.2-pro
+      mode: adversarial-review
+    planner:
+      primary: claude:sonnet
+      draft: deepseek:deepseek-chat
+      mode: structured-breakdown
+    ui:
+      primary: gemini:gemini-2.5-pro
+      reviewer: claude:sonnet
+      mode: multimodal
+    implementation:
+      primary: codex:gpt-5.2-codex
+      fallback: gemini:gemini-2.5-pro
+      reviewer: claude:sonnet
+      mode: worker-dispatch
+    frontend:
+      primary: gemini:gemini-2.5-pro
+      reviewer: claude:sonnet
+      mode: implementation
+    backend:
+      primary: codex:gpt-5.2-codex
+      reviewer: claude:sonnet
+      mode: implementation
+    qa:
+      primary: claude:sonnet
+      draft: deepseek:deepseek-reasoner
+      mode: test-design
+    code_review:
+      first_pass: deepseek:deepseek-coder
+      primary: codex:gpt-5.2-codex
+      architecture_review: claude:opus
+      mode: multi-pass-review
+    release:
+      primary: claude:sonnet
+      checklist: deepseek:deepseek-chat
+      mode: release-control
+    retro_memory:
+      primary: claude:sonnet
+      draft: deepseek:deepseek-chat
+      mode: memory-writing

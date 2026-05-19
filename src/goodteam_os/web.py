@@ -8,48 +8,56 @@ from goodteam_os.state import AgileDevState, StateStore, create_initial_state
 ROLE_DEFINITIONS = [
     {
         "name": "Orchestrator / PM",
+        "key": "orchestrator",
         "artifact": "state",
         "description": "Owns graph routing, checkpoints, approvals, and handoff discipline.",
         "next_action": "Keep workflow paused until the current gate changes.",
     },
     {
         "name": "Research",
+        "key": "research",
         "artifact": "research_report",
         "description": "Finds market, user, competitor, and risk context when the ticket needs discovery.",
         "next_action": "Run only when the idea lacks enough product context.",
     },
     {
         "name": "Product / Requirement",
+        "key": "product_requirement",
         "artifact": "prd",
         "description": "Turns the idea into PRD, scope, user stories, and acceptance criteria.",
         "next_action": "Request approval or changes on the generated PRD.",
     },
     {
         "name": "Architect",
+        "key": "architect",
         "artifact": "rfc",
         "description": "Produces RFC, API contract, data model, migration, rollback, and testing strategy.",
         "next_action": "Wait for approved PRD before drafting RFC",
     },
     {
         "name": "Review",
+        "key": "review",
         "artifact": "review_report",
         "description": "Checks product, architecture, security, UX, and contract risk.",
         "next_action": "Review RFC after architecture output exists.",
     },
     {
         "name": "Planner",
+        "key": "planner",
         "artifact": "task_breakdown",
         "description": "Splits approved design into 0.5 to 2 day Plane-ready work items.",
         "next_action": "Wait for approved RFC and review report.",
     },
     {
         "name": "Implementation",
+        "key": "implementation",
         "artifact": "implementation_handoff",
         "description": "Hands scoped work to FE, BE, Codex, Gemini, or Claude workers.",
         "next_action": "Wait for planner output before dispatching workers.",
     },
     {
         "name": "QA / Release / Memory",
+        "key": "qa",
         "artifact": "qa_report",
         "description": "Owns test plan, QA report, release checklist, rollback note, and memory update.",
         "next_action": "Wait for implementation result artifacts.",
@@ -75,6 +83,7 @@ def build_role_observations(state: AgileDevState) -> list[dict[str, str]]:
     observations = []
     for role in ROLE_DEFINITIONS:
         artifact = role["artifact"]
+        model_config = state.role_models.get(role["key"], {})
         status = "Queued"
         if artifact == "state":
             status = "Active" if state.current_node != "idle" else "Idle"
@@ -93,6 +102,8 @@ def build_role_observations(state: AgileDevState) -> list[dict[str, str]]:
                 "description": role["description"],
                 "next_action": role["next_action"],
                 "artifact_path": state.artifacts.get(artifact, ""),
+                "model": model_config.get("primary", "unassigned"),
+                "mode": model_config.get("mode", "default"),
             }
         )
     return observations
@@ -119,6 +130,8 @@ def render_dashboard(state: AgileDevState) -> str:
           </div>
           <p>{escape(role["description"])}</p>
           <dl class="role-meta">
+            <dt>Model</dt><dd>{escape(role["model"])}</dd>
+            <dt>Mode</dt><dd>{escape(role["mode"])}</dd>
             <dt>Artifact</dt><dd>{escape(role["artifact"])}</dd>
             <dt>Next</dt><dd>{escape(role["next_action"])}</dd>
           </dl>
