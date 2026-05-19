@@ -31,6 +31,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install pytest
 PYTHONPATH=src .venv/bin/python -m pytest tests -q
 PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" --workspace /tmp/goodteam-os-run
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --workspace /tmp/goodteam-os-run --port 8788
 ```
 
 Expected result:
@@ -39,6 +40,12 @@ Expected result:
 - `state/current.json`
 - `state/checkpoints/<run_id>/prd_review_gate.json`
 - `next_node` is `await_prd_approval`
+
+Open the dashboard at:
+
+```text
+http://localhost:8788/
+```
 
 ## Boundary
 

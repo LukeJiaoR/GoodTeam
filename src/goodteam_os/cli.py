@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from goodteam_os.graph import run_until_next_gate
 from goodteam_os.state import StateStore, create_initial_state
+from goodteam_os.web import serve
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,6 +17,11 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("idea")
     start.add_argument("--project-key", default="GTO")
     start.add_argument("--workspace", type=Path, default=Path("."))
+
+    serve_command = subparsers.add_parser("serve")
+    serve_command.add_argument("--host", default="127.0.0.1")
+    serve_command.add_argument("--port", type=int, default=8788)
+    serve_command.add_argument("--workspace", type=Path, default=Path("."))
     return parser
 
 
@@ -32,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
         state_store.write_current(result)
         state_store.write_checkpoint(result)
         print(json.dumps(asdict(result), indent=2))
+        return 0
+    if args.command == "serve":
+        serve(workspace=args.workspace, host=args.host, port=args.port)
         return 0
     return 1
 

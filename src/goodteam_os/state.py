@@ -54,6 +54,16 @@ class StateStore:
         self._write(path, state)
         return path
 
+    def read_current(self) -> AgileDevState | None:
+        path = self.root / "state" / "current.json"
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["approvals"] = {
+            key: ApprovalDecision(value) for key, value in data.get("approvals", {}).items()
+        }
+        return AgileDevState(**data)
+
     def _write(self, path: Path, state: AgileDevState) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(asdict(state), indent=2), encoding="utf-8")
