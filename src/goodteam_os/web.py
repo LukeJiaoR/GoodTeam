@@ -84,12 +84,26 @@ ROLE_DEFINITIONS = [
 def discover_project_directories(base_dir: Path = Path("/Users/luke/WorkSpace/codeAi")) -> list[dict[str, str]]:
     if not base_dir.is_dir():
         return []
+    ignored_names = {".git", ".github", ".venv", "__pycache__", "node_modules", ".data", ".next", "dist", "build"}
     directories = []
-    for path in sorted(base_dir.iterdir(), key=lambda item: item.name.lower()):
-        if path.name.startswith(".") or not path.is_dir():
+    candidates = [base_dir]
+    for _ in range(2):
+        next_candidates = []
+        for parent in candidates:
+            for path in sorted(parent.iterdir(), key=lambda item: item.name.lower()):
+                if path.name.startswith(".") or path.name in ignored_names or not path.is_dir():
+                    continue
+                directories.append({"name": path.name, "path": str(path)})
+                next_candidates.append(path)
+        candidates = next_candidates
+    unique = []
+    seen = set()
+    for item in directories:
+        if item["path"] in seen:
             continue
-        directories.append({"name": path.name, "path": str(path)})
-    return directories
+        seen.add(item["path"])
+        unique.append(item)
+    return unique
 
 
 def _slug(value: str) -> str:
@@ -749,6 +763,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           <dt>Next Node</dt><dd>{escape(state.next_node)}</dd>
           <dt>Model Profile</dt><dd>{escape(state.model_profile)}</dd>
           <dt>Source</dt><dd>{escape(state.source_type)} / {escape(state.source_ref)}</dd>
+          <dt>Project Memory</dt><dd>{escape(state.context_packet_path or "not initialized")}</dd>
         </dl>
         """
         if state is not None

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from goodteam_os.artifacts import ArtifactStore
+from goodteam_os.memory import ProjectMemoryStore, summarize_markdown
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import load_project_target
 from goodteam_os.state import AgileDevState
@@ -33,6 +34,18 @@ def collect_project_context(project_config: Path = Path("projects/eastern-birth-
     target = load_project_target(project_config)
     repos = dict(target.get("repos", {}))
     packets = []
+    memory_root = select_project_memory_root(repos)
+    if memory_root is not None:
+        memory = ProjectMemoryStore(memory_root).read_project_memory(str(target.get("key", "")))
+        if memory["content"]:
+            packets.append(
+                {
+                    "repo": "project_memory",
+                    "path": memory["path"],
+                    "purpose": "Project-local GoodTeam memory",
+                    "summary": memory["summary"],
+                }
+            )
     for repo_name, files in CONTEXT_FILES.items():
         repo_root = repos.get(repo_name)
         if not repo_root:
@@ -53,23 +66,29 @@ def collect_project_context(project_config: Path = Path("projects/eastern-birth-
     return packets
 
 
+def select_project_memory_root(repos: dict[object, object]) -> Path | None:
+    for name in ["docs", "backend", "frontend"]:
+        value = repos.get(name)
+        if value and Path(str(value)).is_dir():
+            return Path(str(value))
+    return None
+
+
+def ensure_project_memory(project_config: Path) -> Path | None:
+    if not project_config.is_file():
+        return None
+    target = load_project_target(project_config)
+    memory_root = select_project_memory_root(dict(target.get("repos", {})))
+    if memory_root is None:
+        return None
+    return ProjectMemoryStore(memory_root).ensure_project_memory(
+        str(target.get("key", "")),
+        str(target.get("name", "")),
+    )
+
+
 def summarize_context_file(content: str) -> str:
-    headings = [
-        line.strip("# ").strip()
-        for line in content.splitlines()
-        if line.startswith("#") and line.strip("# ").strip()
-    ][:6]
-    bullets = [
-        line.strip()[2:].strip()
-        for line in content.splitlines()
-        if line.strip().startswith("- ")
-    ][:8]
-    parts = []
-    if headings:
-        parts.append("Headings: " + "; ".join(headings))
-    if bullets:
-        parts.append("Signals: " + "; ".join(bullets))
-    return " | ".join(parts) if parts else content.strip()[:500]
+    return summarize_markdown(content)
 
 
 def render_prd_markdown(
@@ -251,6 +270,7 @@ def run_adoption_until_next_gate(
     project_config: Path = Path("projects/eastern-birth-chart.local.yaml"),
 ) -> AgileDevState:
     store = ArtifactStore(root=workspace)
+    memory_path = ensure_project_memory(project_config)
     takeover_path = store.write_markdown(
         state.run_id,
         "takeover",
@@ -259,6 +279,8 @@ def run_adoption_until_next_gate(
     )
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
+    if memory_path is not None:
+        state.context_packet_path = str(memory_path)
     state.artifacts["takeover"] = str(takeover_path)
     state.approvals["takeover"] = "pending"
     state.current_node = "takeover_review_gate"

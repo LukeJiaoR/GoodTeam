@@ -24,6 +24,7 @@ def test_render_dashboard_shows_current_gate():
     state.current_node = "prd_review_gate"
     state.next_node = "await_prd_approval"
     state.artifacts["prd"] = "/tmp/prd.md"
+    state.context_packet_path = "/tmp/project/.goodteam/memory/project-memory.md"
 
     html = render_dashboard(state)
 
@@ -59,6 +60,7 @@ def test_render_dashboard_shows_current_gate():
     assert "Build AI Team OS" in html
     assert "artifact-preview" in html
     assert "Project Target" in html
+    assert "/tmp/project/.goodteam/memory/project-memory.md" in html
     assert "Active run in progress" not in html
 
 
@@ -311,6 +313,23 @@ def test_discover_project_directories_lists_immediate_children(tmp_path):
         {"name": "api", "path": str(tmp_path / "api")},
         {"name": "docs", "path": str(tmp_path / "docs")},
     ]
+
+
+def test_discover_project_directories_lists_nested_project_repos(tmp_path):
+    project = tmp_path / "product"
+    docs = project / "product-docs"
+    api = project / "product-api"
+    ignored = project / "product-api" / "node_modules"
+    for path in [docs, api, ignored]:
+        path.mkdir(parents=True)
+
+    dirs = discover_project_directories(tmp_path)
+    paths = [item["path"] for item in dirs]
+
+    assert str(project) in paths
+    assert str(docs) in paths
+    assert str(api) in paths
+    assert str(ignored) not in paths
 
 
 def test_create_local_project_config_writes_selected_directories(tmp_path):

@@ -78,3 +78,16 @@ def test_collect_project_context_reads_configured_sources(tmp_path):
     assert any(path.endswith("docs/codex.md") for path in paths)
     assert any(path.endswith("backend/README.md") for path in paths)
     assert any(path.endswith("frontend/README.md") for path in paths)
+
+
+def test_collect_project_context_reads_project_memory_from_docs_repo(tmp_path):
+    project_config = write_project_fixture(tmp_path)
+    memory = tmp_path / "docs" / ".goodteam" / "memory" / "project-memory.md"
+    memory.parent.mkdir(parents=True)
+    memory.write_text("# Project Memory\n\n- Stable local project memory.", encoding="utf-8")
+
+    context = collect_project_context(project_config)
+    memory_packet = next(item for item in context if item["repo"] == "project_memory")
+
+    assert memory_packet["path"] == str(memory)
+    assert "Stable local project memory" in memory_packet["summary"]
