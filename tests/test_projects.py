@@ -44,3 +44,35 @@ def test_check_project_target_reports_deepseek_provider_from_env(monkeypatch):
     assert report["providers"]["deepseek"]["configured"] is True
     assert report["providers"]["deepseek"]["api_key_env"] == "DEEPSEEK_API_KEY"
     assert "test-key-not-real" not in str(report)
+
+
+def test_check_project_target_reports_deepseek_provider_from_env_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "\n".join(
+            [
+                "# local secrets",
+                "export DEEPSEEK_API_KEY='test-key-not-real'",
+                "IGNORED_WITHOUT_LOOKUP=also-secret",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    target = {
+        "providers": {
+            "deepseek": {
+                "type": "openai-compatible",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "env_file": str(env_file),
+                "base_url": "https://api.deepseek.com",
+            }
+        }
+    }
+
+    report = check_project_target(target)
+
+    assert report["providers"]["deepseek"]["configured"] is True
+    assert report["providers"]["deepseek"]["env_file"] == str(env_file)
+    assert "test-key-not-real" not in str(report)
+    assert "also-secret" not in str(report)

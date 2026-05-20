@@ -22,6 +22,7 @@ providers:
   deepseek:
     type: openai-compatible
     api_key_env: DEEPSEEK_API_KEY
+    env_file: .env.local
     base_url: https://api.deepseek.com
 role_routes:
   product_requirement: docs

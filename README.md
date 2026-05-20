@@ -115,15 +115,20 @@ Local worker commands use the CLIs currently available on this machine:
 
 DeepSeek can remain in `models.yaml` as a model provider target, but there is no local `deepseek` CLI command currently available in `PATH`.
 
-DeepSeek API access is detected through environment configuration and never through committed files:
+DeepSeek API access is detected through environment configuration and never through committed files. If Codex was launched from a process that does not inherit your shell environment, put the key in the git-ignored `.env.local` file instead:
 
 ```bash
+# Option A: shell environment, if Codex inherits it.
 export DEEPSEEK_API_KEY="<your-rotated-deepseek-api-key>"
+
+# Option B: local fallback file, if Codex does not inherit your shell environment.
+printf 'DEEPSEEK_API_KEY=<your-rotated-deepseek-api-key>\n' > .env.local
+
 PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
   --project-config projects/eastern-birth-chart.local.yaml
 ```
 
-The doctor output reports only `configured: true` or `false`; it does not print the key.
+The doctor output reports only `configured: true` or `false`; it does not print the key. Rotate any key that has been pasted into chat before putting the replacement into `.env.local`.
 
 ## Boundary
 
