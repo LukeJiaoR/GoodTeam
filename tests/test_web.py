@@ -29,6 +29,8 @@ def test_render_dashboard_shows_current_gate():
     assert "Start Workflow" in html
     assert "Copy Command" in html
     assert "--dry-run" in html
+    assert "Enter the real workflow goal" in html
+    assert "Start a workflow run to populate this dashboard" not in html
     assert "Overview" in html
     assert "Roles" in html
     assert "Artifacts" in html
@@ -48,6 +50,20 @@ def test_resolve_dashboard_state_reads_existing_state(tmp_path):
 
     assert resolved.run_id == "run-1"
     assert resolved.next_node == "await_prd_approval"
+
+
+def test_resolve_dashboard_state_returns_none_without_current_state(tmp_path):
+    assert resolve_dashboard_state(tmp_path) is None
+
+
+def test_render_dashboard_without_state_shows_only_real_empty_status():
+    html = render_dashboard(None)
+
+    assert "no_active_run" in html
+    assert "No active run" in html
+    assert "no-run-yet" not in html
+    assert "Start a workflow run to populate this dashboard" not in html
+    assert "Approve PRD" not in html
 
 
 def test_build_role_observations_maps_artifacts_to_role_statuses():
@@ -73,8 +89,7 @@ def test_build_role_observations_maps_artifacts_to_role_statuses():
     assert product["status"] == "Waiting for approval"
     assert product["artifact"] == "prd"
     assert product["model"] == "claude:opus"
-    assert architect["status"] == "Queued"
-    assert architect["next_action"] == "Wait for approved PRD before drafting RFC"
+    assert architect["status"] == "No activity"
     assert implementation["model"] == "codex:gpt-5.2-codex"
 
 

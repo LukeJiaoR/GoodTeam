@@ -4,7 +4,7 @@ from pathlib import Path
 
 from goodteam_os.models import list_model_profiles
 from goodteam_os.projects import check_project_target, load_project_target
-from goodteam_os.state import AgileDevState, StateStore, create_initial_state
+from goodteam_os.state import AgileDevState, StateStore
 
 
 ROLE_DEFINITIONS = [
@@ -67,28 +67,21 @@ ROLE_DEFINITIONS = [
 ]
 
 
-def resolve_dashboard_state(workspace: Path) -> AgileDevState:
-    current = StateStore(workspace).read_current()
-    if current is not None:
-        return current
-    state = create_initial_state(
-        run_id="no-run-yet",
-        project_key="GTO",
-        idea="Start a workflow run to populate this dashboard.",
-    )
-    state.current_node = "idle"
-    state.next_node = "start"
-    return state
+def resolve_dashboard_state(workspace: Path) -> AgileDevState | None:
+    return StateStore(workspace).read_current()
 
 
-def build_role_observations(state: AgileDevState) -> list[dict[str, str]]:
+def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]:
+    if state is None:
+        return []
+
     observations = []
     for role in ROLE_DEFINITIONS:
         artifact = role["artifact"]
         model_config = state.role_models.get(role["key"], {})
-        status = "Queued"
+        status = "No activity"
         if artifact == "state":
-            status = "Active" if state.current_node != "idle" else "Idle"
+            status = "Active"
         elif artifact in state.artifacts:
             status = "Artifact ready"
         if role["name"] == "Product / Requirement" and state.next_node == "await_prd_approval":
@@ -102,7 +95,6 @@ def build_role_observations(state: AgileDevState) -> list[dict[str, str]]:
                 "artifact": artifact,
                 "status": status,
                 "description": role["description"],
-                "next_action": role["next_action"],
                 "artifact_path": state.artifacts.get(artifact, ""),
                 "model": model_config.get("primary", "unassigned"),
                 "mode": model_config.get("mode", "default"),
@@ -135,7 +127,7 @@ def build_start_console_context(
     }
 
 
-def render_dashboard(state: AgileDevState, start_context: dict[str, object] | None = None) -> str:
+def render_dashboard(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
     start_context = start_context or build_start_console_context(Path("."))
     role_observations = build_role_observations(state)
     role_status_counts: dict[str, int] = {}
@@ -145,19 +137,21 @@ def render_dashboard(state: AgileDevState, start_context: dict[str, object] | No
         f'<div class="signal"><span>{escape(status)}</span>{count}</div>'
         for status, count in sorted(role_status_counts.items())
     )
+    if not role_summary_items:
+        role_summary_items = '<div class="empty-state">No active run state found.</div>'
     artifact_items = "\n".join(
         f"<li><span>{escape(name.upper())}</span><code>{escape(path)}</code></li>"
-        for name, path in state.artifacts.items()
+        for name, path in (state.artifacts if state is not None else {}).items()
     )
     if not artifact_items:
-        artifact_items = "<li><span>No artifacts yet</span><code>Run goodteam-os start first</code></li>"
+        artifact_items = '<li><span>No artifacts recorded</span><code>state/current.json has no artifact entries</code></li>'
 
     approval_items = "\n".join(
         f"<li><span>{escape(name)}</span><strong>{escape(str(decision))}</strong></li>"
-        for name, decision in state.approvals.items()
+        for name, decision in (state.approvals if state is not None else {}).items()
     )
     if not approval_items:
-        approval_items = "<li><span>No approvals yet</span><code>First gate appears after a workflow run</code></li>"
+        approval_items = '<li><span>No approvals recorded</span><code>state/current.json has no approval entries</code></li>'
     role_cards = "\n".join(
         f"""
         <article class="role-card">
@@ -170,13 +164,14 @@ def render_dashboard(state: AgileDevState, start_context: dict[str, object] | No
             <dt>Model</dt><dd>{escape(role["model"])}</dd>
             <dt>Mode</dt><dd>{escape(role["mode"])}</dd>
             <dt>Artifact</dt><dd>{escape(role["artifact"])}</dd>
-            <dt>Next</dt><dd>{escape(role["next_action"])}</dd>
           </dl>
           {f'<code>{escape(role["artifact_path"])}</code>' if role["artifact_path"] else ''}
         </article>
         """
         for role in role_observations
     )
+    if not role_cards:
+        role_cards = '<div class="empty-state">No role state available because there is no active run.</div>'
     project_report = dict(start_context.get("project_report", {}))
     workers = dict(project_report.get("workers", {}))
     worker_items = "\n".join(
@@ -197,10 +192,33 @@ def render_dashboard(state: AgileDevState, start_context: dict[str, object] | No
         f'<option value="{escape(profile)}"{" selected" if profile == "balanced" else ""}>{escape(profile)}</option>'
         for profile in profiles
     )
-    starter_idea = (
-        "Audit Eastern Birth Chart current docs/backend/frontend state, generate takeover report, "
-        "and propose next Plane tickets. Do not modify product code."
+    current_run_html = (
+        f"""
+        <p class="idea">{escape(state.idea)}</p>
+        <div class="signal-row">
+          <div class="signal"><span>Run</span>{escape(state.run_id)}</div>
+          <div class="signal"><span>Project</span>{escape(state.project_key)}</div>
+          <div class="signal"><span>Next</span>{escape(state.next_node)}</div>
+        </div>
+        """
+        if state is not None
+        else '<div class="empty-state">No active run. Start a workflow to create state/current.json.</div>'
     )
+    state_panel_html = (
+        f"""
+        <dl>
+          <dt>Run</dt><dd>{escape(state.run_id)}</dd>
+          <dt>Project</dt><dd>{escape(state.project_key)}</dd>
+          <dt>Current Node</dt><dd>{escape(state.current_node)}</dd>
+          <dt>Next Node</dt><dd>{escape(state.next_node)}</dd>
+          <dt>Model Profile</dt><dd>{escape(state.model_profile)}</dd>
+          <dt>Source</dt><dd>{escape(state.source_type)} / {escape(state.source_ref)}</dd>
+        </dl>
+        """
+        if state is not None
+        else '<div class="empty-state">state/current.json not found.</div>'
+    )
+    header_status = state.next_node if state is not None else "no_active_run"
 
     return f"""<!doctype html>
 <html lang="en">
@@ -381,6 +399,12 @@ def render_dashboard(state: AgileDevState, start_context: dict[str, object] | No
       text-transform: uppercase;
       margin-bottom: 6px;
     }}
+    .empty-state {{
+      border: 1px dashed var(--line);
+      color: var(--muted);
+      padding: 14px;
+      line-height: 1.45;
+    }}
     .roles {{
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -498,7 +522,7 @@ def render_dashboard(state: AgileDevState, start_context: dict[str, object] | No
         <span class="tag">Local workflow dashboard</span>
         <h1>GoodTeam<br>AI Team OS</h1>
       </div>
-      <div class="status">{escape(state.next_node)}</div>
+      <div class="status">{escape(header_status)}</div>
     </header>
     <nav class="tabs" aria-label="Dashboard sections">
       <button class="tab-button active" data-tab="overview" type="button">Overview</button>
@@ -511,24 +535,14 @@ def render_dashboard(state: AgileDevState, start_context: dict[str, object] | No
       <div class="grid">
         <section class="hero">
           <h2>Current Run</h2>
-          <p class="idea">{escape(state.idea)}</p>
-          <div class="signal-row">
-            <div class="signal"><span>Run</span>{escape(state.run_id)}</div>
-            <div class="signal"><span>Project</span>{escape(state.project_key)}</div>
-            <div class="signal"><span>Next</span>{escape(state.next_node)}</div>
-          </div>
-          <div class="actions">
-            <button class="primary" disabled>Approve PRD</button>
-            <button disabled>Request Changes</button>
-            <button class="danger" disabled>Reject</button>
-          </div>
+          {current_run_html}
         </section>
         <section>
           <h2>Start Workflow</h2>
           <div class="console-grid">
             <label>
-              Goal
-              <textarea id="start-idea">{escape(starter_idea)}</textarea>
+            Goal
+              <textarea id="start-idea" placeholder="Enter the real workflow goal..."></textarea>
             </label>
             <div>
               <label>
@@ -583,12 +597,7 @@ def render_dashboard(state: AgileDevState, start_context: dict[str, object] | No
       <div class="grid">
         <section>
           <h2>State</h2>
-          <dl>
-            <dt>Run</dt><dd>{escape(state.run_id)}</dd>
-            <dt>Project</dt><dd>{escape(state.project_key)}</dd>
-            <dt>Current Node</dt><dd>{escape(state.current_node)}</dd>
-            <dt>Next Node</dt><dd>{escape(state.next_node)}</dd>
-          </dl>
+          {state_panel_html}
         </section>
         <section>
           <h2>Project Target</h2>
@@ -623,10 +632,14 @@ def render_dashboard(state: AgileDevState, start_context: dict[str, object] | No
       const idea = document.getElementById("start-idea").value.trim();
       const profile = document.getElementById("model-profile").value;
       const dryRun = document.getElementById("dry-run").checked;
+      if (!idea) {{
+        document.getElementById("start-command").textContent = "Enter a workflow goal to generate a command.";
+        return;
+      }}
       const command = [
         "PYTHONPATH=src",
         ".venv/bin/python -m goodteam_os.cli start",
-        shellQuote(idea || "Start GoodTeam workflow"),
+        shellQuote(idea),
         "--workspace", shellQuote(workspace),
         "--project-key", shellQuote(projectKey),
         "--model-config", shellQuote(modelConfig),
