@@ -1,5 +1,12 @@
+from pathlib import Path
+
 from goodteam_os.state import StateStore, create_initial_state
-from goodteam_os.web import build_role_observations, render_dashboard, resolve_dashboard_state
+from goodteam_os.web import (
+    build_role_observations,
+    build_start_console_context,
+    render_dashboard,
+    resolve_dashboard_state,
+)
 
 
 def test_render_dashboard_shows_current_gate():
@@ -19,6 +26,9 @@ def test_render_dashboard_shows_current_gate():
     assert "Waiting for approval" in html
     assert "Architect" in html
     assert "Model" in html
+    assert "Start Workflow" in html
+    assert "Copy Command" in html
+    assert "--dry-run" in html
 
 
 def test_resolve_dashboard_state_reads_existing_state(tmp_path):
@@ -59,3 +69,16 @@ def test_build_role_observations_maps_artifacts_to_role_statuses():
     assert architect["status"] == "Queued"
     assert architect["next_action"] == "Wait for approved PRD before drafting RFC"
     assert implementation["model"] == "codex:gpt-5.2-codex"
+
+
+def test_build_start_console_context_reads_project_and_model_config():
+    context = build_start_console_context(
+        workspace=Path("/tmp/goodteam"),
+        model_config=Path("models.yaml"),
+        project_config=Path("projects/eastern-birth-chart.example.yaml"),
+    )
+
+    assert context["project_key"] == "EBC"
+    assert context["project_name"] == "Eastern Birth Chart"
+    assert "balanced" in context["profiles"]
+    assert context["project_config"] == "projects/eastern-birth-chart.example.yaml"

@@ -2,6 +2,8 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from goodteam_os.models import list_model_profiles
+from goodteam_os.projects import check_project_target, load_project_target
 from goodteam_os.state import AgileDevState, StateStore, create_initial_state
 
 
@@ -109,7 +111,31 @@ def build_role_observations(state: AgileDevState) -> list[dict[str, str]]:
     return observations
 
 
-def render_dashboard(state: AgileDevState) -> str:
+def build_start_console_context(
+    workspace: Path,
+    model_config: Path = Path("models.yaml"),
+    project_config: Path = Path("projects/eastern-birth-chart.local.yaml"),
+) -> dict[str, object]:
+    profiles = list_model_profiles(model_config) if model_config.is_file() else ["balanced"]
+    project_report: dict[str, object] = {}
+    if project_config.is_file():
+        project_report = check_project_target(load_project_target(project_config))
+    project = dict(project_report.get("project", {}))
+    providers = dict(project_report.get("providers", {}))
+    deepseek = dict(providers.get("deepseek", {}))
+    return {
+        "workspace": str(workspace),
+        "model_config": str(model_config),
+        "project_config": str(project_config),
+        "profiles": profiles,
+        "project_key": str(project.get("key", "GTO") or "GTO"),
+        "project_name": str(project.get("name", "GoodTeam") or "GoodTeam"),
+        "deepseek_configured": bool(deepseek.get("configured", False)),
+    }
+
+
+def render_dashboard(state: AgileDevState, start_context: dict[str, object] | None = None) -> str:
+    start_context = start_context or build_start_console_context(Path("."))
     artifact_items = "\n".join(
         f"<li><span>{escape(name.upper())}</span><code>{escape(path)}</code></li>"
         for name, path in state.artifacts.items()
@@ -139,6 +165,15 @@ def render_dashboard(state: AgileDevState) -> str:
         </article>
         """
         for role in build_role_observations(state)
+    )
+    profiles = [str(profile) for profile in start_context.get("profiles", ["balanced"])]
+    profile_options = "\n".join(
+        f'<option value="{escape(profile)}"{" selected" if profile == "balanced" else ""}>{escape(profile)}</option>'
+        for profile in profiles
+    )
+    starter_idea = (
+        "Audit Eastern Birth Chart current docs/backend/frontend state, generate takeover report, "
+        "and propose next Plane tickets. Do not modify product code."
     )
 
     return f"""<!doctype html>
@@ -224,6 +259,74 @@ def render_dashboard(state: AgileDevState) -> str:
     }}
     .wide {{
       grid-column: 1 / -1;
+    }}
+    .console-grid {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }}
+    label {{
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }}
+    textarea, select, input {{
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #0f1115;
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+      min-height: 42px;
+    }}
+    textarea {{
+      min-height: 118px;
+      resize: vertical;
+      line-height: 1.45;
+    }}
+    .checkbox-label {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-transform: none;
+      color: var(--text);
+    }}
+    .checkbox-label input {{
+      width: 18px;
+      height: 18px;
+      min-height: 18px;
+      accent-color: var(--accent);
+    }}
+    .command-box {{
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      background: #0d0f13;
+      padding: 14px;
+      min-height: 116px;
+      color: var(--accent);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      text-align: left;
+    }}
+    .signal-row {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }}
+    .signal {{
+      border: 1px solid var(--line);
+      padding: 10px;
+      min-height: 72px;
+    }}
+    .signal span {{
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
     }}
     .roles {{
       display: grid;
@@ -324,6 +427,7 @@ def render_dashboard(state: AgileDevState) -> str:
       header, .grid {{ display: block; }}
       .status {{ margin-top: 16px; }}
       section {{ margin-top: 16px; }}
+      .console-grid, .signal-row {{ grid-template-columns: 1fr; }}
       .roles {{ grid-template-columns: 1fr; }}
       dl {{ grid-template-columns: 1fr; }}
       li {{ display: block; }}
@@ -354,6 +458,34 @@ def render_dashboard(state: AgileDevState) -> str:
         </div>
       </section>
       <section>
+        <h2>Start Workflow</h2>
+        <div class="console-grid">
+          <label>
+            Goal
+            <textarea id="start-idea">{escape(starter_idea)}</textarea>
+          </label>
+          <div>
+            <label>
+              Model Profile
+              <select id="model-profile">{profile_options}</select>
+            </label>
+            <div class="actions">
+              <label class="checkbox-label">
+                <input id="dry-run" type="checkbox" checked>
+                Dry run
+              </label>
+              <button class="primary" id="copy-command" type="button">Copy Command</button>
+            </div>
+          </div>
+        </div>
+        <div class="signal-row">
+          <div class="signal"><span>Project</span>{escape(str(start_context["project_name"]))} / {escape(str(start_context["project_key"]))}</div>
+          <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
+          <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
+        </div>
+        <code class="command-box" id="start-command"></code>
+      </section>
+      <section>
         <h2>State</h2>
         <dl>
           <dt>Run</dt><dd>{escape(state.run_id)}</dd>
@@ -376,6 +508,40 @@ def render_dashboard(state: AgileDevState) -> str:
       </section>
     </div>
   </main>
+  <script>
+    const workspace = {str(start_context["workspace"])!r};
+    const projectKey = {str(start_context["project_key"])!r};
+    const modelConfig = {str(start_context["model_config"])!r};
+
+    function shellQuote(value) {{
+      return "'" + value.replaceAll("'", "'\\''") + "'";
+    }}
+
+    function updateCommand() {{
+      const idea = document.getElementById("start-idea").value.trim();
+      const profile = document.getElementById("model-profile").value;
+      const dryRun = document.getElementById("dry-run").checked;
+      const command = [
+        "PYTHONPATH=src",
+        ".venv/bin/python -m goodteam_os.cli start",
+        shellQuote(idea || "Start GoodTeam workflow"),
+        "--workspace", shellQuote(workspace),
+        "--project-key", shellQuote(projectKey),
+        "--model-config", shellQuote(modelConfig),
+        "--model-profile", shellQuote(profile),
+        dryRun ? "--dry-run" : ""
+      ].filter(Boolean).join(" ");
+      document.getElementById("start-command").textContent = command;
+    }}
+
+    document.getElementById("start-idea").addEventListener("input", updateCommand);
+    document.getElementById("model-profile").addEventListener("change", updateCommand);
+    document.getElementById("dry-run").addEventListener("change", updateCommand);
+    document.getElementById("copy-command").addEventListener("click", async () => {{
+      await navigator.clipboard.writeText(document.getElementById("start-command").textContent);
+    }});
+    updateCommand();
+  </script>
 </body>
 </html>"""
 
@@ -386,7 +552,8 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if self.path not in {"/", "/index.html"}:
                 self.send_error(404)
                 return
-            body = render_dashboard(resolve_dashboard_state(workspace)).encode("utf-8")
+            start_context = build_start_console_context(workspace)
+            body = render_dashboard(resolve_dashboard_state(workspace), start_context).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

@@ -5,6 +5,11 @@ from pathlib import Path
 ModelProfile = dict[str, dict[str, str]]
 
 
+def list_model_profiles(config_path: Path) -> list[str]:
+    config = _parse_simple_yaml(config_path)
+    return sorted(dict(config.get("profiles", {})).keys())
+
+
 def load_model_profile(config_path: Path, profile_name: str) -> ModelProfile:
     config = _parse_simple_yaml(config_path)
     profiles = config.get("profiles", {})
