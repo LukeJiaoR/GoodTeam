@@ -32,10 +32,10 @@ def test_render_dashboard_shows_current_gate():
     assert "Waiting for approval" in html
     assert "Architect" in html
     assert "Model" in html
-    assert "Start Workflow" in html
-    assert "Start Run" in html
+    assert "Start Workflow" not in html
+    assert "Start Run" not in html
     assert "Copy Command" not in html
-    assert "Enter the real workflow goal" in html
+    assert "Enter the real workflow goal" not in html
     assert "Start a workflow run to populate this dashboard" not in html
     assert "Overview" in html
     assert "Roles" in html
@@ -53,7 +53,7 @@ def test_render_dashboard_shows_current_gate():
     assert "Build AI Team OS" in html
     assert "artifact-preview" in html
     assert "Project Target" in html
-    assert "Active run in progress" in html
+    assert "Active run in progress" not in html
 
 
 def test_resolve_dashboard_state_reads_existing_state(tmp_path):
@@ -85,6 +85,9 @@ def test_render_dashboard_without_state_shows_only_real_empty_status():
 
     assert "no_active_run" in html
     assert "No active run" in html
+    assert "Start Workflow" in html
+    assert "Start Run" in html
+    assert "Enter the real workflow goal" in html
     assert "no-run-yet" not in html
     assert "Start a workflow run to populate this dashboard" not in html
     assert "Approve PRD" not in html

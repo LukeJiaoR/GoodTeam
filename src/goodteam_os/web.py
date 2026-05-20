@@ -529,10 +529,102 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         else '<div class="empty-state">state/current.json not found.</div>'
     )
     header_status = state.next_node if state is not None else "no_active_run"
-    start_guard_html = (
-        '<div class="empty-state">Active run in progress. Dry run preview is still available; starting a new run is blocked until this run is finished or archived.</div>'
+    start_workflow_section = (
+        ""
         if active_run
-        else ""
+        else f"""
+        <section>
+          <h2>Start Workflow</h2>
+          <div class="console-grid">
+            <label>
+            Goal
+              <textarea id="start-idea" placeholder="Enter the real workflow goal..."></textarea>
+            </label>
+            <div>
+              <label>
+                Model Profile
+                <select id="model-profile">{profile_options}</select>
+              </label>
+              <div class="actions">
+                <label class="checkbox-label">
+                  <input id="dry-run" type="checkbox" checked>
+                  Dry run
+                </label>
+                <button class="primary" id="start-run" type="button">Start Run</button>
+              </div>
+            </div>
+          </div>
+          <div class="signal-row">
+            <div class="signal"><span>Project</span>{escape(str(start_context["project_name"]))} / {escape(str(start_context["project_key"]))}</div>
+            <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
+            <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
+          </div>
+          <code class="command-box" id="start-result">Enter a workflow goal, then start the run.</code>
+        </section>
+        """
+    )
+    start_workflow_script = (
+        ""
+        if active_run
+        else f"""
+    const workspace = {str(start_context["workspace"])!r};
+    const projectKey = {str(start_context["project_key"])!r};
+    const modelConfig = {str(start_context["model_config"])!r};
+
+    function updateStartState() {{
+      const idea = document.getElementById("start-idea").value.trim();
+      const dryRun = document.getElementById("dry-run").checked;
+      document.getElementById("start-run").textContent = dryRun ? "Preview Run" : "Start Run";
+      if (!idea) {{
+        document.getElementById("start-result").textContent = "Enter a workflow goal, then start the run.";
+        return;
+      }}
+      document.getElementById("start-result").textContent = dryRun
+        ? "Ready to preview. No state or artifacts will be written."
+        : "Ready to start. This will write state, artifacts, and a checkpoint.";
+    }}
+
+    document.getElementById("start-idea").addEventListener("input", updateStartState);
+    document.getElementById("model-profile").addEventListener("change", updateStartState);
+    document.getElementById("dry-run").addEventListener("change", updateStartState);
+    document.getElementById("start-run").addEventListener("click", async () => {{
+      const resultBox = document.getElementById("start-result");
+      const idea = document.getElementById("start-idea").value.trim();
+      const dryRun = document.getElementById("dry-run").checked;
+      if (!idea) {{
+        resultBox.textContent = "Workflow goal is required.";
+        return;
+      }}
+      document.getElementById("start-run").disabled = true;
+      resultBox.textContent = "Starting...";
+      try {{
+        const response = await fetch("/start", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{
+            idea,
+            project_key: projectKey,
+            model_config: modelConfig,
+            model_profile: document.getElementById("model-profile").value,
+            dry_run: dryRun
+          }})
+        }});
+        const payload = await response.json();
+        if (!response.ok) {{
+          throw new Error(payload.error || "Failed to start workflow.");
+        }}
+        resultBox.textContent = JSON.stringify(payload, null, 2);
+        if (!payload.dry_run) {{
+          window.setTimeout(() => window.location.reload(), 600);
+        }}
+      }} catch (error) {{
+        resultBox.textContent = error.message;
+      }} finally {{
+        document.getElementById("start-run").disabled = false;
+      }}
+    }});
+    updateStartState();
+        """
     )
 
     return f"""<!doctype html>
@@ -950,35 +1042,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           <h2>Current Run</h2>
           {current_run_html}
         </section>
-        <section>
-          <h2>Start Workflow</h2>
-          {start_guard_html}
-          <div class="console-grid">
-            <label>
-            Goal
-              <textarea id="start-idea" placeholder="Enter the real workflow goal..."></textarea>
-            </label>
-            <div>
-              <label>
-                Model Profile
-                <select id="model-profile">{profile_options}</select>
-              </label>
-              <div class="actions">
-                <label class="checkbox-label">
-                  <input id="dry-run" type="checkbox" checked>
-                  Dry run
-                </label>
-                <button class="primary" id="start-run" type="button">Start Run</button>
-              </div>
-            </div>
-          </div>
-          <div class="signal-row">
-            <div class="signal"><span>Project</span>{escape(str(start_context["project_name"]))} / {escape(str(start_context["project_key"]))}</div>
-            <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
-            <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
-          </div>
-          <code class="command-box" id="start-result">Enter a workflow goal, then start the run.</code>
-        </section>
+        {start_workflow_section}
         <section>
           <h2>Role Summary</h2>
           <div class="signal-row compact">{role_summary_items}</div>
@@ -1039,72 +1103,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     </div>
   </main>
   <script>
-    const workspace = {str(start_context["workspace"])!r};
-    const projectKey = {str(start_context["project_key"])!r};
-    const modelConfig = {str(start_context["model_config"])!r};
-    const activeRun = {str(active_run).lower()};
-
-    function updateStartState() {{
-      const idea = document.getElementById("start-idea").value.trim();
-      const dryRun = document.getElementById("dry-run").checked;
-      document.getElementById("start-run").textContent = dryRun ? "Preview Run" : "Start Run";
-      document.getElementById("start-run").disabled = activeRun && !dryRun;
-      if (activeRun && !dryRun) {{
-        document.getElementById("start-result").textContent = "Active run in progress. New runs are blocked until the current run is finished or archived.";
-        return;
-      }}
-      if (!idea) {{
-        document.getElementById("start-result").textContent = "Enter a workflow goal, then start the run.";
-        return;
-      }}
-      document.getElementById("start-result").textContent = dryRun
-        ? "Ready to preview. No state or artifacts will be written."
-        : "Ready to start. This will write state, artifacts, and a checkpoint.";
-    }}
-
-    document.getElementById("start-idea").addEventListener("input", updateStartState);
-    document.getElementById("model-profile").addEventListener("change", updateStartState);
-    document.getElementById("dry-run").addEventListener("change", updateStartState);
-    document.getElementById("start-run").addEventListener("click", async () => {{
-      const resultBox = document.getElementById("start-result");
-      const idea = document.getElementById("start-idea").value.trim();
-      const dryRun = document.getElementById("dry-run").checked;
-      if (activeRun && !dryRun) {{
-        resultBox.textContent = "Active run in progress. New runs are blocked until the current run is finished or archived.";
-        return;
-      }}
-      if (!idea) {{
-        resultBox.textContent = "Workflow goal is required.";
-        return;
-      }}
-      document.getElementById("start-run").disabled = true;
-      resultBox.textContent = "Starting...";
-      try {{
-        const response = await fetch("/start", {{
-          method: "POST",
-          headers: {{ "Content-Type": "application/json" }},
-          body: JSON.stringify({{
-            idea,
-            project_key: projectKey,
-            model_config: modelConfig,
-            model_profile: document.getElementById("model-profile").value,
-            dry_run: dryRun
-          }})
-        }});
-        const payload = await response.json();
-        if (!response.ok) {{
-          throw new Error(payload.error || "Failed to start workflow.");
-        }}
-        resultBox.textContent = JSON.stringify(payload, null, 2);
-        if (!payload.dry_run) {{
-          window.setTimeout(() => window.location.reload(), 600);
-        }}
-      }} catch (error) {{
-        resultBox.textContent = error.message;
-      }} finally {{
-        document.getElementById("start-run").disabled = false;
-      }}
-    }});
+    {start_workflow_script}
     document.querySelectorAll(".tab-button").forEach((button) => {{
       button.addEventListener("click", () => {{
         document.querySelectorAll(".tab-button").forEach((item) => item.classList.remove("active"));
@@ -1151,7 +1150,6 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         }}
       }});
     }});
-    updateStartState();
   </script>
 </body>
 </html>"""
