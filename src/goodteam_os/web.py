@@ -128,6 +128,7 @@ def create_local_project_config(
     docs_path: str = "",
     backend_path: str = "",
     frontend_path: str = "",
+    task_sync: list[str] | None = None,
 ) -> dict[str, object]:
     name = project_name.strip()
     key = project_key.strip().upper()
@@ -153,6 +154,12 @@ def create_local_project_config(
         "repos:",
     ]
     lines.extend(f"  {repo}: {repo_path}" for repo, repo_path in repos)
+    sync_values = [value for value in (task_sync or []) if value]
+    lines.extend(["task_backend:", "  mode: local", "  sync:"])
+    if sync_values:
+        lines[-1] = "  sync: " + ",".join(sync_values)
+    else:
+        lines[-1] = "  sync: "
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {
@@ -160,6 +167,7 @@ def create_local_project_config(
         "project_key": key,
         "project_name": name,
         "repos": {repo: str(repo_path) for repo, repo_path in repos},
+        "task_backend": {"mode": "local", "sync": sync_values},
     }
 
 
@@ -572,6 +580,7 @@ def build_start_console_context(
     if project_config.is_file():
         project_report = check_project_target(load_project_target(project_config))
     project = dict(project_report.get("project", {}))
+    target = load_project_target(project_config) if project_config.is_file() else {}
     providers = dict(project_report.get("providers", {}))
     deepseek = dict(providers.get("deepseek", {}))
     return {
@@ -582,10 +591,24 @@ def build_start_console_context(
         "profiles": profiles,
         "project_key": str(project.get("key", "GTO") or "GTO"),
         "project_name": str(project.get("name", "GoodTeam") or "GoodTeam"),
+        "task_backend": normalize_task_backend(target.get("task_backend", {"mode": "local", "sync": []})),
         "deepseek_configured": bool(deepseek.get("configured", False)),
         "project_base": str(project_base),
         "candidate_dirs": discover_project_directories(project_base),
     }
+
+
+def normalize_task_backend(value: object) -> dict[str, object]:
+    backend = dict(value) if isinstance(value, dict) else {}
+    mode = str(backend.get("mode", "local") or "local")
+    sync = backend.get("sync", [])
+    if isinstance(sync, list):
+        sync_values = [str(item) for item in sync if item]
+    elif isinstance(sync, dict):
+        sync_values = []
+    else:
+        sync_values = [part.strip() for part in str(sync).split(",") if part.strip()] if sync else []
+    return {"mode": mode, "sync": sync_values}
 
 
 def render_dashboard(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
@@ -716,6 +739,9 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         for step in workflow_steps
     )
     project_report = dict(start_context.get("project_report", {}))
+    task_backend = normalize_task_backend(start_context.get("task_backend", {"mode": "local", "sync": []}))
+    task_sync_values = [str(value) for value in task_backend.get("sync", [])]
+    task_sync_label = "Local only" if not task_sync_values else "Local + " + ", ".join(task_sync_values)
     workers = dict(project_report.get("workers", {}))
     worker_items = "\n".join(
         f"<li><span>{escape(name)}</span><code>{escape(str(dict(worker).get('path') or dict(worker).get('command') or 'missing'))}</code></li>"
@@ -815,6 +841,15 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
                 Project Config
                 <input id="project-config" value="{escape(str(start_context["project_config"]))}">
               </label>
+              <label>
+                Task Backend Sync
+                <select id="task-sync">
+                  <option value="">Local only</option>
+                  <option value="plane"{" selected" if "plane" in task_sync_values else ""}>Local + Plane</option>
+                  <option value="linear"{" selected" if "linear" in task_sync_values else ""}>Local + Linear</option>
+                  <option value="github_issues"{" selected" if "github_issues" in task_sync_values else ""}>Local + GitHub Issues</option>
+                </select>
+              </label>
               <div class="actions">
                 <label class="checkbox-label">
                   <input id="dry-run" type="checkbox" checked>
@@ -830,6 +865,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
             <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
             <div class="signal"><span>Directory Base</span><code>{escape(str(start_context["project_base"]))}</code></div>
+            <div class="signal"><span>Task Backend</span>{escape(task_sync_label)}</div>
           </div>
           <code class="command-box" id="start-result">Adopt mode reads the project config first and generates takeover-context.md before PRD.</code>
         </section>
@@ -885,7 +921,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             project_key: document.getElementById("project-key").value,
             docs_path: document.getElementById("docs-path").value,
             backend_path: document.getElementById("backend-path").value,
-            frontend_path: document.getElementById("frontend-path").value
+            frontend_path: document.getElementById("frontend-path").value,
+            task_sync: document.getElementById("task-sync").value ? [document.getElementById("task-sync").value] : []
           }})
         }});
         const payload = await response.json();
@@ -1449,6 +1486,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Key</dt><dd>{escape(str(start_context["project_key"]))}</dd>
             <dt>Config</dt><dd>{escape(str(start_context["project_config"]))}</dd>
             <dt>Model Config</dt><dd>{escape(str(start_context["model_config"]))}</dd>
+            <dt>Task Backend</dt><dd>{escape(task_sync_label)}</dd>
           </dl>
         </section>
         <section>
@@ -1633,6 +1671,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         docs_path=str(request.get("docs_path", "")),
                         backend_path=str(request.get("backend_path", "")),
                         frontend_path=str(request.get("frontend_path", "")),
+                        task_sync=[str(value) for value in request.get("task_sync", [])],
                     )
                 self._send_json(200, result)
             except Exception as exc:

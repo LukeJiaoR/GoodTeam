@@ -119,6 +119,22 @@ For multi-repo products, GoodTeam stores project runtime data in the shared pare
 
 The local task ledger is built in. Plane or Linear adapters can synchronize from this ledger later, but they are not required for planning or execution.
 
+Task backends are configured per project:
+
+```yaml
+task_backend:
+  mode: local
+  sync:
+```
+
+To sync local tasks to an external kanban later, keep `mode: local` and add adapters:
+
+```yaml
+task_backend:
+  mode: local
+  sync: plane
+```
+
 Local worker commands use the CLIs currently available on this machine:
 
 - Claude CLI: product, requirement, architect, review, planner, release, retro/memory

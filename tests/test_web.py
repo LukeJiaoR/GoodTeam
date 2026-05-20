@@ -62,6 +62,7 @@ def test_render_dashboard_shows_current_gate():
     assert "Project Target" in html
     assert "/tmp/project/.goodteam/memory/project-memory.md" in html
     assert "Local Task Ledger" in html
+    assert "Task Backend" in html
     assert "Active run in progress" not in html
 
 
@@ -300,6 +301,7 @@ def test_build_start_console_context_reads_project_and_model_config():
     assert context["project_name"] == "Eastern Birth Chart"
     assert "balanced" in context["profiles"]
     assert context["project_config"] == "projects/eastern-birth-chart.example.yaml"
+    assert context["task_backend"] == {"mode": "local", "sync": []}
 
 
 def test_discover_project_directories_lists_immediate_children(tmp_path):
@@ -347,6 +349,7 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
         docs_path=str(docs),
         backend_path=str(backend),
         frontend_path=str(frontend),
+        task_sync=["plane"],
     )
 
     config = Path(payload["project_config"])
@@ -356,6 +359,27 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert f"  docs: {docs}" in content
     assert f"  backend: {backend}" in content
     assert f"  frontend: {frontend}" in content
+    assert "task_backend:" in content
+    assert "  mode: local" in content
+    assert "  sync: plane" in content
+
+
+def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="Existing Product",
+        project_key="EBC",
+        docs_path=str(docs),
+    )
+
+    content = Path(payload["project_config"]).read_text(encoding="utf-8")
+    assert "task_backend:" in content
+    assert "  mode: local" in content
+    assert "  sync:" in content
+    assert payload["task_backend"] == {"mode": "local", "sync": []}
 
 
 def test_start_workflow_writes_state_and_checkpoint(tmp_path):

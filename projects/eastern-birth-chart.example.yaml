@@ -5,6 +5,9 @@ repos:
   docs: "<absolute-path-to-eastern-birth-chart-docs>"
   backend: "<absolute-path-to-eastern-birth-chart-api>"
   frontend: "<absolute-path-to-eastern-birth-chart-mvp-gemini-ui>"
+task_backend:
+  mode: local
+  sync:
 workers:
   product: claude
   requirement: claude

@@ -9,6 +9,8 @@ def test_load_project_target_reads_eastern_birth_chart_example_config():
     assert target["name"] == "Eastern Birth Chart"
     assert target["key"] == "EBC"
     assert target["repos"]["docs"] == "<absolute-path-to-eastern-birth-chart-docs>"
+    assert target["task_backend"]["mode"] == "local"
+    assert "sync" in target["task_backend"]
     assert target["workers"]["backend"] == "codex"
     assert target["workers"]["frontend"] == "gemini"
     assert target["workers"]["product"] == "claude"
