@@ -3,8 +3,10 @@ from pathlib import Path
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import (
     build_role_observations,
+    build_approval_reviews,
     build_start_console_context,
     build_workflow_steps,
+    read_artifact_preview,
     render_dashboard,
     resolve_dashboard_state,
     is_active_run,
@@ -43,6 +45,9 @@ def test_render_dashboard_shows_current_gate():
     assert "Workflow Waterfall" in html
     assert "Needs review" in html
     assert "Review PRD" in html
+    assert "PRD Review" in html
+    assert "Build AI Team OS" in html
+    assert "artifact-preview" in html
     assert "Project Target" in html
     assert "Active run in progress" in html
 
@@ -132,6 +137,29 @@ def test_build_workflow_steps_without_state_is_not_started():
 
     assert steps[0]["status"] == "not-started"
     assert all(step["artifact_path"] == "" for step in steps)
+
+
+def test_build_approval_reviews_reads_prd_artifact(tmp_path):
+    prd = tmp_path / "prd.md"
+    prd.write_text("# PRD\n\nReview me", encoding="utf-8")
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.artifacts["prd"] = str(prd)
+
+    reviews = build_approval_reviews(state)
+    prd_review = next(review for review in reviews if review["approval"] == "prd")
+
+    assert prd_review["artifact"] == "prd"
+    assert prd_review["artifact_path"] == str(prd)
+    assert "# PRD" in prd_review["content"]
+
+
+def test_read_artifact_preview_truncates_long_content(tmp_path):
+    artifact = tmp_path / "long.md"
+    artifact.write_text("a" * 20, encoding="utf-8")
+
+    preview = read_artifact_preview(str(artifact), max_chars=5)
+
+    assert preview == "aaaaa\n\n[Preview truncated]"
 
 
 def test_build_start_console_context_reads_project_and_model_config():

@@ -292,6 +292,44 @@ def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
     return steps
 
 
+def read_artifact_preview(path: str, max_chars: int = 8000) -> str:
+    if not path:
+        return ""
+    artifact_path = Path(path)
+    if not artifact_path.is_file():
+        return ""
+    content = artifact_path.read_text(encoding="utf-8")
+    if len(content) <= max_chars:
+        return content
+    return content[:max_chars] + "\n\n[Preview truncated]"
+
+
+def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
+    if state is None:
+        return []
+
+    reviews = []
+    approval_artifacts = {
+        "prd": "prd",
+        "rfc": "rfc",
+        "security": "review_report",
+        "release": "release_notes",
+    }
+    for approval, decision in state.approvals.items():
+        artifact = approval_artifacts.get(approval, approval)
+        artifact_path = state.artifacts.get(artifact, "")
+        reviews.append(
+            {
+                "approval": approval,
+                "decision": str(decision),
+                "artifact": artifact,
+                "artifact_path": artifact_path,
+                "content": read_artifact_preview(artifact_path),
+            }
+        )
+    return reviews
+
+
 def build_start_console_context(
     workspace: Path,
     model_config: Path = Path("models.yaml"),
@@ -343,6 +381,24 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     if not approval_items:
         approval_items = '<li><span>No approvals recorded</span><code>state/current.json has no approval entries</code></li>'
+    approval_review_cards = "\n".join(
+        f"""
+        <article class="approval-card" id="approval-{escape(review["approval"])}">
+          <div class="role-topline">
+            <h3>{escape(review["approval"].upper())} Review</h3>
+            <span class="role-status">{escape(review["decision"])}</span>
+          </div>
+          <dl class="role-meta">
+            <dt>Artifact</dt><dd>{escape(review["artifact"])}</dd>
+            <dt>Path</dt><dd>{f'<code>{escape(review["artifact_path"])}</code>' if review["artifact_path"] else 'not available'}</dd>
+          </dl>
+          {f'<pre class="artifact-preview">{escape(review["content"])}</pre>' if review["content"] else '<div class="empty-state">No artifact content available for this approval yet.</div>'}
+        </article>
+        """
+        for review in build_approval_reviews(state)
+    )
+    if not approval_review_cards:
+        approval_review_cards = '<div class="empty-state">No approval review items available.</div>'
     role_cards = "\n".join(
         f"""
         <article class="role-card">
@@ -704,6 +760,25 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       padding: 14px;
       min-height: 190px;
     }}
+    .approval-card {{
+      border: 1px solid var(--line);
+      background: #111318;
+      padding: 14px;
+      margin-top: 12px;
+    }}
+    .artifact-preview {{
+      margin: 14px 0 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: #0d0f13;
+      color: var(--text);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-height: 520px;
+      overflow: auto;
+      line-height: 1.45;
+      font: inherit;
+    }}
     .role-topline {{
       display: flex;
       justify-content: space-between;
@@ -886,6 +961,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       <section>
         <h2>Approvals</h2>
         <ul>{approval_items}</ul>
+        {approval_review_cards}
       </section>
     </div>
     <div class="tab-panel" id="tab-system">
@@ -992,6 +1068,10 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     document.querySelectorAll(".review-link").forEach((button) => {{
       button.addEventListener("click", () => {{
         document.querySelector('[data-tab="approvals"]').click();
+        const target = document.getElementById("approval-" + button.dataset.approval);
+        if (target) {{
+          target.scrollIntoView({{ behavior: "smooth", block: "start" }});
+        }}
       }});
     }});
     updateStartState();
