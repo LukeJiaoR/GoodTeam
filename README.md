@@ -115,6 +115,16 @@ Local worker commands use the CLIs currently available on this machine:
 
 DeepSeek can remain in `models.yaml` as a model provider target, but there is no local `deepseek` CLI command currently available in `PATH`.
 
+DeepSeek API access is detected through environment configuration and never through committed files:
+
+```bash
+export DEEPSEEK_API_KEY="<your-rotated-deepseek-api-key>"
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
+  --project-config projects/eastern-birth-chart.local.yaml
+```
+
+The doctor output reports only `configured: true` or `false`; it does not print the key.
+
 ## Boundary
 
 This repo must not read Codex local MCP credentials at runtime. Plane credentials for future adapters should come from environment variables or a secret manager.

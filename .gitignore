@@ -6,3 +6,5 @@ artifacts/
 state/
 logs/
 projects/*.local.yaml
+.env
+.env.*

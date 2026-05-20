@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from shutil import which
 
@@ -27,6 +28,16 @@ def check_project_target(target: ProjectTarget) -> dict[str, object]:
             "available": resolved is not None,
             "path": resolved or "",
         }
+    providers = {}
+    for name, provider in dict(target.get("providers", {})).items():
+        provider_data = dict(provider)
+        api_key_env = str(provider_data.get("api_key_env", ""))
+        providers[name] = {
+            "type": str(provider_data.get("type", "")),
+            "base_url": str(provider_data.get("base_url", "")),
+            "api_key_env": api_key_env,
+            "configured": bool(api_key_env and os.getenv(api_key_env)),
+        }
 
     return {
         "project": {
@@ -36,5 +47,6 @@ def check_project_target(target: ProjectTarget) -> dict[str, object]:
         },
         "repos": repos,
         "workers": workers,
+        "providers": providers,
         "role_routes": target.get("role_routes", {}),
     }
