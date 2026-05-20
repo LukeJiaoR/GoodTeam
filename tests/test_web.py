@@ -29,6 +29,13 @@ def test_render_dashboard_shows_current_gate():
     assert "Start Workflow" in html
     assert "Copy Command" in html
     assert "--dry-run" in html
+    assert "Overview" in html
+    assert "Roles" in html
+    assert "Artifacts" in html
+    assert "Approvals" in html
+    assert "System" in html
+    assert "Role Summary" in html
+    assert "Project Target" in html
 
 
 def test_resolve_dashboard_state_reads_existing_state(tmp_path):
