@@ -1,0 +1,30 @@
+name: Eastern Birth Chart
+key: EBC
+plane_project_id: "<plane-project-id>"
+repos:
+  docs: "<absolute-path-to-eastern-birth-chart-docs>"
+  backend: "<absolute-path-to-eastern-birth-chart-api>"
+  frontend: "<absolute-path-to-eastern-birth-chart-mvp-gemini-ui>"
+workers:
+  product: claude
+  requirement: claude
+  architect: claude
+  review: claude
+  planner: claude
+  backend: codex
+  frontend: gemini
+  ui: gemini
+  qa: codex
+  code_review: codex
+  release: claude
+  retro_memory: claude
+role_routes:
+  product_requirement: docs
+  architect: docs
+  planner: docs
+  backend: backend
+  frontend: frontend
+  ui: frontend
+  qa: docs
+  release: docs
+  retro_memory: docs

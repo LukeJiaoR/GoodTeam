@@ -5,3 +5,4 @@ __pycache__/
 artifacts/
 state/
 logs/
+projects/*.local.yaml

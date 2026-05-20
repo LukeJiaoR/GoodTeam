@@ -50,10 +50,16 @@ def _parse_simple_yaml(path: Path) -> dict[str, object]:
 
         parent = stack[-1][1]
         if value:
-            parent[key] = value
+            parent[key] = _unquote(value)
         else:
             child: dict[str, object] = {}
             parent[key] = child
             stack.append((indent, child))
 
     return root
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value

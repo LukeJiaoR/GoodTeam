@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from goodteam_os.graph import run_until_next_gate
 from goodteam_os.models import apply_role_overrides, load_model_profile
+from goodteam_os.projects import check_project_target, load_project_target
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import serve
 
@@ -27,6 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8788)
     serve_command.add_argument("--workspace", type=Path, default=Path("."))
+
+    doctor = subparsers.add_parser("doctor")
+    doctor.add_argument("--project-config", type=Path, default=Path("projects/eastern-birth-chart.local.yaml"))
     return parser
 
 
@@ -60,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "serve":
         serve(workspace=args.workspace, host=args.host, port=args.port)
+        return 0
+    if args.command == "doctor":
+        target = load_project_target(args.project_config)
+        print(json.dumps(check_project_target(target), indent=2))
         return 0
     return 1
 

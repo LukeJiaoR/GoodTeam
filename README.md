@@ -96,6 +96,25 @@ tmux new -s goodteam-dashboard
 PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --workspace /tmp/goodteam-os-run --port 8788
 ```
 
+## Project Targets
+
+Eastern Birth Chart is registered as the first real workspace target:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
+  --project-config projects/eastern-birth-chart.local.yaml
+```
+
+The committed file is `projects/eastern-birth-chart.example.yaml`. The real local file is `projects/eastern-birth-chart.local.yaml` and is git-ignored because it contains machine-specific repo paths and Plane metadata.
+
+Local worker commands use the CLIs currently available on this machine:
+
+- Claude CLI: product, requirement, architect, review, planner, release, retro/memory
+- Gemini CLI: UI and frontend
+- Codex CLI: backend, QA, code review
+
+DeepSeek can remain in `models.yaml` as a model provider target, but there is no local `deepseek` CLI command currently available in `PATH`.
+
 ## Boundary
 
 This repo must not read Codex local MCP credentials at runtime. Plane credentials for future adapters should come from environment variables or a secret manager.
