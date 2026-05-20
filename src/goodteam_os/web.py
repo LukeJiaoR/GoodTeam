@@ -1,10 +1,14 @@
+import json
+from dataclasses import asdict
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from uuid import uuid4
 
-from goodteam_os.models import list_model_profiles
+from goodteam_os.graph import run_until_next_gate
+from goodteam_os.models import apply_role_overrides, list_model_profiles, load_model_profile
 from goodteam_os.projects import check_project_target, load_project_target
-from goodteam_os.state import AgileDevState, StateStore
+from goodteam_os.state import AgileDevState, StateStore, create_initial_state
 
 
 ROLE_DEFINITIONS = [
@@ -69,6 +73,47 @@ ROLE_DEFINITIONS = [
 
 def resolve_dashboard_state(workspace: Path) -> AgileDevState | None:
     return StateStore(workspace).read_current()
+
+
+def start_workflow(
+    *,
+    workspace: Path,
+    idea: str,
+    project_key: str,
+    model_config: Path,
+    model_profile: str,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    if not idea.strip():
+        raise ValueError("Workflow goal is required.")
+
+    state = create_initial_state(
+        run_id=str(uuid4()),
+        project_key=project_key,
+        idea=idea.strip(),
+    )
+    state.model_profile = model_profile
+    state.role_models = apply_role_overrides(
+        load_model_profile(model_config, model_profile),
+        [],
+    )
+
+    if dry_run:
+        planned_prd = workspace / "artifacts" / "runs" / state.run_id / "prd" / "prd.md"
+        state.current_node = "prd_review_gate"
+        state.next_node = "await_prd_approval"
+        payload = asdict(state)
+        payload["dry_run"] = True
+        payload["planned_artifacts"] = {"prd": str(planned_prd)}
+        return payload
+
+    result = run_until_next_gate(state=state, workspace=workspace)
+    state_store = StateStore(root=workspace)
+    state_store.write_current(result)
+    state_store.write_checkpoint(result)
+    payload = asdict(result)
+    payload["dry_run"] = False
+    return payload
 
 
 def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]:
@@ -554,7 +599,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
                   <input id="dry-run" type="checkbox" checked>
                   Dry run
                 </label>
-                <button class="primary" id="copy-command" type="button">Copy Command</button>
+                <button class="primary" id="start-run" type="button">Start Run</button>
               </div>
             </div>
           </div>
@@ -563,7 +608,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
             <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
           </div>
-          <code class="command-box" id="start-command"></code>
+          <code class="command-box" id="start-result">Enter a workflow goal, then start the run.</code>
         </section>
         <section>
           <h2>Role Summary</h2>
@@ -624,36 +669,56 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     const projectKey = {str(start_context["project_key"])!r};
     const modelConfig = {str(start_context["model_config"])!r};
 
-    function shellQuote(value) {{
-      return "'" + value.replaceAll("'", "'\\''") + "'";
-    }}
-
-    function updateCommand() {{
+    function updateStartState() {{
       const idea = document.getElementById("start-idea").value.trim();
-      const profile = document.getElementById("model-profile").value;
       const dryRun = document.getElementById("dry-run").checked;
+      document.getElementById("start-run").textContent = dryRun ? "Preview Run" : "Start Run";
       if (!idea) {{
-        document.getElementById("start-command").textContent = "Enter a workflow goal to generate a command.";
+        document.getElementById("start-result").textContent = "Enter a workflow goal, then start the run.";
         return;
       }}
-      const command = [
-        "PYTHONPATH=src",
-        ".venv/bin/python -m goodteam_os.cli start",
-        shellQuote(idea),
-        "--workspace", shellQuote(workspace),
-        "--project-key", shellQuote(projectKey),
-        "--model-config", shellQuote(modelConfig),
-        "--model-profile", shellQuote(profile),
-        dryRun ? "--dry-run" : ""
-      ].filter(Boolean).join(" ");
-      document.getElementById("start-command").textContent = command;
+      document.getElementById("start-result").textContent = dryRun
+        ? "Ready to preview. No state or artifacts will be written."
+        : "Ready to start. This will write state, artifacts, and a checkpoint.";
     }}
 
-    document.getElementById("start-idea").addEventListener("input", updateCommand);
-    document.getElementById("model-profile").addEventListener("change", updateCommand);
-    document.getElementById("dry-run").addEventListener("change", updateCommand);
-    document.getElementById("copy-command").addEventListener("click", async () => {{
-      await navigator.clipboard.writeText(document.getElementById("start-command").textContent);
+    document.getElementById("start-idea").addEventListener("input", updateStartState);
+    document.getElementById("model-profile").addEventListener("change", updateStartState);
+    document.getElementById("dry-run").addEventListener("change", updateStartState);
+    document.getElementById("start-run").addEventListener("click", async () => {{
+      const resultBox = document.getElementById("start-result");
+      const idea = document.getElementById("start-idea").value.trim();
+      if (!idea) {{
+        resultBox.textContent = "Workflow goal is required.";
+        return;
+      }}
+      document.getElementById("start-run").disabled = true;
+      resultBox.textContent = "Starting...";
+      try {{
+        const response = await fetch("/start", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{
+            idea,
+            project_key: projectKey,
+            model_config: modelConfig,
+            model_profile: document.getElementById("model-profile").value,
+            dry_run: document.getElementById("dry-run").checked
+          }})
+        }});
+        const payload = await response.json();
+        if (!response.ok) {{
+          throw new Error(payload.error || "Failed to start workflow.");
+        }}
+        resultBox.textContent = JSON.stringify(payload, null, 2);
+        if (!payload.dry_run) {{
+          window.setTimeout(() => window.location.reload(), 600);
+        }}
+      }} catch (error) {{
+        resultBox.textContent = error.message;
+      }} finally {{
+        document.getElementById("start-run").disabled = false;
+      }}
     }});
     document.querySelectorAll(".tab-button").forEach((button) => {{
       button.addEventListener("click", () => {{
@@ -663,7 +728,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         document.getElementById("tab-" + button.dataset.tab).classList.add("active");
       }});
     }});
-    updateCommand();
+    updateStartState();
   </script>
 </body>
 </html>"""
@@ -679,6 +744,34 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             body = render_dashboard(resolve_dashboard_state(workspace), start_context).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self) -> None:
+            if self.path != "/start":
+                self.send_error(404)
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(content_length)
+                request = json.loads(raw_body.decode("utf-8") or "{}")
+                result = start_workflow(
+                    workspace=workspace,
+                    idea=str(request.get("idea", "")),
+                    project_key=str(request.get("project_key", "")),
+                    model_config=Path(str(request.get("model_config", "models.yaml"))),
+                    model_profile=str(request.get("model_profile", "balanced")),
+                    dry_run=bool(request.get("dry_run", False)),
+                )
+                self._send_json(200, result)
+            except Exception as exc:
+                self._send_json(400, {"error": str(exc)})
+
+        def _send_json(self, status: int, payload: dict[str, object]) -> None:
+            body = json.dumps(payload, indent=2).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

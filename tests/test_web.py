@@ -6,6 +6,7 @@ from goodteam_os.web import (
     build_start_console_context,
     render_dashboard,
     resolve_dashboard_state,
+    start_workflow,
 )
 
 
@@ -27,8 +28,8 @@ def test_render_dashboard_shows_current_gate():
     assert "Architect" in html
     assert "Model" in html
     assert "Start Workflow" in html
-    assert "Copy Command" in html
-    assert "--dry-run" in html
+    assert "Start Run" in html
+    assert "Copy Command" not in html
     assert "Enter the real workflow goal" in html
     assert "Start a workflow run to populate this dashboard" not in html
     assert "Overview" in html
@@ -104,3 +105,51 @@ def test_build_start_console_context_reads_project_and_model_config():
     assert context["project_name"] == "Eastern Birth Chart"
     assert "balanced" in context["profiles"]
     assert context["project_config"] == "projects/eastern-birth-chart.example.yaml"
+
+
+def test_start_workflow_writes_state_and_checkpoint(tmp_path):
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Audit real project state",
+        project_key="EBC",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+    )
+
+    assert payload["project_key"] == "EBC"
+    assert payload["next_node"] == "await_prd_approval"
+    assert payload["dry_run"] is False
+    assert Path(payload["artifacts"]["prd"]).is_file()
+    assert (tmp_path / "state" / "current.json").is_file()
+    assert (tmp_path / "state" / "checkpoints" / payload["run_id"] / "prd_review_gate.json").is_file()
+
+
+def test_start_workflow_dry_run_does_not_write_state(tmp_path):
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Preview real project state",
+        project_key="EBC",
+        model_config=Path("models.yaml"),
+        model_profile="cheap",
+        dry_run=True,
+    )
+
+    assert payload["dry_run"] is True
+    assert payload["model_profile"] == "cheap"
+    assert "planned_artifacts" in payload
+    assert not (tmp_path / "state" / "current.json").exists()
+
+
+def test_start_workflow_rejects_empty_goal(tmp_path):
+    try:
+        start_workflow(
+            workspace=tmp_path,
+            idea=" ",
+            project_key="EBC",
+            model_config=Path("models.yaml"),
+            model_profile="balanced",
+        )
+    except ValueError as exc:
+        assert "Workflow goal is required" in str(exc)
+    else:
+        raise AssertionError("Expected empty workflow goal to fail")
