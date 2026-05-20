@@ -61,6 +61,7 @@ def test_render_dashboard_shows_current_gate():
     assert "artifact-preview" in html
     assert "Project Target" in html
     assert "/tmp/project/.goodteam/memory/project-memory.md" in html
+    assert "Local Task Ledger" in html
     assert "Active run in progress" not in html
 
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from goodteam_os.graph import collect_project_context, render_prd_markdown, run_until_next_gate
+from goodteam_os.graph import collect_project_context, resolve_project_runtime_root, render_prd_markdown, run_until_next_gate
 from goodteam_os.graph import run_adoption_until_next_gate
 from goodteam_os.state import create_initial_state
 
@@ -27,6 +27,7 @@ def test_adoption_graph_reaches_takeover_review_gate(tmp_path):
     assert "takeover" in result.artifacts
     assert result.approvals["takeover"] == "pending"
     assert "prd" not in result.artifacts
+    assert (tmp_path / ".goodteam" / "tasks" / "tasks.json").is_file()
 
 
 def write_project_fixture(tmp_path: Path) -> Path:
@@ -80,9 +81,9 @@ def test_collect_project_context_reads_configured_sources(tmp_path):
     assert any(path.endswith("frontend/README.md") for path in paths)
 
 
-def test_collect_project_context_reads_project_memory_from_docs_repo(tmp_path):
+def test_collect_project_context_reads_project_memory_from_project_root(tmp_path):
     project_config = write_project_fixture(tmp_path)
-    memory = tmp_path / "docs" / ".goodteam" / "memory" / "project-memory.md"
+    memory = tmp_path / ".goodteam" / "memory" / "project-memory.md"
     memory.parent.mkdir(parents=True)
     memory.write_text("# Project Memory\n\n- Stable local project memory.", encoding="utf-8")
 
@@ -91,3 +92,16 @@ def test_collect_project_context_reads_project_memory_from_docs_repo(tmp_path):
 
     assert memory_packet["path"] == str(memory)
     assert "Stable local project memory" in memory_packet["summary"]
+
+
+def test_resolve_project_runtime_root_prefers_parent_project_directory(tmp_path):
+    project = tmp_path / "product"
+    docs = project / "docs"
+    backend = project / "api"
+    frontend = project / "ui"
+    for path in [docs, backend, frontend]:
+        path.mkdir(parents=True)
+
+    root = resolve_project_runtime_root({"docs": str(docs), "backend": str(backend), "frontend": str(frontend)})
+
+    assert root == project

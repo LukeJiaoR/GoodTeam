@@ -5,13 +5,14 @@ from goodteam_os.memory import ProjectMemoryStore, summarize_markdown
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import load_project_target
 from goodteam_os.state import AgileDevState
+from goodteam_os.tasks import LocalTaskStore
 
 
 CONTEXT_FILES = {
     "docs": [
         ("codex.md", "Shared long-term memory"),
         ("docs/ai-collaboration.md", "AI collaboration and ownership rules"),
-        ("docs/plane-handoff.md", "Plane handoff and tracking rules"),
+        ("docs/plane-handoff.md", "Optional external tracker handoff rules"),
         ("docs/deployment-current.md", "Current deployment and smoke checks"),
     ],
     "backend": [
@@ -67,11 +68,28 @@ def collect_project_context(project_config: Path = Path("projects/eastern-birth-
 
 
 def select_project_memory_root(repos: dict[object, object]) -> Path | None:
+    runtime_root = resolve_project_runtime_root(repos)
+    if runtime_root is not None:
+        return runtime_root
     for name in ["docs", "backend", "frontend"]:
         value = repos.get(name)
         if value and Path(str(value)).is_dir():
             return Path(str(value))
     return None
+
+
+def resolve_project_runtime_root(repos: dict[object, object]) -> Path | None:
+    roots = [
+        Path(str(value))
+        for value in repos.values()
+        if value and Path(str(value)).is_dir()
+    ]
+    if not roots:
+        return None
+    parents = {root.parent for root in roots}
+    if len(roots) > 1 and len(parents) == 1:
+        return next(iter(parents))
+    return roots[0]
 
 
 def ensure_project_memory(project_config: Path) -> Path | None:
@@ -85,6 +103,20 @@ def ensure_project_memory(project_config: Path) -> Path | None:
         str(target.get("key", "")),
         str(target.get("name", "")),
     )
+
+
+def ensure_project_task_ledger(project_config: Path) -> Path | None:
+    if not project_config.is_file():
+        return None
+    target = load_project_target(project_config)
+    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    if runtime_root is None:
+        return None
+    store = LocalTaskStore(runtime_root)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    if not store.path.is_file():
+        store.path.write_text('{\n  "version": 1,\n  "next_id": 1,\n  "tasks": []\n}', encoding="utf-8")
+    return store.path
 
 
 def summarize_context_file(content: str) -> str:
@@ -118,15 +150,15 @@ def render_prd_markdown(
 
 - This PRD was generated from the configured local context packet for `{project_label}`.
 - The source list above is the durable evidence for this PRD; reviewer feedback should name missing, stale, or contradictory files.
-- Ownership, deployment, auth/session, API contract, and ticketing assumptions must be grounded in the listed source files.
+- Ownership, deployment, auth/session, API contract, and task-tracking assumptions must be grounded in the listed source files.
 - Cross-repository changes require explicit ownership and handoff notes before implementation.
 - Secrets, local credentials, generated state, and run artifacts must remain local-only.
 
 ## Goals
 
 - Produce a real takeover artifact based on the configured docs/backend/frontend repositories.
-- Identify project ownership boundaries, deployment constraints, auth/API contracts, and ticketing discipline before any code work.
-- Propose next Plane-ready work items only after the source docs and current repo state have been inspected.
+- Identify project ownership boundaries, deployment constraints, auth/API contracts, and task-tracking discipline before any code work.
+- Propose next GoodTeam local tasks only after the source docs and current repo state have been inspected.
 - Keep the current run read-only for product/requirement review; no product code changes are allowed.
 
 ## Non-goals
@@ -134,8 +166,8 @@ def render_prd_markdown(
 - Do not modify product code during the product/requirement phase.
 - Do not change API contracts, database schema, or UI implementation before RFC approval.
 - Do not create release or deployment actions from this PRD alone.
-- Do not bypass the configured ticketing/project tracking flow for backend, frontend, deploy, docs, or cross-team work.
-- Do not paste or persist secrets in artifacts, Plane, git docs, or chat.
+- Do not bypass the configured GoodTeam local task flow for backend, frontend, deploy, docs, or cross-team work.
+- Do not paste or persist secrets in artifacts, local tasks, external trackers, git docs, or chat.
 
 ## Users / Stakeholders
 
@@ -144,23 +176,23 @@ def render_prd_markdown(
 - Human reviewer: approves, requests changes, or rejects the PRD at the current gate.
 - Backend AI: owns backend/API/deploy/auth contract work.
 - Frontend AI: owns frontend/UI/RPC client behavior.
-- Planner: converts approved takeover findings into Plane tickets.
+- Planner: converts approved takeover findings into GoodTeam local tasks, with optional external tracker sync.
 
 ## User Stories
 
 - As the product owner, I want GoodTeam to read the configured project docs before proposing next work so review is grounded in project reality.
 - As backend owner, I want backend/frontend boundaries preserved so agents do not edit the wrong repository.
 - As frontend owner, I want API/auth contract assumptions called out before UI work depends on them.
-- As planner, I want takeover findings converted into 0.5-2 day tickets with explicit inputs, outputs, and acceptance criteria.
+- As planner, I want takeover findings converted into 0.5-2 day GoodTeam tasks with explicit inputs, outputs, and acceptance criteria.
 - As reviewer, I want visible source evidence so I can challenge missing docs, stale docs, or bad conclusions.
 
 ## Functional Requirements
 
 - Read the configured docs/backend/frontend repository paths from the project target.
 - Include exact source files read in the PRD.
-- Summarize ownership, Plane, deployment, auth/API, and frontend/backend sync constraints.
+- Summarize ownership, task tracking, deployment, auth/API, and frontend/backend sync constraints.
 - Preserve artifact paths and state paths for workflow recovery.
-- Produce enough context for a follow-up takeover report and Plane ticket proposal.
+- Produce enough context for a follow-up takeover report and local task proposal.
 
 ## Acceptance Criteria
 
@@ -177,7 +209,7 @@ def render_prd_markdown(
 - Reviewer can tell which source files influenced the PRD.
 - Reviewer can give concrete feedback on missing source context.
 - Architect can produce an RFC/takeover design without rescanning unrelated files.
-- Planner can create Plane ticket proposals tied to the takeover findings.
+- Planner can create GoodTeam local task proposals tied to the takeover findings.
 - Future runs can recover from `state/current.json` and persisted artifacts.
 
 ## Edge Cases
@@ -193,16 +225,16 @@ def render_prd_markdown(
 
 - Docs may be stale; architecture must verify against repo state before implementation.
 - PRD approval without a real takeover report can still push ambiguity downstream.
-- Creating Plane tickets without reading current ticket comments can duplicate work.
+- Creating local or external tasks without reading current task history can duplicate work.
 - Cross-editing FE/BE repos without explicit ownership can break team boundaries.
 - Deployment or auth changes can affect frontend behavior and require sync labels/comments.
 
 ## Open Questions
 
 - Should the next step be a takeover report before RFC, or should RFC include takeover findings?
-- Which tickets are currently active and must be linked before task planning?
-- Are docs or ticket comments considered authoritative when they conflict?
-- Should GoodTeam create new Plane tickets automatically or first produce ticket proposals for review?
+- Which local or external tasks are currently active and must be linked before planning?
+- Are docs or task comments considered authoritative when they conflict?
+- Should GoodTeam create local tasks automatically or first produce task proposals for review?
 - Which repos may GoodTeam modify in this run, if any?
 
 ## Reviewer Feedback Prompts
@@ -210,8 +242,8 @@ def render_prd_markdown(
 - Are the listed context files sufficient for taking over `{project_label}`?
 - Which source document is missing or stale?
 - Are the backend/frontend ownership boundaries correct?
-- Should the next artifact be a takeover report, RFC, or Plane ticket proposal?
-- Should the workflow remain read-only until a human approves ticket creation?
+- Should the next artifact be a takeover report, RFC, or local task proposal?
+- Should the workflow remain read-only until a human approves task creation?
 """
 
 
@@ -246,7 +278,7 @@ def render_takeover_context_markdown(
 ## Takeover Checklist
 
 - Confirm docs/backend/frontend repository paths are correct.
-- Confirm durable docs and ticketing rules are current.
+- Confirm durable docs and task-tracking rules are current.
 - Confirm backend/frontend ownership boundaries before dispatching workers.
 - Confirm deployment, auth/session, API contract, and smoke-test facts from source files.
 - Confirm generated artifacts, state, local configs, credentials, and run history stay local-only unless explicitly exported.
@@ -255,12 +287,12 @@ def render_takeover_context_markdown(
 
 - Missing context files must be called out before PRD generation.
 - Stale or contradictory docs must be resolved before RFC generation.
-- Existing tickets and repo state should be read before task planning.
-- Any product-code changes require explicit downstream tickets and role ownership.
+- Existing local tasks, optional external tasks, and repo state should be read before task planning.
+- Any product-code changes require explicit downstream GoodTeam tasks and role ownership.
 
 ## Recommended Next Step
 
-Approve this takeover context only if the listed sources are enough for a grounded PRD. Request changes if more docs, tickets, or repository checks are required first.
+Approve this takeover context only if the listed sources are enough for a grounded PRD. Request changes if more docs, local tasks, external tracker items, or repository checks are required first.
 """
 
 
@@ -271,6 +303,7 @@ def run_adoption_until_next_gate(
 ) -> AgileDevState:
     store = ArtifactStore(root=workspace)
     memory_path = ensure_project_memory(project_config)
+    task_ledger_path = ensure_project_task_ledger(project_config)
     takeover_path = store.write_markdown(
         state.run_id,
         "takeover",
@@ -281,6 +314,8 @@ def run_adoption_until_next_gate(
     state.source_ref = str(project_config)
     if memory_path is not None:
         state.context_packet_path = str(memory_path)
+    if task_ledger_path is not None:
+        state.artifacts["task_ledger"] = str(task_ledger_path)
     state.artifacts["takeover"] = str(takeover_path)
     state.approvals["takeover"] = "pending"
     state.current_node = "takeover_review_gate"

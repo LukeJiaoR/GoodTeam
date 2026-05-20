@@ -33,7 +33,7 @@ ROLE_DEFINITIONS = [
         "name": "Research",
         "key": "research",
         "artifact": "research_report",
-        "description": "Finds market, user, competitor, and risk context when the ticket needs discovery.",
+        "description": "Finds market, user, competitor, and risk context when the task needs discovery.",
         "next_action": "Run only when the idea lacks enough product context.",
     },
     {
@@ -61,7 +61,7 @@ ROLE_DEFINITIONS = [
         "name": "Planner",
         "key": "planner",
         "artifact": "task_breakdown",
-        "description": "Splits approved design into 0.5 to 2 day Plane-ready work items.",
+        "description": "Splits approved design into 0.5 to 2 day GoodTeam local tasks, with optional external tracker sync.",
         "next_action": "Wait for approved RFC and review report.",
     },
     {
@@ -202,7 +202,7 @@ WORKFLOW_STEPS = [
         "roles": "Planner",
         "artifact": "task_breakdown",
         "node": "planner",
-        "summary": "Split approved design into 0.5 to 2 day Plane-ready tickets.",
+        "summary": "Split approved design into 0.5 to 2 day GoodTeam local tasks.",
     },
     {
         "key": "ui_design",
@@ -764,6 +764,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           <dt>Model Profile</dt><dd>{escape(state.model_profile)}</dd>
           <dt>Source</dt><dd>{escape(state.source_type)} / {escape(state.source_ref)}</dd>
           <dt>Project Memory</dt><dd>{escape(state.context_packet_path or "not initialized")}</dd>
+          <dt>Local Task Ledger</dt><dd>{escape(state.artifacts.get("task_ledger", "not initialized"))}</dd>
         </dl>
         """
         if state is not None

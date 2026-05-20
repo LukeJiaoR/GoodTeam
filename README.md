@@ -9,6 +9,9 @@ V1 focuses on the workflow foundation:
 - Persist workflow state to JSON.
 - Write a checkpoint.
 - Pause at a human approval gate.
+- Keep project-local GoodTeam memory and task ledgers under each target project.
+
+GoodTeam can operate without Plane, Linear, or any external tracker. External systems are optional sync surfaces; the local project runtime is the source of truth for memory, artifacts, decisions, and tasks.
 
 The long-term design lives in Obsidian under:
 
@@ -106,6 +109,15 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
 ```
 
 The committed file is `projects/eastern-birth-chart.example.yaml`. The real local file is `projects/eastern-birth-chart.local.yaml` and is git-ignored because it contains machine-specific repo paths and Plane metadata.
+
+For multi-repo products, GoodTeam stores project runtime data in the shared parent project directory when the configured repos live together:
+
+```text
+<project-root>/.goodteam/memory/project-memory.md
+<project-root>/.goodteam/tasks/tasks.json
+```
+
+The local task ledger is built in. Plane or Linear adapters can synchronize from this ledger later, but they are not required for planning or execution.
 
 Local worker commands use the CLIs currently available on this machine:
 
