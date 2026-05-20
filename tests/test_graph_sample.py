@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from goodteam_os.graph import collect_project_context, render_prd_markdown, run_until_next_gate
+from goodteam_os.graph import run_adoption_until_next_gate
 from goodteam_os.state import create_initial_state
 
 
@@ -12,6 +13,20 @@ def test_graph_reaches_prd_gate(tmp_path):
     assert result.current_node == "prd_review_gate"
     assert result.next_node == "await_prd_approval"
     assert "prd" in result.artifacts
+
+
+def test_adoption_graph_reaches_takeover_review_gate(tmp_path):
+    project_config = write_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
+
+    result = run_adoption_until_next_gate(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.source_type == "existing_project"
+    assert result.current_node == "takeover_review_gate"
+    assert result.next_node == "await_takeover_approval"
+    assert "takeover" in result.artifacts
+    assert result.approvals["takeover"] == "pending"
+    assert "prd" not in result.artifacts
 
 
 def write_project_fixture(tmp_path: Path) -> Path:

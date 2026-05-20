@@ -85,8 +85,10 @@ def test_render_dashboard_without_state_shows_only_real_empty_status():
 
     assert "no_active_run" in html
     assert "No active run" in html
-    assert "Start Workflow" in html
-    assert "Start Run" in html
+    assert "Start New Project" in html
+    assert "Adopt Existing Project" in html
+    assert "Start new project" in html
+    assert "Start adoption" in html
     assert "Enter the real workflow goal" in html
     assert "no-run-yet" not in html
     assert "Start a workflow run to populate this dashboard" not in html
@@ -148,6 +150,25 @@ def test_build_workflow_steps_marks_current_review_gate():
     assert prd_review["action_label"] == "Review PRD"
     assert prd_review["approval"] == "prd"
     assert architecture["status"] == "not-started"
+
+
+def test_build_workflow_steps_for_existing_project_starts_with_takeover_review():
+    state = create_initial_state("run-1", "EBC", "Take over existing project")
+    state.source_type = "existing_project"
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.artifacts["takeover"] = "/tmp/takeover-context.md"
+    state.approvals["takeover"] = "pending"
+
+    steps = build_workflow_steps(state)
+    takeover = steps[0]
+    prd = next(step for step in steps if step["key"] == "product_requirement")
+
+    assert takeover["key"] == "takeover_review"
+    assert takeover["status"] == "review-needed"
+    assert takeover["action_label"] == "Review TAKEOVER"
+    assert takeover["artifact_path"] == "/tmp/takeover-context.md"
+    assert prd["status"] == "not-started"
 
 
 def test_build_workflow_steps_marks_next_step_ready():
@@ -228,6 +249,34 @@ def test_start_workflow_writes_state_and_checkpoint(tmp_path):
     assert Path(payload["artifacts"]["prd"]).is_file()
     assert (tmp_path / "state" / "current.json").is_file()
     assert (tmp_path / "state" / "checkpoints" / payload["run_id"] / "prd_review_gate.json").is_file()
+
+
+def test_start_workflow_can_adopt_existing_project_first(tmp_path):
+    project_config = tmp_path / "project.local.yaml"
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "codex.md").write_text("# Memory\n- Existing project fact.\n", encoding="utf-8")
+    project_config.write_text(
+        f"name: Existing Product\nkey: EBC\nrepos:\n  docs: {docs}\n",
+        encoding="utf-8",
+    )
+
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Take over real project state",
+        project_key="EBC",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+        source_type="existing_project",
+        project_config=project_config,
+    )
+
+    assert payload["source_type"] == "existing_project"
+    assert payload["next_node"] == "await_takeover_approval"
+    assert payload["dry_run"] is False
+    assert Path(payload["artifacts"]["takeover"]).is_file()
+    assert "prd" not in payload["artifacts"]
+    assert (tmp_path / "state" / "checkpoints" / payload["run_id"] / "takeover_review_gate.json").is_file()
 
 
 def test_start_workflow_rejects_new_run_when_current_run_is_active(tmp_path):

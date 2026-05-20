@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from uuid import uuid4
 
-from goodteam_os.graph import run_until_next_gate
+from goodteam_os.graph import run_adoption_until_next_gate, run_until_next_gate
 from goodteam_os.models import apply_role_overrides, list_model_profiles, load_model_profile
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target
@@ -19,6 +19,13 @@ ROLE_DEFINITIONS = [
         "artifact": "state",
         "description": "Owns graph routing, checkpoints, approvals, and handoff discipline.",
         "next_action": "Keep workflow paused until the current gate changes.",
+    },
+    {
+        "name": "Project Intake",
+        "key": "project_intake",
+        "artifact": "takeover",
+        "description": "Reads existing project config, context files, ownership boundaries, and local-only constraints before PRD.",
+        "next_action": "Generate or review takeover-context.md before product work.",
     },
     {
         "name": "Research",
@@ -163,6 +170,22 @@ WORKFLOW_STEPS = [
     },
 ]
 
+TAKEOVER_WORKFLOW_STEP = {
+    "key": "takeover_review",
+    "title": "Takeover Context",
+    "roles": "Orchestrator, Product, Human",
+    "approval": "takeover",
+    "artifact": "takeover",
+    "node": "takeover_review_gate",
+    "summary": "Read configured project context before PRD, then review whether the team understood the existing project.",
+}
+
+
+def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]]:
+    if state is not None and state.source_type == "existing_project":
+        return [TAKEOVER_WORKFLOW_STEP, *WORKFLOW_STEPS]
+    return WORKFLOW_STEPS
+
 
 def resolve_dashboard_state(workspace: Path) -> AgileDevState | None:
     return StateStore(workspace).read_current()
@@ -179,6 +202,8 @@ def start_workflow(
     project_key: str,
     model_config: Path,
     model_profile: str,
+    source_type: str = "new_project",
+    project_config: Path = Path("projects/eastern-birth-chart.local.yaml"),
     dry_run: bool = False,
 ) -> dict[str, object]:
     if not idea.strip():
@@ -186,11 +211,16 @@ def start_workflow(
     if not dry_run and is_active_run(resolve_dashboard_state(workspace)):
         raise ValueError("An active run already exists. Finish, archive, or resume it before starting another run.")
 
+    if source_type not in {"new_project", "existing_project"}:
+        raise ValueError(f"Unknown workflow source type: {source_type}")
+
     state = create_initial_state(
         run_id=str(uuid4()),
         project_key=project_key,
         idea=idea.strip(),
     )
+    state.source_type = source_type
+    state.source_ref = str(project_config) if source_type == "existing_project" else "manual"
     state.model_profile = model_profile
     state.role_models = apply_role_overrides(
         load_model_profile(model_config, model_profile),
@@ -198,15 +228,24 @@ def start_workflow(
     )
 
     if dry_run:
-        planned_prd = workspace / "artifacts" / "runs" / state.run_id / "prd" / "prd.md"
-        state.current_node = "prd_review_gate"
-        state.next_node = "await_prd_approval"
+        if source_type == "existing_project":
+            planned_artifacts = {"takeover": str(workspace / "artifacts" / "runs" / state.run_id / "takeover" / "takeover-context.md")}
+            state.current_node = "takeover_review_gate"
+            state.next_node = "await_takeover_approval"
+            state.approvals["takeover"] = ApprovalDecision.PENDING
+        else:
+            planned_artifacts = {"prd": str(workspace / "artifacts" / "runs" / state.run_id / "prd" / "prd.md")}
+            state.current_node = "prd_review_gate"
+            state.next_node = "await_prd_approval"
         payload = asdict(state)
         payload["dry_run"] = True
-        payload["planned_artifacts"] = {"prd": str(planned_prd)}
+        payload["planned_artifacts"] = planned_artifacts
         return payload
 
-    result = run_until_next_gate(state=state, workspace=workspace)
+    if source_type == "existing_project":
+        result = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+    else:
+        result = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
     state_store = StateStore(root=workspace)
     state_store.write_current(result)
     state_store.write_checkpoint(result)
@@ -217,6 +256,7 @@ def start_workflow(
 
 def decide_approval(*, workspace: Path, approval: str, decision: str) -> dict[str, object]:
     approved_next = {
+        "takeover": "product_requirement",
         "prd": "architect",
         "rfc": "planner",
         "security": "planner",
@@ -260,6 +300,8 @@ def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]
             status = "Active"
         elif artifact in state.artifacts:
             status = "Artifact ready"
+        if role["name"] == "Project Intake" and state.next_node == "await_takeover_approval":
+            status = "Waiting for approval"
         if role["name"] == "Product / Requirement" and state.next_node == "await_prd_approval":
             status = "Waiting for approval"
         if role["name"] == "Architect" and state.current_node == "architect":
@@ -283,7 +325,7 @@ def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]
 
 def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
     steps = []
-    for index, step in enumerate(WORKFLOW_STEPS, start=1):
+    for index, step in enumerate(workflow_steps_for_state(state), start=1):
         artifact = step.get("artifact", "")
         approval = step.get("approval", "")
         status = "not-started"
@@ -356,6 +398,7 @@ def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
 
     reviews = []
     approval_artifacts = {
+        "takeover": "takeover",
         "prd": "prd",
         "rfc": "rfc",
         "security": "review_report",
@@ -542,6 +585,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         <div class="signal-row">
           <div class="signal"><span>Run</span>{escape(state.run_id)}</div>
           <div class="signal"><span>Project</span>{escape(state.project_key)}</div>
+          <div class="signal"><span>Mode</span>{escape(state.source_type)}</div>
           <div class="signal"><span>Next</span>{escape(state.next_node)}</div>
         </div>
         """
@@ -569,6 +613,10 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         else f"""
         <section>
           <h2>Start Workflow</h2>
+          <div class="mode-switch" role="tablist" aria-label="Workflow start mode">
+            <button class="mode-button active" data-start-mode="existing_project" type="button">Adopt Existing Project</button>
+            <button class="mode-button" data-start-mode="new_project" type="button">Start New Project</button>
+          </div>
           <div class="console-grid">
             <label>
             Goal
@@ -579,12 +627,16 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
                 Model Profile
                 <select id="model-profile">{profile_options}</select>
               </label>
+              <label>
+                Project Config
+                <input id="project-config" value="{escape(str(start_context["project_config"]))}">
+              </label>
               <div class="actions">
                 <label class="checkbox-label">
                   <input id="dry-run" type="checkbox" checked>
                   Dry run
                 </label>
-                <button class="primary" id="start-run" type="button">Start Run</button>
+                <button class="primary" id="start-run" data-adopt-label="Start adoption" data-new-label="Start new project" type="button">Start adoption</button>
               </div>
             </div>
           </div>
@@ -593,7 +645,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
             <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
           </div>
-          <code class="command-box" id="start-result">Enter a workflow goal, then start the run.</code>
+          <code class="command-box" id="start-result">Adopt mode reads the project config first and generates takeover-context.md before PRD.</code>
         </section>
         """
     )
@@ -604,13 +656,17 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     const workspace = {str(start_context["workspace"])!r};
     const projectKey = {str(start_context["project_key"])!r};
     const modelConfig = {str(start_context["model_config"])!r};
+    let startMode = "existing_project";
 
     function updateStartState() {{
       const idea = document.getElementById("start-idea").value.trim();
       const dryRun = document.getElementById("dry-run").checked;
-      document.getElementById("start-run").textContent = dryRun ? "Preview Run" : "Start Run";
+      const action = startMode === "existing_project" ? "adoption" : "new project";
+      document.getElementById("start-run").textContent = dryRun ? "Preview " + action : "Start " + action;
       if (!idea) {{
-        document.getElementById("start-result").textContent = "Enter a workflow goal, then start the run.";
+        document.getElementById("start-result").textContent = startMode === "existing_project"
+          ? "Enter a takeover goal. The first artifact will be takeover-context.md."
+          : "Enter a product idea. The first artifact will be prd.md.";
         return;
       }}
       document.getElementById("start-result").textContent = dryRun
@@ -621,6 +677,14 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     document.getElementById("start-idea").addEventListener("input", updateStartState);
     document.getElementById("model-profile").addEventListener("change", updateStartState);
     document.getElementById("dry-run").addEventListener("change", updateStartState);
+    document.querySelectorAll(".mode-button").forEach((button) => {{
+      button.addEventListener("click", () => {{
+        document.querySelectorAll(".mode-button").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        startMode = button.dataset.startMode;
+        updateStartState();
+      }});
+    }});
     document.getElementById("start-run").addEventListener("click", async () => {{
       const resultBox = document.getElementById("start-result");
       const idea = document.getElementById("start-idea").value.trim();
@@ -640,6 +704,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             project_key: projectKey,
             model_config: modelConfig,
             model_profile: document.getElementById("model-profile").value,
+            source_type: startMode,
+            project_config: document.getElementById("project-config").value,
             dry_run: dryRun
           }})
         }});
@@ -773,6 +839,21 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 14px;
+    }}
+    .mode-switch {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }}
+    .mode-button {{
+      min-height: 42px;
+      color: var(--muted);
+    }}
+    .mode-button.active {{
+      border-color: var(--accent);
+      color: var(--accent);
+      background: #151a15;
     }}
     label {{
       display: grid;
@@ -1230,6 +1311,8 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         project_key=str(request.get("project_key", "")),
                         model_config=Path(str(request.get("model_config", "models.yaml"))),
                         model_profile=str(request.get("model_profile", "balanced")),
+                        source_type=str(request.get("source_type", "new_project")),
+                        project_config=Path(str(request.get("project_config", "projects/eastern-birth-chart.local.yaml"))),
                         dry_run=bool(request.get("dry_run", False)),
                     )
                 else:

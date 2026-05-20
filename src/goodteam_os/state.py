@@ -64,6 +64,11 @@ class StateStore:
         data["approvals"] = {
             key: ApprovalDecision(value) for key, value in data.get("approvals", {}).items()
         }
+        data.setdefault("source_type", "idea")
+        data.setdefault("source_ref", "manual")
+        data.setdefault("context_packet_path", "")
+        data.setdefault("artifacts", {})
+        data.setdefault("blockers", [])
         data.setdefault("model_profile", "balanced")
         data.setdefault("role_models", {})
         return AgileDevState(**data)

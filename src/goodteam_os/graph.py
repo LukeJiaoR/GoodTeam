@@ -196,6 +196,76 @@ def render_prd_markdown(
 """
 
 
+def render_takeover_context_markdown(
+    state: AgileDevState,
+    project_config: Path = Path("projects/eastern-birth-chart.local.yaml"),
+) -> str:
+    context = collect_project_context(project_config)
+    context_sources = "\n".join(
+        f"- `{item['path']}` ({item['purpose']}): {item['summary']}"
+        for item in context
+    )
+    if not context_sources:
+        context_sources = "- No project context files were loaded. Check the project config before approving takeover."
+
+    return f"""# Takeover Context
+
+## Goal
+
+{state.idea}
+
+## Project
+
+- Key: `{state.project_key}`
+- Source type: existing project
+- Project config: `{project_config}`
+
+## Context Files Read
+
+{context_sources}
+
+## Takeover Checklist
+
+- Confirm docs/backend/frontend repository paths are correct.
+- Confirm durable docs and ticketing rules are current.
+- Confirm backend/frontend ownership boundaries before dispatching workers.
+- Confirm deployment, auth/session, API contract, and smoke-test facts from source files.
+- Confirm generated artifacts, state, local configs, credentials, and run history stay local-only unless explicitly exported.
+
+## Findings To Review
+
+- Missing context files must be called out before PRD generation.
+- Stale or contradictory docs must be resolved before RFC generation.
+- Existing tickets and repo state should be read before task planning.
+- Any product-code changes require explicit downstream tickets and role ownership.
+
+## Recommended Next Step
+
+Approve this takeover context only if the listed sources are enough for a grounded PRD. Request changes if more docs, tickets, or repository checks are required first.
+"""
+
+
+def run_adoption_until_next_gate(
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path = Path("projects/eastern-birth-chart.local.yaml"),
+) -> AgileDevState:
+    store = ArtifactStore(root=workspace)
+    takeover_path = store.write_markdown(
+        state.run_id,
+        "takeover",
+        "takeover-context.md",
+        render_takeover_context_markdown(state, project_config),
+    )
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.artifacts["takeover"] = str(takeover_path)
+    state.approvals["takeover"] = "pending"
+    state.current_node = "takeover_review_gate"
+    state.next_node = gate_next_node(state, gate="takeover", approved_next="product_requirement")
+    return state
+
+
 def run_until_next_gate(
     state: AgileDevState,
     workspace: Path,

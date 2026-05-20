@@ -22,6 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--model-config", type=Path, default=Path("models.yaml"))
     start.add_argument("--model-profile", default="balanced")
     start.add_argument("--role-model", action="append", default=[])
+    start.add_argument("--source-type", choices=["new_project", "existing_project"], default="new_project")
+    start.add_argument("--project-config", type=Path, default=Path("projects/eastern-birth-chart.local.yaml"))
     start.add_argument("--dry-run", action="store_true")
 
     serve_command = subparsers.add_parser("serve")
@@ -48,15 +50,40 @@ def main(argv: list[str] | None = None) -> int:
             args.role_model,
         )
         if args.dry_run:
-            planned_prd = args.workspace / "artifacts" / "runs" / state.run_id / "prd" / "prd.md"
-            state.current_node = "prd_review_gate"
-            state.next_node = "await_prd_approval"
+            state.source_type = args.source_type
+            state.source_ref = str(args.project_config) if args.source_type == "existing_project" else "manual"
+            if args.source_type == "existing_project":
+                planned_artifacts = {
+                    "takeover": str(args.workspace / "artifacts" / "runs" / state.run_id / "takeover" / "takeover-context.md")
+                }
+                state.current_node = "takeover_review_gate"
+                state.next_node = "await_takeover_approval"
+                state.approvals["takeover"] = "pending"
+            else:
+                planned_artifacts = {"prd": str(args.workspace / "artifacts" / "runs" / state.run_id / "prd" / "prd.md")}
+                state.current_node = "prd_review_gate"
+                state.next_node = "await_prd_approval"
             payload = asdict(state)
             payload["dry_run"] = True
-            payload["planned_artifacts"] = {"prd": str(planned_prd)}
+            payload["planned_artifacts"] = planned_artifacts
             print(json.dumps(payload, indent=2))
             return 0
-        result = run_until_next_gate(state=state, workspace=args.workspace)
+        state.source_type = args.source_type
+        state.source_ref = str(args.project_config) if args.source_type == "existing_project" else "manual"
+        if args.source_type == "existing_project":
+            from goodteam_os.graph import run_adoption_until_next_gate
+
+            result = run_adoption_until_next_gate(
+                state=state,
+                workspace=args.workspace,
+                project_config=args.project_config,
+            )
+        else:
+            result = run_until_next_gate(
+                state=state,
+                workspace=args.workspace,
+                project_config=args.project_config,
+            )
         state_store = StateStore(root=args.workspace)
         state_store.write_current(result)
         state_store.write_checkpoint(result)
