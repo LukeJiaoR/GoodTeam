@@ -120,6 +120,17 @@ def test_build_role_observations_maps_artifacts_to_role_statuses():
     assert implementation["model"] == "codex:gpt-5.2-codex"
 
 
+def test_build_role_observations_marks_next_role_ready():
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.current_node = "prd_review_gate"
+    state.next_node = "architect"
+
+    observations = build_role_observations(state)
+    architect = next(role for role in observations if role["name"] == "Architect")
+
+    assert architect["status"] == "Ready"
+
+
 def test_build_workflow_steps_marks_current_review_gate():
     state = create_initial_state("run-1", "GTO", "Build AI Team OS")
     state.current_node = "prd_review_gate"
@@ -137,6 +148,21 @@ def test_build_workflow_steps_marks_current_review_gate():
     assert prd_review["action_label"] == "Review PRD"
     assert prd_review["approval"] == "prd"
     assert architecture["status"] == "not-started"
+
+
+def test_build_workflow_steps_marks_next_step_ready():
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.current_node = "prd_review_gate"
+    state.next_node = "architect"
+    state.approvals["prd"] = "approved"
+    state.artifacts["prd"] = "/tmp/prd.md"
+
+    steps = build_workflow_steps(state)
+    architecture = next(step for step in steps if step["key"] == "architecture")
+
+    assert architecture["status"] == "ready"
+    assert architecture["status_label"] == "Ready"
+    assert "no worker execution" in architecture["feedback"]
 
 
 def test_build_workflow_steps_without_state_is_not_started():

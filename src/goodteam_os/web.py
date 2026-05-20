@@ -264,6 +264,8 @@ def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]
             status = "Waiting for approval"
         if role["name"] == "Architect" and state.current_node == "architect":
             status = "Active"
+        if role["key"] == state.next_node:
+            status = "Ready"
 
         observations.append(
             {
@@ -287,25 +289,35 @@ def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
         status = "not-started"
         status_label = "Not started"
         action_label = ""
+        feedback = "No work recorded yet."
 
         if state is not None:
             approval_value = str(state.approvals.get(str(approval), "")) if approval else ""
             if artifact and artifact in state.artifacts:
                 status = "done"
                 status_label = "Done"
+                feedback = "Artifact is available."
             if approval and approval_value == "pending" and state.next_node == f"await_{approval}_approval":
                 status = "review-needed"
                 status_label = "Needs review"
                 action_label = f"Review {approval.upper()}"
+                feedback = "Human review is required before the workflow can continue."
             elif approval and approval_value == "approved":
                 status = "done"
                 status_label = "Approved"
+                feedback = "Approval completed."
             elif approval and approval_value in {"changes_requested", "rejected"}:
                 status = "blocked"
                 status_label = approval_value.replace("_", " ").title()
-            elif step.get("node") in {state.current_node, state.next_node}:
+                feedback = "Workflow is blocked by this decision."
+            elif step.get("node") == state.current_node:
                 status = "active"
                 status_label = "Active"
+                feedback = "Worker is marked as active in current state."
+            elif step.get("node") == state.next_node:
+                status = "ready"
+                status_label = "Ready"
+                feedback = "Ready to run; no worker execution or artifact has been recorded yet."
 
         steps.append(
             {
@@ -316,6 +328,7 @@ def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
                 "artifact": str(artifact),
                 "approval": str(approval),
                 "summary": str(step["summary"]),
+                "feedback": feedback,
                 "status": status,
                 "status_label": status_label,
                 "action_label": action_label,
@@ -461,6 +474,26 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     if not role_cards:
         role_cards = '<div class="empty-state">No role state available because there is no active run.</div>'
+    current_step = next(
+        (step for step in workflow_steps if step["status"] in {"active", "ready", "review-needed", "blocked"}),
+        None,
+    )
+    current_work_html = (
+        f"""
+        <section>
+          <h2>Current Work</h2>
+          <dl>
+            <dt>Step</dt><dd>{escape(current_step["title"])}</dd>
+            <dt>Status</dt><dd>{escape(current_step["status_label"])}</dd>
+            <dt>Roles</dt><dd>{escape(current_step["roles"])}</dd>
+            <dt>Artifact</dt><dd>{escape(current_step["artifact"] or "none")}</dd>
+            <dt>Feedback</dt><dd>{escape(current_step["feedback"])}</dd>
+          </dl>
+        </section>
+        """
+        if current_step is not None
+        else ""
+    )
     waterfall_cards = "\n".join(
         f"""
         <article class="flow-card flow-{escape(step["status"])}">
@@ -471,6 +504,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
               <span class="flow-status">{escape(step["status_label"])}</span>
             </div>
             <p>{escape(step["summary"])}</p>
+            <p class="flow-feedback">{escape(step["feedback"])}</p>
             <dl class="role-meta">
               <dt>Roles</dt><dd>{escape(step["roles"])}</dd>
               <dt>Artifact</dt><dd>{escape(step["artifact"] or "none")}</dd>
@@ -858,6 +892,10 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       margin: 10px 0 12px;
       font-size: 13px;
     }}
+    .flow-card .flow-feedback {{
+      color: var(--text);
+      margin-top: 0;
+    }}
     .flow-done {{
       border-color: #4ade80;
     }}
@@ -871,6 +909,13 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     .flow-active .flow-status {{
       color: var(--blue);
       border-color: var(--blue);
+    }}
+    .flow-ready {{
+      border-color: #fbbf24;
+    }}
+    .flow-ready .flow-status {{
+      color: #fbbf24;
+      border-color: #fbbf24;
     }}
     .flow-review-needed {{
       border-color: var(--accent);
@@ -1047,6 +1092,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           <h2>Role Summary</h2>
           <div class="signal-row compact">{role_summary_items}</div>
         </section>
+        {current_work_html}
         <section class="wide">
           <h2>Workflow Waterfall</h2>
           <div class="waterfall">{waterfall_cards}</div>
