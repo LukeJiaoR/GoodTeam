@@ -7,9 +7,13 @@ from goodteam_os.web import (
     build_start_console_context,
     build_workflow_steps,
     decide_approval,
+    discover_project_directories,
+    create_local_project_config,
+    read_artifact,
     read_artifact_preview,
     render_dashboard,
     resolve_dashboard_state,
+    save_artifact,
     is_active_run,
     start_workflow,
 )
@@ -50,6 +54,8 @@ def test_render_dashboard_shows_current_gate():
     assert "Approve" in html
     assert "Request Changes" in html
     assert "Reject" in html
+    assert "Edit Artifact" in html
+    assert "Save Markdown" in html
     assert "Build AI Team OS" in html
     assert "artifact-preview" in html
     assert "Project Target" in html
@@ -221,6 +227,65 @@ def test_read_artifact_preview_truncates_long_content(tmp_path):
     assert preview == "aaaaa\n\n[Preview truncated]"
 
 
+def test_read_artifact_reads_current_run_artifact(tmp_path):
+    artifact = tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-context.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("# Takeover\n\nReview me", encoding="utf-8")
+    state = create_initial_state("run-1", "EBC", "Take over")
+    state.artifacts["takeover"] = str(artifact)
+    StateStore(tmp_path).write_current(state)
+
+    payload = read_artifact(workspace=tmp_path, artifact_key="takeover")
+
+    assert payload["artifact"] == "takeover"
+    assert payload["path"] == str(artifact)
+    assert payload["content"] == "# Takeover\n\nReview me"
+
+
+def test_save_artifact_updates_current_run_artifact_and_logs_edit(tmp_path):
+    artifact = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("# PRD\n\nBefore", encoding="utf-8")
+    state = create_initial_state("run-1", "EBC", "Take over")
+    state.artifacts["prd"] = str(artifact)
+    StateStore(tmp_path).write_current(state)
+
+    payload = save_artifact(workspace=tmp_path, artifact_key="prd", content="# PRD\n\nAfter")
+
+    assert payload["artifact"] == "prd"
+    assert payload["bytes"] == len("# PRD\n\nAfter".encode("utf-8"))
+    assert artifact.read_text(encoding="utf-8") == "# PRD\n\nAfter"
+    edit_log = tmp_path / "state" / "edit-log.jsonl"
+    assert edit_log.is_file()
+    assert '"artifact": "prd"' in edit_log.read_text(encoding="utf-8")
+
+
+def test_save_artifact_rejects_unregistered_artifact(tmp_path):
+    StateStore(tmp_path).write_current(create_initial_state("run-1", "EBC", "Take over"))
+
+    try:
+        save_artifact(workspace=tmp_path, artifact_key="prd", content="# PRD")
+    except ValueError as exc:
+        assert "Artifact is not registered" in str(exc)
+    else:
+        raise AssertionError("Expected unregistered artifact to be rejected")
+
+
+def test_save_artifact_rejects_path_outside_current_run(tmp_path):
+    outside = tmp_path / "notes.md"
+    outside.write_text("# Outside", encoding="utf-8")
+    state = create_initial_state("run-1", "EBC", "Take over")
+    state.artifacts["prd"] = str(outside)
+    StateStore(tmp_path).write_current(state)
+
+    try:
+        save_artifact(workspace=tmp_path, artifact_key="prd", content="# PRD")
+    except ValueError as exc:
+        assert "current run artifacts directory" in str(exc)
+    else:
+        raise AssertionError("Expected outside path to be rejected")
+
+
 def test_build_start_console_context_reads_project_and_model_config():
     context = build_start_console_context(
         workspace=Path("/tmp/goodteam"),
@@ -232,6 +297,45 @@ def test_build_start_console_context_reads_project_and_model_config():
     assert context["project_name"] == "Eastern Birth Chart"
     assert "balanced" in context["profiles"]
     assert context["project_config"] == "projects/eastern-birth-chart.example.yaml"
+
+
+def test_discover_project_directories_lists_immediate_children(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "api").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "file.txt").write_text("nope", encoding="utf-8")
+
+    dirs = discover_project_directories(tmp_path)
+
+    assert dirs == [
+        {"name": "api", "path": str(tmp_path / "api")},
+        {"name": "docs", "path": str(tmp_path / "docs")},
+    ]
+
+
+def test_create_local_project_config_writes_selected_directories(tmp_path):
+    docs = tmp_path / "docs"
+    backend = tmp_path / "api"
+    frontend = tmp_path / "ui"
+    for path in [docs, backend, frontend]:
+        path.mkdir()
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="Existing Product",
+        project_key="EBC",
+        docs_path=str(docs),
+        backend_path=str(backend),
+        frontend_path=str(frontend),
+    )
+
+    config = Path(payload["project_config"])
+    assert config == tmp_path / "projects" / "ebc.local.yaml"
+    content = config.read_text(encoding="utf-8")
+    assert "name: Existing Product" in content
+    assert f"  docs: {docs}" in content
+    assert f"  backend: {backend}" in content
+    assert f"  frontend: {frontend}" in content
 
 
 def test_start_workflow_writes_state_and_checkpoint(tmp_path):

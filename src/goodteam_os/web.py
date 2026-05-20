@@ -1,8 +1,10 @@
 import json
 from dataclasses import asdict
+from datetime import datetime, UTC
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 from goodteam_os.graph import run_adoption_until_next_gate, run_until_next_gate
@@ -77,6 +79,75 @@ ROLE_DEFINITIONS = [
         "next_action": "Wait for implementation result artifacts.",
     },
 ]
+
+
+def discover_project_directories(base_dir: Path = Path("/Users/luke/WorkSpace/codeAi")) -> list[dict[str, str]]:
+    if not base_dir.is_dir():
+        return []
+    directories = []
+    for path in sorted(base_dir.iterdir(), key=lambda item: item.name.lower()):
+        if path.name.startswith(".") or not path.is_dir():
+            continue
+        directories.append({"name": path.name, "path": str(path)})
+    return directories
+
+
+def _slug(value: str) -> str:
+    cleaned = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
+    return "-".join(part for part in cleaned.split("-") if part) or "project"
+
+
+def _validate_directory_path(label: str, value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"{label} path must be absolute.")
+    if not path.is_dir():
+        raise ValueError(f"{label} path does not exist or is not a directory.")
+    return path
+
+
+def create_local_project_config(
+    *,
+    workspace: Path,
+    project_name: str,
+    project_key: str,
+    docs_path: str = "",
+    backend_path: str = "",
+    frontend_path: str = "",
+) -> dict[str, object]:
+    name = project_name.strip()
+    key = project_key.strip().upper()
+    if not name:
+        raise ValueError("Project name is required.")
+    if not key:
+        raise ValueError("Project key is required.")
+
+    repos = []
+    if docs_path.strip():
+        repos.append(("docs", _validate_directory_path("Docs", docs_path)))
+    if backend_path.strip():
+        repos.append(("backend", _validate_directory_path("Backend", backend_path)))
+    if frontend_path.strip():
+        repos.append(("frontend", _validate_directory_path("Frontend", frontend_path)))
+    if not repos:
+        raise ValueError("Select at least one project directory.")
+
+    path = workspace / "projects" / f"{_slug(key)}.local.yaml"
+    lines = [
+        f"name: {name}",
+        f"key: {key}",
+        "repos:",
+    ]
+    lines.extend(f"  {repo}: {repo_path}" for repo, repo_path in repos)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {
+        "project_config": str(path),
+        "project_key": key,
+        "project_name": name,
+        "repos": {repo: str(repo_path) for repo, repo_path in repos},
+    }
+
 
 WORKFLOW_STEPS = [
     {
@@ -392,6 +463,61 @@ def read_artifact_preview(path: str, max_chars: int = 8000) -> str:
     return content[:max_chars] + "\n\n[Preview truncated]"
 
 
+def _resolve_registered_artifact(workspace: Path, artifact_key: str) -> tuple[AgileDevState, Path]:
+    state = StateStore(workspace).read_current()
+    if state is None:
+        raise ValueError("No active run state found.")
+    artifact_path = state.artifacts.get(artifact_key, "")
+    if not artifact_path:
+        raise ValueError(f"Artifact is not registered in current run: {artifact_key}")
+
+    path = Path(artifact_path)
+    if not path.is_absolute():
+        path = workspace / path
+    path = path.resolve()
+    run_root = (workspace / "artifacts" / "runs" / state.run_id).resolve()
+    if run_root not in [path, *path.parents]:
+        raise ValueError("Artifact path must stay inside the current run artifacts directory.")
+    if path.suffix.lower() not in {".md", ".markdown"}:
+        raise ValueError("Only markdown artifacts can be edited in the dashboard.")
+    if not path.is_file():
+        raise ValueError(f"Artifact file does not exist: {artifact_key}")
+    return state, path
+
+
+def read_artifact(*, workspace: Path, artifact_key: str) -> dict[str, object]:
+    _, path = _resolve_registered_artifact(workspace, artifact_key)
+    return {
+        "artifact": artifact_key,
+        "path": str(path),
+        "content": path.read_text(encoding="utf-8"),
+    }
+
+
+def save_artifact(*, workspace: Path, artifact_key: str, content: str) -> dict[str, object]:
+    state, path = _resolve_registered_artifact(workspace, artifact_key)
+    path.write_text(content, encoding="utf-8")
+
+    edit_log = workspace / "state" / "edit-log.jsonl"
+    edit_log.parent.mkdir(parents=True, exist_ok=True)
+    edit_event = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "run_id": state.run_id,
+        "artifact": artifact_key,
+        "path": str(path),
+        "bytes": len(content.encode("utf-8")),
+    }
+    with edit_log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(edit_event) + "\n")
+
+    return {
+        "artifact": artifact_key,
+        "path": str(path),
+        "bytes": edit_event["bytes"],
+        "saved": True,
+    }
+
+
 def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
     if state is None:
         return []
@@ -425,6 +551,7 @@ def build_start_console_context(
     workspace: Path,
     model_config: Path = Path("models.yaml"),
     project_config: Path = Path("projects/eastern-birth-chart.local.yaml"),
+    project_base: Path = Path("/Users/luke/WorkSpace/codeAi"),
 ) -> dict[str, object]:
     profiles = list_model_profiles(model_config) if model_config.is_file() else ["balanced"]
     project_report: dict[str, object] = {}
@@ -442,6 +569,8 @@ def build_start_console_context(
         "project_key": str(project.get("key", "GTO") or "GTO"),
         "project_name": str(project.get("name", "GoodTeam") or "GoodTeam"),
         "deepseek_configured": bool(deepseek.get("configured", False)),
+        "project_base": str(project_base),
+        "candidate_dirs": discover_project_directories(project_base),
     }
 
 
@@ -483,6 +612,19 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Artifact</dt><dd>{escape(review["artifact"])}</dd>
             <dt>Path</dt><dd>{f'<code>{escape(review["artifact_path"])}</code>' if review["artifact_path"] else 'not available'}</dd>
           </dl>
+          {f'''
+          <div class="approval-actions">
+            <button class="edit-artifact" data-artifact="{escape(review["artifact"])}" type="button">Edit Artifact</button>
+          </div>
+          <div class="artifact-editor" id="editor-{escape(review["artifact"])}" hidden>
+            <textarea data-editor-for="{escape(review["artifact"])}" spellcheck="false"></textarea>
+            <div class="approval-actions">
+              <button class="primary save-artifact" data-artifact="{escape(review["artifact"])}" type="button">Save Markdown</button>
+              <button class="cancel-edit" data-artifact="{escape(review["artifact"])}" type="button">Cancel</button>
+            </div>
+            <code class="editor-status" id="editor-status-{escape(review["artifact"])}">Unsaved edits stay in this browser until saved.</code>
+          </div>
+          ''' if review["artifact_path"] and str(review["artifact_path"]).lower().endswith((".md", ".markdown")) else ''}
           {f'''
           <div class="approval-actions">
             <button class="primary approval-decision" data-approval="{escape(review["approval"])}" data-decision="approved" type="button">Approve</button>
@@ -579,6 +721,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         f'<option value="{escape(profile)}"{" selected" if profile == "balanced" else ""}>{escape(profile)}</option>'
         for profile in profiles
     )
+    candidate_dirs = [dict(item) for item in start_context.get("candidate_dirs", [])]
+    directory_options = "\n".join(
+        f'<option value="{escape(str(item["path"]))}">{escape(str(item["name"]))}</option>'
+        for item in candidate_dirs
+    )
+    directory_options_with_empty = f'<option value="">Not selected</option>{directory_options}'
     current_run_html = (
         f"""
         <p class="idea">{escape(state.idea)}</p>
@@ -624,8 +772,28 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             </label>
             <div>
               <label>
+                Project Name
+                <input id="project-name" value="{escape(str(start_context["project_name"]))}">
+              </label>
+              <label>
+                Project Key
+                <input id="project-key" value="{escape(str(start_context["project_key"]))}">
+              </label>
+              <label>
                 Model Profile
                 <select id="model-profile">{profile_options}</select>
+              </label>
+              <label>
+                Docs Directory
+                <select id="docs-path">{directory_options_with_empty}</select>
+              </label>
+              <label>
+                Backend Directory
+                <select id="backend-path">{directory_options_with_empty}</select>
+              </label>
+              <label>
+                Frontend Directory
+                <select id="frontend-path">{directory_options_with_empty}</select>
               </label>
               <label>
                 Project Config
@@ -636,6 +804,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
                   <input id="dry-run" type="checkbox" checked>
                   Dry run
                 </label>
+                <button id="create-project-config" type="button">Create Local Config</button>
                 <button class="primary" id="start-run" data-adopt-label="Start adoption" data-new-label="Start new project" type="button">Start adoption</button>
               </div>
             </div>
@@ -644,6 +813,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <div class="signal"><span>Project</span>{escape(str(start_context["project_name"]))} / {escape(str(start_context["project_key"]))}</div>
             <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
             <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
+            <div class="signal"><span>Directory Base</span><code>{escape(str(start_context["project_base"]))}</code></div>
           </div>
           <code class="command-box" id="start-result">Adopt mode reads the project config first and generates takeover-context.md before PRD.</code>
         </section>
@@ -685,6 +855,35 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         updateStartState();
       }});
     }});
+    document.getElementById("create-project-config").addEventListener("click", async () => {{
+      const resultBox = document.getElementById("start-result");
+      const button = document.getElementById("create-project-config");
+      button.disabled = true;
+      resultBox.textContent = "Creating local project config...";
+      try {{
+        const response = await fetch("/project-config", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{
+            project_name: document.getElementById("project-name").value,
+            project_key: document.getElementById("project-key").value,
+            docs_path: document.getElementById("docs-path").value,
+            backend_path: document.getElementById("backend-path").value,
+            frontend_path: document.getElementById("frontend-path").value
+          }})
+        }});
+        const payload = await response.json();
+        if (!response.ok) {{
+          throw new Error(payload.error || "Failed to create local config.");
+        }}
+        document.getElementById("project-config").value = payload.project_config;
+        resultBox.textContent = JSON.stringify(payload, null, 2);
+      }} catch (error) {{
+        resultBox.textContent = error.message;
+      }} finally {{
+        button.disabled = false;
+      }}
+    }});
     document.getElementById("start-run").addEventListener("click", async () => {{
       const resultBox = document.getElementById("start-result");
       const idea = document.getElementById("start-idea").value.trim();
@@ -701,7 +900,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           headers: {{ "Content-Type": "application/json" }},
           body: JSON.stringify({{
             idea,
-            project_key: projectKey,
+            project_key: document.getElementById("project-key").value || projectKey,
             model_config: modelConfig,
             model_profile: document.getElementById("model-profile").value,
             source_type: startMode,
@@ -1039,6 +1238,24 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       line-height: 1.45;
       font: inherit;
     }}
+    .artifact-editor {{
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      background: #0d0f13;
+      padding: 14px;
+    }}
+    .artifact-editor textarea {{
+      min-height: 420px;
+      line-height: 1.45;
+      white-space: pre;
+      overflow: auto;
+      resize: vertical;
+    }}
+    .editor-status {{
+      display: block;
+      text-align: left;
+      margin-top: 10px;
+    }}
     .role-topline {{
       display: flex;
       justify-content: space-between;
@@ -1277,6 +1494,63 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         }}
       }});
     }});
+    document.querySelectorAll(".edit-artifact").forEach((button) => {{
+      button.addEventListener("click", async () => {{
+        const artifact = button.dataset.artifact;
+        const editor = document.getElementById("editor-" + artifact);
+        const textarea = document.querySelector(`[data-editor-for="${{artifact}}"]`);
+        const status = document.getElementById("editor-status-" + artifact);
+        button.disabled = true;
+        status.textContent = "Loading artifact...";
+        try {{
+          const response = await fetch("/artifact?key=" + encodeURIComponent(artifact));
+          const payload = await response.json();
+          if (!response.ok) {{
+            throw new Error(payload.error || "Failed to read artifact.");
+          }}
+          textarea.value = payload.content;
+          editor.hidden = false;
+          status.textContent = payload.path;
+        }} catch (error) {{
+          status.textContent = error.message;
+        }} finally {{
+          button.disabled = false;
+        }}
+      }});
+    }});
+    document.querySelectorAll(".cancel-edit").forEach((button) => {{
+      button.addEventListener("click", () => {{
+        const editor = document.getElementById("editor-" + button.dataset.artifact);
+        if (editor) {{
+          editor.hidden = true;
+        }}
+      }});
+    }});
+    document.querySelectorAll(".save-artifact").forEach((button) => {{
+      button.addEventListener("click", async () => {{
+        const artifact = button.dataset.artifact;
+        const textarea = document.querySelector(`[data-editor-for="${{artifact}}"]`);
+        const status = document.getElementById("editor-status-" + artifact);
+        button.disabled = true;
+        status.textContent = "Saving...";
+        try {{
+          const response = await fetch("/artifact", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ artifact, content: textarea.value }})
+          }});
+          const payload = await response.json();
+          if (!response.ok) {{
+            throw new Error(payload.error || "Failed to save artifact.");
+          }}
+          status.textContent = "Saved " + payload.bytes + " bytes. Reloading preview...";
+          window.setTimeout(() => window.location.reload(), 350);
+        }} catch (error) {{
+          status.textContent = error.message;
+          button.disabled = false;
+        }}
+      }});
+    }});
   </script>
 </body>
 </html>"""
@@ -1285,7 +1559,15 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
 def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            if self.path not in {"/", "/index.html"}:
+            parsed = urlparse(self.path)
+            if parsed.path == "/artifact":
+                try:
+                    artifact_key = parse_qs(parsed.query).get("key", [""])[0]
+                    self._send_json(200, read_artifact(workspace=workspace, artifact_key=artifact_key))
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path not in {"/", "/index.html"}:
                 self.send_error(404)
                 return
             start_context = build_start_console_context(workspace)
@@ -1297,7 +1579,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if self.path not in {"/start", "/approve"}:
+            if self.path not in {"/start", "/approve", "/artifact", "/project-config"}:
                 self.send_error(404)
                 return
             try:
@@ -1315,11 +1597,26 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         project_config=Path(str(request.get("project_config", "projects/eastern-birth-chart.local.yaml"))),
                         dry_run=bool(request.get("dry_run", False)),
                     )
-                else:
+                elif self.path == "/approve":
                     result = decide_approval(
                         workspace=workspace,
                         approval=str(request.get("approval", "")),
                         decision=str(request.get("decision", "")),
+                    )
+                elif self.path == "/artifact":
+                    result = save_artifact(
+                        workspace=workspace,
+                        artifact_key=str(request.get("artifact", "")),
+                        content=str(request.get("content", "")),
+                    )
+                else:
+                    result = create_local_project_config(
+                        workspace=workspace,
+                        project_name=str(request.get("project_name", "")),
+                        project_key=str(request.get("project_key", "")),
+                        docs_path=str(request.get("docs_path", "")),
+                        backend_path=str(request.get("backend_path", "")),
+                        frontend_path=str(request.get("frontend_path", "")),
                     )
                 self._send_json(200, result)
             except Exception as exc:
