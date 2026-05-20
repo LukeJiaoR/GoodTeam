@@ -7,8 +7,9 @@ from uuid import uuid4
 
 from goodteam_os.graph import run_until_next_gate
 from goodteam_os.models import apply_role_overrides, list_model_profiles, load_model_profile
+from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target
-from goodteam_os.state import AgileDevState, StateStore, create_initial_state
+from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state
 
 
 ROLE_DEFINITIONS = [
@@ -214,6 +215,38 @@ def start_workflow(
     return payload
 
 
+def decide_approval(*, workspace: Path, approval: str, decision: str) -> dict[str, object]:
+    approved_next = {
+        "prd": "architect",
+        "rfc": "planner",
+        "security": "planner",
+        "release": "retro_memory",
+    }
+    if approval not in approved_next:
+        raise ValueError(f"Unknown approval gate: {approval}")
+
+    try:
+        approval_decision = ApprovalDecision(decision)
+    except ValueError as exc:
+        raise ValueError(f"Unknown approval decision: {decision}") from exc
+
+    state_store = StateStore(workspace)
+    state = state_store.read_current()
+    if state is None:
+        raise ValueError("No active run to approve.")
+    if approval not in state.approvals:
+        raise ValueError(f"Approval gate is not present in current state: {approval}")
+
+    state.approvals[approval] = approval_decision
+    state.current_node = f"{approval}_review_gate"
+    state.next_node = gate_next_node(state, gate=approval, approved_next=approved_next[approval])
+    state_store.write_current(state)
+    state_store.write_checkpoint(state)
+    payload = asdict(state)
+    payload["decision"] = str(approval_decision)
+    return payload
+
+
 def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]:
     if state is None:
         return []
@@ -322,6 +355,8 @@ def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
             {
                 "approval": approval,
                 "decision": str(decision),
+                "is_pending": str(decision) == ApprovalDecision.PENDING,
+                "is_actionable": str(decision) == ApprovalDecision.PENDING and state.next_node == f"await_{approval}_approval",
                 "artifact": artifact,
                 "artifact_path": artifact_path,
                 "content": read_artifact_preview(artifact_path),
@@ -392,6 +427,13 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Artifact</dt><dd>{escape(review["artifact"])}</dd>
             <dt>Path</dt><dd>{f'<code>{escape(review["artifact_path"])}</code>' if review["artifact_path"] else 'not available'}</dd>
           </dl>
+          {f'''
+          <div class="approval-actions">
+            <button class="primary approval-decision" data-approval="{escape(review["approval"])}" data-decision="approved" type="button">Approve</button>
+            <button class="approval-decision" data-approval="{escape(review["approval"])}" data-decision="changes_requested" type="button">Request Changes</button>
+            <button class="danger approval-decision" data-approval="{escape(review["approval"])}" data-decision="rejected" type="button">Reject</button>
+          </div>
+          ''' if review["is_actionable"] else ''}
           {f'<pre class="artifact-preview">{escape(review["content"])}</pre>' if review["content"] else '<div class="empty-state">No artifact content available for this approval yet.</div>'}
         </article>
         """
@@ -848,6 +890,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       flex-wrap: wrap;
       margin-top: 18px;
     }}
+    .approval-actions {{
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }}
     button {{
       border: 1px solid var(--line);
       background: #0f1115;
@@ -1074,6 +1122,35 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         }}
       }});
     }});
+    document.querySelectorAll(".approval-decision").forEach((button) => {{
+      button.addEventListener("click", async () => {{
+        button.disabled = true;
+        try {{
+          const response = await fetch("/approve", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{
+              approval: button.dataset.approval,
+              decision: button.dataset.decision
+            }})
+          }});
+          const payload = await response.json();
+          if (!response.ok) {{
+            throw new Error(payload.error || "Failed to update approval.");
+          }}
+          window.setTimeout(() => window.location.reload(), 300);
+        }} catch (error) {{
+          button.disabled = false;
+          const card = button.closest(".approval-card");
+          if (card) {{
+            const message = document.createElement("div");
+            message.className = "empty-state";
+            message.textContent = error.message;
+            card.prepend(message);
+          }}
+        }}
+      }});
+    }});
     updateStartState();
   </script>
 </body>
@@ -1095,21 +1172,28 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if self.path != "/start":
+            if self.path not in {"/start", "/approve"}:
                 self.send_error(404)
                 return
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length)
                 request = json.loads(raw_body.decode("utf-8") or "{}")
-                result = start_workflow(
-                    workspace=workspace,
-                    idea=str(request.get("idea", "")),
-                    project_key=str(request.get("project_key", "")),
-                    model_config=Path(str(request.get("model_config", "models.yaml"))),
-                    model_profile=str(request.get("model_profile", "balanced")),
-                    dry_run=bool(request.get("dry_run", False)),
-                )
+                if self.path == "/start":
+                    result = start_workflow(
+                        workspace=workspace,
+                        idea=str(request.get("idea", "")),
+                        project_key=str(request.get("project_key", "")),
+                        model_config=Path(str(request.get("model_config", "models.yaml"))),
+                        model_profile=str(request.get("model_profile", "balanced")),
+                        dry_run=bool(request.get("dry_run", False)),
+                    )
+                else:
+                    result = decide_approval(
+                        workspace=workspace,
+                        approval=str(request.get("approval", "")),
+                        decision=str(request.get("decision", "")),
+                    )
                 self._send_json(200, result)
             except Exception as exc:
                 self._send_json(400, {"error": str(exc)})

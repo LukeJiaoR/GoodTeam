@@ -6,6 +6,7 @@ from goodteam_os.web import (
     build_approval_reviews,
     build_start_console_context,
     build_workflow_steps,
+    decide_approval,
     read_artifact_preview,
     render_dashboard,
     resolve_dashboard_state,
@@ -46,6 +47,9 @@ def test_render_dashboard_shows_current_gate():
     assert "Needs review" in html
     assert "Review PRD" in html
     assert "PRD Review" in html
+    assert "Approve" in html
+    assert "Request Changes" in html
+    assert "Reject" in html
     assert "Build AI Team OS" in html
     assert "artifact-preview" in html
     assert "Project Target" in html
@@ -144,6 +148,7 @@ def test_build_approval_reviews_reads_prd_artifact(tmp_path):
     prd.write_text("# PRD\n\nReview me", encoding="utf-8")
     state = create_initial_state("run-1", "GTO", "Build AI Team OS")
     state.artifacts["prd"] = str(prd)
+    state.next_node = "await_prd_approval"
 
     reviews = build_approval_reviews(state)
     prd_review = next(review for review in reviews if review["approval"] == "prd")
@@ -151,6 +156,10 @@ def test_build_approval_reviews_reads_prd_artifact(tmp_path):
     assert prd_review["artifact"] == "prd"
     assert prd_review["artifact_path"] == str(prd)
     assert "# PRD" in prd_review["content"]
+    assert prd_review["is_pending"] is True
+    assert prd_review["is_actionable"] is True
+    rfc_review = next(review for review in reviews if review["approval"] == "rfc")
+    assert rfc_review["is_actionable"] is False
 
 
 def test_read_artifact_preview_truncates_long_content(tmp_path):
@@ -260,3 +269,49 @@ def test_start_workflow_rejects_empty_goal(tmp_path):
         assert "Workflow goal is required" in str(exc)
     else:
         raise AssertionError("Expected empty workflow goal to fail")
+
+
+def test_decide_approval_approves_prd_and_advances_to_architect(tmp_path):
+    state = create_initial_state("run-1", "EBC", "Existing active run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    StateStore(tmp_path).write_current(state)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        approval="prd",
+        decision="approved",
+    )
+
+    assert payload["approvals"]["prd"] == "approved"
+    assert payload["current_node"] == "prd_review_gate"
+    assert payload["next_node"] == "architect"
+    assert (tmp_path / "state" / "checkpoints" / "run-1" / "prd_review_gate.json").is_file()
+
+
+def test_decide_approval_can_request_changes(tmp_path):
+    state = create_initial_state("run-1", "EBC", "Existing active run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    StateStore(tmp_path).write_current(state)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        approval="prd",
+        decision="changes_requested",
+    )
+
+    assert payload["approvals"]["prd"] == "changes_requested"
+    assert payload["next_node"] == "revise_prd"
+
+
+def test_decide_approval_rejects_unknown_gate(tmp_path):
+    state = create_initial_state("run-1", "EBC", "Existing active run")
+    StateStore(tmp_path).write_current(state)
+
+    try:
+        decide_approval(workspace=tmp_path, approval="unknown", decision="approved")
+    except ValueError as exc:
+        assert "Unknown approval gate" in str(exc)
+    else:
+        raise AssertionError("Expected unknown approval gate to fail")
