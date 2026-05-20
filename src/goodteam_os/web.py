@@ -70,6 +70,98 @@ ROLE_DEFINITIONS = [
     },
 ]
 
+WORKFLOW_STEPS = [
+    {
+        "key": "product_requirement",
+        "title": "Product / Requirement",
+        "roles": "Product, Requirement",
+        "artifact": "prd",
+        "node": "product_requirement",
+        "summary": "Create PRD, scope, user stories, acceptance criteria.",
+    },
+    {
+        "key": "prd_review",
+        "title": "PRD Review",
+        "roles": "Human, Review",
+        "approval": "prd",
+        "node": "prd_review_gate",
+        "summary": "Review generated PRD and decide approve, request changes, or reject.",
+    },
+    {
+        "key": "architecture",
+        "title": "Architecture",
+        "roles": "Architect",
+        "artifact": "rfc",
+        "node": "architect",
+        "summary": "Draft RFC, data model, API contract, migration and rollback plan.",
+    },
+    {
+        "key": "architecture_review",
+        "title": "Architecture Review",
+        "roles": "Human, Review, Security",
+        "approval": "rfc",
+        "node": "rfc_review_gate",
+        "summary": "Review architecture, security posture, contract and implementation risks.",
+    },
+    {
+        "key": "planning",
+        "title": "Planning",
+        "roles": "Planner",
+        "artifact": "task_breakdown",
+        "node": "planner",
+        "summary": "Split approved design into 0.5 to 2 day Plane-ready tickets.",
+    },
+    {
+        "key": "ui_design",
+        "title": "UI Design",
+        "roles": "UI",
+        "artifact": "ui_spec",
+        "node": "ui",
+        "summary": "Define page structure, interactions, responsive rules, states, accessibility.",
+    },
+    {
+        "key": "implementation",
+        "title": "Implementation",
+        "roles": "FE, BE",
+        "artifact": "implementation_handoff",
+        "node": "implementation",
+        "summary": "Dispatch scoped frontend and backend work to the configured worker CLIs.",
+    },
+    {
+        "key": "qa",
+        "title": "QA",
+        "roles": "QA",
+        "artifact": "qa_report",
+        "node": "qa",
+        "summary": "Run test plan, regression, E2E and edge-case checks.",
+    },
+    {
+        "key": "code_review",
+        "title": "Code Review",
+        "roles": "Code Review",
+        "artifact": "code_review",
+        "node": "code_review",
+        "summary": "Check quality, security, performance, tests, RFC and API contract alignment.",
+    },
+    {
+        "key": "release",
+        "title": "Release",
+        "roles": "Release",
+        "approval": "release",
+        "artifact": "release_notes",
+        "node": "release",
+        "summary": "Prepare release notes, deployment checklist, feature flags and rollback plan.",
+    },
+    {
+        "key": "retro_memory",
+        "title": "Retro / Memory",
+        "roles": "Retro / Memory",
+        "artifact": "retro_memory",
+        "node": "retro_memory",
+        "summary": "Update lessons learned, ADRs, standards, memory and postmortem notes.",
+    },
+]
+
 
 def resolve_dashboard_state(workspace: Path) -> AgileDevState | None:
     return StateStore(workspace).read_current()
@@ -154,6 +246,52 @@ def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]
     return observations
 
 
+def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
+    steps = []
+    for index, step in enumerate(WORKFLOW_STEPS, start=1):
+        artifact = step.get("artifact", "")
+        approval = step.get("approval", "")
+        status = "not-started"
+        status_label = "Not started"
+        action_label = ""
+
+        if state is not None:
+            approval_value = str(state.approvals.get(str(approval), "")) if approval else ""
+            if artifact and artifact in state.artifacts:
+                status = "done"
+                status_label = "Done"
+            if approval and approval_value == "pending" and state.next_node == f"await_{approval}_approval":
+                status = "review-needed"
+                status_label = "Needs review"
+                action_label = f"Review {approval.upper()}"
+            elif approval and approval_value == "approved":
+                status = "done"
+                status_label = "Approved"
+            elif approval and approval_value in {"changes_requested", "rejected"}:
+                status = "blocked"
+                status_label = approval_value.replace("_", " ").title()
+            elif step.get("node") in {state.current_node, state.next_node}:
+                status = "active"
+                status_label = "Active"
+
+        steps.append(
+            {
+                "number": str(index),
+                "key": str(step["key"]),
+                "title": str(step["title"]),
+                "roles": str(step["roles"]),
+                "artifact": str(artifact),
+                "approval": str(approval),
+                "summary": str(step["summary"]),
+                "status": status,
+                "status_label": status_label,
+                "action_label": action_label,
+                "artifact_path": state.artifacts.get(str(artifact), "") if state is not None and artifact else "",
+            }
+        )
+    return steps
+
+
 def build_start_console_context(
     workspace: Path,
     model_config: Path = Path("models.yaml"),
@@ -182,6 +320,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     start_context = start_context or build_start_console_context(Path("."))
     active_run = is_active_run(state)
     role_observations = build_role_observations(state)
+    workflow_steps = build_workflow_steps(state)
     role_status_counts: dict[str, int] = {}
     for role in role_observations:
         role_status_counts[role["status"]] = role_status_counts.get(role["status"], 0) + 1
@@ -224,6 +363,27 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     if not role_cards:
         role_cards = '<div class="empty-state">No role state available because there is no active run.</div>'
+    waterfall_cards = "\n".join(
+        f"""
+        <article class="flow-card flow-{escape(step["status"])}">
+          <div class="flow-index">{escape(step["number"])}</div>
+          <div class="flow-body">
+            <div class="flow-topline">
+              <h3>{escape(step["title"])}</h3>
+              <span class="flow-status">{escape(step["status_label"])}</span>
+            </div>
+            <p>{escape(step["summary"])}</p>
+            <dl class="role-meta">
+              <dt>Roles</dt><dd>{escape(step["roles"])}</dd>
+              <dt>Artifact</dt><dd>{escape(step["artifact"] or "none")}</dd>
+              {f'<dt>Path</dt><dd><code>{escape(step["artifact_path"])}</code></dd>' if step["artifact_path"] else ''}
+            </dl>
+            {f'<button class="primary review-link" data-approval="{escape(step["approval"])}" type="button">{escape(step["action_label"])}</button>' if step["action_label"] else ''}
+          </div>
+        </article>
+        """
+        for step in workflow_steps
+    )
     project_report = dict(start_context.get("project_report", {}))
     workers = dict(project_report.get("workers", {}))
     worker_items = "\n".join(
@@ -467,6 +627,77 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 12px;
     }}
+    .waterfall {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .flow-card {{
+      display: grid;
+      grid-template-columns: 40px 1fr;
+      gap: 12px;
+      border: 1px solid var(--line);
+      background: #111318;
+      padding: 14px;
+      min-height: 172px;
+    }}
+    .flow-index {{
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+    }}
+    .flow-topline {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }}
+    .flow-status {{
+      border: 1px solid var(--line);
+      color: var(--muted);
+      padding: 4px 6px;
+      font-size: 11px;
+      white-space: nowrap;
+    }}
+    .flow-card p {{
+      color: var(--muted);
+      line-height: 1.45;
+      margin: 10px 0 12px;
+      font-size: 13px;
+    }}
+    .flow-done {{
+      border-color: #4ade80;
+    }}
+    .flow-done .flow-status {{
+      color: #4ade80;
+      border-color: #4ade80;
+    }}
+    .flow-active {{
+      border-color: var(--blue);
+    }}
+    .flow-active .flow-status {{
+      color: var(--blue);
+      border-color: var(--blue);
+    }}
+    .flow-review-needed {{
+      border-color: var(--accent);
+      background: #171a10;
+    }}
+    .flow-review-needed .flow-index,
+    .flow-review-needed .flow-status {{
+      color: var(--accent);
+      border-color: var(--accent);
+    }}
+    .flow-blocked {{
+      border-color: var(--red);
+    }}
+    .flow-blocked .flow-status {{
+      color: var(--red);
+      border-color: var(--red);
+    }}
     .role-card {{
       border: 1px solid var(--line);
       background: #111318;
@@ -562,6 +793,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       .status {{ margin-top: 16px; }}
       section {{ margin-top: 16px; }}
       .console-grid, .signal-row {{ grid-template-columns: 1fr; }}
+      .waterfall {{ grid-template-columns: 1fr; }}
       .roles {{ grid-template-columns: 1fr; }}
       dl {{ grid-template-columns: 1fr; }}
       li {{ display: block; }}
@@ -569,6 +801,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     }}
     @media (min-width: 761px) and (max-width: 1040px) {{
       .roles {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .waterfall {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -626,6 +859,10 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         <section>
           <h2>Role Summary</h2>
           <div class="signal-row compact">{role_summary_items}</div>
+        </section>
+        <section class="wide">
+          <h2>Workflow Waterfall</h2>
+          <div class="waterfall">{waterfall_cards}</div>
         </section>
         <section>
           <h2>Recent Artifacts</h2>
@@ -750,6 +987,11 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         document.querySelectorAll(".tab-panel").forEach((item) => item.classList.remove("active"));
         button.classList.add("active");
         document.getElementById("tab-" + button.dataset.tab).classList.add("active");
+      }});
+    }});
+    document.querySelectorAll(".review-link").forEach((button) => {{
+      button.addEventListener("click", () => {{
+        document.querySelector('[data-tab="approvals"]').click();
       }});
     }});
     updateStartState();

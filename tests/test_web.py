@@ -4,6 +4,7 @@ from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import (
     build_role_observations,
     build_start_console_context,
+    build_workflow_steps,
     render_dashboard,
     resolve_dashboard_state,
     is_active_run,
@@ -39,6 +40,9 @@ def test_render_dashboard_shows_current_gate():
     assert "Approvals" in html
     assert "System" in html
     assert "Role Summary" in html
+    assert "Workflow Waterfall" in html
+    assert "Needs review" in html
+    assert "Review PRD" in html
     assert "Project Target" in html
     assert "Active run in progress" in html
 
@@ -102,6 +106,32 @@ def test_build_role_observations_maps_artifacts_to_role_statuses():
     assert product["model"] == "claude:opus"
     assert architect["status"] == "No activity"
     assert implementation["model"] == "codex:gpt-5.2-codex"
+
+
+def test_build_workflow_steps_marks_current_review_gate():
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    state.artifacts["prd"] = "/tmp/prd.md"
+
+    steps = build_workflow_steps(state)
+    product = next(step for step in steps if step["key"] == "product_requirement")
+    prd_review = next(step for step in steps if step["key"] == "prd_review")
+    architecture = next(step for step in steps if step["key"] == "architecture")
+
+    assert product["status"] == "done"
+    assert product["artifact_path"] == "/tmp/prd.md"
+    assert prd_review["status"] == "review-needed"
+    assert prd_review["action_label"] == "Review PRD"
+    assert prd_review["approval"] == "prd"
+    assert architecture["status"] == "not-started"
+
+
+def test_build_workflow_steps_without_state_is_not_started():
+    steps = build_workflow_steps(None)
+
+    assert steps[0]["status"] == "not-started"
+    assert all(step["artifact_path"] == "" for step in steps)
 
 
 def test_build_start_console_context_reads_project_and_model_config():
