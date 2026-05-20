@@ -75,6 +75,10 @@ def resolve_dashboard_state(workspace: Path) -> AgileDevState | None:
     return StateStore(workspace).read_current()
 
 
+def is_active_run(state: AgileDevState | None) -> bool:
+    return state is not None and bool(state.next_node)
+
+
 def start_workflow(
     *,
     workspace: Path,
@@ -86,6 +90,8 @@ def start_workflow(
 ) -> dict[str, object]:
     if not idea.strip():
         raise ValueError("Workflow goal is required.")
+    if not dry_run and is_active_run(resolve_dashboard_state(workspace)):
+        raise ValueError("An active run already exists. Finish, archive, or resume it before starting another run.")
 
     state = create_initial_state(
         run_id=str(uuid4()),
@@ -174,6 +180,7 @@ def build_start_console_context(
 
 def render_dashboard(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
     start_context = start_context or build_start_console_context(Path("."))
+    active_run = is_active_run(state)
     role_observations = build_role_observations(state)
     role_status_counts: dict[str, int] = {}
     for role in role_observations:
@@ -264,6 +271,11 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         else '<div class="empty-state">state/current.json not found.</div>'
     )
     header_status = state.next_node if state is not None else "no_active_run"
+    start_guard_html = (
+        '<div class="empty-state">Active run in progress. Dry run preview is still available; starting a new run is blocked until this run is finished or archived.</div>'
+        if active_run
+        else ""
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -584,6 +596,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         </section>
         <section>
           <h2>Start Workflow</h2>
+          {start_guard_html}
           <div class="console-grid">
             <label>
             Goal
@@ -668,11 +681,17 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     const workspace = {str(start_context["workspace"])!r};
     const projectKey = {str(start_context["project_key"])!r};
     const modelConfig = {str(start_context["model_config"])!r};
+    const activeRun = {str(active_run).lower()};
 
     function updateStartState() {{
       const idea = document.getElementById("start-idea").value.trim();
       const dryRun = document.getElementById("dry-run").checked;
       document.getElementById("start-run").textContent = dryRun ? "Preview Run" : "Start Run";
+      document.getElementById("start-run").disabled = activeRun && !dryRun;
+      if (activeRun && !dryRun) {{
+        document.getElementById("start-result").textContent = "Active run in progress. New runs are blocked until the current run is finished or archived.";
+        return;
+      }}
       if (!idea) {{
         document.getElementById("start-result").textContent = "Enter a workflow goal, then start the run.";
         return;
@@ -688,6 +707,11 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     document.getElementById("start-run").addEventListener("click", async () => {{
       const resultBox = document.getElementById("start-result");
       const idea = document.getElementById("start-idea").value.trim();
+      const dryRun = document.getElementById("dry-run").checked;
+      if (activeRun && !dryRun) {{
+        resultBox.textContent = "Active run in progress. New runs are blocked until the current run is finished or archived.";
+        return;
+      }}
       if (!idea) {{
         resultBox.textContent = "Workflow goal is required.";
         return;
@@ -703,7 +727,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             project_key: projectKey,
             model_config: modelConfig,
             model_profile: document.getElementById("model-profile").value,
-            dry_run: document.getElementById("dry-run").checked
+            dry_run: dryRun
           }})
         }});
         const payload = await response.json();

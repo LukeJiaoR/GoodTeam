@@ -6,6 +6,7 @@ from goodteam_os.web import (
     build_start_console_context,
     render_dashboard,
     resolve_dashboard_state,
+    is_active_run,
     start_workflow,
 )
 
@@ -39,6 +40,7 @@ def test_render_dashboard_shows_current_gate():
     assert "System" in html
     assert "Role Summary" in html
     assert "Project Target" in html
+    assert "Active run in progress" in html
 
 
 def test_resolve_dashboard_state_reads_existing_state(tmp_path):
@@ -55,6 +57,14 @@ def test_resolve_dashboard_state_reads_existing_state(tmp_path):
 
 def test_resolve_dashboard_state_returns_none_without_current_state(tmp_path):
     assert resolve_dashboard_state(tmp_path) is None
+
+
+def test_is_active_run_detects_current_gate():
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.next_node = "await_prd_approval"
+
+    assert is_active_run(state) is True
+    assert is_active_run(None) is False
 
 
 def test_render_dashboard_without_state_shows_only_real_empty_status():
@@ -124,6 +134,26 @@ def test_start_workflow_writes_state_and_checkpoint(tmp_path):
     assert (tmp_path / "state" / "checkpoints" / payload["run_id"] / "prd_review_gate.json").is_file()
 
 
+def test_start_workflow_rejects_new_run_when_current_run_is_active(tmp_path):
+    existing = create_initial_state("run-1", "EBC", "Existing active run")
+    existing.current_node = "prd_review_gate"
+    existing.next_node = "await_prd_approval"
+    StateStore(tmp_path).write_current(existing)
+
+    try:
+        start_workflow(
+            workspace=tmp_path,
+            idea="Start another run",
+            project_key="EBC",
+            model_config=Path("models.yaml"),
+            model_profile="balanced",
+        )
+    except ValueError as exc:
+        assert "active run already exists" in str(exc)
+    else:
+        raise AssertionError("Expected active run guard to reject a new run")
+
+
 def test_start_workflow_dry_run_does_not_write_state(tmp_path):
     payload = start_workflow(
         workspace=tmp_path,
@@ -138,6 +168,25 @@ def test_start_workflow_dry_run_does_not_write_state(tmp_path):
     assert payload["model_profile"] == "cheap"
     assert "planned_artifacts" in payload
     assert not (tmp_path / "state" / "current.json").exists()
+
+
+def test_start_workflow_allows_dry_run_when_current_run_is_active(tmp_path):
+    existing = create_initial_state("run-1", "EBC", "Existing active run")
+    existing.current_node = "prd_review_gate"
+    existing.next_node = "await_prd_approval"
+    StateStore(tmp_path).write_current(existing)
+
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Preview another run",
+        project_key="EBC",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+        dry_run=True,
+    )
+
+    assert payload["dry_run"] is True
+    assert StateStore(tmp_path).read_current().run_id == "run-1"
 
 
 def test_start_workflow_rejects_empty_goal(tmp_path):
