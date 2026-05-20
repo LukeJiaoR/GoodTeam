@@ -8,6 +8,12 @@ repos:
 task_backend:
   mode: local
   sync:
+  plane:
+    api_host_url: https://api.plane.so/
+    workspace_slug: "<plane-workspace-slug>"
+    project_id: "<plane-project-id>"
+    api_key_env: PLANE_API_KEY
+    mcp_server: plane
 workers:
   product: claude
   requirement: claude

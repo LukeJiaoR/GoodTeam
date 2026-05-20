@@ -129,6 +129,11 @@ def create_local_project_config(
     backend_path: str = "",
     frontend_path: str = "",
     task_sync: list[str] | None = None,
+    plane_api_host_url: str = "",
+    plane_workspace_slug: str = "",
+    plane_project_id: str = "",
+    plane_api_key_env: str = "",
+    plane_mcp_server: str = "",
 ) -> dict[str, object]:
     name = project_name.strip()
     key = project_key.strip().upper()
@@ -160,14 +165,27 @@ def create_local_project_config(
         lines[-1] = "  sync: " + ",".join(sync_values)
     else:
         lines[-1] = "  sync: "
+    plane_config = {
+        "api_host_url": plane_api_host_url.strip(),
+        "workspace_slug": plane_workspace_slug.strip(),
+        "project_id": plane_project_id.strip(),
+        "api_key_env": plane_api_key_env.strip() or "PLANE_API_KEY",
+        "mcp_server": plane_mcp_server.strip() or "plane",
+    }
+    if "plane" in sync_values:
+        lines.append("  plane:")
+        lines.extend(f"    {key}: {value}" for key, value in plane_config.items() if value)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    task_backend: dict[str, object] = {"mode": "local", "sync": sync_values}
+    if "plane" in sync_values:
+        task_backend["plane"] = plane_config
     return {
         "project_config": str(path),
         "project_key": key,
         "project_name": name,
         "repos": {repo: str(repo_path) for repo, repo_path in repos},
-        "task_backend": {"mode": "local", "sync": sync_values},
+        "task_backend": task_backend,
     }
 
 
@@ -742,6 +760,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     task_backend = normalize_task_backend(start_context.get("task_backend", {"mode": "local", "sync": []}))
     task_sync_values = [str(value) for value in task_backend.get("sync", [])]
     task_sync_label = "Local only" if not task_sync_values else "Local + " + ", ".join(task_sync_values)
+    plane_config = dict(task_backend.get("plane", {})) if isinstance(task_backend.get("plane", {}), dict) else {}
     workers = dict(project_report.get("workers", {}))
     worker_items = "\n".join(
         f"<li><span>{escape(name)}</span><code>{escape(str(dict(worker).get('path') or dict(worker).get('command') or 'missing'))}</code></li>"
@@ -850,6 +869,28 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
                   <option value="github_issues"{" selected" if "github_issues" in task_sync_values else ""}>Local + GitHub Issues</option>
                 </select>
               </label>
+              <div class="adapter-config" id="plane-config">
+                <label>
+                  Plane API Host
+                  <input id="plane-api-host-url" value="{escape(str(plane_config.get("api_host_url", "https://api.plane.so/")))}">
+                </label>
+                <label>
+                  Plane Workspace Slug
+                  <input id="plane-workspace-slug" value="{escape(str(plane_config.get("workspace_slug", "")))}" placeholder="leader_kanban">
+                </label>
+                <label>
+                  Plane Project ID
+                  <input id="plane-project-id" value="{escape(str(plane_config.get("project_id", "")))}" placeholder="project uuid">
+                </label>
+                <label>
+                  Plane API Key Env
+                  <input id="plane-api-key-env" value="{escape(str(plane_config.get("api_key_env", "PLANE_API_KEY")))}">
+                </label>
+                <label>
+                  Plane MCP Server
+                  <input id="plane-mcp-server" value="{escape(str(plane_config.get("mcp_server", "plane")))}">
+                </label>
+              </div>
               <div class="actions">
                 <label class="checkbox-label">
                   <input id="dry-run" type="checkbox" checked>
@@ -899,6 +940,10 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     document.getElementById("start-idea").addEventListener("input", updateStartState);
     document.getElementById("model-profile").addEventListener("change", updateStartState);
     document.getElementById("dry-run").addEventListener("change", updateStartState);
+    function updateAdapterConfigVisibility() {{
+      document.getElementById("plane-config").hidden = document.getElementById("task-sync").value !== "plane";
+    }}
+    document.getElementById("task-sync").addEventListener("change", updateAdapterConfigVisibility);
     document.querySelectorAll(".mode-button").forEach((button) => {{
       button.addEventListener("click", () => {{
         document.querySelectorAll(".mode-button").forEach((item) => item.classList.remove("active"));
@@ -922,7 +967,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             docs_path: document.getElementById("docs-path").value,
             backend_path: document.getElementById("backend-path").value,
             frontend_path: document.getElementById("frontend-path").value,
-            task_sync: document.getElementById("task-sync").value ? [document.getElementById("task-sync").value] : []
+            task_sync: document.getElementById("task-sync").value ? [document.getElementById("task-sync").value] : [],
+            plane_api_host_url: document.getElementById("plane-api-host-url").value,
+            plane_workspace_slug: document.getElementById("plane-workspace-slug").value,
+            plane_project_id: document.getElementById("plane-project-id").value,
+            plane_api_key_env: document.getElementById("plane-api-key-env").value,
+            plane_mcp_server: document.getElementById("plane-mcp-server").value
           }})
         }});
         const payload = await response.json();
@@ -937,6 +987,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         button.disabled = false;
       }}
     }});
+    updateAdapterConfigVisibility();
     document.getElementById("start-run").addEventListener("click", async () => {{
       const resultBox = document.getElementById("start-result");
       const idea = document.getElementById("start-idea").value.trim();
@@ -1151,6 +1202,16 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       text-align: left;
+    }}
+    .adapter-config {{
+      border: 1px solid var(--line);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      background: #101318;
+    }}
+    .adapter-config[hidden] {{
+      display: none;
     }}
     .signal-row {{
       display: grid;
@@ -1672,6 +1733,11 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         backend_path=str(request.get("backend_path", "")),
                         frontend_path=str(request.get("frontend_path", "")),
                         task_sync=[str(value) for value in request.get("task_sync", [])],
+                        plane_api_host_url=str(request.get("plane_api_host_url", "")),
+                        plane_workspace_slug=str(request.get("plane_workspace_slug", "")),
+                        plane_project_id=str(request.get("plane_project_id", "")),
+                        plane_api_key_env=str(request.get("plane_api_key_env", "")),
+                        plane_mcp_server=str(request.get("plane_mcp_server", "")),
                     )
                 self._send_json(200, result)
             except Exception as exc:

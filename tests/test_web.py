@@ -350,6 +350,11 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
         backend_path=str(backend),
         frontend_path=str(frontend),
         task_sync=["plane"],
+        plane_api_host_url="https://api.plane.so/",
+        plane_workspace_slug="leader_kanban",
+        plane_project_id="project-123",
+        plane_api_key_env="PLANE_API_KEY",
+        plane_mcp_server="plane",
     )
 
     config = Path(payload["project_config"])
@@ -362,6 +367,14 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert "task_backend:" in content
     assert "  mode: local" in content
     assert "  sync: plane" in content
+    assert "  plane:" in content
+    assert "    api_host_url: https://api.plane.so/" in content
+    assert "    workspace_slug: leader_kanban" in content
+    assert "    project_id: project-123" in content
+    assert "    api_key_env: PLANE_API_KEY" in content
+    assert "    mcp_server: plane" in content
+    assert "api_key:" not in content
+    assert payload["task_backend"]["plane"]["workspace_slug"] == "leader_kanban"
 
 
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):

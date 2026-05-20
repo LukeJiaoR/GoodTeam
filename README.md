@@ -133,7 +133,15 @@ To sync local tasks to an external kanban later, keep `mode: local` and add adap
 task_backend:
   mode: local
   sync: plane
+  plane:
+    api_host_url: https://api.plane.so/
+    workspace_slug: leader_kanban
+    project_id: "<plane-project-id>"
+    api_key_env: PLANE_API_KEY
+    mcp_server: plane
 ```
+
+Do not put the Plane API key itself in project config. `api_key_env` names the local environment variable or MCP-side secret source.
 
 Local worker commands use the CLIs currently available on this machine:
 

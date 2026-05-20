@@ -11,6 +11,8 @@ def test_load_project_target_reads_eastern_birth_chart_example_config():
     assert target["repos"]["docs"] == "<absolute-path-to-eastern-birth-chart-docs>"
     assert target["task_backend"]["mode"] == "local"
     assert "sync" in target["task_backend"]
+    assert target["task_backend"]["plane"]["api_key_env"] == "PLANE_API_KEY"
+    assert "api_key" not in target["task_backend"]["plane"]
     assert target["workers"]["backend"] == "codex"
     assert target["workers"]["frontend"] == "gemini"
     assert target["workers"]["product"] == "claude"
