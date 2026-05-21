@@ -12,6 +12,7 @@ from goodteam_os.models import apply_role_overrides, list_model_profiles, load_m
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state
+from goodteam_os.workers import WorkerJobStore
 
 
 ROLE_DEFINITIONS = [
@@ -134,6 +135,7 @@ def create_local_project_config(
     plane_project_id: str = "",
     plane_api_key_env: str = "",
     plane_mcp_server: str = "",
+    worker_backend_mode: str = "manual",
 ) -> dict[str, object]:
     name = project_name.strip()
     key = project_key.strip().upper()
@@ -175,6 +177,8 @@ def create_local_project_config(
     if "plane" in sync_values:
         lines.append("  plane:")
         lines.extend(f"    {key}: {value}" for key, value in plane_config.items() if value)
+    worker_mode = worker_backend_mode.strip() or "manual"
+    lines.extend(["worker_backend:", f"  mode: {worker_mode}"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     task_backend: dict[str, object] = {"mode": "local", "sync": sync_values}
@@ -186,6 +190,7 @@ def create_local_project_config(
         "project_name": name,
         "repos": {repo: str(repo_path) for repo, repo_path in repos},
         "task_backend": task_backend,
+        "worker_backend": {"mode": worker_mode},
     }
 
 
@@ -610,6 +615,7 @@ def build_start_console_context(
         "project_key": str(project.get("key", "GTO") or "GTO"),
         "project_name": str(project.get("name", "GoodTeam") or "GoodTeam"),
         "task_backend": normalize_task_backend(target.get("task_backend", {"mode": "local", "sync": []})),
+        "worker_backend": normalize_worker_backend(target.get("worker_backend", {"mode": "manual"})),
         "deepseek_configured": bool(deepseek.get("configured", False)),
         "project_base": str(project_base),
         "candidate_dirs": discover_project_directories(project_base),
@@ -627,6 +633,28 @@ def normalize_task_backend(value: object) -> dict[str, object]:
     else:
         sync_values = [part.strip() for part in str(sync).split(",") if part.strip()] if sync else []
     return {"mode": mode, "sync": sync_values}
+
+
+def normalize_worker_backend(value: object) -> dict[str, object]:
+    backend = dict(value) if isinstance(value, dict) else {}
+    return {"mode": str(backend.get("mode", "manual") or "manual")}
+
+
+def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
+    if project_root is None:
+        return []
+    items = []
+    for job in WorkerJobStore(project_root).list_jobs():
+        items.append(
+            {
+                "id": str(job.get("id", "")),
+                "role": str(job.get("role", "")),
+                "adapter": str(job.get("adapter", "")),
+                "status": str(job.get("status", "")),
+                "updated_at": str(job.get("updated_at", "")),
+            }
+        )
+    return items
 
 
 def render_dashboard(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
@@ -761,6 +789,15 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     task_sync_values = [str(value) for value in task_backend.get("sync", [])]
     task_sync_label = "Local only" if not task_sync_values else "Local + " + ", ".join(task_sync_values)
     plane_config = dict(task_backend.get("plane", {})) if isinstance(task_backend.get("plane", {}), dict) else {}
+    worker_backend = normalize_worker_backend(start_context.get("worker_backend", {"mode": "manual"}))
+    worker_backend_mode = str(worker_backend.get("mode", "manual"))
+    project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
+    worker_job_items = "\n".join(
+        f"<li><span>{escape(item['role'])} / {escape(item['adapter'])}</span><code>{escape(item['status'])} · {escape(item['id'])}</code></li>"
+        for item in build_worker_job_items(project_root)
+    )
+    if not worker_job_items:
+        worker_job_items = "<li><span>No worker jobs</span><code>Create jobs from planner or worker dispatch.</code></li>"
     workers = dict(project_report.get("workers", {}))
     worker_items = "\n".join(
         f"<li><span>{escape(name)}</span><code>{escape(str(dict(worker).get('path') or dict(worker).get('command') or 'missing'))}</code></li>"
@@ -869,6 +906,14 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
                   <option value="github_issues"{" selected" if "github_issues" in task_sync_values else ""}>Local + GitHub Issues</option>
                 </select>
               </label>
+              <label>
+                Worker Backend
+                <select id="worker-backend-mode">
+                  <option value="manual"{" selected" if worker_backend_mode == "manual" else ""}>Manual / human adapter</option>
+                  <option value="noop"{" selected" if worker_backend_mode == "noop" else ""}>Noop / protocol dry run</option>
+                  <option value="supervised"{" selected" if worker_backend_mode == "supervised" else ""}>Supervised CLI adapters</option>
+                </select>
+              </label>
               <div class="adapter-config" id="plane-config">
                 <label>
                   Plane API Host
@@ -907,6 +952,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
             <div class="signal"><span>Directory Base</span><code>{escape(str(start_context["project_base"]))}</code></div>
             <div class="signal"><span>Task Backend</span>{escape(task_sync_label)}</div>
+            <div class="signal"><span>Worker Backend</span>{escape(worker_backend_mode)}</div>
           </div>
           <code class="command-box" id="start-result">Adopt mode reads the project config first and generates takeover-context.md before PRD.</code>
         </section>
@@ -972,7 +1018,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             plane_workspace_slug: document.getElementById("plane-workspace-slug").value,
             plane_project_id: document.getElementById("plane-project-id").value,
             plane_api_key_env: document.getElementById("plane-api-key-env").value,
-            plane_mcp_server: document.getElementById("plane-mcp-server").value
+            plane_mcp_server: document.getElementById("plane-mcp-server").value,
+            worker_backend_mode: document.getElementById("worker-backend-mode").value
           }})
         }});
         const payload = await response.json();
@@ -1490,6 +1537,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       <button class="tab-button active" data-tab="overview" type="button">Overview</button>
       <button class="tab-button" data-tab="roles" type="button">Roles</button>
       <button class="tab-button" data-tab="artifacts" type="button">Artifacts</button>
+      <button class="tab-button" data-tab="workers" type="button">Workers</button>
       <button class="tab-button" data-tab="approvals" type="button">Approvals</button>
       <button class="tab-button" data-tab="system" type="button">System</button>
     </nav>
@@ -1527,6 +1575,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         <ul>{artifact_items}</ul>
       </section>
     </div>
+    <div class="tab-panel" id="tab-workers">
+      <section>
+        <h2>Worker Jobs</h2>
+        <ul>{worker_job_items}</ul>
+      </section>
+    </div>
     <div class="tab-panel" id="tab-approvals">
       <section>
         <h2>Approvals</h2>
@@ -1548,6 +1602,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Config</dt><dd>{escape(str(start_context["project_config"]))}</dd>
             <dt>Model Config</dt><dd>{escape(str(start_context["model_config"]))}</dd>
             <dt>Task Backend</dt><dd>{escape(task_sync_label)}</dd>
+            <dt>Worker Backend</dt><dd>{escape(worker_backend_mode)}</dd>
           </dl>
         </section>
         <section>
@@ -1738,6 +1793,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         plane_project_id=str(request.get("plane_project_id", "")),
                         plane_api_key_env=str(request.get("plane_api_key_env", "")),
                         plane_mcp_server=str(request.get("plane_mcp_server", "")),
+                        worker_backend_mode=str(request.get("worker_backend_mode", "manual")),
                     )
                 self._send_json(200, result)
             except Exception as exc:

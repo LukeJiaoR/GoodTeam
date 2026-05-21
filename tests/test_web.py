@@ -47,6 +47,7 @@ def test_render_dashboard_shows_current_gate():
     assert "Artifacts" in html
     assert "Approvals" in html
     assert "System" in html
+    assert "Worker Jobs" in html
     assert "Role Summary" in html
     assert "Workflow Waterfall" in html
     assert "Needs review" in html
@@ -63,6 +64,7 @@ def test_render_dashboard_shows_current_gate():
     assert "/tmp/project/.goodteam/memory/project-memory.md" in html
     assert "Local Task Ledger" in html
     assert "Task Backend" in html
+    assert "Worker Backend" in html
     assert "Active run in progress" not in html
 
 
@@ -302,6 +304,7 @@ def test_build_start_console_context_reads_project_and_model_config():
     assert "balanced" in context["profiles"]
     assert context["project_config"] == "projects/eastern-birth-chart.example.yaml"
     assert context["task_backend"] == {"mode": "local", "sync": []}
+    assert context["worker_backend"] == {"mode": "manual"}
 
 
 def test_discover_project_directories_lists_immediate_children(tmp_path):
@@ -355,6 +358,7 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
         plane_project_id="project-123",
         plane_api_key_env="PLANE_API_KEY",
         plane_mcp_server="plane",
+        worker_backend_mode="manual",
     )
 
     config = Path(payload["project_config"])
@@ -375,6 +379,9 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert "    mcp_server: plane" in content
     assert "api_key:" not in content
     assert payload["task_backend"]["plane"]["workspace_slug"] == "leader_kanban"
+    assert "worker_backend:" in content
+    assert "  mode: manual" in content
+    assert payload["worker_backend"] == {"mode": "manual"}
 
 
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):

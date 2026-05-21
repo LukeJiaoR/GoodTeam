@@ -143,6 +143,15 @@ task_backend:
 
 Do not put the Plane API key itself in project config. `api_key_env` names the local environment variable or MCP-side secret source.
 
+Worker execution is also configured separately from the workflow protocol:
+
+```yaml
+worker_backend:
+  mode: manual
+```
+
+Supported V1 modes are `manual`, `noop`, and `supervised`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth.
+
 Local worker commands use the CLIs currently available on this machine:
 
 - Claude CLI: product, requirement, architect, review, planner, release, retro/memory

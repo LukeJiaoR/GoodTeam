@@ -14,6 +14,8 @@ task_backend:
     project_id: "<plane-project-id>"
     api_key_env: PLANE_API_KEY
     mcp_server: plane
+worker_backend:
+  mode: manual
 workers:
   product: claude
   requirement: claude
