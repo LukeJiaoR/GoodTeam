@@ -75,7 +75,7 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
   --workspace /tmp/goodteam-os-run \
   --model-profile cheap \
   --role-model architect=claude:opusplan \
-  --role-model qa=agy:gemini-2.5-flash
+  --role-model qa=agy:gemini-3-flash-preview
 ```
 
 Preview the model matrix and planned artifact paths without writing state or artifacts:

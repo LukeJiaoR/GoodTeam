@@ -5,7 +5,8 @@ profiles:
       fallback: claude:sonnet
       mode: short-context
     research:
-      primary: agy:gemini-2.5-pro
+      primary: agy:gemini-3-pro-preview
+      fallback: agy:gemini-2.5-pro
       assistant: deepseek:deepseek-chat
       mode: long-context
     product_requirement:
@@ -25,17 +26,17 @@ profiles:
       reviewer: claude:sonnet
       mode: structured-breakdown
     ui:
-      primary: agy:gemini-2.5-pro
-      fallback: claude:sonnet
+      primary: agy:gemini-3-pro-preview
+      fallback: agy:gemini-2.5-pro
       mode: multimodal
     implementation:
       primary: codex:gpt-5.2-codex
-      fallback: agy:gemini-2.5-pro
+      fallback: agy:gemini-3-pro-preview
       assistant: deepseek:deepseek-coder
       mode: worker-dispatch
     frontend:
-      primary: agy:gemini-2.5-pro
-      fallback: claude:sonnet
+      primary: agy:gemini-3-pro-preview
+      fallback: agy:gemini-2.5-pro
       mode: implementation
     backend:
       primary: codex:gpt-5.2-codex
@@ -43,7 +44,7 @@ profiles:
       mode: implementation
     qa:
       primary: deepseek:deepseek-reasoner
-      fallback: agy:gemini-2.5-flash
+      fallback: agy:gemini-3-flash-preview
       mode: test-design
     code_review:
       first_pass: deepseek:deepseek-coder
@@ -65,7 +66,7 @@ profiles:
       mode: short-context
     research:
       primary: deepseek:deepseek-chat
-      fallback: agy:gemini-2.5-flash
+      fallback: agy:gemini-3-flash-preview
       mode: cost-efficient
     product_requirement:
       primary: deepseek:deepseek-chat
@@ -84,17 +85,17 @@ profiles:
       reviewer: claude:sonnet
       mode: structured-breakdown
     ui:
-      primary: agy:gemini-2.5-flash
-      fallback: claude:sonnet
+      primary: agy:gemini-3-flash-preview
+      fallback: agy:gemini-2.5-flash
       mode: lightweight-ui
     implementation:
       primary: codex:gpt-5.2-codex
-      fallback: agy:gemini-2.5-flash
+      fallback: agy:gemini-3-flash-preview
       assistant: deepseek:deepseek-coder
       mode: worker-dispatch
     frontend:
-      primary: agy:gemini-2.5-flash
-      fallback: claude:sonnet
+      primary: agy:gemini-3-flash-preview
+      fallback: agy:gemini-2.5-flash
       mode: implementation
     backend:
       primary: codex:gpt-5.2-codex
@@ -102,7 +103,7 @@ profiles:
       mode: implementation
     qa:
       primary: deepseek:deepseek-reasoner
-      fallback: agy:gemini-2.5-flash
+      fallback: agy:gemini-3-flash-preview
       mode: test-design
     code_review:
       first_pass: deepseek:deepseek-coder
@@ -120,10 +121,11 @@ profiles:
     orchestrator:
       primary: codex:gpt-5.2
       fallback: claude:sonnet
-      escalation: agy:gemini-2.5-pro
+      escalation: agy:gemini-3-pro-preview
       mode: short-context-with-global-planning-escalation
     research:
-      primary: agy:gemini-2.5-pro
+      primary: agy:gemini-3-pro-preview
+      fallback: agy:gemini-2.5-pro
       assistant: deepseek:deepseek-chat
       mode: long-context
     product_requirement:
@@ -143,16 +145,18 @@ profiles:
       draft: deepseek:deepseek-chat
       mode: structured-breakdown
     ui:
-      primary: agy:gemini-2.5-pro
+      primary: agy:gemini-3-pro-preview
+      fallback: agy:gemini-2.5-pro
       reviewer: claude:sonnet
       mode: multimodal
     implementation:
       primary: codex:gpt-5.2-codex
-      fallback: agy:gemini-2.5-pro
+      fallback: agy:gemini-3-pro-preview
       reviewer: claude:sonnet
       mode: worker-dispatch
     frontend:
-      primary: agy:gemini-2.5-pro
+      primary: agy:gemini-3-pro-preview
+      fallback: agy:gemini-2.5-pro
       reviewer: claude:sonnet
       mode: implementation
     backend:
