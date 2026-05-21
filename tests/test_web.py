@@ -535,6 +535,37 @@ def test_decide_approval_approves_prd_and_advances_to_architect(tmp_path):
     assert (tmp_path / "state" / "checkpoints" / "run-1" / "prd_review_gate.json").is_file()
 
 
+def test_decide_approval_approves_takeover_and_generates_prd(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "codex.md").write_text("# Memory\n- Existing project context.\n", encoding="utf-8")
+    project_config = tmp_path / "project.local.yaml"
+    project_config.write_text(
+        f"name: Existing Product\nkey: EBC\nrepos:\n  docs: {docs}\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "EBC", "Existing active run")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = "pending"
+    state.artifacts["takeover"] = str(tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-context.md")
+    StateStore(tmp_path).write_current(state)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        approval="takeover",
+        decision="approved",
+    )
+
+    assert payload["approvals"]["takeover"] == "approved"
+    assert payload["current_node"] == "prd_review_gate"
+    assert payload["next_node"] == "await_prd_approval"
+    assert Path(payload["artifacts"]["prd"]).is_file()
+    assert (tmp_path / "state" / "checkpoints" / "run-1" / "prd_review_gate.json").is_file()
+
+
 def test_decide_approval_can_request_changes(tmp_path):
     state = create_initial_state("run-1", "EBC", "Existing active run")
     state.current_node = "prd_review_gate"

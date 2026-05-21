@@ -396,6 +396,11 @@ def decide_approval(*, workspace: Path, approval: str, decision: str) -> dict[st
     state.approvals[approval] = approval_decision
     state.current_node = f"{approval}_review_gate"
     state.next_node = gate_next_node(state, gate=approval, approved_next=approved_next[approval])
+    if approval == "takeover" and approval_decision == ApprovalDecision.APPROVED:
+        state_store.write_current(state)
+        state_store.write_checkpoint(state)
+        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else Path("projects/eastern-birth-chart.local.yaml")
+        state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
     state_store.write_current(state)
     state_store.write_checkpoint(state)
     payload = asdict(state)
