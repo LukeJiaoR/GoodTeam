@@ -23,8 +23,8 @@ workers:
   review: claude
   planner: claude
   backend: codex
-  frontend: gemini
-  ui: gemini
+  frontend: agy
+  ui: agy
   qa: codex
   code_review: codex
   release: claude

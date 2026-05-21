@@ -69,7 +69,7 @@ ROLE_DEFINITIONS = [
         "name": "Implementation",
         "key": "implementation",
         "artifact": "implementation_handoff",
-        "description": "Hands scoped work to FE, BE, Codex, Gemini, or Claude workers.",
+        "description": "Hands scoped work to FE, BE, Codex, Agy, or Claude workers.",
         "next_action": "Wait for planner output before dispatching workers.",
     },
     {

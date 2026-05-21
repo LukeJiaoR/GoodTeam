@@ -15,7 +15,7 @@ def test_load_model_profile_reads_balanced_defaults():
 def test_apply_role_overrides_replaces_primary_model():
     profile = load_model_profile(Path("models.yaml"), "balanced")
 
-    updated = apply_role_overrides(profile, ["architect=gemini:gemini-2.5-pro"])
+    updated = apply_role_overrides(profile, ["architect=agy:gemini-2.5-pro"])
 
-    assert updated["architect"]["primary"] == "gemini:gemini-2.5-pro"
+    assert updated["architect"]["primary"] == "agy:gemini-2.5-pro"
     assert updated["architect"]["reviewer"] == "openai:gpt-5.2-pro"

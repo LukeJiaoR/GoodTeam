@@ -75,7 +75,7 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
   --workspace /tmp/goodteam-os-run \
   --model-profile cheap \
   --role-model architect=claude:opusplan \
-  --role-model qa=gemini:gemini-2.5-flash
+  --role-model qa=agy:gemini-2.5-flash
 ```
 
 Preview the model matrix and planned artifact paths without writing state or artifacts:
@@ -155,7 +155,7 @@ Supported V1 modes are `manual`, `noop`, and `supervised`. The worker job protoc
 Local worker commands use the CLIs currently available on this machine:
 
 - Claude CLI: product, requirement, architect, review, planner, release, retro/memory
-- Gemini CLI: UI and frontend
+- Agy CLI: UI and frontend
 - Codex CLI: backend, QA, code review
 
 DeepSeek can remain in `models.yaml` as a model provider target, but there is no local `deepseek` CLI command currently available in `PATH`.

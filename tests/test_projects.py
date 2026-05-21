@@ -15,7 +15,7 @@ def test_load_project_target_reads_eastern_birth_chart_example_config():
     assert "api_key" not in target["task_backend"]["plane"]
     assert target["worker_backend"]["mode"] == "manual"
     assert target["workers"]["backend"] == "codex"
-    assert target["workers"]["frontend"] == "gemini"
+    assert target["workers"]["frontend"] == "agy"
     assert target["workers"]["product"] == "claude"
     assert target["providers"]["deepseek"]["api_key_env"] == "DEEPSEEK_API_KEY"
 
