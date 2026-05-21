@@ -28,6 +28,8 @@ def test_adoption_graph_reaches_takeover_review_gate(tmp_path):
     assert result.approvals["takeover"] == "pending"
     assert "prd" not in result.artifacts
     assert (tmp_path / ".goodteam" / "tasks" / "tasks.json").is_file()
+    assert (tmp_path / ".goodteam" / "memory" / "roles" / "product-requirement" / "short-term.md").is_file()
+    assert (tmp_path / ".goodteam" / "memory" / "roles" / "architect" / "long-term.md").is_file()
 
 
 def write_project_fixture(tmp_path: Path) -> Path:
@@ -38,6 +40,14 @@ def write_project_fixture(tmp_path: Path) -> Path:
         repo.mkdir()
 
     (docs / "codex.md").write_text("# Shared Memory\n- Ticket-first handoff.\n", encoding="utf-8")
+    (docs / "docs").mkdir()
+    (docs / "docs" / "backend-roadmap.md").write_text(
+        "# Backend Roadmap\n\n"
+        "## Current Priority Order\n\n"
+        "- Complete Better Auth source-of-truth integration.\n"
+        "- Deploy Postgres-backed dev environment.\n",
+        encoding="utf-8",
+    )
     (backend / "README.md").write_text("# Backend\n- Owns API contracts.\n", encoding="utf-8")
     (frontend / "README.md").write_text("# Frontend\n- Owns UI states.\n", encoding="utf-8")
 
@@ -58,17 +68,22 @@ def write_project_fixture(tmp_path: Path) -> Path:
     return config
 
 
-def test_prd_includes_project_context_sections(tmp_path):
+def test_prd_uses_project_roadmap_contract_instead_of_takeover_workflow(tmp_path):
     project_config = write_project_fixture(tmp_path)
     state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
 
     prd = render_prd_markdown(state, project_config)
 
+    assert "# Product Roadmap PRD" in prd
     assert "## Project Context Read" in prd
-    assert "## Current Project Understanding" in prd
+    assert "## Workflow Request" in prd
     assert "codex.md" in prd
+    assert "backend-roadmap.md" in prd
+    assert "Complete Better Auth source-of-truth integration." in prd
     assert "Backend overview" in prd
-    assert "Secrets, local credentials, generated state, and run artifacts must remain local-only." in prd
+    assert "Produce a real takeover artifact" not in prd
+    assert "Propose next GoodTeam local tasks" not in prd
+    assert "Do not bypass the configured GoodTeam local task flow" not in prd
 
 
 def test_collect_project_context_reads_configured_sources(tmp_path):
@@ -77,6 +92,7 @@ def test_collect_project_context_reads_configured_sources(tmp_path):
     paths = [item["path"] for item in context]
 
     assert any(path.endswith("docs/codex.md") for path in paths)
+    assert any(path.endswith("docs/docs/backend-roadmap.md") for path in paths)
     assert any(path.endswith("backend/README.md") for path in paths)
     assert any(path.endswith("frontend/README.md") for path in paths)
 

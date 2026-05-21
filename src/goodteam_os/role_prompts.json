@@ -1,0 +1,496 @@
+{
+  "version": 1,
+  "context_sources": {
+    "docs": [
+      {
+        "path": "codex.md",
+        "purpose": "Shared long-term project memory"
+      },
+      {
+        "path": "README.md",
+        "purpose": "Project docs index"
+      },
+      {
+        "path": "docs/ai-collaboration.md",
+        "purpose": "AI collaboration and ownership rules"
+      },
+      {
+        "path": "docs/plane-handoff.md",
+        "purpose": "External tracker handoff rules"
+      },
+      {
+        "path": "docs/deployment-current.md",
+        "purpose": "Current deployment and smoke checks"
+      },
+      {
+        "path": "docs/backend-roadmap.md",
+        "purpose": "Backend roadmap"
+      },
+      {
+        "path": "docs/frontend-plane-sync.md",
+        "purpose": "Frontend task and handoff status"
+      },
+      {
+        "path": "docs/definition-of-done.md",
+        "purpose": "Completion and verification rules"
+      }
+    ],
+    "backend": [
+      {
+        "path": "README.md",
+        "purpose": "Backend overview"
+      },
+      {
+        "path": "docs/frontend-auth-contract.md",
+        "purpose": "Frontend-facing auth contract"
+      },
+      {
+        "path": "docs/api.md",
+        "purpose": "Backend API contract"
+      },
+      {
+        "path": "docs/frontend-api-changes.md",
+        "purpose": "Frontend-visible API changes"
+      },
+      {
+        "path": "docs/postgres-app-state-migration.md",
+        "purpose": "App state migration plan"
+      }
+    ],
+    "frontend": [
+      {
+        "path": "GEMINI.md",
+        "purpose": "Frontend agent conventions"
+      },
+      {
+        "path": "README.md",
+        "purpose": "Frontend overview"
+      },
+      {
+        "path": "docs/backend-auth-contract.md",
+        "purpose": "Frontend mirror of backend auth contract"
+      },
+      {
+        "path": "docs/frontend-plane-sync.md",
+        "purpose": "Frontend task and handoff status"
+      }
+    ]
+  },
+  "roles": [
+    {
+      "name": "Orchestrator / PM",
+      "key": "orchestrator",
+      "artifact": "state",
+      "description": "Owns graph routing, checkpoints, approvals, and handoff discipline.",
+      "next_action": "Keep workflow paused until the current gate changes.",
+      "stable_prompt": "You are the Orchestrator / PM role. Maintain workflow state, route between gates, preserve evidence, and keep role outputs separate from task-specific instructions."
+    },
+    {
+      "name": "Project Intake",
+      "key": "project_intake",
+      "artifact": "takeover",
+      "description": "Reads configured project sources and verifies whether enough evidence exists before downstream product work.",
+      "next_action": "Generate or review takeover-context.md before product work.",
+      "stable_prompt": "You are the Project Intake role. Verify configured repositories, durable docs, tracker rules, ownership, deployment, and local-only constraints before any product or engineering role acts."
+    },
+    {
+      "name": "Research",
+      "key": "research",
+      "artifact": "research_report",
+      "description": "Finds market, user, competitor, and risk context when discovery is required.",
+      "next_action": "Run only when the product context lacks enough evidence.",
+      "stable_prompt": "You are the Research role. Add external or internal discovery evidence that clarifies users, market, constraints, and risks without redefining the product or implementation plan."
+    },
+    {
+      "name": "Product / Requirement",
+      "key": "product_requirement",
+      "artifact": "prd",
+      "description": "Creates the target project's roadmap, scope, user stories, and acceptance criteria from evidence.",
+      "next_action": "Request approval or changes on the generated PRD.",
+      "stable_prompt": "You are the Product / Requirement role. Produce target-project product requirements and roadmap decisions from project evidence; treat workflow goals as context, not as the product scope."
+    },
+    {
+      "name": "Architect",
+      "key": "architect",
+      "artifact": "rfc",
+      "description": "Produces RFC, API contract, data model, migration, rollback, and testing strategy.",
+      "next_action": "Wait for approved PRD before drafting RFC.",
+      "stable_prompt": "You are the Architect role. Turn an approved product requirement into a technical design with explicit boundaries, contracts, data flow, migrations, rollback, and verification strategy."
+    },
+    {
+      "name": "Review",
+      "key": "review",
+      "artifact": "review_report",
+      "description": "Checks product, architecture, security, UX, and contract risk.",
+      "next_action": "Review RFC after architecture output exists.",
+      "stable_prompt": "You are the Review role. Challenge artifacts for correctness, missing evidence, regressions, security risk, user impact, and contract drift before work proceeds."
+    },
+    {
+      "name": "Planner",
+      "key": "planner",
+      "artifact": "task_breakdown",
+      "description": "Splits approved design into small local tasks with optional external tracker sync.",
+      "next_action": "Wait for approved RFC and review report.",
+      "stable_prompt": "You are the Planner role. Convert approved artifacts into small executable tasks with inputs, outputs, dependencies, acceptance criteria, and handoff notes."
+    },
+    {
+      "name": "UI Design",
+      "key": "ui",
+      "artifact": "ui_spec",
+      "description": "Defines page structure, interactions, responsive rules, states, and accessibility.",
+      "next_action": "Wait for approved product and architecture boundaries.",
+      "stable_prompt": "You are the UI Design role. Translate approved product intent into user flows, interface states, responsive behavior, accessibility rules, and visual interaction requirements."
+    },
+    {
+      "name": "Implementation",
+      "key": "implementation",
+      "artifact": "implementation_handoff",
+      "description": "Hands scoped work to configured frontend, backend, or automation workers.",
+      "next_action": "Wait for planner output before dispatching workers.",
+      "stable_prompt": "You are the Implementation role. Execute only approved scoped tasks, preserve repository ownership, record evidence, and return artifacts suitable for review."
+    },
+    {
+      "name": "QA",
+      "key": "qa",
+      "artifact": "qa_report",
+      "description": "Owns test plan, regression checks, E2E checks, and QA report.",
+      "next_action": "Wait for implementation result artifacts.",
+      "stable_prompt": "You are the QA role. Verify behavior against requirements and contracts with reproducible tests, smoke checks, regression coverage, and clear pass/fail evidence."
+    },
+    {
+      "name": "Code Review",
+      "key": "code_review",
+      "artifact": "code_review",
+      "description": "Checks quality, security, performance, tests, and contract alignment.",
+      "next_action": "Review implementation outputs before release.",
+      "stable_prompt": "You are the Code Review role. Inspect changes for defects, regressions, maintainability, security, test quality, and alignment with approved artifacts."
+    },
+    {
+      "name": "Release",
+      "key": "release",
+      "artifact": "release_notes",
+      "description": "Prepares release notes, deployment checklist, feature flags, and rollback plan.",
+      "next_action": "Wait for QA and code review evidence.",
+      "stable_prompt": "You are the Release role. Package verified work for deployment with release notes, smoke checks, rollback steps, operational caveats, and approval evidence."
+    },
+    {
+      "name": "Retro / Memory",
+      "key": "retro_memory",
+      "artifact": "retro_memory",
+      "description": "Updates lessons learned, durable memory, standards, and follow-up notes.",
+      "next_action": "Run after release or after a meaningful stopped work slice.",
+      "stable_prompt": "You are the Retro / Memory role. Preserve durable lessons, decisions, caveats, and follow-up facts without storing secrets or temporary debugging noise."
+    }
+  ],
+  "workflow_steps": [
+    {
+      "key": "product_requirement",
+      "title": "Product / Requirement",
+      "roles": "Product, Requirement",
+      "artifact": "prd",
+      "node": "product_requirement",
+      "summary": "Create target-project roadmap, scope, user stories, and acceptance criteria."
+    },
+    {
+      "key": "prd_review",
+      "title": "PRD Review",
+      "roles": "Human, Review",
+      "approval": "prd",
+      "node": "prd_review_gate",
+      "summary": "Review generated PRD and decide approve, request changes, or reject."
+    },
+    {
+      "key": "architecture",
+      "title": "Architecture",
+      "roles": "Architect",
+      "artifact": "rfc",
+      "node": "architect",
+      "summary": "Draft RFC, data model, API contract, migration and rollback plan."
+    },
+    {
+      "key": "architecture_review",
+      "title": "Architecture Review",
+      "roles": "Human, Review, Security",
+      "approval": "rfc",
+      "node": "rfc_review_gate",
+      "summary": "Review architecture, security posture, contract and implementation risks."
+    },
+    {
+      "key": "planning",
+      "title": "Planning",
+      "roles": "Planner",
+      "artifact": "task_breakdown",
+      "node": "planner",
+      "summary": "Split approved design into small executable tasks."
+    },
+    {
+      "key": "ui_design",
+      "title": "UI Design",
+      "roles": "UI",
+      "artifact": "ui_spec",
+      "node": "ui",
+      "summary": "Define page structure, interactions, responsive rules, states, and accessibility."
+    },
+    {
+      "key": "implementation",
+      "title": "Implementation",
+      "roles": "FE, BE",
+      "artifact": "implementation_handoff",
+      "node": "implementation",
+      "summary": "Dispatch scoped frontend and backend work to the configured worker CLIs."
+    },
+    {
+      "key": "qa",
+      "title": "QA",
+      "roles": "QA",
+      "artifact": "qa_report",
+      "node": "qa",
+      "summary": "Run test plan, regression, E2E, and edge-case checks."
+    },
+    {
+      "key": "code_review",
+      "title": "Code Review",
+      "roles": "Code Review",
+      "artifact": "code_review",
+      "node": "code_review",
+      "summary": "Check quality, security, performance, tests, RFC, and API contract alignment."
+    },
+    {
+      "key": "release",
+      "title": "Release",
+      "roles": "Release",
+      "approval": "release",
+      "artifact": "release_notes",
+      "node": "release",
+      "summary": "Prepare release notes, deployment checklist, feature flags, and rollback plan."
+    },
+    {
+      "key": "retro_memory",
+      "title": "Retro / Memory",
+      "roles": "Retro / Memory",
+      "artifact": "retro_memory",
+      "node": "retro_memory",
+      "summary": "Update lessons learned, ADRs, standards, memory, and postmortem notes."
+    }
+  ],
+  "takeover_workflow_step": {
+    "key": "takeover_review",
+    "title": "Takeover Context",
+    "roles": "Orchestrator, Product, Human",
+    "approval": "takeover",
+    "artifact": "takeover",
+    "node": "takeover_review_gate",
+    "summary": "Review whether configured project evidence is sufficient before downstream product work."
+  },
+  "approval_artifacts": {
+    "takeover": "takeover",
+    "prd": "prd",
+    "rfc": "rfc",
+    "security": "review_report",
+    "release": "release_notes"
+  },
+  "artifact_contracts": {
+    "takeover": {
+      "title": "Takeover Context",
+      "role": "project_intake",
+      "purpose": "Verify project evidence and operating boundaries before role work begins.",
+      "sections": [
+        {
+          "title": "Evidence Checklist",
+          "items": [
+            "Confirm configured repository paths exist.",
+            "Confirm durable docs and tracker rules are current enough for downstream roles.",
+            "Confirm ownership boundaries for docs, backend, frontend, deployment, and API contracts.",
+            "Confirm generated state, local configs, credentials, and run artifacts remain local-only unless explicitly exported."
+          ]
+        },
+        {
+          "title": "Review Decision",
+          "items": [
+            "Approve only when the listed sources are sufficient for product, architecture, planning, and implementation roles.",
+            "Request changes when more docs, repository checks, task history, or tracker comments are required first."
+          ]
+        }
+      ]
+    },
+    "prd": {
+      "title": "Product Roadmap PRD",
+      "role": "product_requirement",
+      "purpose": "Define the target project's product roadmap, requirements, user value, scope, and acceptance criteria from project evidence.",
+      "sections": [
+        {
+          "title": "Product Roadmap",
+          "items": [
+            "Summarize the target project's current roadmap priorities from the project context sources.",
+            "Separate product scope from workflow orchestration details.",
+            "Treat the workflow request as background context, not as the roadmap itself."
+          ]
+        },
+        {
+          "title": "Users And Value",
+          "items": [
+            "Name the user or stakeholder groups affected by the roadmap.",
+            "Describe the user value and business value expected from the next product slice."
+          ]
+        },
+        {
+          "title": "Scope And Non-Goals",
+          "items": [
+            "List the next product capabilities to pursue.",
+            "List explicit non-goals and deferred work."
+          ]
+        },
+        {
+          "title": "Acceptance Criteria",
+          "items": [
+            "State reviewable product outcomes.",
+            "Include verification expectations from project definition-of-done sources when available."
+          ]
+        },
+        {
+          "title": "Risks And Open Questions",
+          "items": [
+            "Call out stale docs, conflicting evidence, contract drift, deployment gaps, and unresolved product decisions.",
+            "Identify which questions require human or tracker confirmation before implementation."
+          ]
+        }
+      ]
+    },
+    "rfc": {
+      "title": "Technical RFC",
+      "role": "architect",
+      "purpose": "Translate an approved PRD into technical design, contracts, migrations, rollback, and verification strategy.",
+      "sections": [
+        {
+          "title": "Design",
+          "items": [
+            "Describe system boundaries, data flow, APIs, persistence, and ownership."
+          ]
+        },
+        {
+          "title": "Verification",
+          "items": [
+            "Define tests, smoke checks, rollout checks, and rollback steps."
+          ]
+        }
+      ]
+    },
+    "review_report": {
+      "title": "Review Report",
+      "role": "review",
+      "purpose": "Assess approved artifacts and implementation evidence for product, security, UX, contract, and delivery risk.",
+      "sections": [
+        {
+          "title": "Findings",
+          "items": [
+            "List defects and risks ordered by severity with evidence."
+          ]
+        }
+      ]
+    },
+    "task_breakdown": {
+      "title": "Task Breakdown",
+      "role": "planner",
+      "purpose": "Convert approved artifacts into small executable tasks with dependencies, acceptance criteria, and handoff notes.",
+      "sections": [
+        {
+          "title": "Tasks",
+          "items": [
+            "Each task must have owner role, inputs, outputs, dependencies, and acceptance criteria."
+          ]
+        }
+      ]
+    },
+    "ui_spec": {
+      "title": "UI Spec",
+      "role": "ui",
+      "purpose": "Define user flows, screens, states, interactions, responsive behavior, and accessibility requirements.",
+      "sections": [
+        {
+          "title": "Interface Requirements",
+          "items": [
+            "Describe views, controls, states, empty/loading/error handling, and accessibility."
+          ]
+        }
+      ]
+    },
+    "implementation_handoff": {
+      "title": "Implementation Handoff",
+      "role": "implementation",
+      "purpose": "Record executed implementation work, changed files, commands, evidence, and handoff risks.",
+      "sections": [
+        {
+          "title": "Execution Evidence",
+          "items": [
+            "List scoped tasks, changed files, verification commands, and unresolved issues."
+          ]
+        }
+      ]
+    },
+    "qa_report": {
+      "title": "QA Report",
+      "role": "qa",
+      "purpose": "Verify implementation against requirements with reproducible test and smoke evidence.",
+      "sections": [
+        {
+          "title": "Verification Matrix",
+          "items": [
+            "Map requirements to tests, commands, pass/fail results, and residual risk."
+          ]
+        }
+      ]
+    },
+    "code_review": {
+      "title": "Code Review",
+      "role": "code_review",
+      "purpose": "Inspect implementation for defects, maintainability, security, test quality, and approved-artifact alignment.",
+      "sections": [
+        {
+          "title": "Findings",
+          "items": [
+            "Lead with actionable issues ordered by severity and grounded in file references."
+          ]
+        }
+      ]
+    },
+    "release_notes": {
+      "title": "Release Notes",
+      "role": "release",
+      "purpose": "Prepare verified work for deployment with release summary, smoke checks, rollback steps, and approval evidence.",
+      "sections": [
+        {
+          "title": "Release Checklist",
+          "items": [
+            "List deployment steps, smoke checks, monitoring, rollback, and known caveats."
+          ]
+        }
+      ]
+    },
+    "retro_memory": {
+      "title": "Retro And Memory Update",
+      "role": "retro_memory",
+      "purpose": "Preserve durable lessons, decisions, caveats, and follow-up facts from the completed work slice.",
+      "sections": [
+        {
+          "title": "Durable Updates",
+          "items": [
+            "Record only stable facts that should survive the current run and keep secrets out."
+          ]
+        }
+      ]
+    },
+    "research_report": {
+      "title": "Research Report",
+      "role": "research",
+      "purpose": "Capture discovery evidence that informs product decisions without redefining implementation scope.",
+      "sections": [
+        {
+          "title": "Evidence",
+          "items": [
+            "Summarize user, market, competitor, and risk evidence with clear source references."
+          ]
+        }
+      ]
+    }
+  }
+}

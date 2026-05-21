@@ -114,8 +114,23 @@ For multi-repo products, GoodTeam stores project runtime data in the shared pare
 
 ```text
 <project-root>/.goodteam/memory/project-memory.md
+<project-root>/.goodteam/memory/roles/<role-key>/long-term.md
+<project-root>/.goodteam/memory/roles/<role-key>/mid-term.md
+<project-root>/.goodteam/memory/roles/<role-key>/short-term.md
+<project-root>/.goodteam/memory/roles/<role-key>/index.json
+<project-root>/.goodteam/memory/roles/<role-key>/events.jsonl
 <project-root>/.goodteam/tasks/tasks.json
 ```
+
+Each role owns its own long-, mid-, and short-term memory files. Long-term role memory is for durable role-specific project facts and contracts, mid-term role memory is for active decisions and conventions, and short-term role memory is for interrupted work, pickup notes, next actions, blockers, and handoffs.
+
+Role memory is designed for low-token pickup:
+
+- `events.jsonl` is the append-only source for memory updates and rebuilds.
+- `index.json` stores hashes, character counts, and compact summaries for each horizon.
+- Worker jobs should read `short-term.md` plus the `index.json` summaries first, not the full long/mid files.
+- Full `long-term.md` or `mid-term.md` should be expanded only when the current task needs that specific context.
+- Rebuilds can regenerate role memory files from `events.jsonl` when the markdown files become stale or too noisy.
 
 The local task ledger is built in. Plane or Linear adapters can synchronize from this ledger later, but they are not required for planning or execution.
 
@@ -150,7 +165,7 @@ worker_backend:
   mode: manual
 ```
 
-Supported V1 modes are `manual`, `noop`, and `supervised`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth.
+Supported V1 modes are `manual`, `noop`, and `supervised`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth. Each job includes `role_prompt.md`, `task.md`, `context.md`, `constraints.md`, `expected_artifacts.json`, `role_memory_paths.json`, `role_pickup_packet.json`, and `result.md`. The stable role prompt stays separate from the concrete task. `role_memory_paths.json` points workers at their role-specific long-, mid-, and short-term project memory files; `role_pickup_packet.json` is the default token-light pickup packet.
 
 Local worker commands use the CLIs currently available on this machine:
 

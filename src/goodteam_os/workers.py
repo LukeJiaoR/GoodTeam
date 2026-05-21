@@ -4,6 +4,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from goodteam_os.memory import RoleMemoryStore
+from goodteam_os.roles import role_definition, stable_role_prompt
+
 
 class WorkerJobStore:
     def __init__(self, project_root: Path):
@@ -36,6 +39,18 @@ class WorkerJobStore:
             "expected_artifacts": expected_artifacts or [],
         }
         self._write_json(job_root / "job.json", job)
+        (job_root / "role_prompt.md").write_text(stable_role_prompt(role), encoding="utf-8")
+        role_config = role_definition(role)
+        role_memory_store = RoleMemoryStore(self.project_root)
+        role_memory_paths = role_memory_store.ensure_role_memory(
+            role_key=role,
+            role_name=str(role_config.get("name", role)),
+        )
+        self._write_json(
+            job_root / "role_memory_paths.json",
+            {horizon: str(path) for horizon, path in role_memory_paths.items()},
+        )
+        self._write_json(job_root / "role_pickup_packet.json", role_memory_store.build_pickup_packet(role))
         (job_root / "task.md").write_text(task, encoding="utf-8")
         (job_root / "context.md").write_text(context, encoding="utf-8")
         (job_root / "constraints.md").write_text("\n".join(f"- {item}" for item in constraints or []), encoding="utf-8")

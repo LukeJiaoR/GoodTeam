@@ -11,6 +11,7 @@ from goodteam_os.web import (
     create_local_project_config,
     read_artifact,
     read_artifact_preview,
+    render_markdown_preview,
     render_dashboard,
     resolve_dashboard_state,
     save_artifact,
@@ -224,6 +225,20 @@ def test_build_approval_reviews_reads_prd_artifact(tmp_path):
     assert rfc_review["is_actionable"] is False
 
 
+def test_render_dashboard_renders_markdown_artifact_preview(tmp_path):
+    prd = tmp_path / "prd.md"
+    prd.write_text("# PRD\n\nReview **me**", encoding="utf-8")
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.artifacts["prd"] = str(prd)
+    state.next_node = "await_prd_approval"
+
+    html = render_dashboard(state)
+
+    assert '<div class="artifact-preview markdown-preview">' in html
+    assert '<h1 id="prd">PRD</h1>' in html
+    assert "<p>Review <strong>me</strong></p>" in html
+
+
 def test_read_artifact_preview_truncates_long_content(tmp_path):
     artifact = tmp_path / "long.md"
     artifact.write_text("a" * 20, encoding="utf-8")
@@ -231,6 +246,19 @@ def test_read_artifact_preview_truncates_long_content(tmp_path):
     preview = read_artifact_preview(str(artifact), max_chars=5)
 
     assert preview == "aaaaa\n\n[Preview truncated]"
+
+
+def test_render_markdown_preview_outputs_readable_safe_html():
+    html = render_markdown_preview(
+        "# PRD\n\nReview **bold** text.\n\n- One\n- Two\n\n```html\n<script>alert(1)</script>\n```"
+    )
+
+    assert '<h1 id="prd">PRD</h1>' in html
+    assert "<p>Review <strong>bold</strong> text.</p>" in html
+    assert "<ul>" in html
+    assert "<li>One</li>" in html
+    assert "<pre><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></pre>" in html
+    assert "<script>" not in html
 
 
 def test_read_artifact_reads_current_run_artifact(tmp_path):

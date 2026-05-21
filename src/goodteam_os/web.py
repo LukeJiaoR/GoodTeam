@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -11,76 +12,9 @@ from goodteam_os.graph import run_adoption_until_next_gate, run_until_next_gate
 from goodteam_os.models import apply_role_overrides, list_model_profiles, load_model_profile
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target
+from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state
 from goodteam_os.workers import WorkerJobStore
-
-
-ROLE_DEFINITIONS = [
-    {
-        "name": "Orchestrator / PM",
-        "key": "orchestrator",
-        "artifact": "state",
-        "description": "Owns graph routing, checkpoints, approvals, and handoff discipline.",
-        "next_action": "Keep workflow paused until the current gate changes.",
-    },
-    {
-        "name": "Project Intake",
-        "key": "project_intake",
-        "artifact": "takeover",
-        "description": "Reads existing project config, context files, ownership boundaries, and local-only constraints before PRD.",
-        "next_action": "Generate or review takeover-context.md before product work.",
-    },
-    {
-        "name": "Research",
-        "key": "research",
-        "artifact": "research_report",
-        "description": "Finds market, user, competitor, and risk context when the task needs discovery.",
-        "next_action": "Run only when the idea lacks enough product context.",
-    },
-    {
-        "name": "Product / Requirement",
-        "key": "product_requirement",
-        "artifact": "prd",
-        "description": "Turns the idea into PRD, scope, user stories, and acceptance criteria.",
-        "next_action": "Request approval or changes on the generated PRD.",
-    },
-    {
-        "name": "Architect",
-        "key": "architect",
-        "artifact": "rfc",
-        "description": "Produces RFC, API contract, data model, migration, rollback, and testing strategy.",
-        "next_action": "Wait for approved PRD before drafting RFC",
-    },
-    {
-        "name": "Review",
-        "key": "review",
-        "artifact": "review_report",
-        "description": "Checks product, architecture, security, UX, and contract risk.",
-        "next_action": "Review RFC after architecture output exists.",
-    },
-    {
-        "name": "Planner",
-        "key": "planner",
-        "artifact": "task_breakdown",
-        "description": "Splits approved design into 0.5 to 2 day GoodTeam local tasks, with optional external tracker sync.",
-        "next_action": "Wait for approved RFC and review report.",
-    },
-    {
-        "name": "Implementation",
-        "key": "implementation",
-        "artifact": "implementation_handoff",
-        "description": "Hands scoped work to FE, BE, Codex, Agy, or Claude workers.",
-        "next_action": "Wait for planner output before dispatching workers.",
-    },
-    {
-        "name": "QA / Release / Memory",
-        "key": "qa",
-        "artifact": "qa_report",
-        "description": "Owns test plan, QA report, release checklist, rollback note, and memory update.",
-        "next_action": "Wait for implementation result artifacts.",
-    },
-]
-
 
 def discover_project_directories(base_dir: Path = Path("/Users/luke/WorkSpace/codeAi")) -> list[dict[str, str]]:
     if not base_dir.is_dir():
@@ -194,113 +128,9 @@ def create_local_project_config(
     }
 
 
-WORKFLOW_STEPS = [
-    {
-        "key": "product_requirement",
-        "title": "Product / Requirement",
-        "roles": "Product, Requirement",
-        "artifact": "prd",
-        "node": "product_requirement",
-        "summary": "Create PRD, scope, user stories, acceptance criteria.",
-    },
-    {
-        "key": "prd_review",
-        "title": "PRD Review",
-        "roles": "Human, Review",
-        "approval": "prd",
-        "node": "prd_review_gate",
-        "summary": "Review generated PRD and decide approve, request changes, or reject.",
-    },
-    {
-        "key": "architecture",
-        "title": "Architecture",
-        "roles": "Architect",
-        "artifact": "rfc",
-        "node": "architect",
-        "summary": "Draft RFC, data model, API contract, migration and rollback plan.",
-    },
-    {
-        "key": "architecture_review",
-        "title": "Architecture Review",
-        "roles": "Human, Review, Security",
-        "approval": "rfc",
-        "node": "rfc_review_gate",
-        "summary": "Review architecture, security posture, contract and implementation risks.",
-    },
-    {
-        "key": "planning",
-        "title": "Planning",
-        "roles": "Planner",
-        "artifact": "task_breakdown",
-        "node": "planner",
-        "summary": "Split approved design into 0.5 to 2 day GoodTeam local tasks.",
-    },
-    {
-        "key": "ui_design",
-        "title": "UI Design",
-        "roles": "UI",
-        "artifact": "ui_spec",
-        "node": "ui",
-        "summary": "Define page structure, interactions, responsive rules, states, accessibility.",
-    },
-    {
-        "key": "implementation",
-        "title": "Implementation",
-        "roles": "FE, BE",
-        "artifact": "implementation_handoff",
-        "node": "implementation",
-        "summary": "Dispatch scoped frontend and backend work to the configured worker CLIs.",
-    },
-    {
-        "key": "qa",
-        "title": "QA",
-        "roles": "QA",
-        "artifact": "qa_report",
-        "node": "qa",
-        "summary": "Run test plan, regression, E2E and edge-case checks.",
-    },
-    {
-        "key": "code_review",
-        "title": "Code Review",
-        "roles": "Code Review",
-        "artifact": "code_review",
-        "node": "code_review",
-        "summary": "Check quality, security, performance, tests, RFC and API contract alignment.",
-    },
-    {
-        "key": "release",
-        "title": "Release",
-        "roles": "Release",
-        "approval": "release",
-        "artifact": "release_notes",
-        "node": "release",
-        "summary": "Prepare release notes, deployment checklist, feature flags and rollback plan.",
-    },
-    {
-        "key": "retro_memory",
-        "title": "Retro / Memory",
-        "roles": "Retro / Memory",
-        "artifact": "retro_memory",
-        "node": "retro_memory",
-        "summary": "Update lessons learned, ADRs, standards, memory and postmortem notes.",
-    },
-]
-
-TAKEOVER_WORKFLOW_STEP = {
-    "key": "takeover_review",
-    "title": "Takeover Context",
-    "roles": "Orchestrator, Product, Human",
-    "approval": "takeover",
-    "artifact": "takeover",
-    "node": "takeover_review_gate",
-    "summary": "Read configured project context before PRD, then review whether the team understood the existing project.",
-}
-
-
 def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]]:
-    if state is not None and state.source_type == "existing_project":
-        return [TAKEOVER_WORKFLOW_STEP, *WORKFLOW_STEPS]
-    return WORKFLOW_STEPS
+    source_type = state.source_type if state is not None else "new_project"
+    return workflow_steps_for_source(source_type)
 
 
 def resolve_dashboard_state(workspace: Path) -> AgileDevState | None:
@@ -413,7 +243,7 @@ def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]
         return []
 
     observations = []
-    for role in ROLE_DEFINITIONS:
+    for role in list_role_definitions():
         artifact = role["artifact"]
         model_config = state.role_models.get(role["key"], {})
         status = "No activity"
@@ -421,11 +251,9 @@ def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]
             status = "Active"
         elif artifact in state.artifacts:
             status = "Artifact ready"
-        if role["name"] == "Project Intake" and state.next_node == "await_takeover_approval":
+        if artifact in state.approvals and state.next_node == f"await_{artifact}_approval":
             status = "Waiting for approval"
-        if role["name"] == "Product / Requirement" and state.next_node == "await_prd_approval":
-            status = "Waiting for approval"
-        if role["name"] == "Architect" and state.current_node == "architect":
+        if role["key"] == state.current_node:
             status = "Active"
         if role["key"] == state.next_node:
             status = "Ready"
@@ -513,6 +341,79 @@ def read_artifact_preview(path: str, max_chars: int = 8000) -> str:
     return content[:max_chars] + "\n\n[Preview truncated]"
 
 
+def _slug_heading(value: str) -> str:
+    slug = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
+    return "-".join(part for part in slug.split("-") if part) or "section"
+
+
+def _render_inline_markdown(value: str) -> str:
+    text = escape(value)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", text)
+    return text
+
+
+def render_markdown_preview(markdown: str) -> str:
+    lines = markdown.splitlines()
+    blocks: list[str] = []
+    paragraph: list[str] = []
+    list_items: list[str] = []
+    code_lines: list[str] = []
+    in_code = False
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            blocks.append(f"<p>{_render_inline_markdown(' '.join(paragraph))}</p>")
+            paragraph.clear()
+
+    def flush_list() -> None:
+        if list_items:
+            blocks.append("<ul>" + "".join(f"<li>{item}</li>" for item in list_items) + "</ul>")
+            list_items.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush_paragraph()
+            flush_list()
+            if in_code:
+                blocks.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
+                code_lines.clear()
+                in_code = False
+            else:
+                in_code = True
+            continue
+        if in_code:
+            code_lines.append(line)
+            continue
+        if not stripped:
+            flush_paragraph()
+            flush_list()
+            continue
+        heading = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+        if heading:
+            flush_paragraph()
+            flush_list()
+            level = len(heading.group(1))
+            title = heading.group(2).strip()
+            blocks.append(f'<h{level} id="{_slug_heading(title)}">{_render_inline_markdown(title)}</h{level}>')
+            continue
+        list_item = re.match(r"^[-*]\s+(.+)$", stripped)
+        if list_item:
+            flush_paragraph()
+            list_items.append(_render_inline_markdown(list_item.group(1)))
+            continue
+        flush_list()
+        paragraph.append(stripped)
+
+    if in_code:
+        blocks.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
+    flush_paragraph()
+    flush_list()
+    return "\n".join(blocks)
+
+
 def _resolve_registered_artifact(workspace: Path, artifact_key: str) -> tuple[AgileDevState, Path]:
     state = StateStore(workspace).read_current()
     if state is None:
@@ -573,13 +474,7 @@ def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
         return []
 
     reviews = []
-    approval_artifacts = {
-        "takeover": "takeover",
-        "prd": "prd",
-        "rfc": "rfc",
-        "security": "review_report",
-        "release": "release_notes",
-    }
+    approval_artifacts = approval_artifact_map()
     for approval, decision in state.approvals.items():
         artifact = approval_artifacts.get(approval, approval)
         artifact_path = state.artifacts.get(artifact, "")
@@ -720,7 +615,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <button class="danger approval-decision" data-approval="{escape(review["approval"])}" data-decision="rejected" type="button">Reject</button>
           </div>
           ''' if review["is_actionable"] else ''}
-          {f'<pre class="artifact-preview">{escape(review["content"])}</pre>' if review["content"] else '<div class="empty-state">No artifact content available for this approval yet.</div>'}
+          {f'<div class="artifact-preview markdown-preview">{render_markdown_preview(review["content"])}</div>' if review["content"] else '<div class="empty-state">No artifact content available for this approval yet.</div>'}
         </article>
         """
         for review in build_approval_reviews(state)
@@ -1090,23 +985,31 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
   <title>GoodTeam AI Team OS</title>
   <style>
     :root {{
-      color-scheme: dark;
-      --bg: #101113;
-      --panel: #181a1f;
-      --panel-2: #20242b;
-      --text: #f4f0e8;
-      --muted: #a7adba;
-      --line: #343a46;
-      --accent: #d6ff63;
-      --blue: #7dd3fc;
-      --red: #fb7185;
+      color-scheme: light;
+      --bg: #f5f7f4;
+      --panel: #ffffff;
+      --panel-2: #eef3f1;
+      --surface: #f9fbfa;
+      --ink: #17211d;
+      --text: #17211d;
+      --muted: #66736e;
+      --line: #d9e0dc;
+      --accent: #217a62;
+      --accent-soft: #e2f2ed;
+      --blue: #246b8f;
+      --red: #bf3d4d;
+      --code-bg: #eef1ef;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-family: "Avenir Next", Avenir, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
       background: var(--bg);
       color: var(--text);
+      font-size: 15px;
+    }}
+    code, pre, .command-box, .editor-status {{
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     }}
     main {{
       width: min(1120px, calc(100vw - 32px));
@@ -1137,6 +1040,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     .status {{
       border: 1px solid var(--accent);
       color: var(--accent);
+      background: var(--accent-soft);
       padding: 10px 12px;
       min-width: 220px;
       text-align: center;
@@ -1157,7 +1061,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     .tab-button.active {{
       border-color: var(--accent);
       color: var(--accent);
-      background: #151a15;
+      background: var(--accent-soft);
     }}
     .tab-panel {{
       display: none;
@@ -1176,6 +1080,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       background: var(--panel);
       padding: 18px;
       min-height: 180px;
+      border-radius: 8px;
     }}
     h2 {{
       margin: 0 0 14px;
@@ -1208,7 +1113,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     .mode-button.active {{
       border-color: var(--accent);
       color: var(--accent);
-      background: #151a15;
+      background: var(--accent-soft);
     }}
     label {{
       display: grid;
@@ -1220,11 +1125,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     textarea, select, input {{
       width: 100%;
       border: 1px solid var(--line);
-      background: #0f1115;
+      background: var(--surface);
       color: var(--text);
       padding: 10px 12px;
       font: inherit;
       min-height: 42px;
+      border-radius: 6px;
     }}
     textarea {{
       min-height: 118px;
@@ -1247,7 +1153,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     .command-box {{
       margin-top: 14px;
       border: 1px solid var(--line);
-      background: #0d0f13;
+      background: var(--code-bg);
       padding: 14px;
       min-height: 116px;
       color: var(--accent);
@@ -1260,7 +1166,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       padding: 12px;
       display: grid;
       gap: 10px;
-      background: #101318;
+      background: var(--surface);
     }}
     .adapter-config[hidden] {{
       display: none;
@@ -1307,9 +1213,10 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       grid-template-columns: 40px 1fr;
       gap: 12px;
       border: 1px solid var(--line);
-      background: #111318;
+      background: var(--surface);
       padding: 14px;
       min-height: 172px;
+      border-radius: 8px;
     }}
     .flow-index {{
       width: 32px;
@@ -1365,7 +1272,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     }}
     .flow-review-needed {{
       border-color: var(--accent);
-      background: #171a10;
+      background: var(--accent-soft);
     }}
     .flow-review-needed .flow-index,
     .flow-review-needed .flow-status {{
@@ -1381,41 +1288,110 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     }}
     .role-card {{
       border: 1px solid var(--line);
-      background: #111318;
+      background: var(--surface);
       padding: 14px;
       min-height: 190px;
+      border-radius: 8px;
     }}
     .approval-card {{
       border: 1px solid var(--line);
-      background: #111318;
+      background: var(--surface);
       padding: 14px;
       margin-top: 12px;
+      border-radius: 8px;
     }}
     .artifact-preview {{
       margin: 14px 0 0;
-      padding: 14px;
+      padding: 22px;
       border: 1px solid var(--line);
-      background: #0d0f13;
-      color: var(--text);
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+      background: #fffefa;
+      color: var(--ink);
+      overflow-wrap: break-word;
       max-height: 520px;
       overflow: auto;
-      line-height: 1.45;
-      font: inherit;
+      line-height: 1.65;
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(23, 33, 29, 0.06);
+    }}
+    .markdown-preview h1,
+    .markdown-preview h2,
+    .markdown-preview h3 {{
+      color: var(--ink);
+      text-transform: none;
+      margin: 22px 0 10px;
+      line-height: 1.2;
+    }}
+    .markdown-preview h1:first-child,
+    .markdown-preview h2:first-child,
+    .markdown-preview h3:first-child {{
+      margin-top: 0;
+    }}
+    .markdown-preview h1 {{
+      font-size: 30px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }}
+    .markdown-preview h2 {{
+      font-size: 21px;
+      color: var(--blue);
+    }}
+    .markdown-preview h3 {{
+      font-size: 17px;
+    }}
+    .markdown-preview p {{
+      margin: 10px 0;
+    }}
+    .markdown-preview ul {{
+      margin: 10px 0 14px;
+      padding-left: 24px;
+      display: block;
+      list-style: disc;
+    }}
+    .markdown-preview li {{
+      display: list-item;
+      border-top: 0;
+      padding-top: 0;
+      margin: 6px 0;
+    }}
+    .markdown-preview code {{
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+      color: var(--ink);
+      text-align: left;
+    }}
+    .markdown-preview pre {{
+      margin: 14px 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #17211d;
+      color: #edf7f1;
+      overflow: auto;
+    }}
+    .markdown-preview pre code {{
+      background: transparent;
+      border: 0;
+      color: inherit;
+      padding: 0;
     }}
     .artifact-editor {{
       margin-top: 14px;
       border: 1px solid var(--line);
-      background: #0d0f13;
+      background: var(--panel);
       padding: 14px;
+      border-radius: 8px;
     }}
     .artifact-editor textarea {{
       min-height: 420px;
-      line-height: 1.45;
+      line-height: 1.6;
       white-space: pre;
       overflow: auto;
       resize: vertical;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 14px;
     }}
     .editor-status {{
       display: block;
@@ -1499,10 +1475,11 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     }}
     button {{
       border: 1px solid var(--line);
-      background: #0f1115;
+      background: var(--panel);
       color: var(--text);
       padding: 10px 12px;
       font: inherit;
+      border-radius: 6px;
     }}
     button.primary {{
       border-color: var(--accent);
