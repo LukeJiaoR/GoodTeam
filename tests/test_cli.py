@@ -23,6 +23,48 @@ def test_cli_start_reaches_prd_gate(tmp_path):
     assert (tmp_path / "state" / "projects" / "GTO" / "current.json").exists()
 
 
+def test_cli_smoke_dry_run_outputs_planned_report(tmp_path):
+    command = [
+        sys.executable,
+        "-m",
+        "goodteam_os.cli",
+        "smoke",
+        "--workspace",
+        str(tmp_path),
+        "--suite",
+        "contentops,self",
+        "--cycles",
+        "2",
+        "--autonomy",
+        "full",
+        "--worker-mode",
+        "fake",
+        "--dry-run",
+    ]
+
+    completed = subprocess.run(command, check=True, capture_output=True, text=True)
+    payload = json.loads(completed.stdout)
+
+    assert payload["status"] == "planned"
+    assert len(payload["runs"]) == 4
+    assert not (tmp_path / "state" / "smoke-runs" / "latest.json").exists()
+
+
+def test_cli_smoke_failure_exits_nonzero_and_writes_report(tmp_path, monkeypatch):
+    from goodteam_os import cli
+
+    def fake_run_smoke_suite(**kwargs):
+        return {
+            "status": "failed",
+            "report_path": str(tmp_path / "state" / "smoke-runs" / "latest.json"),
+            "runs": [{"project_key": "CONTENTOPS", "status": "failed", "classification": "target scaffold"}],
+        }
+
+    monkeypatch.setattr(cli, "run_smoke_suite", fake_run_smoke_suite)
+
+    assert cli.main(["smoke", "--workspace", str(tmp_path), "--suite", "contentops", "--cycles", "1"]) == 1
+
+
 def test_cli_start_accepts_model_profile_and_role_override(tmp_path):
     command = [
         sys.executable,

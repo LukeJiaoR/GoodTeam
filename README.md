@@ -105,6 +105,38 @@ tmux new -s goodteam-dashboard
 PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --workspace /tmp/goodteam-os-run --port 8788
 ```
 
+## Smoke Loops
+
+GoodTeam can run local smoke loops that exercise the workflow, approval gates, workers, verification commands, and machine-readable evidence reports:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli smoke \
+  --workspace /tmp/goodteam-smoke \
+  --suite contentops,self \
+  --cycles 2 \
+  --autonomy full \
+  --worker-mode fake
+```
+
+Use `--dry-run` to preview planned cycles without creating project configs, state, artifacts, or target files. Smoke reports are written to:
+
+```text
+<workspace>/state/smoke-runs/latest.json
+```
+
+Supported smoke suites:
+
+- `contentops`: runs the CONTENTOPS canary workflow against an isolated local target. Set `GOODTEAM_CONTENTOPS_ROOT` to point at an existing target root; otherwise GoodTeam creates one under the smoke workspace.
+- `self`: runs GoodTeam against GoodTeam from a temporary git worktree under the smoke workspace. Because this uses `git worktree`, it tests committed code at `HEAD`; commit the current GoodTeam changes before treating self-smoke results as acceptance evidence.
+
+Supported smoke worker modes:
+
+- `fake`: deterministic local worker adapter for smoke-loop verification.
+- `noop`: records protocol-only worker completion.
+- `codex`: invokes the configured Codex CLI worker adapter.
+
+On failure, GoodTeam classifies the failure (`auth/provider`, `worker timeout`, `GoodTeam workflow`, `target scaffold`, `QA/browser/UI`, or `unknown`) and writes a blocker task into the target's `.goodteam/tasks/tasks.json`.
+
 ## Project Targets
 
 Create a local project config for your own repos from the dashboard, or add one directly under `projects/`:
@@ -234,3 +266,19 @@ Codex worker preflight records only non-secret facts, such as whether `OPENAI_AP
 ## Boundary
 
 This repo must not read Codex local MCP credentials at runtime. Plane credentials for future adapters should come from environment variables or a secret manager.
+
+## Telegram Approval Channel
+
+GoodTeam can poll a Telegram bot for approval callbacks. The channel is local-first and uses long polling, not a public webhook:
+
+```bash
+export GOODTEAM_TG_BOT_TOKEN="<telegram-bot-token>"
+export GOODTEAM_TG_CHAT_ID="<chat-id>"
+export GOODTEAM_TG_ALLOWED_USERS="<telegram-user-id>,<telegram-user-id>"
+
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli tg-poll \
+  --workspace /tmp/goodteam-os-run \
+  --project-key CONTENTOPS
+```
+
+Only environment variable names and configured/allowed metadata are recorded by GoodTeam. Do not put bot tokens in project configs or committed files.

@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 
 from goodteam_os.projects import check_project_target, load_project_target
+from goodteam_os.smoke import run_smoke_suite
+from goodteam_os.telegram import poll_telegram_approvals
 from goodteam_os.web import serve, start_workflow
 
 
@@ -29,6 +31,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--project-config", type=Path, required=True)
+
+    smoke = subparsers.add_parser("smoke")
+    smoke.add_argument("--workspace", type=Path, default=Path("."))
+    smoke.add_argument("--suite", default="contentops,self")
+    smoke.add_argument("--cycles", type=int, default=2)
+    smoke.add_argument("--autonomy", choices=["full"], default="full")
+    smoke.add_argument("--worker-mode", choices=["fake", "noop", "codex"], default="fake")
+    smoke.add_argument("--dry-run", action="store_true")
+
+    tg_poll = subparsers.add_parser("tg-poll")
+    tg_poll.add_argument("--workspace", type=Path, default=Path("."))
+    tg_poll.add_argument("--project-key", default="")
+    tg_poll.add_argument("--once", action="store_true")
     return parser
 
 
@@ -55,6 +70,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         target = load_project_target(args.project_config)
         print(json.dumps(check_project_target(target), indent=2))
+        return 0
+    if args.command == "smoke":
+        payload = run_smoke_suite(
+            workspace=args.workspace,
+            suites=[suite.strip() for suite in args.suite.split(",") if suite.strip()],
+            cycles=args.cycles,
+            autonomy=args.autonomy,
+            dry_run=args.dry_run,
+            worker_mode=args.worker_mode,
+        )
+        print(json.dumps(payload, indent=2))
+        return 1 if payload.get("status") == "failed" else 0
+    if args.command == "tg-poll":
+        payload = poll_telegram_approvals(workspace=args.workspace, project_key=args.project_key, once=args.once)
+        print(json.dumps(payload, indent=2))
         return 0
     return 1
 

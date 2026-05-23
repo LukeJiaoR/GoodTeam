@@ -108,6 +108,24 @@ def build_action_items(workspace: Path, project_key: str = "") -> list[dict[str,
     return list(reversed(items))
 
 
+def build_smoke_run_items(workspace: Path) -> list[dict[str, str]]:
+    root = workspace / "state" / "smoke-runs"
+    if not root.is_dir():
+        return []
+    items: list[dict[str, str]] = []
+    for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for run in report.get("runs", []):
+            raw = dict(run)
+            raw["report_path"] = str(path)
+            raw["report_status"] = str(report.get("status", ""))
+            items.append({key: str(value) for key, value in raw.items()})
+    return items[:12]
+
+
 def maybe_send_favicon_response(handler: object, path: str) -> bool:
     if path != "/favicon.ico":
         return False
@@ -969,7 +987,11 @@ def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
 
 
 def render_dashboard(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
-    start_context = start_context or build_start_console_context(Path("."))
+    if start_context is None:
+        start_context = build_start_console_context(Path("."))
+    else:
+        default_context = build_start_console_context(Path(str(start_context.get("workspace", "."))))
+        start_context = {**default_context, **start_context}
     workspace = Path(str(start_context.get("workspace", ".")))
     active_run = is_active_run(state)
     role_observations = build_role_observations(state)
@@ -1057,6 +1079,25 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     if not action_cards:
         action_cards = '<div class="empty-state">No actions recorded yet.</div>'
+    smoke_cards = "\n".join(
+        f"""
+        <article class="action-card">
+          <div class="role-topline">
+            <h3>{escape(item.get("project_key", ""))} cycle {escape(item.get("cycle", ""))}</h3>
+            <span class="role-status">{escape(item.get("status", ""))}</span>
+          </div>
+          <dl class="role-meta">
+            <dt>Suite</dt><dd>{escape(item.get("suite", ""))}</dd>
+            <dt>Classification</dt><dd>{escape(item.get("classification", "") or "none")}</dd>
+            <dt>Next Task</dt><dd>{escape(item.get("next_task", "") or "none")}</dd>
+            <dt>Report</dt><dd><code>{escape(item.get("report_path", ""))}</code></dd>
+          </dl>
+        </article>
+        """
+        for item in build_smoke_run_items(workspace)
+    )
+    if not smoke_cards:
+        smoke_cards = '<div class="empty-state">No smoke runs recorded yet.</div>'
     role_cards = "\n".join(
         f"""
         <article class="role-card">
@@ -2130,6 +2171,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       <button class="tab-button" data-tab="roles" type="button">Roles</button>
       <button class="tab-button" data-tab="artifacts" type="button">Artifacts</button>
       <button class="tab-button" data-tab="actions" type="button">Actions</button>
+      <button class="tab-button" data-tab="smoke" type="button">Smoke Runs</button>
       <button class="tab-button" data-tab="workers" type="button">Workers</button>
       <button class="tab-button" data-tab="approvals" type="button">Approvals</button>
       <button class="tab-button" data-tab="system" type="button">System</button>
@@ -2172,6 +2214,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       <section>
         <h2>Actions</h2>
         <div class="action-timeline">{action_cards}</div>
+      </section>
+    </div>
+    <div class="tab-panel" id="tab-smoke">
+      <section>
+        <h2>Smoke Runs</h2>
+        <div class="action-timeline">{smoke_cards}</div>
       </section>
     </div>
     <div class="tab-panel" id="tab-workers">

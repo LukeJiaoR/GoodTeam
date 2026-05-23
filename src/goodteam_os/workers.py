@@ -82,6 +82,8 @@ class WorkerJobStore:
         adapter = str(job["adapter"])
         if adapter == "noop":
             return self._complete_noop(job_root, job)
+        if adapter == "fake":
+            return self._complete_fake(job_root, job)
         if adapter == "human":
             return self._wait_for_human(job_root, job)
         if adapter == "codex":
@@ -91,6 +93,14 @@ class WorkerJobStore:
     def _complete_noop(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         summary = "Completed by noop adapter. No external CLI was invoked."
         (job_root / "result.md").write_text(f"# Worker Result\n\n{summary}\n", encoding="utf-8")
+        return self._write_status(job_root, job, "completed", summary)
+
+    def _complete_fake(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        summary = "Completed by fake smoke adapter. No external CLI was invoked."
+        (job_root / "result.md").write_text(
+            f"# Worker Result\n\nStatus: pass\n\n{summary}\n",
+            encoding="utf-8",
+        )
         return self._write_status(job_root, job, "completed", summary)
 
     def _wait_for_human(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
