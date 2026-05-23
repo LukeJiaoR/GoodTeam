@@ -7,6 +7,7 @@ from goodteam_os.smoke import (
     classify_smoke_failure,
     ensure_self_worktree,
     ensure_self_worktree_target_is_safe,
+    run_shell_command,
     run_smoke_suite,
     write_smoke_report,
 )
@@ -24,11 +25,25 @@ def test_smoke_registry_defines_contentops_and_self_projects(tmp_path):
     assert registry["self"].cleanup_policy == "temporary_worktree"
 
 
+def test_contentops_registry_uses_existing_target_verification_commands(tmp_path, monkeypatch):
+    target = tmp_path / "contentops"
+    target.mkdir()
+    (target / "package.json").write_text('{"scripts":{"test":"echo test","build":"echo build"}}', encoding="utf-8")
+    monkeypatch.setenv("GOODTEAM_CONTENTOPS_ROOT", str(target))
+
+    registry = build_smoke_project_registry(workspace=tmp_path / "workspace", repo_root=Path.cwd())
+
+    commands = [item["command"] for item in registry["contentops"].verification_commands]
+    assert commands == ["npm run test", "npm run build"]
+    assert registry["contentops"].target_root == target
+
+
 def test_smoke_failure_classifier_uses_stable_categories():
     assert classify_smoke_failure("401 Unauthorized INVALID_API_KEY") == "auth/provider"
     assert classify_smoke_failure("worker timeout after 1800 seconds") == "worker timeout"
     assert classify_smoke_failure("next_node was blocked") == "GoodTeam workflow"
     assert classify_smoke_failure("npm run build failed in generated scaffold") == "target scaffold"
+    assert classify_smoke_failure("better-sqlite3 NODE_MODULE_VERSION mismatch during npm run test") == "target scaffold"
     assert classify_smoke_failure("QA release-blocking browser capture failed") == "QA/browser/UI"
     assert classify_smoke_failure("something else broke") == "unknown"
 
@@ -65,7 +80,9 @@ def test_smoke_suite_dry_run_reports_two_cycles_without_mutating_targets(tmp_pat
     assert not (tmp_path / "state" / "smoke-runs" / "latest.json").exists()
 
 
-def test_smoke_suite_fake_mode_generates_reports_tasks_and_worker_ids(tmp_path):
+def test_smoke_suite_fake_mode_generates_reports_tasks_and_worker_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("GOODTEAM_CONTENTOPS_ROOT", str(tmp_path / "contentops"))
+
     result = run_smoke_suite(
         workspace=tmp_path,
         suites=["contentops"],
@@ -116,6 +133,35 @@ def test_smoke_suite_failure_creates_blocker_task(tmp_path):
     assert result["runs"][0]["classification"] == "target scaffold"
     task_ledger = tmp_path / "target" / ".goodteam" / "tasks" / "tasks.json"
     assert "Smoke failure: CONTENTOPS cycle 1" in task_ledger.read_text(encoding="utf-8")
+
+
+def test_shell_command_runner_uses_login_shell_path(tmp_path, monkeypatch):
+    calls = []
+
+    class Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(command, *, cwd, capture_output, text, check):
+        calls.append({"command": command, "cwd": cwd, "capture_output": capture_output, "text": text, "check": check})
+        return Completed()
+
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setattr("goodteam_os.smoke.subprocess.run", fake_run)
+
+    result = run_shell_command("node -p process.version", tmp_path)
+
+    assert result["exit_code"] == 0
+    assert calls == [
+        {
+            "command": ["/bin/zsh", "-lc", "node -p process.version"],
+            "cwd": tmp_path,
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+    ]
 
 
 def test_self_worktree_target_must_not_be_inside_current_repo(tmp_path):

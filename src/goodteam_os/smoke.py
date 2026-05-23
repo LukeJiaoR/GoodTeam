@@ -1,4 +1,5 @@
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -35,10 +36,11 @@ def build_smoke_project_registry(workspace: Path, repo_root: Path) -> dict[str, 
         str(
             _env_or_default(
                 "GOODTEAM_CONTENTOPS_ROOT",
-                workspace / "smoke-targets" / "contentops",
+                _default_contentops_root(workspace),
             )
         )
     )
+    contentops_commands = _contentops_verification_commands(contentops_root, python_command)
     self_root = workspace / "smoke-worktrees" / "goodteam-self"
     return {
         "contentops": SmokeProject(
@@ -49,9 +51,7 @@ def build_smoke_project_registry(workspace: Path, repo_root: Path) -> dict[str, 
             delivery_mode="init_project",
             project_config=workspace / "projects" / "contentops.local.yaml",
             target_root=contentops_root,
-            verification_commands=[
-                {"name": "contentops-readme", "command": f"{sys.executable} -c \"from pathlib import Path; assert Path('README.md').is_file()\"", "cwd": str(contentops_root)}
-            ],
+            verification_commands=contentops_commands,
             cleanup_policy="keep",
         ),
         "self": SmokeProject(
@@ -195,12 +195,12 @@ def classify_smoke_failure(message: str) -> str:
         return "auth/provider"
     if "timeout" in normalized or "timed out" in normalized:
         return "worker timeout"
-    if "next_node" in normalized or "blocked" in normalized or "approval gate" in normalized or "workflow" in normalized:
-        return "GoodTeam workflow"
-    if "npm" in normalized or "build failed" in normalized or "scaffold" in normalized:
+    if "npm" in normalized or "build failed" in normalized or "scaffold" in normalized or "node_module_version" in normalized:
         return "target scaffold"
     if "qa" in normalized or "browser" in normalized or "ui" in normalized:
         return "QA/browser/UI"
+    if "next_node" in normalized or "blocked" in normalized or "approval gate" in normalized or "workflow" in normalized:
+        return "GoodTeam workflow"
     return "unknown"
 
 
@@ -236,7 +236,8 @@ def ensure_self_worktree(repo_root: Path, target: Path) -> None:
 
 
 def run_shell_command(command: str, cwd: Path) -> dict[str, object]:
-    completed = subprocess.run(command, cwd=cwd, shell=True, capture_output=True, text=True, check=False)
+    shell = os.getenv("SHELL") or "/bin/sh"
+    completed = subprocess.run([shell, "-lc", command], cwd=cwd, capture_output=True, text=True, check=False)
     return {
         "command": command,
         "cwd": str(cwd),
@@ -322,6 +323,24 @@ def _project_or_fail(registry: dict[str, SmokeProject], suite: str) -> SmokeProj
 
 
 def _env_or_default(name: str, default: Path) -> str:
-    import os
-
     return os.getenv(name, str(default))
+
+
+def _default_contentops_root(workspace: Path) -> Path:
+    existing = Path("/Users/luke/workspace/contentops-goodteam-e2e/contentops")
+    return existing if existing.is_dir() else workspace / "smoke-targets" / "contentops"
+
+
+def _contentops_verification_commands(contentops_root: Path, python_command: str) -> list[dict[str, str]]:
+    if (contentops_root / "package.json").is_file():
+        return [
+            {"name": "contentops-test", "command": "npm run test", "cwd": str(contentops_root)},
+            {"name": "contentops-build", "command": "npm run build", "cwd": str(contentops_root)},
+        ]
+    return [
+        {
+            "name": "contentops-readme",
+            "command": f"{python_command} -c \"from pathlib import Path; assert Path('README.md').is_file()\"",
+            "cwd": str(contentops_root),
+        }
+    ]
