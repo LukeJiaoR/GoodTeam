@@ -1,5 +1,7 @@
 import json
+import os
 import re
+import shutil
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -8,13 +10,112 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-from goodteam_os.graph import run_adoption_until_next_gate, run_until_next_gate
-from goodteam_os.models import apply_role_overrides, list_model_profiles, load_model_profile
+from goodteam_os.graph import advance_approved_workflow, run_adoption_until_next_gate, run_until_next_gate
+from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
-from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state
+from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.workers import WorkerJobStore
+
+PRD_REVIEW_ROLES = [
+    "Product / Requirement",
+    "Architect",
+    "Review / QA",
+]
+
+
+def append_action(
+    workspace: Path,
+    *,
+    run_id: str,
+    actor: str,
+    action: str,
+    project_key: str = "",
+    gate: str = "",
+    decision: str = "",
+    before_node: str = "",
+    after_node: str = "",
+    artifact: str = "",
+    artifact_path: str = "",
+) -> None:
+    action_log = _action_log_path(workspace, project_key)
+    action_log.parent.mkdir(parents=True, exist_ok=True)
+    event = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "run_id": run_id,
+        "actor": actor,
+        "action": action,
+        "gate": gate,
+        "decision": decision,
+        "before_node": before_node,
+        "after_node": after_node,
+        "artifact": artifact,
+        "artifact_path": artifact_path,
+    }
+    with action_log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event) + "\n")
+
+
+def _action_log_path(workspace: Path, project_key: str = "") -> Path:
+    if project_key:
+        return StateStore(workspace).project_state_dir(project_key) / "action-log.jsonl"
+    return workspace / "state" / "action-log.jsonl"
+
+
+def build_action_title(action: dict[str, str]) -> str:
+    actor = action.get("actor", "").title() or "System"
+    action_type = action.get("action", "")
+    artifact = action.get("artifact", "")
+    gate = action.get("gate", "")
+    decision = action.get("decision", "")
+    if action_type == "workflow_started":
+        return f"{actor} started workflow"
+    if action_type.endswith("_generated") and artifact:
+        return f"{actor} generated {artifact.upper()}"
+    if action_type == "prd_regenerated":
+        return f"{actor} regenerated PRD"
+    if action_type == "artifact_saved" and artifact:
+        return f"{actor} saved {artifact.upper()} artifact"
+    if action_type == "approval_decided" and gate and decision:
+        verb = {
+            "approved": "approved",
+            "changes_requested": "requested changes on",
+            "rejected": "rejected",
+        }.get(decision, decision.replace("_", " "))
+        return f"{actor} {verb} {gate.upper()}"
+    return f"{actor} {action_type.replace('_', ' ')}".strip()
+
+
+def build_action_items(workspace: Path, project_key: str = "") -> list[dict[str, str]]:
+    action_log = _action_log_path(workspace, project_key)
+    if not action_log.is_file():
+        return []
+    items = []
+    for line in action_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        action = {key: str(value) for key, value in raw.items()}
+        before_node = action.get("before_node", "")
+        after_node = action.get("after_node", "")
+        action["title"] = build_action_title(action)
+        action["node_transition"] = f"{before_node} -> {after_node}" if before_node or after_node else ""
+        items.append(action)
+    return list(reversed(items))
+
+
+def maybe_send_favicon_response(handler: object, path: str) -> bool:
+    if path != "/favicon.ico":
+        return False
+    handler.send_response(204)
+    handler.send_header("Content-Length", "0")
+    handler.end_headers()
+    return True
+
 
 def discover_project_directories(base_dir: Path = Path("/Users/luke/WorkSpace/codeAi")) -> list[dict[str, str]]:
     if not base_dir.is_dir():
@@ -39,6 +140,16 @@ def discover_project_directories(base_dir: Path = Path("/Users/luke/WorkSpace/co
         seen.add(item["path"])
         unique.append(item)
     return unique
+
+
+def _project_directory_base(repos: dict[str, object], fallback: Path) -> Path:
+    repo_paths = [Path(str(path)).expanduser() for path in repos.values() if str(path).strip()]
+    existing_repo_paths = [path.resolve() for path in repo_paths if path.is_dir()]
+    if not existing_repo_paths:
+        return fallback
+
+    common_path = Path(os.path.commonpath([str(path) for path in existing_repo_paths]))
+    return common_path if common_path.is_dir() else existing_repo_paths[0].parent
 
 
 def _slug(value: str) -> str:
@@ -69,7 +180,10 @@ def create_local_project_config(
     plane_project_id: str = "",
     plane_api_key_env: str = "",
     plane_mcp_server: str = "",
-    worker_backend_mode: str = "manual",
+    worker_backend_mode: str = "codex",
+    model_profile: str = "balanced",
+    delivery_mode: str = "init_project",
+    role_model_overrides: dict[str, str] | None = None,
 ) -> dict[str, object]:
     name = project_name.strip()
     key = project_key.strip().upper()
@@ -89,11 +203,25 @@ def create_local_project_config(
         raise ValueError("Select at least one project directory.")
 
     path = workspace / "projects" / f"{_slug(key)}.local.yaml"
+    profile = model_profile.strip() or "balanced"
+    mode = normalize_delivery_mode(delivery_mode)
+    overrides = {
+        str(role).strip(): str(model).strip()
+        for role, model in (role_model_overrides or {}).items()
+        if str(role).strip() and str(model).strip()
+    }
     lines = [
         f"name: {name}",
         f"key: {key}",
-        "repos:",
+        f"model_profile: {profile}",
+        f"delivery_mode: {mode}",
     ]
+    if overrides:
+        lines.append("role_model_overrides:")
+        lines.extend(f"  {role}: {model}" for role, model in sorted(overrides.items()))
+    lines.extend([
+        "repos:",
+    ])
     lines.extend(f"  {repo}: {repo_path}" for repo, repo_path in repos)
     sync_values = [value for value in (task_sync or []) if value]
     lines.extend(["task_backend:", "  mode: local", "  sync:"])
@@ -111,7 +239,7 @@ def create_local_project_config(
     if "plane" in sync_values:
         lines.append("  plane:")
         lines.extend(f"    {key}: {value}" for key, value in plane_config.items() if value)
-    worker_mode = worker_backend_mode.strip() or "manual"
+    worker_mode = worker_backend_mode.strip() or "codex"
     lines.extend(["worker_backend:", f"  mode: {worker_mode}"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -125,6 +253,9 @@ def create_local_project_config(
         "repos": {repo: str(repo_path) for repo, repo_path in repos},
         "task_backend": task_backend,
         "worker_backend": {"mode": worker_mode},
+        "model_profile": profile,
+        "delivery_mode": mode,
+        "role_model_overrides": overrides,
     }
 
 
@@ -133,8 +264,11 @@ def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]
     return workflow_steps_for_source(source_type)
 
 
-def resolve_dashboard_state(workspace: Path) -> AgileDevState | None:
-    return StateStore(workspace).read_current()
+def resolve_dashboard_state(workspace: Path, project_key: str = "") -> AgileDevState | None:
+    store = StateStore(workspace)
+    if project_key:
+        return store.read_project_current(project_key)
+    return store.read_current()
 
 
 def is_active_run(state: AgileDevState | None) -> bool:
@@ -148,30 +282,40 @@ def start_workflow(
     project_key: str,
     model_config: Path,
     model_profile: str,
+    delivery_mode: str = "",
     source_type: str = "new_project",
-    project_config: Path = Path("projects/eastern-birth-chart.local.yaml"),
+    project_config: Path | None = None,
+    role_model_overrides: list[str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, object]:
     if not idea.strip():
         raise ValueError("Workflow goal is required.")
-    if not dry_run and is_active_run(resolve_dashboard_state(workspace)):
+    key = normalize_project_key(project_key)
+    if not dry_run and is_active_run(resolve_dashboard_state(workspace, project_key=key)):
         raise ValueError("An active run already exists. Finish, archive, or resume it before starting another run.")
 
     if source_type not in {"new_project", "existing_project"}:
         raise ValueError(f"Unknown workflow source type: {source_type}")
+    if source_type == "existing_project" and project_config is None:
+        raise ValueError("Project config is required for existing project adoption.")
 
+    target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
+    resolved_profile, role_models = resolve_project_model_profile(
+        model_config,
+        target,
+        explicit_profile=model_profile,
+        role_overrides=role_model_overrides or [],
+    )
     state = create_initial_state(
         run_id=str(uuid4()),
-        project_key=project_key,
+        project_key=key,
         idea=idea.strip(),
     )
     state.source_type = source_type
-    state.source_ref = str(project_config) if source_type == "existing_project" else "manual"
-    state.model_profile = model_profile
-    state.role_models = apply_role_overrides(
-        load_model_profile(model_config, model_profile),
-        [],
-    )
+    state.source_ref = str(project_config) if source_type == "existing_project" and project_config is not None else "manual"
+    state.model_profile = resolved_profile
+    state.delivery_mode = normalize_delivery_mode(delivery_mode or str(target.get("delivery_mode", "") or "init_project"))
+    state.role_models = role_models
 
     if dry_run:
         if source_type == "existing_project":
@@ -193,14 +337,37 @@ def start_workflow(
     else:
         result = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
     state_store = StateStore(root=workspace)
-    state_store.write_current(result)
-    state_store.write_checkpoint(result)
+    state_store.write_project_current(result)
+    state_store.write_project_checkpoint(result)
+    append_action(
+        workspace,
+        run_id=result.run_id,
+        actor="human",
+        action="workflow_started",
+        project_key=result.project_key,
+        before_node="",
+        after_node=result.next_node,
+    )
+    for artifact, artifact_path in result.artifacts.items():
+        if artifact in {"task_ledger"}:
+            continue
+        append_action(
+            workspace,
+            run_id=result.run_id,
+            actor="system",
+            action=f"{artifact}_generated",
+            project_key=result.project_key,
+            before_node="",
+            after_node=result.next_node,
+            artifact=artifact,
+            artifact_path=artifact_path,
+        )
     payload = asdict(result)
     payload["dry_run"] = False
     return payload
 
 
-def decide_approval(*, workspace: Path, approval: str, decision: str) -> dict[str, object]:
+def decide_approval(*, workspace: Path, approval: str, decision: str, project_key: str = "") -> dict[str, object]:
     approved_next = {
         "takeover": "product_requirement",
         "prd": "architect",
@@ -217,25 +384,194 @@ def decide_approval(*, workspace: Path, approval: str, decision: str) -> dict[st
         raise ValueError(f"Unknown approval decision: {decision}") from exc
 
     state_store = StateStore(workspace)
-    state = state_store.read_current()
+    state = state_store.read_project_current(project_key) if project_key else state_store.read_current()
     if state is None:
         raise ValueError("No active run to approve.")
+    key = normalize_project_key(project_key or state.project_key)
     if approval not in state.approvals:
         raise ValueError(f"Approval gate is not present in current state: {approval}")
+    if state.next_node != f"await_{approval}_approval":
+        raise ValueError(f"Approval gate is not currently actionable: {approval}")
 
+    before_node = state.next_node
     state.approvals[approval] = approval_decision
     state.current_node = f"{approval}_review_gate"
     state.next_node = gate_next_node(state, gate=approval, approved_next=approved_next[approval])
+    append_action(
+        workspace,
+        run_id=state.run_id,
+        actor="human",
+        action="approval_decided",
+        project_key=key,
+        gate=approval,
+        decision=str(approval_decision),
+        before_node=before_node,
+        after_node=state.next_node,
+        artifact=approval_artifact_map().get(approval, approval),
+        artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
+    )
     if approval == "takeover" and approval_decision == ApprovalDecision.APPROVED:
-        state_store.write_current(state)
-        state_store.write_checkpoint(state)
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else Path("projects/eastern-birth-chart.local.yaml")
+        regenerate_before_node = state.next_node
+        state_store.write_project_current(state, key)
+        state_store.write_project_checkpoint(state, key)
+        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
         state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-    state_store.write_current(state)
-    state_store.write_checkpoint(state)
+        append_action(
+            workspace,
+            run_id=state.run_id,
+            actor="system",
+            action="prd_generated",
+            project_key=key,
+            gate="prd",
+            before_node=regenerate_before_node,
+            after_node=state.next_node,
+            artifact="prd",
+            artifact_path=state.artifacts.get("prd", ""),
+        )
+    elif approval_decision == ApprovalDecision.APPROVED:
+        generated_before = set(state.artifacts)
+        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+        if project_config is None and project_key:
+            try:
+                project_config = _project_config_for_key(workspace, project_key)
+            except ValueError:
+                project_config = None
+        state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
+        for artifact in sorted(set(state.artifacts) - generated_before):
+            append_action(
+                workspace,
+                run_id=state.run_id,
+                actor="system",
+                action=f"{artifact}_generated",
+                project_key=key,
+                gate=approval,
+                before_node=before_node,
+                after_node=state.next_node,
+                artifact=artifact,
+                artifact_path=state.artifacts.get(artifact, ""),
+            )
+    elif approval == "prd" and approval_decision == ApprovalDecision.REJECTED:
+        regenerate_before_node = state.next_node
+        state.approvals["prd"] = ApprovalDecision.PENDING
+        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+        state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+        append_action(
+            workspace,
+            run_id=state.run_id,
+            actor="system",
+            action="prd_regenerated",
+            project_key=key,
+            gate="prd",
+            before_node=regenerate_before_node,
+            after_node=state.next_node,
+            artifact="prd",
+            artifact_path=state.artifacts.get("prd", ""),
+        )
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
     payload = asdict(state)
     payload["decision"] = str(approval_decision)
     return payload
+
+
+def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    state_store = StateStore(workspace)
+    state = state_store.read_project_current(key)
+    if state is None:
+        raise ValueError(f"No active run for project: {key}")
+    if state.current_node != "implementation" or state.next_node != "blocked":
+        raise ValueError(f"Current run is not blocked at implementation: {key}")
+
+    before_node = state.next_node
+    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+    if project_config is None or not project_config.is_file():
+        project_config = _project_config_for_key(workspace, key)
+
+    generated_before = set(state.artifacts)
+    state.blockers = []
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+    state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
+
+    append_action(
+        workspace,
+        run_id=state.run_id,
+        actor="human",
+        action="blocked_workflow_retried",
+        project_key=key,
+        before_node=before_node,
+        after_node=state.next_node,
+    )
+    for artifact in sorted(set(state.artifacts) - generated_before):
+        append_action(
+            workspace,
+            run_id=state.run_id,
+            actor="system",
+            action=f"{artifact}_generated",
+            project_key=key,
+            before_node=before_node,
+            after_node=state.next_node,
+            artifact=artifact,
+            artifact_path=state.artifacts.get(artifact, ""),
+        )
+
+    payload = asdict(state)
+    payload["retried"] = True
+    return payload
+
+
+def terminate_project_run(*, workspace: Path, project_key: str) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    state_store = StateStore(workspace)
+    state = state_store.read_project_current(key)
+    if state is None:
+        raise ValueError(f"No active run for project: {key}")
+    before_node = state.next_node
+    archive_path = state_store.archive_project_current(key, reason="cancelled")
+    append_action(
+        workspace,
+        run_id=state.run_id,
+        actor="human",
+        action="run_terminated",
+        project_key=key,
+        before_node=before_node,
+        after_node="cancelled",
+    )
+    return {
+        "terminated": True,
+        "project_key": key,
+        "run_id": state.run_id,
+        "archive_path": str(archive_path),
+    }
+
+
+def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    config_path = _project_config_for_key(workspace, key)
+    projects_dir = (workspace / "projects").resolve()
+    resolved_config = config_path.resolve()
+    if projects_dir not in resolved_config.parents or not resolved_config.name.endswith(".local.yaml"):
+        raise ValueError("Project deletion is limited to local project configs under workspace/projects.")
+
+    state_store = StateStore(workspace)
+    state_projects_dir = (workspace / "state" / "projects").resolve()
+    state_dir = state_store.project_state_dir(key).resolve()
+    if state_projects_dir not in state_dir.parents:
+        raise ValueError("Project deletion is limited to project-scoped GoodTeam state.")
+
+    resolved_config.unlink()
+    if state_dir.exists():
+        shutil.rmtree(state_dir)
+
+    return {
+        "deleted": True,
+        "project_key": key,
+        "project_config": str(config_path),
+        "state_dir": str(state_store.project_state_dir(key)),
+    }
 
 
 def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]:
@@ -414,8 +750,9 @@ def render_markdown_preview(markdown: str) -> str:
     return "\n".join(blocks)
 
 
-def _resolve_registered_artifact(workspace: Path, artifact_key: str) -> tuple[AgileDevState, Path]:
-    state = StateStore(workspace).read_current()
+def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key: str = "") -> tuple[AgileDevState, Path]:
+    store = StateStore(workspace)
+    state = store.read_project_current(project_key) if project_key else store.read_current()
     if state is None:
         raise ValueError("No active run state found.")
     artifact_path = state.artifacts.get(artifact_key, "")
@@ -436,8 +773,8 @@ def _resolve_registered_artifact(workspace: Path, artifact_key: str) -> tuple[Ag
     return state, path
 
 
-def read_artifact(*, workspace: Path, artifact_key: str) -> dict[str, object]:
-    _, path = _resolve_registered_artifact(workspace, artifact_key)
+def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
+    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
     return {
         "artifact": artifact_key,
         "path": str(path),
@@ -445,11 +782,12 @@ def read_artifact(*, workspace: Path, artifact_key: str) -> dict[str, object]:
     }
 
 
-def save_artifact(*, workspace: Path, artifact_key: str, content: str) -> dict[str, object]:
-    state, path = _resolve_registered_artifact(workspace, artifact_key)
+def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_key: str = "") -> dict[str, object]:
+    state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
     path.write_text(content, encoding="utf-8")
 
-    edit_log = workspace / "state" / "edit-log.jsonl"
+    key = normalize_project_key(project_key or state.project_key)
+    edit_log = StateStore(workspace).project_state_dir(key) / "edit-log.jsonl" if project_key else workspace / "state" / "edit-log.jsonl"
     edit_log.parent.mkdir(parents=True, exist_ok=True)
     edit_event = {
         "timestamp": datetime.now(UTC).isoformat(),
@@ -460,6 +798,18 @@ def save_artifact(*, workspace: Path, artifact_key: str, content: str) -> dict[s
     }
     with edit_log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(edit_event) + "\n")
+
+    append_action(
+        workspace,
+        run_id=state.run_id,
+        actor="human",
+        action="artifact_saved",
+        project_key=key if project_key else "",
+        before_node=state.next_node,
+        after_node=state.next_node,
+        artifact=artifact_key,
+        artifact_path=str(path),
+    )
 
     return {
         "artifact": artifact_key,
@@ -487,6 +837,7 @@ def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
                 "artifact": artifact,
                 "artifact_path": artifact_path,
                 "content": read_artifact_preview(artifact_path),
+                "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
             }
         )
     return reviews
@@ -495,31 +846,77 @@ def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
 def build_start_console_context(
     workspace: Path,
     model_config: Path = Path("models.yaml"),
-    project_config: Path = Path("projects/eastern-birth-chart.local.yaml"),
+    project_config: Path | None = None,
     project_base: Path = Path("/Users/luke/WorkSpace/codeAi"),
 ) -> dict[str, object]:
     profiles = list_model_profiles(model_config) if model_config.is_file() else ["balanced"]
     project_report: dict[str, object] = {}
-    if project_config.is_file():
+    if project_config is not None and project_config.is_file():
         project_report = check_project_target(load_project_target(project_config))
     project = dict(project_report.get("project", {}))
-    target = load_project_target(project_config) if project_config.is_file() else {}
-    providers = dict(project_report.get("providers", {}))
-    deepseek = dict(providers.get("deepseek", {}))
+    target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
+    directory_base = _project_directory_base(dict(target.get("repos", {})), project_base)
     return {
         "workspace": str(workspace),
         "model_config": str(model_config),
-        "project_config": str(project_config),
+        "project_config": str(project_config or ""),
         "project_report": project_report,
         "profiles": profiles,
         "project_key": str(project.get("key", "GTO") or "GTO"),
         "project_name": str(project.get("name", "GoodTeam") or "GoodTeam"),
+        "model_profile": str(target.get("model_profile", "balanced") or "balanced"),
+        "delivery_mode": normalize_delivery_mode(str(target.get("delivery_mode", "init_project") or "init_project")),
+        "role_model_overrides": dict(target.get("role_model_overrides", {})) if isinstance(target.get("role_model_overrides", {}), dict) else {},
         "task_backend": normalize_task_backend(target.get("task_backend", {"mode": "local", "sync": []})),
-        "worker_backend": normalize_worker_backend(target.get("worker_backend", {"mode": "manual"})),
-        "deepseek_configured": bool(deepseek.get("configured", False)),
-        "project_base": str(project_base),
-        "candidate_dirs": discover_project_directories(project_base),
+        "worker_backend": normalize_worker_backend(target.get("worker_backend", {"mode": "codex"})),
+        "project_base": str(directory_base),
+        "candidate_dirs": discover_project_directories(directory_base),
     }
+
+
+def discover_project_configs(workspace: Path) -> list[Path]:
+    project_dir = workspace / "projects"
+    if not project_dir.is_dir():
+        return []
+    paths = [*project_dir.glob("*.local.yaml")]
+    unique = sorted({path.resolve(): path for path in paths}.values(), key=lambda item: item.name.lower())
+    return unique
+
+
+def build_project_overview_items(workspace: Path, model_config: Path = Path("models.yaml")) -> list[dict[str, str]]:
+    items = []
+    store = StateStore(workspace)
+    for config_path in discover_project_configs(workspace):
+        target = load_project_target(config_path)
+        project_key = normalize_project_key(str(target.get("key", config_path.stem)))
+        state = store.read_project_current(project_key)
+        action_items = build_action_items(workspace, project_key=project_key)
+        items.append(
+            {
+                "project_name": str(target.get("name", project_key) or project_key),
+                "project_key": project_key,
+                "project_config": str(config_path),
+                "status": "active" if is_active_run(state) else "idle",
+                "run_id": state.run_id if state is not None else "",
+                "next_node": state.next_node if state is not None else "",
+                "model_profile": str(target.get("model_profile", "balanced") or "balanced"),
+                "delivery_mode": normalize_delivery_mode(str(target.get("delivery_mode", "init_project") or "init_project")),
+                "last_action": action_items[0].get("timestamp", "") if action_items else "",
+            }
+        )
+    return items
+
+
+def _project_config_for_key(workspace: Path, project_key: str) -> Path:
+    key = normalize_project_key(project_key)
+    for config_path in discover_project_configs(workspace):
+        target = load_project_target(config_path)
+        if normalize_project_key(str(target.get("key", config_path.stem))) == key:
+            return config_path
+    fallback = workspace / "projects" / f"{key.lower()}.local.yaml"
+    if fallback.is_file():
+        return fallback
+    raise ValueError(f"No local project config found for project: {key}")
 
 
 def normalize_task_backend(value: object) -> dict[str, object]:
@@ -537,7 +934,21 @@ def normalize_task_backend(value: object) -> dict[str, object]:
 
 def normalize_worker_backend(value: object) -> dict[str, object]:
     backend = dict(value) if isinstance(value, dict) else {}
-    return {"mode": str(backend.get("mode", "manual") or "manual")}
+    return {"mode": str(backend.get("mode", "codex") or "codex")}
+
+
+def normalize_delivery_mode(value: str) -> str:
+    mode = (value or "init_project").strip()
+    if mode not in {"mvp", "init_project", "multi_service"}:
+        raise ValueError(f"Unknown delivery mode: {mode}")
+    return mode
+
+
+def render_review_roles(review_roles: list[str]) -> str:
+    if not review_roles:
+        return ""
+    items = "".join(f"<li>{escape(role)}</li>" for role in review_roles)
+    return f'<div class="review-roles"><span>Review roles</span><ul>{items}</ul></div>'
 
 
 def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
@@ -559,6 +970,7 @@ def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
 
 def render_dashboard(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
     start_context = start_context or build_start_console_context(Path("."))
+    workspace = Path(str(start_context.get("workspace", ".")))
     active_run = is_active_run(state)
     role_observations = build_role_observations(state)
     workflow_steps = build_workflow_steps(state)
@@ -595,6 +1007,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Artifact</dt><dd>{escape(review["artifact"])}</dd>
             <dt>Path</dt><dd>{f'<code>{escape(review["artifact_path"])}</code>' if review["artifact_path"] else 'not available'}</dd>
           </dl>
+          {render_review_roles(review["review_roles"])}
           {f'''
           <div class="approval-actions">
             <button class="edit-artifact" data-artifact="{escape(review["artifact"])}" type="button">Edit Artifact</button>
@@ -622,6 +1035,28 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     if not approval_review_cards:
         approval_review_cards = '<div class="empty-state">No approval review items available.</div>'
+    project_key = state.project_key if state is not None else str(start_context.get("project_key", ""))
+    action_cards = "\n".join(
+        f"""
+        <article class="action-card">
+          <div class="role-topline">
+            <h3>{escape(action["title"])}</h3>
+            <span class="role-status">{escape(action["actor"])}</span>
+          </div>
+          <dl class="role-meta">
+            <dt>Time</dt><dd>{escape(action.get("timestamp", ""))}</dd>
+            <dt>Action</dt><dd>{escape(action.get("action", ""))}</dd>
+            <dt>Gate</dt><dd>{escape(action.get("gate", "") or "none")}</dd>
+            <dt>Decision</dt><dd>{escape(action.get("decision", "") or "none")}</dd>
+            <dt>Node</dt><dd>{escape(action.get("node_transition", "") or "none")}</dd>
+            <dt>Artifact</dt><dd>{f'<code>{escape(action.get("artifact_path", ""))}</code>' if action.get("artifact_path", "") else escape(action.get("artifact", "") or "none")}</dd>
+          </dl>
+        </article>
+        """
+        for action in build_action_items(workspace, project_key=project_key if state is not None else "")
+    )
+    if not action_cards:
+        action_cards = '<div class="empty-state">No actions recorded yet.</div>'
     role_cards = "\n".join(
         f"""
         <article class="role-card">
@@ -689,8 +1124,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     task_sync_values = [str(value) for value in task_backend.get("sync", [])]
     task_sync_label = "Local only" if not task_sync_values else "Local + " + ", ".join(task_sync_values)
     plane_config = dict(task_backend.get("plane", {})) if isinstance(task_backend.get("plane", {}), dict) else {}
-    worker_backend = normalize_worker_backend(start_context.get("worker_backend", {"mode": "manual"}))
-    worker_backend_mode = str(worker_backend.get("mode", "manual"))
+    worker_backend = normalize_worker_backend(start_context.get("worker_backend", {"mode": "codex"}))
+    worker_backend_mode = str(worker_backend.get("mode", "codex"))
     project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
     worker_job_items = "\n".join(
         f"<li><span>{escape(item['role'])} / {escape(item['adapter'])}</span><code>{escape(item['status'])} · {escape(item['id'])}</code></li>"
@@ -713,28 +1148,77 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     if not provider_items:
         provider_items = "<li><span>No providers</span><code>Project target not loaded</code></li>"
     profiles = [str(profile) for profile in start_context.get("profiles", ["balanced"])]
+    selected_profile = str(start_context.get("model_profile", "balanced") or "balanced")
+    selected_delivery_mode = normalize_delivery_mode(str(start_context.get("delivery_mode", "init_project") or "init_project"))
     profile_options = "\n".join(
-        f'<option value="{escape(profile)}"{" selected" if profile == "balanced" else ""}>{escape(profile)}</option>'
+        f'<option value="{escape(profile)}"{" selected" if profile == selected_profile else ""}>{escape(profile)}</option>'
         for profile in profiles
     )
+    delivery_mode_options = "\n".join(
+        f'<option value="{mode}"{" selected" if mode == selected_delivery_mode else ""}>{label}</option>'
+        for mode, label in [
+            ("mvp", "MVP / validation slice"),
+            ("init_project", "Init project / production starter"),
+            ("multi_service", "Multi-service product"),
+        ]
+    )
+    role_overrides = dict(start_context.get("role_model_overrides", {}))
+    role_overrides_text = "\n".join(f"{role}={model}" for role, model in sorted(role_overrides.items()))
     candidate_dirs = [dict(item) for item in start_context.get("candidate_dirs", [])]
     directory_options = "\n".join(
         f'<option value="{escape(str(item["path"]))}">{escape(str(item["name"]))}</option>'
         for item in candidate_dirs
     )
     directory_options_with_empty = f'<option value="">Not selected</option>{directory_options}'
+    blocker_html = ""
+    if state is not None and state.blockers:
+        blocker_items = "".join(f"<li>{escape(blocker)}</li>" for blocker in state.blockers)
+        blocker_html = f"""
+        <div class="empty-state blocker-state"><strong>Blocked</strong><ul>{blocker_items}</ul></div>
+        <div class="approval-actions">
+          <button class="primary retry-blocked" type="button">Retry blocked workers</button>
+        </div>
+        """
+    closed_run = state is not None and not active_run
     current_run_html = (
         f"""
-        <p class="idea">{escape(state.idea)}</p>
+        <div class="completion-banner">
+          <p class="eyebrow-line">Run Complete</p>
+          <p class="idea">{escape(state.idea)}</p>
+          <div class="completion-actions">
+            <a class="button primary" href="/">Open project overview</a>
+            <button class="review-link" data-approval="release" type="button">Review release notes</button>
+          </div>
+        </div>
         <div class="signal-row">
           <div class="signal"><span>Run</span>{escape(state.run_id)}</div>
           <div class="signal"><span>Project</span>{escape(state.project_key)}</div>
           <div class="signal"><span>Mode</span>{escape(state.source_type)}</div>
-          <div class="signal"><span>Next</span>{escape(state.next_node)}</div>
+          <div class="signal"><span>Next</span>{escape(state.next_node or state.current_node)}</div>
+          <div class="signal"><span>Model Profile</span>{escape(state.model_profile)}</div>
+          <div class="signal"><span>Delivery</span>{escape(state.delivery_mode)}</div>
+          <div class="signal"><span>Worker Model</span><code>gpt-5.5</code></div>
         </div>
+        {blocker_html}
+        """
+        if closed_run
+        else (
+        f"""
+        <p class="idea">{escape(state.idea)}</p>
+          <div class="signal-row">
+            <div class="signal"><span>Run</span>{escape(state.run_id)}</div>
+            <div class="signal"><span>Project</span>{escape(state.project_key)}</div>
+            <div class="signal"><span>Mode</span>{escape(state.source_type)}</div>
+            <div class="signal"><span>Next</span>{escape(state.next_node or state.current_node)}</div>
+            <div class="signal"><span>Model Profile</span>{escape(state.model_profile)}</div>
+            <div class="signal"><span>Delivery</span>{escape(state.delivery_mode)}</div>
+            <div class="signal"><span>Worker Model</span><code>gpt-5.5</code></div>
+          </div>
+        {blocker_html}
         """
         if state is not None
         else '<div class="empty-state">No active run. Start a workflow to create state/current.json.</div>'
+        )
     )
     state_panel_html = (
         f"""
@@ -744,6 +1228,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           <dt>Current Node</dt><dd>{escape(state.current_node)}</dd>
           <dt>Next Node</dt><dd>{escape(state.next_node)}</dd>
           <dt>Model Profile</dt><dd>{escape(state.model_profile)}</dd>
+          <dt>Delivery Mode</dt><dd>{escape(state.delivery_mode)}</dd>
           <dt>Source</dt><dd>{escape(state.source_type)} / {escape(state.source_ref)}</dd>
           <dt>Project Memory</dt><dd>{escape(state.context_packet_path or "not initialized")}</dd>
           <dt>Local Task Ledger</dt><dd>{escape(state.artifacts.get("task_ledger", "not initialized"))}</dd>
@@ -752,13 +1237,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         if state is not None
         else '<div class="empty-state">state/current.json not found.</div>'
     )
-    header_status = state.next_node if state is not None else "no_active_run"
-    start_workflow_section = (
-        ""
-        if active_run
-        else f"""
-        <section>
-          <h2>Start Workflow</h2>
+    header_status = state.next_node or state.current_node if state is not None else "no_active_run"
+    start_workflow_inner = f"""
           <div class="mode-switch" role="tablist" aria-label="Workflow start mode">
             <button class="mode-button active" data-start-mode="existing_project" type="button">Adopt Existing Project</button>
             <button class="mode-button" data-start-mode="new_project" type="button">Start New Project</button>
@@ -780,6 +1260,14 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
               <label>
                 Model Profile
                 <select id="model-profile">{profile_options}</select>
+              </label>
+              <label>
+                Delivery Mode
+                <select id="delivery-mode">{delivery_mode_options}</select>
+              </label>
+              <label>
+                Role Model Overrides
+                <textarea id="role-model-overrides" placeholder="architect=codex:gpt-5.5&#10;frontend=codex:gpt-5.5">{escape(role_overrides_text)}</textarea>
               </label>
               <label>
                 Docs Directory
@@ -809,6 +1297,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
               <label>
                 Worker Backend
                 <select id="worker-backend-mode">
+                  <option value="codex"{" selected" if worker_backend_mode == "codex" else ""}>Codex CLI / gpt-5.5</option>
                   <option value="manual"{" selected" if worker_backend_mode == "manual" else ""}>Manual / human adapter</option>
                   <option value="noop"{" selected" if worker_backend_mode == "noop" else ""}>Noop / protocol dry run</option>
                   <option value="supervised"{" selected" if worker_backend_mode == "supervised" else ""}>Supervised CLI adapters</option>
@@ -849,14 +1338,35 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           <div class="signal-row">
             <div class="signal"><span>Project</span>{escape(str(start_context["project_name"]))} / {escape(str(start_context["project_key"]))}</div>
             <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
-            <div class="signal"><span>DeepSeek</span>{'configured' if start_context["deepseek_configured"] else 'not configured'}</div>
+            <div class="signal"><span>Delivery Mode</span>{escape(selected_delivery_mode)}</div>
+            <div class="signal"><span>Worker Model</span><code>gpt-5.5</code></div>
             <div class="signal"><span>Directory Base</span><code>{escape(str(start_context["project_base"]))}</code></div>
             <div class="signal"><span>Task Backend</span>{escape(task_sync_label)}</div>
             <div class="signal"><span>Worker Backend</span>{escape(worker_backend_mode)}</div>
           </div>
           <code class="command-box" id="start-result">Adopt mode reads the project config first and generates takeover-context.md before PRD.</code>
+    """
+    start_workflow_section = (
+        ""
+        if active_run
+        else (
+            f"""
+        <details class="start-workflow-drawer">
+          <summary>Start another run for this project</summary>
+          <section class="start-workflow-panel">
+            <h3>Start Workflow</h3>
+            {start_workflow_inner}
+          </section>
+        </details>
+        """
+            if closed_run
+            else f"""
+        <section>
+          <h2>Start Workflow</h2>
+          {start_workflow_inner}
         </section>
         """
+        )
     )
     start_workflow_script = (
         ""
@@ -885,6 +1395,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
 
     document.getElementById("start-idea").addEventListener("input", updateStartState);
     document.getElementById("model-profile").addEventListener("change", updateStartState);
+    document.getElementById("delivery-mode").addEventListener("change", updateStartState);
     document.getElementById("dry-run").addEventListener("change", updateStartState);
     function updateAdapterConfigVisibility() {{
       document.getElementById("plane-config").hidden = document.getElementById("task-sync").value !== "plane";
@@ -920,6 +1431,17 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             plane_api_key_env: document.getElementById("plane-api-key-env").value,
             plane_mcp_server: document.getElementById("plane-mcp-server").value,
             worker_backend_mode: document.getElementById("worker-backend-mode").value
+            ,
+            model_profile: document.getElementById("model-profile").value,
+            delivery_mode: document.getElementById("delivery-mode").value,
+            role_model_overrides: Object.fromEntries(
+              document.getElementById("role-model-overrides").value
+                .split("\\n")
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => line.split("=", 2))
+                .filter((parts) => parts.length === 2 && parts[0] && parts[1])
+            )
           }})
         }});
         const payload = await response.json();
@@ -954,8 +1476,13 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             project_key: document.getElementById("project-key").value || projectKey,
             model_config: modelConfig,
             model_profile: document.getElementById("model-profile").value,
+            delivery_mode: document.getElementById("delivery-mode").value,
             source_type: startMode,
             project_config: document.getElementById("project-config").value,
+            role_model_overrides: document.getElementById("role-model-overrides").value
+              .split("\\n")
+              .map((line) => line.trim())
+              .filter(Boolean),
             dry_run: dryRun
           }})
         }});
@@ -976,12 +1503,14 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     updateStartState();
         """
     )
+    current_run_section_class = "hero wide" if closed_run else "hero"
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>GoodTeam AI Team OS</title>
   <style>
     :root {{
@@ -1092,8 +1621,48 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     .hero {{
       background: linear-gradient(135deg, var(--panel), var(--panel-2));
     }}
+    .completion-banner {{
+      display: grid;
+      gap: 14px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 16px;
+    }}
+    .eyebrow-line {{
+      margin: 0;
+      color: var(--accent);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .completion-actions {{
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }}
     .wide {{
       grid-column: 1 / -1;
+    }}
+    .start-workflow-drawer {{
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 0;
+      overflow: hidden;
+    }}
+    .start-workflow-drawer summary {{
+      cursor: pointer;
+      padding: 14px 18px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      list-style-position: inside;
+    }}
+    .start-workflow-panel {{
+      border: 0;
+      border-top: 1px solid var(--line);
+      border-radius: 0;
+      min-height: 0;
     }}
     .console-grid {{
       display: grid;
@@ -1300,6 +1869,16 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       margin-top: 12px;
       border-radius: 8px;
     }}
+    .action-card {{
+      border-left: 3px solid var(--accent);
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+      padding: 14px;
+    }}
+    .action-timeline {{
+      display: grid;
+      gap: 10px;
+    }}
     .artifact-preview {{
       margin: 14px 0 0;
       padding: 22px;
@@ -1428,6 +2007,30 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       gap: 7px 10px;
       font-size: 12px;
     }}
+    .review-roles {{
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .review-roles span {{
+      display: block;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .review-roles ul {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+    }}
+    .review-roles li {{
+      border: 1px solid var(--line);
+      padding: 5px 7px;
+      color: var(--ink);
+      background: var(--panel);
+    }}
     .idea {{
       font-size: 20px;
       line-height: 1.45;
@@ -1473,6 +2076,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       flex-wrap: wrap;
       margin-top: 14px;
     }}
+    .button,
     button {{
       border: 1px solid var(--line);
       background: var(--panel);
@@ -1480,7 +2084,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       padding: 10px 12px;
       font: inherit;
       border-radius: 6px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }}
+    .button.primary,
     button.primary {{
       border-color: var(--accent);
       color: var(--accent);
@@ -1508,6 +2117,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
 </head>
 <body>
   <main>
+    <script>window.GOODTEAM_PROJECT_KEY = {project_key!r};</script>
     <header>
       <div>
         <span class="tag">Local workflow dashboard</span>
@@ -1519,22 +2129,23 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       <button class="tab-button active" data-tab="overview" type="button">Overview</button>
       <button class="tab-button" data-tab="roles" type="button">Roles</button>
       <button class="tab-button" data-tab="artifacts" type="button">Artifacts</button>
+      <button class="tab-button" data-tab="actions" type="button">Actions</button>
       <button class="tab-button" data-tab="workers" type="button">Workers</button>
       <button class="tab-button" data-tab="approvals" type="button">Approvals</button>
       <button class="tab-button" data-tab="system" type="button">System</button>
     </nav>
     <div class="tab-panel active" id="tab-overview">
       <div class="grid">
-        <section class="hero">
+        <section class="{current_run_section_class}">
           <h2>Current Run</h2>
           {current_run_html}
         </section>
-        {start_workflow_section}
         <section>
           <h2>Role Summary</h2>
           <div class="signal-row compact">{role_summary_items}</div>
         </section>
         {current_work_html}
+        {start_workflow_section}
         <section class="wide">
           <h2>Workflow Waterfall</h2>
           <div class="waterfall">{waterfall_cards}</div>
@@ -1555,6 +2166,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       <section>
         <h2>Artifacts</h2>
         <ul>{artifact_items}</ul>
+      </section>
+    </div>
+    <div class="tab-panel" id="tab-actions">
+      <section>
+        <h2>Actions</h2>
+        <div class="action-timeline">{action_cards}</div>
       </section>
     </div>
     <div class="tab-panel" id="tab-workers">
@@ -1583,6 +2200,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Key</dt><dd>{escape(str(start_context["project_key"]))}</dd>
             <dt>Config</dt><dd>{escape(str(start_context["project_config"]))}</dd>
             <dt>Model Config</dt><dd>{escape(str(start_context["model_config"]))}</dd>
+            <dt>Delivery Mode</dt><dd>{escape(selected_delivery_mode)}</dd>
             <dt>Task Backend</dt><dd>{escape(task_sync_label)}</dd>
             <dt>Worker Backend</dt><dd>{escape(worker_backend_mode)}</dd>
           </dl>
@@ -1625,6 +2243,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             method: "POST",
             headers: {{ "Content-Type": "application/json" }},
             body: JSON.stringify({{
+              project_key: window.GOODTEAM_PROJECT_KEY,
               approval: button.dataset.approval,
               decision: button.dataset.decision
             }})
@@ -1655,7 +2274,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         button.disabled = true;
         status.textContent = "Loading artifact...";
         try {{
-          const response = await fetch("/artifact?key=" + encodeURIComponent(artifact));
+          const response = await fetch("/artifact?key=" + encodeURIComponent(artifact) + "&project=" + encodeURIComponent(window.GOODTEAM_PROJECT_KEY));
           const payload = await response.json();
           if (!response.ok) {{
             throw new Error(payload.error || "Failed to read artifact.");
@@ -1689,7 +2308,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           const response = await fetch("/artifact", {{
             method: "POST",
             headers: {{ "Content-Type": "application/json" }},
-            body: JSON.stringify({{ artifact, content: textarea.value }})
+            body: JSON.stringify({{ project_key: window.GOODTEAM_PROJECT_KEY, artifact, content: textarea.value }})
           }});
           const payload = await response.json();
           if (!response.ok) {{
@@ -1703,6 +2322,174 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         }}
       }});
     }});
+    document.querySelectorAll(".retry-blocked").forEach((button) => {{
+      button.addEventListener("click", async () => {{
+        button.disabled = true;
+        button.textContent = "Retrying workers...";
+        try {{
+          const response = await fetch("/retry", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ project_key: window.GOODTEAM_PROJECT_KEY }})
+          }});
+          const payload = await response.json();
+          if (!response.ok) {{
+            throw new Error(payload.error || "Failed to retry blocked workflow.");
+          }}
+          window.setTimeout(() => window.location.reload(), 300);
+        }} catch (error) {{
+          button.textContent = error.message;
+          button.disabled = false;
+        }}
+      }});
+    }});
+  </script>
+</body>
+</html>"""
+
+
+def render_project_overview(workspace: Path, model_config: Path = Path("models.yaml")) -> str:
+    project_items = build_project_overview_items(workspace, model_config=model_config)
+    legacy_state = StateStore(workspace).read_current()
+    first_project_key = project_items[0]["project_key"] if project_items else ""
+    open_project_link = (
+        f'<a class="button primary" href="/?project={escape(first_project_key)}">Open {escape(first_project_key)}</a>'
+        if first_project_key
+        else ""
+    )
+    cards = "\n".join(
+        f"""
+        <article class="project-card project-{escape(item["status"])}">
+          <div>
+            <h2>{escape(item["project_name"])}</h2>
+            <p>{escape(item["project_key"])} · {escape(item["status"])}</p>
+          </div>
+          <dl>
+            <dt>Model</dt><dd>{escape(item["model_profile"])}</dd>
+            <dt>Delivery</dt><dd>{escape(item["delivery_mode"])}</dd>
+            <dt>Next</dt><dd>{escape(item["next_node"] or "no active run")}</dd>
+            <dt>Config</dt><dd><code>{escape(item["project_config"])}</code></dd>
+            <dt>Last Action</dt><dd>{escape(item["last_action"] or "none")}</dd>
+          </dl>
+          <div class="project-actions">
+            <a class="button primary" href="/?project={escape(item["project_key"])}">Open project</a>
+            <a class="button" href="/?project={escape(item["project_key"])}">{'Resume' if item["status"] == "active" else 'Start'}</a>
+            {f'<button class="danger terminate-project" data-project="{escape(item["project_key"])}" type="button">Terminate run</button>' if item["status"] == "active" else ''}
+            <button class="danger delete-project" data-project="{escape(item["project_key"])}" type="button">Delete project</button>
+          </div>
+        </article>
+        """
+        for item in project_items
+    )
+    if not cards:
+        cards = '<div class="empty-state">No local project configs found. Create a real project config with the dashboard form or add projects/&lt;project-key&gt;.local.yaml.</div>'
+    legacy_notice = (
+        f'<section class="legacy"><h2>Legacy active run</h2><p>{escape(legacy_state.project_key)} / {escape(legacy_state.next_node)}</p><code>state/current.json</code></section>'
+        if legacy_state is not None
+        else ""
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoodTeam Projects</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f5f7f4;
+      --panel: #ffffff;
+      --surface: #f9fbfa;
+      --ink: #17211d;
+      --muted: #66736e;
+      --line: #d9e0dc;
+      --accent: #217a62;
+      --accent-soft: #e2f2ed;
+      --red: #bf3d4d;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: "Avenir Next", Avenir, "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--ink); }}
+    main {{ width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0; }}
+    header {{ display: flex; justify-content: space-between; gap: 20px; align-items: end; border-bottom: 1px solid var(--line); padding-bottom: 20px; }}
+    h1 {{ margin: 0; font-size: clamp(32px, 5vw, 56px); line-height: 1; letter-spacing: 0; }}
+    .tag {{ color: var(--accent); text-transform: uppercase; font-size: 13px; }}
+    .projects {{ display: grid; gap: 12px; margin-top: 24px; }}
+    .project-card, .legacy {{ display: grid; grid-template-columns: 0.8fr 1.5fr auto; gap: 18px; align-items: center; border: 1px solid var(--line); background: var(--panel); padding: 16px; border-radius: 8px; }}
+    .project-active {{ border-color: var(--accent); background: var(--accent-soft); }}
+    h2 {{ margin: 0 0 6px; font-size: 19px; letter-spacing: 0; }}
+    p {{ margin: 0; color: var(--muted); }}
+    dl {{ display: grid; grid-template-columns: 80px 1fr; gap: 7px 12px; margin: 0; font-size: 13px; }}
+    dt {{ color: var(--muted); }}
+    dd {{ margin: 0; overflow-wrap: anywhere; }}
+    code {{ color: var(--muted); }}
+    .project-actions {{ display: flex; gap: 8px; flex-wrap: wrap; justify-content: end; }}
+    .button, button {{ border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 9px 11px; border-radius: 6px; font: inherit; text-decoration: none; }}
+    .primary {{ border-color: var(--accent); color: var(--accent); }}
+    .danger {{ border-color: var(--red); color: var(--red); }}
+    .empty-state {{ border: 1px dashed var(--line); background: var(--panel); color: var(--muted); padding: 16px; }}
+    @media (max-width: 780px) {{ header, .project-card, .legacy {{ display: block; }} .project-actions {{ justify-content: start; margin-top: 14px; }} dl {{ margin-top: 14px; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <div class="tag">Multi-project control room</div>
+        <h1>GoodTeam Projects</h1>
+      </div>
+      {open_project_link}
+    </header>
+    {legacy_notice}
+    <section class="projects">{cards}</section>
+  </main>
+  <script>
+    document.querySelectorAll(".terminate-project").forEach((button) => {{
+      button.addEventListener("click", async () => {{
+        button.disabled = true;
+        try {{
+          const response = await fetch("/terminate", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ project_key: button.dataset.project }})
+          }});
+          const payload = await response.json();
+          if (!response.ok) {{
+            throw new Error(payload.error || "Failed to terminate run.");
+          }}
+          window.setTimeout(() => window.location.reload(), 250);
+        }} catch (error) {{
+          button.textContent = error.message;
+          button.disabled = false;
+        }}
+      }});
+    }});
+    document.querySelectorAll(".delete-project").forEach((button) => {{
+      button.addEventListener("click", async () => {{
+        const projectKey = button.dataset.project;
+        const confirmed = window.confirm(
+          "Delete project " + projectKey + " from GoodTeam? This removes the local project config and GoodTeam state only. It will not delete any referenced repos."
+        );
+        if (!confirmed) {{
+          return;
+        }}
+        button.disabled = true;
+        try {{
+          const response = await fetch("/project-delete", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ project_key: projectKey }})
+          }});
+          const payload = await response.json();
+          if (!response.ok) {{
+            throw new Error(payload.error || "Failed to delete project.");
+          }}
+          window.setTimeout(() => window.location.reload(), 250);
+        }} catch (error) {{
+          button.textContent = error.message;
+          button.disabled = false;
+        }}
+      }});
+    }});
   </script>
 </body>
 </html>"""
@@ -1712,18 +2499,26 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
+            query = parse_qs(parsed.query)
+            project_key = query.get("project", [""])[0]
+            if maybe_send_favicon_response(self, parsed.path):
+                return
             if parsed.path == "/artifact":
                 try:
-                    artifact_key = parse_qs(parsed.query).get("key", [""])[0]
-                    self._send_json(200, read_artifact(workspace=workspace, artifact_key=artifact_key))
+                    artifact_key = query.get("key", [""])[0]
+                    self._send_json(200, read_artifact(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return
             if parsed.path not in {"/", "/index.html"}:
                 self.send_error(404)
                 return
-            start_context = build_start_console_context(workspace)
-            body = render_dashboard(resolve_dashboard_state(workspace), start_context).encode("utf-8")
+            if not project_key:
+                body = render_project_overview(workspace).encode("utf-8")
+            else:
+                project_config = _project_config_for_key(workspace, project_key)
+                start_context = build_start_console_context(workspace, project_config=project_config)
+                body = render_dashboard(resolve_dashboard_state(workspace, project_key=project_key), start_context).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -1731,7 +2526,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if self.path not in {"/start", "/approve", "/artifact", "/project-config"}:
+            if self.path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry"}:
                 self.send_error(404)
                 return
             try:
@@ -1745,21 +2540,40 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         project_key=str(request.get("project_key", "")),
                         model_config=Path(str(request.get("model_config", "models.yaml"))),
                         model_profile=str(request.get("model_profile", "balanced")),
+                        delivery_mode=str(request.get("delivery_mode", "")),
                         source_type=str(request.get("source_type", "new_project")),
-                        project_config=Path(str(request.get("project_config", "projects/eastern-birth-chart.local.yaml"))),
+                        project_config=Path(str(request["project_config"])) if str(request.get("project_config", "")).strip() else None,
+                        role_model_overrides=[str(value) for value in request.get("role_model_overrides", [])],
                         dry_run=bool(request.get("dry_run", False)),
                     )
                 elif self.path == "/approve":
                     result = decide_approval(
                         workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
                         approval=str(request.get("approval", "")),
                         decision=str(request.get("decision", "")),
                     )
                 elif self.path == "/artifact":
                     result = save_artifact(
                         workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
                         content=str(request.get("content", "")),
+                    )
+                elif self.path == "/terminate":
+                    result = terminate_project_run(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                    )
+                elif self.path == "/project-delete":
+                    result = delete_project(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                    )
+                elif self.path == "/retry":
+                    result = retry_blocked_workflow(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
                     )
                 else:
                     result = create_local_project_config(
@@ -1775,7 +2589,10 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         plane_project_id=str(request.get("plane_project_id", "")),
                         plane_api_key_env=str(request.get("plane_api_key_env", "")),
                         plane_mcp_server=str(request.get("plane_mcp_server", "")),
-                        worker_backend_mode=str(request.get("worker_backend_mode", "manual")),
+                        worker_backend_mode=str(request.get("worker_backend_mode", "codex")),
+                        model_profile=str(request.get("model_profile", "balanced")),
+                        delivery_mode=str(request.get("delivery_mode", "init_project")),
+                        role_model_overrides=dict(request.get("role_model_overrides", {})),
                     )
                 self._send_json(200, result)
             except Exception as exc:

@@ -51,3 +51,6 @@ def test_prd_contract_is_project_roadmap_focused():
     assert contract["role"] == "product_requirement"
     assert "roadmap" in contract["purpose"].lower()
     assert "takeover" not in contract["purpose"].lower()
+    items = [item for section in contract["sections"] for item in section["items"]]
+    assert any("decision-ready PRD" in item for item in items)
+    assert any("Product / Requirement, Architect, and Review / QA" in item for item in items)

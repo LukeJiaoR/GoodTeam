@@ -1,182 +1,182 @@
 profiles:
   balanced:
     orchestrator:
-      primary: codex:gpt-5.2
-      fallback: claude:sonnet
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: short-context
     research:
-      primary: agy:gemini-3-pro-preview
-      fallback: agy:gemini-2.5-pro
-      assistant: deepseek:deepseek-chat
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: long-context
     product_requirement:
-      primary: claude:opus
-      draft: deepseek:deepseek-chat
+      primary: codex:gpt-5.5
+      draft: codex:gpt-5.5
       mode: spec-writing
     architect:
-      primary: claude:opusplan
-      reviewer: openai:gpt-5.2-pro
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: high-reasoning
     review:
-      primary: claude:opus
-      reviewer: openai:gpt-5.2-pro
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: adversarial-review
     planner:
-      primary: deepseek:deepseek-chat
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: structured-breakdown
     ui:
-      primary: agy:gemini-3-pro-preview
-      fallback: agy:gemini-2.5-pro
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: multimodal
     implementation:
-      primary: codex:gpt-5.2-codex
-      fallback: agy:gemini-3-pro-preview
-      assistant: deepseek:deepseek-coder
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: worker-dispatch
     frontend:
-      primary: agy:gemini-3-pro-preview
-      fallback: agy:gemini-2.5-pro
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: implementation
     backend:
-      primary: codex:gpt-5.2-codex
-      assistant: deepseek:deepseek-coder
+      primary: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: implementation
     qa:
-      primary: deepseek:deepseek-reasoner
-      fallback: agy:gemini-3-flash-preview
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: test-design
     code_review:
-      first_pass: deepseek:deepseek-coder
-      primary: codex:gpt-5.2-codex
-      architecture_review: claude:opus
+      first_pass: codex:gpt-5.5
+      primary: codex:gpt-5.5
+      architecture_review: codex:gpt-5.5
       mode: multi-pass-review
     release:
-      primary: claude:sonnet
-      checklist: deepseek:deepseek-chat
+      primary: codex:gpt-5.5
+      checklist: codex:gpt-5.5
       mode: release-control
     retro_memory:
-      primary: deepseek:deepseek-chat
-      reviewer: claude:haiku
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: memory-writing
   cheap:
     orchestrator:
-      primary: codex:gpt-5.2
-      fallback: claude:sonnet
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: short-context
     research:
-      primary: deepseek:deepseek-chat
-      fallback: agy:gemini-3-flash-preview
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: cost-efficient
     product_requirement:
-      primary: deepseek:deepseek-chat
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: draft-first
     architect:
-      primary: deepseek:deepseek-reasoner
-      reviewer: claude:opusplan
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: draft-plus-review
     review:
-      primary: deepseek:deepseek-reasoner
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: first-pass-review
     planner:
-      primary: deepseek:deepseek-chat
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: structured-breakdown
     ui:
-      primary: agy:gemini-3-flash-preview
-      fallback: agy:gemini-2.5-flash
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: lightweight-ui
     implementation:
-      primary: codex:gpt-5.2-codex
-      fallback: agy:gemini-3-flash-preview
-      assistant: deepseek:deepseek-coder
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: worker-dispatch
     frontend:
-      primary: agy:gemini-3-flash-preview
-      fallback: agy:gemini-2.5-flash
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: implementation
     backend:
-      primary: codex:gpt-5.2-codex
-      assistant: deepseek:deepseek-coder
+      primary: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: implementation
     qa:
-      primary: deepseek:deepseek-reasoner
-      fallback: agy:gemini-3-flash-preview
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: test-design
     code_review:
-      first_pass: deepseek:deepseek-coder
-      primary: codex:gpt-5.2-codex
+      first_pass: codex:gpt-5.5
+      primary: codex:gpt-5.5
       mode: multi-pass-review
     release:
-      primary: deepseek:deepseek-chat
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: checklist
     retro_memory:
-      primary: deepseek:deepseek-chat
-      reviewer: claude:haiku
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: memory-writing
   max_quality:
     orchestrator:
-      primary: codex:gpt-5.2
-      fallback: claude:sonnet
-      escalation: agy:gemini-3-pro-preview
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      escalation: codex:gpt-5.5
       mode: short-context-with-global-planning-escalation
     research:
-      primary: agy:gemini-3-pro-preview
-      fallback: agy:gemini-2.5-pro
-      assistant: deepseek:deepseek-chat
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: long-context
     product_requirement:
-      primary: claude:opus
-      draft: deepseek:deepseek-chat
+      primary: codex:gpt-5.5
+      draft: codex:gpt-5.5
       mode: spec-writing
     architect:
-      primary: claude:opusplan
-      reviewer: openai:gpt-5.2-pro
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: high-reasoning
     review:
-      primary: claude:opus
-      reviewer: openai:gpt-5.2-pro
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: adversarial-review
     planner:
-      primary: claude:sonnet
-      draft: deepseek:deepseek-chat
+      primary: codex:gpt-5.5
+      draft: codex:gpt-5.5
       mode: structured-breakdown
     ui:
-      primary: agy:gemini-3-pro-preview
-      fallback: agy:gemini-2.5-pro
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: multimodal
     implementation:
-      primary: codex:gpt-5.2-codex
-      fallback: agy:gemini-3-pro-preview
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: worker-dispatch
     frontend:
-      primary: agy:gemini-3-pro-preview
-      fallback: agy:gemini-2.5-pro
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: implementation
     backend:
-      primary: codex:gpt-5.2-codex
-      reviewer: claude:sonnet
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: implementation
     qa:
-      primary: claude:sonnet
-      draft: deepseek:deepseek-reasoner
+      primary: codex:gpt-5.5
+      draft: codex:gpt-5.5
       mode: test-design
     code_review:
-      first_pass: deepseek:deepseek-coder
-      primary: codex:gpt-5.2-codex
-      architecture_review: claude:opus
+      first_pass: codex:gpt-5.5
+      primary: codex:gpt-5.5
+      architecture_review: codex:gpt-5.5
       mode: multi-pass-review
     release:
-      primary: claude:sonnet
-      checklist: deepseek:deepseek-chat
+      primary: codex:gpt-5.5
+      checklist: codex:gpt-5.5
       mode: release-control
     retro_memory:
-      primary: claude:sonnet
-      draft: deepseek:deepseek-chat
+      primary: codex:gpt-5.5
+      draft: codex:gpt-5.5
       mode: memory-writing

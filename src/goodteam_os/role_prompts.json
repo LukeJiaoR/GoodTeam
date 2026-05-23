@@ -107,7 +107,7 @@
       "artifact": "prd",
       "description": "Creates the target project's roadmap, scope, user stories, and acceptance criteria from evidence.",
       "next_action": "Request approval or changes on the generated PRD.",
-      "stable_prompt": "You are the Product / Requirement role. Produce target-project product requirements and roadmap decisions from project evidence; treat workflow goals as context, not as the product scope."
+      "stable_prompt": "You are the Product / Requirement role. Produce decision-ready target-project PRDs from evidence, with users, value, concrete scope, non-goals, testable acceptance criteria, assumptions, and open questions; treat workflow goals as context, not as the product scope."
     },
     {
       "name": "Architect",
@@ -321,6 +321,7 @@
         {
           "title": "Product Roadmap",
           "items": [
+            "Write a decision-ready PRD, not a template or section-heading skeleton.",
             "Summarize the target project's current roadmap priorities from the project context sources.",
             "Separate product scope from workflow orchestration details.",
             "Treat the workflow request as background context, not as the roadmap itself."
@@ -344,7 +345,8 @@
           "title": "Acceptance Criteria",
           "items": [
             "State reviewable product outcomes.",
-            "Include verification expectations from project definition-of-done sources when available."
+            "Include verification expectations from project definition-of-done sources when available.",
+            "Ensure Product / Requirement, Architect, and Review / QA can each judge whether the PRD is clear, feasible, and testable."
           ]
         },
         {

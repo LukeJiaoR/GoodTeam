@@ -3,21 +3,53 @@ from pathlib import Path
 from goodteam_os.projects import check_project_target, load_project_target
 
 
-def test_load_project_target_reads_eastern_birth_chart_example_config():
-    target = load_project_target(Path("projects/eastern-birth-chart.example.yaml"))
+def test_load_project_target_reads_project_config(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        f"""
+name: Real Product
+key: REAL
+model_profile: balanced
+delivery_mode: multi_service
+role_model_overrides:
+  architect: claude:opusplan
+repos:
+  docs: {docs}
+task_backend:
+  mode: local
+  sync:
+worker_backend:
+  mode: manual
+workers:
+  backend: codex
+  frontend: agy
+  product: claude
+providers:
+  deepseek:
+    type: openai-compatible
+    api_key_env: DEEPSEEK_API_KEY
+""",
+        encoding="utf-8",
+    )
 
-    assert target["name"] == "Eastern Birth Chart"
-    assert target["key"] == "EBC"
-    assert target["repos"]["docs"] == "<absolute-path-to-eastern-birth-chart-docs>"
+    target = load_project_target(config)
+
+    assert target["name"] == "Real Product"
+    assert target["key"] == "REAL"
+    assert target["repos"]["docs"] == str(docs)
     assert target["task_backend"]["mode"] == "local"
     assert "sync" in target["task_backend"]
-    assert target["task_backend"]["plane"]["api_key_env"] == "PLANE_API_KEY"
-    assert "api_key" not in target["task_backend"]["plane"]
+    assert "plane" not in target["task_backend"]
     assert target["worker_backend"]["mode"] == "manual"
     assert target["workers"]["backend"] == "codex"
     assert target["workers"]["frontend"] == "agy"
     assert target["workers"]["product"] == "claude"
     assert target["providers"]["deepseek"]["api_key_env"] == "DEEPSEEK_API_KEY"
+    assert target["model_profile"] == "balanced"
+    assert target["delivery_mode"] == "multi_service"
+    assert target["role_model_overrides"]["architect"] == "claude:opusplan"
 
 
 def test_check_project_target_reports_repo_and_cli_status():

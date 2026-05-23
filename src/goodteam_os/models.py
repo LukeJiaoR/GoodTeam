@@ -35,6 +35,31 @@ def apply_role_overrides(profile: ModelProfile, overrides: list[str]) -> ModelPr
     return updated
 
 
+def resolve_project_model_profile(
+    config_path: Path,
+    project_target: dict[str, object],
+    *,
+    explicit_profile: str = "",
+    role_overrides: list[str] | None = None,
+) -> tuple[str, ModelProfile]:
+    profile_name = explicit_profile.strip() or str(project_target.get("model_profile", "") or "balanced")
+    profile = load_model_profile(config_path, profile_name)
+    project_overrides = _project_role_overrides(project_target.get("role_model_overrides", {}))
+    updated = apply_role_overrides(profile, project_overrides)
+    updated = apply_role_overrides(updated, role_overrides or [])
+    return profile_name, updated
+
+
+def _project_role_overrides(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return [f"{role}={model}" for role, model in value.items() if str(role).strip() and str(model).strip()]
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return []
+
+
 def _parse_simple_yaml(path: Path) -> dict[str, object]:
     root: dict[str, object] = {}
     stack: list[tuple[int, dict[str, object]]] = [(-1, root)]

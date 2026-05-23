@@ -40,14 +40,20 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --workspace /tmp/goodte
 Expected result:
 
 - `artifacts/runs/<run_id>/prd/prd.md`
-- `state/current.json`
-- `state/checkpoints/<run_id>/prd_review_gate.json`
+- `state/projects/GTO/current.json`
+- `state/projects/GTO/checkpoints/<run_id>/prd_review_gate.json`
 - `next_node` is `await_prd_approval`
 
 Open the dashboard at:
 
 ```text
 http://localhost:8788/
+```
+
+The root dashboard is a multi-project overview. Open a project detail page with:
+
+```text
+http://localhost:8788/?project=<PROJECT_KEY>
 ```
 
 ## Model Profiles
@@ -74,8 +80,8 @@ Override one role for a single run:
 PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
   --workspace /tmp/goodteam-os-run \
   --model-profile cheap \
-  --role-model architect=claude:opusplan \
-  --role-model qa=agy:gemini-3-flash-preview
+  --role-model architect=codex:gpt-5.5 \
+  --role-model qa=codex:gpt-5.5
 ```
 
 Preview the model matrix and planned artifact paths without writing state or artifacts:
@@ -84,11 +90,11 @@ Preview the model matrix and planned artifact paths without writing state or art
 PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
   --workspace /tmp/goodteam-os-run \
   --model-profile cheap \
-  --role-model architect=claude:opusplan \
+  --role-model architect=codex:gpt-5.5 \
   --dry-run
 ```
 
-The chosen profile and role model matrix are saved into `state/current.json`, so the dashboard and future resume logic can observe the exact model choices for that run.
+The chosen profile and role model matrix are saved into `state/projects/<project-key>/current.json`, so each project can keep its own active run and model choices.
 
 ## tmux
 
@@ -101,14 +107,63 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --workspace /tmp/goodte
 
 ## Project Targets
 
-Eastern Birth Chart is registered as the first real workspace target:
+Create a local project config for your own repos from the dashboard, or add one directly under `projects/`:
+
+```yaml
+name: My Product
+key: MYPROD
+model_profile: balanced
+delivery_mode: init_project
+repos:
+  docs: /absolute/path/to/my-product-docs
+  backend: /absolute/path/to/my-product-api
+  frontend: /absolute/path/to/my-product-web
+task_backend:
+  mode: local
+  sync:
+worker_backend:
+  mode: codex
+```
+
+Then check the project target:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
-  --project-config projects/eastern-birth-chart.local.yaml
+  --project-config projects/my-project.local.yaml
 ```
 
-The committed file is `projects/eastern-birth-chart.example.yaml`. The real local file is `projects/eastern-birth-chart.local.yaml` and is git-ignored because it contains machine-specific repo paths and Plane metadata.
+Local project configs are intended to be machine-specific and may contain repo paths or tracker metadata. Keep secrets out of them; use environment variables or local secret files for credentials.
+
+Project management actions are scoped to GoodTeam metadata:
+
+- `Terminate run` archives the selected project's active run and clears `state/projects/<project-key>/current.json`.
+- `Delete project` removes the selected `projects/<project-key>.local.yaml` config and `state/projects/<project-key>/` runtime state from GoodTeam.
+- `Delete project` does not delete any repository directories listed under `repos:`.
+
+Projects can carry their own default model strategy:
+
+```yaml
+model_profile: balanced
+role_model_overrides:
+  architect: codex:gpt-5.5
+  frontend: codex:gpt-5.5
+```
+
+At run start, GoodTeam resolves models in this order: the global `models.yaml` profile, the project `model_profile`, the project `role_model_overrides`, then any one-run `--role-model` or dashboard override.
+
+Projects can also declare their delivery shape:
+
+```yaml
+delivery_mode: init_project
+```
+
+Supported delivery modes:
+
+- `mvp`: validation-ready slice with the smallest useful product surface, local run commands, deterministic tests, and a clear evolution path.
+- `init_project`: production starter for a real internet product, including frontend/backend separation, API contracts, data layer, routing, DevOps, CI/test commands, deployment notes, and health checks.
+- `multi_service`: multi-service product shape with service boundaries, API or event contracts, gateway/router responsibilities, database ownership, async/queue needs, observability, orchestration, and rollback strategy.
+
+If omitted, GoodTeam defaults to `init_project`. The selected delivery mode is stored in `state/projects/<project-key>/current.json` and flows into PRD, RFC, implementation handoff, worker expected artifacts, and QA expectations.
 
 For multi-repo products, GoodTeam stores project runtime data in the shared parent project directory when the configured repos live together:
 
@@ -162,33 +217,19 @@ Worker execution is also configured separately from the workflow protocol:
 
 ```yaml
 worker_backend:
-  mode: manual
+  mode: codex
 ```
 
-Supported V1 modes are `manual`, `noop`, and `supervised`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth. Each job includes `role_prompt.md`, `task.md`, `context.md`, `constraints.md`, `expected_artifacts.json`, `role_memory_paths.json`, `role_pickup_packet.json`, and `result.md`. The stable role prompt stays separate from the concrete task. `role_memory_paths.json` points workers at their role-specific long-, mid-, and short-term project memory files; `role_pickup_packet.json` is the default token-light pickup packet.
+Supported V1 modes are `codex`, `manual`, `noop`, and `supervised`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth. Each job includes `role_prompt.md`, `task.md`, `context.md`, `constraints.md`, `expected_artifacts.json`, `role_memory_paths.json`, `role_pickup_packet.json`, `result.md`, `stdout.txt`, `stderr.txt`, and `status.json`. The stable role prompt stays separate from the concrete task. `role_memory_paths.json` points workers at their role-specific long-, mid-, and short-term project memory files; `role_pickup_packet.json` is the default token-light pickup packet.
 
-Local worker commands use the CLIs currently available on this machine:
+Early CONTENTOPS E2E worker execution uses Codex CLI for every role:
 
-- Claude CLI: product, requirement, architect, review, planner, release, retro/memory
-- Agy CLI: UI and frontend
-- Codex CLI: backend, QA, code review
+- Command: `codex exec --model gpt-5.5 --skip-git-repo-check`
+- Adapter: `worker_backend.mode: codex`
+- Evidence: each job stores command, exit code, stdout, stderr, preflight diagnostics, and final result under `.goodteam/workers/jobs/<job_id>/`.
 
-DeepSeek can remain in `models.yaml` as a model provider target, but there is no local `deepseek` CLI command currently available in `PATH`.
-
-DeepSeek API access is detected through environment configuration and never through committed files. If Codex was launched from a process that does not inherit your shell environment, put the key in the git-ignored `.env.local` file instead:
-
-```bash
-# Option A: shell environment, if Codex inherits it.
-export DEEPSEEK_API_KEY="<your-rotated-deepseek-api-key>"
-
-# Option B: local fallback file, if Codex does not inherit your shell environment.
-printf 'DEEPSEEK_API_KEY=<your-rotated-deepseek-api-key>\n' > .env.local
-
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
-  --project-config projects/eastern-birth-chart.local.yaml
-```
-
-The doctor output reports only `configured: true` or `false`; it does not print the key. Rotate any key that has been pasted into chat before putting the replacement into `.env.local`.
+Codex CLI uses the locally configured provider and credentials. Provider credentials must come from environment variables or a secret manager when future adapters need them. Do not commit API keys or paste secrets into GoodTeam project configs.
+Codex worker preflight records only non-secret facts, such as whether `OPENAI_API_KEY`, `CODEX_API_KEY`, or `CODEX_ACCESS_TOKEN` is present; it never stores credential values.
 
 ## Boundary
 

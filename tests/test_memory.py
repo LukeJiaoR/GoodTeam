@@ -6,11 +6,11 @@ def test_project_memory_store_creates_default_packet(tmp_path):
     project_root.mkdir()
     store = ProjectMemoryStore(project_root)
 
-    path = store.ensure_project_memory("EBC", "Eastern Birth Chart")
+    path = store.ensure_project_memory("CONTENTOPS", "AI Content Studio")
 
     assert path == project_root / ".goodteam" / "memory" / "project-memory.md"
     content = path.read_text(encoding="utf-8")
-    assert "# Project Memory: Eastern Birth Chart" in content
+    assert "# Project Memory: AI Content Studio" in content
     assert "## Long-Term Memory" in content
     assert "## Mid-Term Memory" in content
     assert "## Near-Term Memory" in content
@@ -20,10 +20,10 @@ def test_project_memory_store_reads_existing_packet(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
     store = ProjectMemoryStore(project_root)
-    path = store.ensure_project_memory("EBC", "Eastern Birth Chart")
+    path = store.ensure_project_memory("CONTENTOPS", "AI Content Studio")
     path.write_text("# Project Memory\n\n## Long-Term Memory\n\n- Stable fact.", encoding="utf-8")
 
-    packet = store.read_project_memory("EBC")
+    packet = store.read_project_memory("CONTENTOPS")
 
     assert packet["path"] == str(path)
     assert "Stable fact." in packet["content"]
@@ -38,14 +38,14 @@ def test_role_memory_store_creates_long_mid_short_files(tmp_path):
     paths = store.ensure_role_memory(
         role_key="product_requirement",
         role_name="Product / Requirement",
-        project_name="Eastern Birth Chart",
+        project_name="AI Content Studio",
     )
 
     assert paths["long-term"] == project_root / ".goodteam" / "memory" / "roles" / "product-requirement" / "long-term.md"
     assert paths["mid-term"] == project_root / ".goodteam" / "memory" / "roles" / "product-requirement" / "mid-term.md"
     assert paths["short-term"] == project_root / ".goodteam" / "memory" / "roles" / "product-requirement" / "short-term.md"
     assert "# Product / Requirement Long-Term Memory" in paths["long-term"].read_text(encoding="utf-8")
-    assert "Eastern Birth Chart" in paths["short-term"].read_text(encoding="utf-8")
+    assert "AI Content Studio" in paths["short-term"].read_text(encoding="utf-8")
     assert "Current interrupted work" in paths["short-term"].read_text(encoding="utf-8")
 
 
@@ -53,10 +53,10 @@ def test_role_memory_store_does_not_overwrite_existing_memory(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
     store = RoleMemoryStore(project_root)
-    paths = store.ensure_role_memory("architect", "Architect", "Eastern Birth Chart")
+    paths = store.ensure_role_memory("architect", "Architect", "AI Content Studio")
     paths["short-term"].write_text("# Custom\n\n- Resume RFC here.", encoding="utf-8")
 
-    store.ensure_role_memory("architect", "Architect", "Eastern Birth Chart")
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
 
     assert paths["short-term"].read_text(encoding="utf-8") == "# Custom\n\n- Resume RFC here."
 
@@ -65,7 +65,7 @@ def test_role_memory_store_reads_pickup_packet(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
     store = RoleMemoryStore(project_root)
-    paths = store.ensure_role_memory("planner", "Planner", "Eastern Birth Chart")
+    paths = store.ensure_role_memory("planner", "Planner", "AI Content Studio")
     paths["short-term"].write_text("# Planner Short-Term Memory\n\n- Resume task breakdown.", encoding="utf-8")
 
     packet = store.read_role_memory("planner")
@@ -80,7 +80,7 @@ def test_role_memory_store_appends_events_and_updates_index(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
     store = RoleMemoryStore(project_root)
-    store.ensure_role_memory("architect", "Architect", "Eastern Birth Chart")
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
 
     event = store.append_memory_event(
         "architect",
@@ -103,7 +103,7 @@ def test_pickup_packet_uses_index_summaries_without_loading_long_mid_full_text(t
     project_root = tmp_path / "project"
     project_root.mkdir()
     store = RoleMemoryStore(project_root)
-    paths = store.ensure_role_memory("product_requirement", "Product / Requirement", "Eastern Birth Chart")
+    paths = store.ensure_role_memory("product_requirement", "Product / Requirement", "AI Content Studio")
     paths["long-term"].write_text(
         "# Product / Requirement Long-Term Memory\n\n"
         "This long context should not be copied into default pickup packets.\n"
@@ -135,7 +135,7 @@ def test_role_memory_store_rebuilds_memory_from_events(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
     store = RoleMemoryStore(project_root)
-    store.ensure_role_memory("planner", "Planner", "Eastern Birth Chart")
+    store.ensure_role_memory("planner", "Planner", "AI Content Studio")
     store.append_memory_event(
         "planner",
         horizon="mid-term",
@@ -144,7 +144,7 @@ def test_role_memory_store_rebuilds_memory_from_events(tmp_path):
     )
     store.memory_path("planner", "mid-term").write_text("# Corrupted\n", encoding="utf-8")
 
-    rebuilt = store.rebuild_role_memory("planner", "Planner", "Eastern Birth Chart")
+    rebuilt = store.rebuild_role_memory("planner", "Planner", "AI Content Studio")
 
     assert rebuilt["event_count"] == 1
     assert "Frontend auth tasks depend" in store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
