@@ -5,6 +5,14 @@ from typing import Any
 
 
 TASK_STATUSES = {"todo", "in_progress", "blocked", "review", "done", "canceled"}
+TASK_BOARD_COLUMNS = ["backlog", "doing", "blocked", "done"]
+TASK_BOARD_STATUS_MAP = {
+    "todo": "backlog",
+    "review": "backlog",
+    "in_progress": "doing",
+    "blocked": "blocked",
+    "done": "done",
+}
 
 
 class LocalTaskStore:
@@ -81,3 +89,41 @@ class LocalTaskStore:
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()
+
+
+def build_task_board(tasks: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    board: dict[str, list[dict[str, Any]]] = {column: [] for column in TASK_BOARD_COLUMNS}
+    for task in tasks:
+        column = TASK_BOARD_STATUS_MAP.get(str(task.get("status", "")))
+        if column is None:
+            continue
+        board[column].append(task)
+    return board
+
+
+def serialize_task_board(board: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    columns = {
+        column: [_serialize_task(task) for task in board.get(column, [])]
+        for column in TASK_BOARD_COLUMNS
+    }
+    return {
+        "columns": columns,
+        "counts": {column: len(items) for column, items in columns.items()},
+    }
+
+
+def _serialize_task(task: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(task.get("id", "")),
+        "title": str(task.get("title", "")),
+        "description": str(task.get("description", "")),
+        "role": str(task.get("role", "")),
+        "status": str(task.get("status", "")),
+        "priority": str(task.get("priority", "")),
+        "dependencies": list(task.get("dependencies", [])),
+        "acceptance_criteria": list(task.get("acceptance_criteria", [])),
+        "artifact_refs": list(task.get("artifact_refs", [])),
+        "external_refs": list(task.get("external_refs", [])),
+        "created_at": str(task.get("created_at", "")),
+        "updated_at": str(task.get("updated_at", "")),
+    }

@@ -98,7 +98,55 @@ def test_smoke_suite_fake_mode_generates_reports_tasks_and_worker_ids(tmp_path, 
     assert result["runs"][0]["status"] == "passed"
     assert result["runs"][0]["worker_job_ids"]
     assert result["runs"][0]["commands"]
+    assert result["runs"][0]["evidence"]["smoke_report"] == result["report_path"]
+    assert result["runs"][0]["evidence"]["worker_result_paths"]
     assert Path(result["report_path"]).is_file()
+    persisted_report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    assert persisted_report["report_path"] == result["report_path"]
+    assert persisted_report["runs"][0]["evidence"]["smoke_report"] == result["report_path"]
+    task_ledger = tmp_path / "contentops" / ".goodteam" / "tasks" / "tasks.json"
+    tasks = json.loads(task_ledger.read_text(encoding="utf-8"))["tasks"]
+    smoke_task = next(task for task in tasks if task["title"] == "Run CONTENTOPS smoke cycle")
+    assert smoke_task["status"] == "done"
+    assert result["report_path"] in smoke_task["artifact_refs"]
+    assert all(path in smoke_task["artifact_refs"] for path in result["runs"][0]["evidence"]["worker_result_paths"])
+
+
+def test_smoke_evidence_only_includes_current_run_worker_results(tmp_path):
+    def runner(command, *, cwd):
+        return {"command": command, "cwd": str(cwd), "exit_code": 0, "stdout": "ok", "stderr": ""}
+
+    project = SmokeProject(
+        suite="contentops",
+        project_key="CONTENTOPS",
+        name="AI Content Studio",
+        idea="Build CONTENTOPS",
+        delivery_mode="init_project",
+        project_config=tmp_path / "projects" / "contentops.local.yaml",
+        target_root=tmp_path / "target",
+        verification_commands=[{"name": "ok", "command": "echo ok", "cwd": str(tmp_path / "target")}],
+        cleanup_policy="keep",
+    )
+    old_job = tmp_path / "target" / ".goodteam" / "workers" / "jobs" / "job-old"
+    old_job.mkdir(parents=True)
+    (old_job / "job.json").write_text(json.dumps({"id": "job-old", "run_id": "old-run"}), encoding="utf-8")
+    (old_job / "result.md").write_text("old result", encoding="utf-8")
+
+    result = run_smoke_suite(
+        workspace=tmp_path,
+        suites=["contentops"],
+        cycles=1,
+        autonomy="full",
+        dry_run=False,
+        worker_mode="fake",
+        repo_root=Path.cwd(),
+        registry={"contentops": project},
+        command_runner=runner,
+    )
+
+    evidence_paths = result["runs"][0]["evidence"]["worker_result_paths"]
+    assert evidence_paths
+    assert all("job-old" not in path for path in evidence_paths)
 
 
 def test_smoke_suite_failure_creates_blocker_task(tmp_path):
@@ -132,7 +180,123 @@ def test_smoke_suite_failure_creates_blocker_task(tmp_path):
     assert result["status"] == "failed"
     assert result["runs"][0]["classification"] == "target scaffold"
     task_ledger = tmp_path / "target" / ".goodteam" / "tasks" / "tasks.json"
-    assert "Smoke failure: CONTENTOPS cycle 1" in task_ledger.read_text(encoding="utf-8")
+    tasks = json.loads(task_ledger.read_text(encoding="utf-8"))["tasks"]
+    assert any(task["title"] == "Smoke failure: CONTENTOPS cycle 1" for task in tasks)
+    smoke_task = next(task for task in tasks if task["title"] == "Run CONTENTOPS smoke cycle")
+    assert smoke_task["status"] == "blocked"
+    assert smoke_task["priority"] == "high"
+
+
+def test_smoke_failure_updates_existing_backlog_task_for_same_cycle(tmp_path):
+    calls = {"count": 0}
+
+    def failing_runner(command, *, cwd):
+        calls["count"] += 1
+        message = "npm run test failed" if calls["count"] == 1 else "npm run build failed"
+        return {"command": command, "cwd": str(cwd), "exit_code": 1, "stdout": "", "stderr": message}
+
+    project = SmokeProject(
+        suite="contentops",
+        project_key="CONTENTOPS",
+        name="AI Content Studio",
+        idea="Build CONTENTOPS",
+        delivery_mode="init_project",
+        project_config=tmp_path / "projects" / "contentops.local.yaml",
+        target_root=tmp_path / "target",
+        verification_commands=[{"name": "verify", "command": "npm run build", "cwd": str(tmp_path / "target")}],
+        cleanup_policy="keep",
+    )
+
+    first = run_smoke_suite(
+        workspace=tmp_path,
+        suites=["contentops"],
+        cycles=1,
+        autonomy="full",
+        dry_run=False,
+        worker_mode="fake",
+        repo_root=Path.cwd(),
+        registry={"contentops": project},
+        command_runner=failing_runner,
+    )
+    second = run_smoke_suite(
+        workspace=tmp_path,
+        suites=["contentops"],
+        cycles=1,
+        autonomy="full",
+        dry_run=False,
+        worker_mode="fake",
+        repo_root=Path.cwd(),
+        registry={"contentops": project},
+        command_runner=failing_runner,
+    )
+
+    task_ledger = tmp_path / "target" / ".goodteam" / "tasks" / "tasks.json"
+    failure_tasks = [
+        task
+        for task in json.loads(task_ledger.read_text(encoding="utf-8"))["tasks"]
+        if task["title"] == "Smoke failure: CONTENTOPS cycle 1"
+    ]
+    assert first["runs"][0]["next_task"] == second["runs"][0]["next_task"]
+    assert len(failure_tasks) == 1
+    assert failure_tasks[0]["status"] == "todo"
+    assert "npm run build failed" in failure_tasks[0]["description"]
+
+
+def test_smoke_cycle_rerun_refreshes_acceptance_criteria_after_success(tmp_path):
+    calls = {"count": 0}
+
+    def flaky_runner(command, *, cwd):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"command": command, "cwd": str(cwd), "exit_code": 1, "stdout": "", "stderr": "npm run build failed"}
+        return {"command": command, "cwd": str(cwd), "exit_code": 0, "stdout": "ok", "stderr": ""}
+
+    project = SmokeProject(
+        suite="contentops",
+        project_key="CONTENTOPS",
+        name="AI Content Studio",
+        idea="Build CONTENTOPS",
+        delivery_mode="init_project",
+        project_config=tmp_path / "projects" / "contentops.local.yaml",
+        target_root=tmp_path / "target",
+        verification_commands=[{"name": "build", "command": "npm run build", "cwd": str(tmp_path / "target")}],
+        cleanup_policy="keep",
+    )
+
+    first = run_smoke_suite(
+        workspace=tmp_path,
+        suites=["contentops"],
+        cycles=1,
+        autonomy="full",
+        dry_run=False,
+        worker_mode="fake",
+        repo_root=Path.cwd(),
+        registry={"contentops": project},
+        command_runner=flaky_runner,
+    )
+    second = run_smoke_suite(
+        workspace=tmp_path,
+        suites=["contentops"],
+        cycles=1,
+        autonomy="full",
+        dry_run=False,
+        worker_mode="fake",
+        repo_root=Path.cwd(),
+        registry={"contentops": project},
+        command_runner=flaky_runner,
+    )
+
+    task_ledger = tmp_path / "target" / ".goodteam" / "tasks" / "tasks.json"
+    tasks = json.loads(task_ledger.read_text(encoding="utf-8"))["tasks"]
+    smoke_task = next(task for task in tasks if task["title"] == "Run CONTENTOPS smoke cycle")
+    assert first["status"] == "failed"
+    assert second["status"] == "passed"
+    assert smoke_task["status"] == "done"
+    assert smoke_task["acceptance_criteria"] == [
+        "Smoke report latest.json exists.",
+        "Verification commands and exit codes are recorded.",
+        "Worker job ids or protocol evidence are recorded.",
+    ]
 
 
 def test_shell_command_runner_uses_login_shell_path(tmp_path, monkeypatch):

@@ -137,6 +137,17 @@ Supported smoke worker modes:
 
 On failure, GoodTeam classifies the failure (`auth/provider`, `worker timeout`, `GoodTeam workflow`, `target scaffold`, `QA/browser/UI`, or `unknown`) and writes a blocker task into the target's `.goodteam/tasks/tasks.json`.
 
+Smoke projects are also first-class agile board tasks. Each smoke cycle creates or updates a high-priority task in the target task ledger, moves it through `backlog`/`doing`/`blocked`/`done`, and attaches the smoke report plus worker result paths as evidence when available.
+
+View the same lightweight Kanban data from the CLI:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli board \
+  --project-root /absolute/path/to/project
+```
+
+The dashboard exposes the same data in the `Agile Board` tab, alongside the existing `Smoke Runs` tab.
+
 ## Project Targets
 
 Create a local project config for your own repos from the dashboard, or add one directly under `projects/`:

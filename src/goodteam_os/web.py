@@ -16,6 +16,7 @@ from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
+from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.workers import WorkerJobStore
 
 PRD_REVIEW_ROLES = [
@@ -124,6 +125,25 @@ def build_smoke_run_items(workspace: Path) -> list[dict[str, str]]:
             raw["report_status"] = str(report.get("status", ""))
             items.append({key: str(value) for key, value in raw.items()})
     return items[:12]
+
+
+def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
+    ledger = _task_ledger_from_state(state)
+    if ledger is None:
+        return serialize_task_board(build_task_board([]))
+    return serialize_task_board(build_task_board(LocalTaskStore(ledger.parents[2]).list_tasks()))
+
+
+def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
+    if state is None:
+        return None
+    path = str(state.artifacts.get("task_ledger", "")).strip()
+    if not path:
+        return None
+    ledger = Path(path)
+    if ledger.name != "tasks.json" or not ledger.is_file():
+        return None
+    return ledger
 
 
 def maybe_send_favicon_response(handler: object, path: str) -> bool:
@@ -969,6 +989,40 @@ def render_review_roles(review_roles: list[str]) -> str:
     return f'<div class="review-roles"><span>Review roles</span><ul>{items}</ul></div>'
 
 
+def render_task_cards(tasks: list[dict[str, object]]) -> str:
+    if not tasks:
+        return '<div class="empty-state">No tasks in this lane.</div>'
+    return "\n".join(
+        f"""
+        <article class="task-card task-{escape(str(task.get("priority", "")))}">
+          <div class="role-topline">
+            <h4>{escape(str(task.get("id", "")))} {escape(str(task.get("title", "")))}</h4>
+            <span class="role-status">{escape(str(task.get("priority", "")))}</span>
+          </div>
+          <p>{escape(str(task.get("description", "")))}</p>
+          <dl class="role-meta">
+            <dt>Role</dt><dd>{escape(str(task.get("role", "")))}</dd>
+            <dt>Status</dt><dd>{escape(str(task.get("status", "")))}</dd>
+          </dl>
+          {render_inline_list("Acceptance", list(task.get("acceptance_criteria", [])))}
+          {render_inline_list("Artifacts", list(task.get("artifact_refs", [])), code=True)}
+        </article>
+        """
+        for task in tasks
+    )
+
+
+def render_inline_list(label: str, values: list[object], *, code: bool = False) -> str:
+    clean = [str(value) for value in values if str(value).strip()]
+    if not clean:
+        return ""
+    items = "".join(
+        f"<li>{f'<code>{escape(value)}</code>' if code else escape(value)}</li>"
+        for value in clean
+    )
+    return f'<div class="task-list"><span>{escape(label)}</span><ul>{items}</ul></div>'
+
+
 def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
     if project_root is None:
         return []
@@ -1098,6 +1152,29 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     if not smoke_cards:
         smoke_cards = '<div class="empty-state">No smoke runs recorded yet.</div>'
+    agile_board = build_agile_board(state)
+    agile_columns = dict(agile_board.get("columns", {}))
+    agile_counts = dict(agile_board.get("counts", {}))
+    agile_column_labels = {
+        "backlog": "Backlog",
+        "doing": "Doing",
+        "blocked": "Blocked",
+        "done": "Done",
+    }
+    agile_board_cards = "\n".join(
+        f"""
+        <section class="kanban-column">
+          <div class="kanban-column-head">
+            <h3>{escape(agile_column_labels[column])}</h3>
+            <span>{escape(str(agile_counts.get(column, 0)))}</span>
+          </div>
+          <div class="task-stack">
+            {render_task_cards(list(agile_columns.get(column, [])))}
+          </div>
+        </section>
+        """
+        for column in ["backlog", "doing", "blocked", "done"]
+    )
     role_cards = "\n".join(
         f"""
         <article class="role-card">
@@ -1818,6 +1895,80 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
     }}
+    .agile-board {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }}
+    .kanban-column {{
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.02);
+      min-height: 360px;
+      padding: 12px;
+      border-radius: 8px;
+    }}
+    .kanban-column-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }}
+    .kanban-column-head h3 {{
+      font-size: 14px;
+      margin: 0;
+      letter-spacing: 0;
+    }}
+    .kanban-column-head span {{
+      border: 1px solid var(--line);
+      color: var(--muted);
+      min-width: 28px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+    }}
+    .task-stack {{
+      display: grid;
+      gap: 10px;
+    }}
+    .task-card {{
+      border: 1px solid var(--line);
+      background: var(--surface);
+      padding: 12px;
+      border-radius: 8px;
+    }}
+    .task-card h4 {{
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }}
+    .task-card p {{
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin: 8px 0;
+    }}
+    .task-high {{
+      border-left: 3px solid var(--red);
+    }}
+    .task-list {{
+      margin-top: 8px;
+    }}
+    .task-list span {{
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+    }}
+    .task-list ul {{
+      margin: 5px 0 0;
+      padding-left: 16px;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.45;
+    }}
     .flow-card {{
       display: grid;
       grid-template-columns: 40px 1fr;
@@ -2171,6 +2322,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       <button class="tab-button" data-tab="roles" type="button">Roles</button>
       <button class="tab-button" data-tab="artifacts" type="button">Artifacts</button>
       <button class="tab-button" data-tab="actions" type="button">Actions</button>
+      <button class="tab-button" data-tab="board" type="button">Agile Board</button>
       <button class="tab-button" data-tab="smoke" type="button">Smoke Runs</button>
       <button class="tab-button" data-tab="workers" type="button">Workers</button>
       <button class="tab-button" data-tab="approvals" type="button">Approvals</button>
@@ -2214,6 +2366,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
       <section>
         <h2>Actions</h2>
         <div class="action-timeline">{action_cards}</div>
+      </section>
+    </div>
+    <div class="tab-panel" id="tab-board">
+      <section class="wide">
+        <h2>Agile Board</h2>
+        <div class="agile-board">{agile_board_cards}</div>
       </section>
     </div>
     <div class="tab-panel" id="tab-smoke">

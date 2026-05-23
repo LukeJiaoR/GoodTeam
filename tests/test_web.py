@@ -2,8 +2,10 @@ import json
 from pathlib import Path
 
 from goodteam_os.state import StateStore, create_initial_state
+from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.web import (
     build_action_items,
+    build_agile_board,
     build_project_overview_items,
     build_role_observations,
     build_approval_reviews,
@@ -56,6 +58,7 @@ def test_render_dashboard_shows_current_gate():
     assert "Roles" in html
     assert "Artifacts" in html
     assert "Actions" in html
+    assert "Agile Board" in html
     assert "Approvals" in html
     assert "System" in html
     assert "Worker Jobs" in html
@@ -79,6 +82,30 @@ def test_render_dashboard_shows_current_gate():
     assert "Task Backend" in html
     assert "Worker Backend" in html
     assert "Active run in progress" not in html
+
+
+def test_dashboard_renders_agile_board_from_project_task_ledger(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    store = LocalTaskStore(project_root)
+    task = store.create_task(
+        title="Run CONTENTOPS smoke",
+        description="CONTENTOPS must leave a smoke report.",
+        role="qa",
+        priority="high",
+        acceptance_criteria=["state/smoke-runs/latest.json exists"],
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
+    state.artifacts["task_ledger"] = str(project_root / ".goodteam" / "tasks" / "tasks.json")
+
+    board = build_agile_board(state)
+    html = render_dashboard(state)
+
+    assert board["counts"]["backlog"] == 1
+    assert board["columns"]["backlog"][0]["id"] == task["id"]
+    assert "Agile Board" in html
+    assert "Run CONTENTOPS smoke" in html
+    assert "state/smoke-runs/latest.json exists" in html
 
 
 def test_render_dashboard_shows_worker_blockers():

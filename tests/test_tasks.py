@@ -1,4 +1,4 @@
-from goodteam_os.tasks import LocalTaskStore
+from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 
 
 def test_local_task_store_creates_project_task_ledger(tmp_path):
@@ -46,3 +46,50 @@ def test_local_task_store_rejects_unknown_status(tmp_path):
         assert "Unknown task status" in str(exc)
     else:
         raise AssertionError("Expected unknown status to fail")
+
+
+def test_task_board_maps_local_task_statuses_to_lightweight_kanban(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = LocalTaskStore(project_root)
+    backlog = store.create_task(title="Run CONTENTOPS smoke", description="", role="qa", priority="high")
+    doing = store.create_task(title="Verify GOODTEAM-SELF smoke", description="", role="qa")
+    blocked = store.create_task(title="Fix failed smoke", description="", role="qa")
+    done = store.create_task(title="Record smoke evidence", description="", role="release")
+    review = store.create_task(title="Review smoke report", description="", role="review")
+    canceled = store.create_task(title="Old smoke run", description="", role="qa")
+
+    store.update_task(doing["id"], status="in_progress")
+    store.update_task(blocked["id"], status="blocked")
+    store.update_task(done["id"], status="done")
+    store.update_task(review["id"], status="review")
+    store.update_task(canceled["id"], status="canceled")
+
+    board = build_task_board(store.list_tasks())
+
+    assert [task["id"] for task in board["backlog"]] == [backlog["id"], review["id"]]
+    assert [task["id"] for task in board["doing"]] == [doing["id"]]
+    assert [task["id"] for task in board["blocked"]] == [blocked["id"]]
+    assert [task["id"] for task in board["done"]] == [done["id"]]
+    assert canceled["id"] not in [task["id"] for column in board.values() for task in column]
+
+
+def test_serialize_task_board_outputs_stable_summary(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = LocalTaskStore(project_root)
+    task = store.create_task(
+        title="Run CONTENTOPS smoke",
+        description="CONTENTOPS must leave a smoke report.",
+        role="qa",
+        priority="high",
+        acceptance_criteria=["latest.json exists"],
+        artifact_refs=["state/smoke-runs/latest.json"],
+    )
+
+    payload = serialize_task_board(build_task_board(store.list_tasks()))
+
+    assert payload["counts"] == {"backlog": 1, "doing": 0, "blocked": 0, "done": 0}
+    assert payload["columns"]["backlog"][0]["id"] == task["id"]
+    assert payload["columns"]["backlog"][0]["title"] == "Run CONTENTOPS smoke"
+    assert payload["columns"]["backlog"][0]["acceptance_criteria"] == ["latest.json exists"]

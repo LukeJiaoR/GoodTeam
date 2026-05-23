@@ -2,6 +2,8 @@ import json
 import subprocess
 import sys
 
+from goodteam_os.tasks import LocalTaskStore
+
 
 def test_cli_start_reaches_prd_gate(tmp_path):
     command = [
@@ -63,6 +65,22 @@ def test_cli_smoke_failure_exits_nonzero_and_writes_report(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "run_smoke_suite", fake_run_smoke_suite)
 
     assert cli.main(["smoke", "--workspace", str(tmp_path), "--suite", "contentops", "--cycles", "1"]) == 1
+
+
+def test_cli_board_outputs_task_board_json(tmp_path, capsys):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    store = LocalTaskStore(project_root)
+    store.create_task(title="Run CONTENTOPS smoke", description="", role="qa", priority="high")
+
+    from goodteam_os import cli
+
+    result = cli.main(["board", "--project-root", str(project_root)])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert payload["counts"]["backlog"] == 1
+    assert payload["columns"]["backlog"][0]["title"] == "Run CONTENTOPS smoke"
 
 
 def test_cli_start_accepts_model_profile_and_role_override(tmp_path):

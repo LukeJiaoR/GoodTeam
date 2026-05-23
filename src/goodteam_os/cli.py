@@ -4,6 +4,7 @@ from pathlib import Path
 
 from goodteam_os.projects import check_project_target, load_project_target
 from goodteam_os.smoke import run_smoke_suite
+from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import poll_telegram_approvals
 from goodteam_os.web import serve, start_workflow
 
@@ -31,6 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--project-config", type=Path, required=True)
+
+    board = subparsers.add_parser("board")
+    board.add_argument("--project-root", type=Path, required=True)
 
     smoke = subparsers.add_parser("smoke")
     smoke.add_argument("--workspace", type=Path, default=Path("."))
@@ -70,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         target = load_project_target(args.project_config)
         print(json.dumps(check_project_target(target), indent=2))
+        return 0
+    if args.command == "board":
+        payload = serialize_task_board(build_task_board(LocalTaskStore(args.project_root).list_tasks()))
+        print(json.dumps(payload, indent=2))
         return 0
     if args.command == "smoke":
         payload = run_smoke_suite(

@@ -113,11 +113,15 @@ def run_smoke_suite(
             report["runs"].append(run)
             if run["status"] != "passed":
                 report["status"] = "failed"
-                report["report_path"] = str(write_smoke_report(workspace, report))
+                report_path = prepare_smoke_report_for_write(workspace, report)
+                write_smoke_report(workspace, report)
+                _attach_report_path_to_smoke_tasks(report["runs"], report_path, projects)
                 return report
 
     if not dry_run:
-        report["report_path"] = str(write_smoke_report(workspace, report))
+        report_path = prepare_smoke_report_for_write(workspace, report)
+        write_smoke_report(workspace, report)
+        _attach_report_path_to_smoke_tasks(report["runs"], report_path, projects)
     return report
 
 
@@ -139,9 +143,12 @@ def _execute_project_cycle(
         "classification": "",
         "commands": [],
         "artifacts": {},
+        "evidence": {"smoke_report": "", "worker_result_paths": []},
         "worker_job_ids": [],
         "next_task": "",
     }
+    smoke_task_id = _ensure_smoke_task(project, cycle)
+    run["task_id"] = smoke_task_id
     try:
         payload = start_workflow(
             workspace=workspace,
@@ -161,17 +168,19 @@ def _execute_project_cycle(
             raise RuntimeError("; ".join(state.blockers) or f"workflow stopped at {state.next_node}")
         run["run_id"] = state.run_id
         run["artifacts"] = dict(state.artifacts)
-        run["worker_job_ids"] = _worker_job_ids(project.target_root)
+        run["worker_job_ids"] = _worker_job_ids(project.target_root, run_id=state.run_id)
+        run["evidence"]["worker_result_paths"] = _worker_result_paths(project.target_root, list(run["worker_job_ids"]))
         run["commands"] = [_run_verification(command, command_runner) for command in project.verification_commands]
         failing_command = next((command for command in run["commands"] if int(command.get("exit_code", 0)) != 0), None)
         if failing_command:
             raise RuntimeError(str(failing_command.get("stderr") or failing_command.get("stdout") or failing_command.get("command")))
+        _mark_smoke_task_done(project, smoke_task_id, run)
         return run
     except Exception as exc:
         message = str(exc)
         run["status"] = "failed"
         run["classification"] = classify_smoke_failure(message)
-        run["next_task"] = _record_failure_task(project, cycle, message, run["classification"])
+        run["next_task"] = _record_failure_task(project, cycle, message, run["classification"], smoke_task_id=smoke_task_id)
         return run
 
 
@@ -213,6 +222,18 @@ def write_smoke_report(workspace: Path, report: dict[str, object]) -> Path:
     snapshot = root / f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
     snapshot.write_text(json.dumps(body, indent=2), encoding="utf-8")
     return latest
+
+
+def prepare_smoke_report_for_write(workspace: Path, report: dict[str, object]) -> Path:
+    report_path = workspace / "state" / "smoke-runs" / "latest.json"
+    report["report_path"] = str(report_path)
+    for raw in list(report.get("runs", [])):
+        if not isinstance(raw, dict):
+            continue
+        evidence = dict(raw.get("evidence", {}) or {})
+        evidence["smoke_report"] = str(report_path)
+        raw["evidence"] = evidence
+    return report_path
 
 
 def ensure_self_worktree_target_is_safe(repo_root: Path, target: Path) -> None:
@@ -283,22 +304,168 @@ def _prepare_project(project: SmokeProject, *, worker_mode: str, repo_root: Path
     )
 
 
-def _record_failure_task(project: SmokeProject, cycle: int, message: str, classification: str) -> str:
-    task = LocalTaskStore(project.target_root).create_task(
-        title=f"Smoke failure: {project.project_key} cycle {cycle}",
-        description=f"Classification: {classification}\n\nFailure: {message}",
+def _ensure_smoke_task(project: SmokeProject, cycle: int) -> str:
+    store = LocalTaskStore(project.target_root)
+    title = f"Run {project.project_key} smoke cycle"
+    existing = next(
+        (
+            task
+            for task in store.list_tasks()
+            if task.get("title") == title
+            and f"cycle:{cycle}" in list(task.get("external_refs", []))
+            and f"suite:{project.suite}" in list(task.get("external_refs", []))
+        ),
+        None,
+    )
+    if existing:
+        updated = store.update_task(
+            str(existing["id"]),
+            status="in_progress",
+            acceptance_criteria=_smoke_task_acceptance_criteria(),
+        )
+        return str(updated["id"])
+    task = store.create_task(
+        title=title,
+        description=f"Run smoke suite {project.suite} cycle {cycle} and keep machine-readable evidence.",
         role="qa",
         priority="high",
-        acceptance_criteria=["Smoke suite reruns without this failure.", "Failure is covered by a regression test."],
+        acceptance_criteria=_smoke_task_acceptance_criteria(),
     )
-    return str(task["id"])
+    return str(store.update_task(task["id"], status="in_progress", external_refs=[f"suite:{project.suite}", f"cycle:{cycle}"])["id"])
 
 
-def _worker_job_ids(target_root: Path) -> list[str]:
+def _smoke_task_acceptance_criteria() -> list[str]:
+    return [
+        "Smoke report latest.json exists.",
+        "Verification commands and exit codes are recorded.",
+        "Worker job ids or protocol evidence are recorded.",
+    ]
+
+
+def _attach_report_path_to_smoke_tasks(runs: list[object], report_path: Path, projects: dict[str, SmokeProject]) -> None:
+    for raw in runs:
+        run = dict(raw)
+        evidence = dict(run.get("evidence", {}) or {})
+        evidence["smoke_report"] = str(report_path)
+        run["evidence"] = evidence
+        if isinstance(raw, dict):
+            raw["evidence"] = evidence
+        task_id = str(run.get("task_id", ""))
+        suite = str(run.get("suite", ""))
+        if not task_id or suite not in projects:
+            continue
+        project = projects[suite]
+        store = LocalTaskStore(project.target_root)
+        try:
+            task = store.get_task(task_id)
+        except ValueError:
+            continue
+        artifact_refs = list(task.get("artifact_refs", []))
+        for artifact_ref in _smoke_task_artifact_refs(run):
+            if artifact_ref not in artifact_refs:
+                artifact_refs.append(artifact_ref)
+        if str(report_path) not in artifact_refs:
+            artifact_refs.append(str(report_path))
+        if artifact_refs != list(task.get("artifact_refs", [])):
+            store.update_task(task_id, artifact_refs=artifact_refs)
+
+
+def _mark_smoke_task_done(project: SmokeProject, task_id: str, run: dict[str, object]) -> None:
+    artifact_refs = _smoke_task_artifact_refs(run)
+    LocalTaskStore(project.target_root).update_task(task_id, status="done", artifact_refs=artifact_refs)
+
+
+def _smoke_task_artifact_refs(run: dict[str, object]) -> list[str]:
+    refs: list[str] = []
+    for path in dict(run.get("artifacts", {})).values():
+        if str(path):
+            refs.append(str(path))
+    evidence = dict(run.get("evidence", {}) or {})
+    if evidence.get("smoke_report"):
+        refs.append(str(evidence["smoke_report"]))
+    for path in list(evidence.get("worker_result_paths", [])):
+        if str(path):
+            refs.append(str(path))
+    if run.get("report_path"):
+        refs.append(str(run["report_path"]))
+    return list(dict.fromkeys(refs))
+
+
+def _record_failure_task(project: SmokeProject, cycle: int, message: str, classification: str, *, smoke_task_id: str) -> str:
+    store = LocalTaskStore(project.target_root)
+    store.update_task(
+        smoke_task_id,
+        status="blocked",
+        priority="high",
+        acceptance_criteria=[
+            "Smoke suite reruns without this failure.",
+            "Failure is covered by a regression test.",
+        ],
+    )
+    title = f"Smoke failure: {project.project_key} cycle {cycle}"
+    description = f"Classification: {classification}\n\nFailure: {message}"
+    external_refs = [f"suite:{project.suite}", f"cycle:{cycle}", "type:smoke-failure"]
+    acceptance_criteria = ["Smoke suite reruns without this failure.", "Failure is covered by a regression test."]
+    existing = next(
+        (
+            task
+            for task in store.list_tasks()
+            if task.get("title") == title
+            and all(ref in list(task.get("external_refs", [])) for ref in external_refs)
+        ),
+        None,
+    )
+    if existing:
+        updated = store.update_task(
+            str(existing["id"]),
+            description=description,
+            status="todo",
+            priority="high",
+            acceptance_criteria=acceptance_criteria,
+        )
+        return str(updated["id"])
+    task = store.create_task(
+        title=title,
+        description=description,
+        role="qa",
+        priority="high",
+        acceptance_criteria=acceptance_criteria,
+    )
+    return str(store.update_task(str(task["id"]), external_refs=external_refs)["id"])
+
+
+def _worker_job_ids(target_root: Path, *, run_id: str = "") -> list[str]:
     jobs_root = target_root / ".goodteam" / "workers" / "jobs"
     if not jobs_root.is_dir():
         return []
-    return sorted(path.name for path in jobs_root.iterdir() if path.is_dir())
+    job_ids = []
+    for path in jobs_root.iterdir():
+        if not path.is_dir():
+            continue
+        if run_id and _worker_job_run_id(path) != run_id:
+            continue
+        job_ids.append(path.name)
+    return sorted(job_ids)
+
+
+def _worker_job_run_id(job_root: Path) -> str:
+    path = job_root / "job.json"
+    if not path.is_file():
+        return ""
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("run_id", ""))
+    except json.JSONDecodeError:
+        return ""
+
+
+def _worker_result_paths(target_root: Path, job_ids: list[str]) -> list[str]:
+    jobs_root = target_root / ".goodteam" / "workers" / "jobs"
+    paths = []
+    for job_id in job_ids:
+        result = jobs_root / job_id / "result.md"
+        if result.is_file():
+            paths.append(str(result))
+    return paths
 
 
 def _planned_run(project: SmokeProject, cycle: int) -> dict[str, object]:
@@ -310,6 +477,7 @@ def _planned_run(project: SmokeProject, cycle: int) -> dict[str, object]:
         "classification": "",
         "commands": project.verification_commands,
         "artifacts": {},
+        "evidence": {"smoke_report": "", "worker_result_paths": []},
         "worker_job_ids": [],
         "next_task": "",
     }
