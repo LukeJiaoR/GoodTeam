@@ -10,14 +10,28 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-from goodteam_os.graph import advance_approved_workflow, run_adoption_until_next_gate, run_until_next_gate
+from goodteam_os.graph import (
+    advance_approved_workflow,
+    render_downstream_artifact_markdown,
+    run_adoption_until_next_gate,
+    run_until_next_gate,
+)
+from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
+from goodteam_os.staging import (
+    deployment_backend_config,
+    delivery_contract_config as load_delivery_contract_config,
+    delivery_contract_report,
+    run_staging_backend,
+)
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
+from goodteam_os.telegram import send_approval_notification
 from goodteam_os.workers import WorkerJobStore
+from goodteam_os.workers import DEFAULT_CODEX_MODEL
 
 PRD_REVIEW_ROLES = [
     "Product / Requirement",
@@ -58,6 +72,35 @@ def append_action(
         handle.write(json.dumps(event) + "\n")
 
 
+def notify_current_approval_gate(state: AgileDevState | None) -> dict[str, object]:
+    gate = current_approval_gate(state)
+    if state is None or not gate:
+        return {"status": "skipped", "reason": "no approval gate"}
+    artifact_key = approval_artifact_map().get(gate, gate)
+    try:
+        return send_approval_notification(
+            project_key=state.project_key,
+            run_id=state.run_id,
+            gate=gate,
+            artifact_path=state.artifacts.get(artifact_key, ""),
+            summary=f"GoodTeam is waiting for {gate.upper()} approval on {state.project_key}.",
+        )
+    except Exception as exc:
+        return {"status": "failed", "error": exc.__class__.__name__}
+
+
+def current_approval_gate(state: AgileDevState | None) -> str:
+    if state is None:
+        return ""
+    match = re.fullmatch(r"await_(.+)_approval", state.next_node)
+    if not match:
+        return ""
+    gate = match.group(1)
+    if str(state.approvals.get(gate, "")) != ApprovalDecision.PENDING:
+        return ""
+    return gate
+
+
 def _action_log_path(workspace: Path, project_key: str = "") -> Path:
     if project_key:
         return StateStore(workspace).project_state_dir(project_key) / "action-log.jsonl"
@@ -74,8 +117,8 @@ def build_action_title(action: dict[str, str]) -> str:
         return f"{actor} started workflow"
     if action_type.endswith("_generated") and artifact:
         return f"{actor} generated {artifact.upper()}"
-    if action_type == "prd_regenerated":
-        return f"{actor} regenerated PRD"
+    if action_type.endswith("_regenerated") and gate:
+        return f"{actor} regenerated {gate.upper()}"
     if action_type == "artifact_saved" and artifact:
         return f"{actor} saved {artifact.upper()} artifact"
     if action_type == "approval_decided" and gate and decision:
@@ -222,6 +265,18 @@ def create_local_project_config(
     model_profile: str = "balanced",
     delivery_mode: str = "init_project",
     role_model_overrides: dict[str, str] | None = None,
+    deployment_backend_mode: str = "",
+    staging_ssh_target: str = "",
+    staging_remote_dir: str = "",
+    staging_git_ref: str = "",
+    staging_public_url: str = "",
+    staging_deploy_command: str = "",
+    staging_healthcheck_command: str = "",
+    staging_smoke_command: str = "",
+    delivery_contract_required: bool = False,
+    delivery_contract_minimum_evidence: str = "infrastructure",
+    delivery_contract_fatal_patterns: str = "",
+    delivery_contract_acceptance: str = "",
 ) -> dict[str, object]:
     name = project_name.strip()
     key = project_key.strip().upper()
@@ -279,6 +334,38 @@ def create_local_project_config(
         lines.extend(f"    {key}: {value}" for key, value in plane_config.items() if value)
     worker_mode = worker_backend_mode.strip() or "codex"
     lines.extend(["worker_backend:", f"  mode: {worker_mode}"])
+    deployment_backend = {
+        "mode": deployment_backend_mode.strip(),
+        "staging_ssh_target": staging_ssh_target.strip(),
+        "staging_remote_dir": staging_remote_dir.strip(),
+        "staging_git_ref": staging_git_ref.strip(),
+        "staging_public_url": staging_public_url.strip(),
+        "staging_deploy_command": staging_deploy_command.strip(),
+        "staging_healthcheck_command": staging_healthcheck_command.strip(),
+        "staging_smoke_command": staging_smoke_command.strip(),
+    }
+    if deployment_backend["mode"]:
+        lines.extend(["deployment_backend:", f"  mode: {deployment_backend['mode']}"])
+        for config_key in [
+            "staging_ssh_target",
+            "staging_remote_dir",
+            "staging_git_ref",
+            "staging_public_url",
+            "staging_deploy_command",
+            "staging_healthcheck_command",
+            "staging_smoke_command",
+        ]:
+            value = deployment_backend[config_key]
+            if value:
+                lines.append(f"  {config_key}: {value}")
+    delivery_contract_lines = _delivery_contract_lines(
+        required=delivery_contract_required,
+        minimum_evidence=delivery_contract_minimum_evidence,
+        fatal_patterns=delivery_contract_fatal_patterns,
+        acceptance=delivery_contract_acceptance,
+    )
+    if delivery_contract_lines:
+        lines.extend(delivery_contract_lines)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     task_backend: dict[str, object] = {"mode": "local", "sync": sync_values}
@@ -291,10 +378,57 @@ def create_local_project_config(
         "repos": {repo: str(repo_path) for repo, repo_path in repos},
         "task_backend": task_backend,
         "worker_backend": {"mode": worker_mode},
+        "deployment_backend": {"mode": deployment_backend["mode"], **({key: value for key, value in deployment_backend.items() if key != "mode" and value})},
+        "delivery_contract": delivery_contract_report(load_project_target(path)),
         "model_profile": profile,
         "delivery_mode": mode,
         "role_model_overrides": overrides,
     }
+
+
+def _delivery_contract_lines(
+    *,
+    required: bool,
+    minimum_evidence: str,
+    fatal_patterns: str,
+    acceptance: str,
+) -> list[str]:
+    pattern_values = [line.strip() for line in fatal_patterns.splitlines() if line.strip()]
+    checks = []
+    for raw_line in acceptance.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split("|", 2)]
+        if len(parts) != 3 or not all(parts):
+            continue
+        check_id, check_type, command = parts
+        if check_type not in {"ssh_command", "local_command"}:
+            check_type = "ssh_command"
+        checks.append((check_id, check_type, command))
+    if not required and not pattern_values and not checks:
+        return []
+    evidence = minimum_evidence.strip() or ("functional" if required else "infrastructure")
+    lines = [
+        "delivery_contract:",
+        f"  required: {'true' if required else 'false'}",
+        f"  minimum_evidence: {evidence}",
+    ]
+    if pattern_values:
+        lines.append("  fatal_output_patterns:")
+        for index, pattern in enumerate(pattern_values, start=1):
+            lines.append(f"    pattern_{index}: {pattern}")
+    if checks:
+        lines.append("  staging_acceptance:")
+        for check_id, check_type, command in checks:
+            lines.extend(
+                [
+                    f"    {check_id}:",
+                    f"      type: {check_type}",
+                    f"      command: {command}",
+                ]
+            )
+    return lines
 
 
 def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]]:
@@ -400,6 +534,7 @@ def start_workflow(
             artifact=artifact,
             artifact_path=artifact_path,
         )
+    notify_current_approval_gate(result)
     payload = asdict(result)
     payload["dry_run"] = False
     return payload
@@ -410,6 +545,7 @@ def decide_approval(*, workspace: Path, approval: str, decision: str, project_ke
         "takeover": "product_requirement",
         "prd": "architect",
         "rfc": "planner",
+        "staging": "release",
         "security": "planner",
         "release": "retro_memory",
     }
@@ -488,28 +624,55 @@ def decide_approval(*, workspace: Path, approval: str, decision: str, project_ke
                 artifact=artifact,
                 artifact_path=state.artifacts.get(artifact, ""),
             )
-    elif approval == "prd" and approval_decision == ApprovalDecision.REJECTED:
+    elif approval in {"prd", "rfc"} and approval_decision == ApprovalDecision.REJECTED:
         regenerate_before_node = state.next_node
-        state.approvals["prd"] = ApprovalDecision.PENDING
+        state.approvals[approval] = ApprovalDecision.PENDING
         project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+        if project_config is None and project_key:
+            try:
+                project_config = _project_config_for_key(workspace, project_key)
+            except ValueError:
+                project_config = None
+        if approval == "prd":
+            state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+        else:
+            state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
         append_action(
             workspace,
             run_id=state.run_id,
             actor="system",
-            action="prd_regenerated",
+            action=f"{approval}_regenerated",
             project_key=key,
-            gate="prd",
+            gate=approval,
             before_node=regenerate_before_node,
             after_node=state.next_node,
-            artifact="prd",
-            artifact_path=state.artifacts.get("prd", ""),
+            artifact=approval_artifact_map().get(approval, approval),
+            artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
         )
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
+    notify_current_approval_gate(state)
     payload = asdict(state)
     payload["decision"] = str(approval_decision)
     return payload
+
+
+def regenerate_rfc_review_gate(
+    *,
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None = None,
+) -> AgileDevState:
+    rfc_path = ArtifactStore(root=workspace).write_markdown(
+        state.run_id,
+        "rfc",
+        "rfc.md",
+        render_downstream_artifact_markdown("rfc", state, project_config),
+    )
+    state.artifacts["rfc"] = str(rfc_path)
+    state.current_node = "rfc_review_gate"
+    state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
+    return state
 
 
 def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, object]:
@@ -525,12 +688,42 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
     project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
     if project_config is None or not project_config.is_file():
         project_config = _project_config_for_key(workspace, key)
+    state.role_models = refresh_state_role_models(state, project_config)
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
 
     generated_before = set(state.artifacts)
+    staging_retry = any(blocker.startswith("staging ") for blocker in state.blockers)
     state.blockers = []
-    state.current_node = "rfc_review_gate"
-    state.next_node = "planner"
-    state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
+    if staging_retry:
+        staging_result = run_staging_backend(project_config=project_config)
+        from goodteam_os.graph import render_staging_report_markdown
+        from goodteam_os.artifacts import ArtifactStore
+
+        store = ArtifactStore(root=workspace)
+        staging_path = store.write_markdown(
+            state.run_id,
+            "staging_report",
+            "staging-report.md",
+            render_staging_report_markdown(state, project_config, staging_result),
+        )
+        state.artifacts["staging_report"] = str(staging_path)
+        if str(staging_result.get("status", "")) != "passed":
+            failed_step = str(staging_result.get("failed_step", "") or "deploy")
+            state.current_node = "implementation"
+            state.next_node = "blocked"
+            evidence_gap = str(staging_result.get("evidence_gap", "") or "")
+            if failed_step == "acceptance" and evidence_gap:
+                state.blockers = [f"staging acceptance failed: {evidence_gap}"]
+            else:
+                state.blockers = [f"staging {failed_step} failed"]
+        else:
+            state.current_node = "staging_review_gate"
+            state.next_node = "await_staging_approval"
+    else:
+        state.current_node = "rfc_review_gate"
+        state.next_node = "planner"
+        state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
 
@@ -556,9 +749,36 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
             artifact_path=state.artifacts.get(artifact, ""),
         )
 
+    notify_current_approval_gate(state)
     payload = asdict(state)
     payload["retried"] = True
     return payload
+
+
+def refresh_state_role_models(state: AgileDevState, project_config: Path | None) -> dict[str, dict[str, str]]:
+    target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
+    try:
+        _profile, role_models = resolve_project_model_profile(
+            Path("models.yaml"),
+            target,
+            explicit_profile=state.model_profile,
+            role_overrides=[],
+        )
+    except Exception:
+        return state.role_models
+    return role_models
+
+
+def worker_model_label(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
+    if state is not None:
+        model = str(dict(state.role_models.get("implementation", {})).get("primary", "")).strip()
+        if model:
+            return model.removeprefix("codex:")
+    overrides = dict((start_context or {}).get("role_model_overrides", {}) or {})
+    model = str(overrides.get("implementation", "") or overrides.get("frontend", "") or overrides.get("backend", "") or "").strip()
+    if model:
+        return model.removeprefix("codex:")
+    return DEFAULT_CODEX_MODEL
 
 
 def terminate_project_run(*, workspace: Path, project_key: str) -> dict[str, object]:
@@ -893,6 +1113,8 @@ def build_start_console_context(
         project_report = check_project_target(load_project_target(project_config))
     project = dict(project_report.get("project", {}))
     target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
+    deployment_backend = deployment_backend_config(project_config) if project_config is not None and project_config.is_file() else {"mode": ""}
+    delivery_contract = delivery_contract_report(target) if target else delivery_contract_report({})
     directory_base = _project_directory_base(dict(target.get("repos", {})), project_base)
     return {
         "workspace": str(workspace),
@@ -907,6 +1129,8 @@ def build_start_console_context(
         "role_model_overrides": dict(target.get("role_model_overrides", {})) if isinstance(target.get("role_model_overrides", {}), dict) else {},
         "task_backend": normalize_task_backend(target.get("task_backend", {"mode": "local", "sync": []})),
         "worker_backend": normalize_worker_backend(target.get("worker_backend", {"mode": "codex"})),
+        "deployment_backend": deployment_backend,
+        "delivery_contract": delivery_contract,
         "project_base": str(directory_base),
         "candidate_dirs": discover_project_directories(directory_base),
     }
@@ -1035,6 +1259,9 @@ def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
                 "adapter": str(job.get("adapter", "")),
                 "status": str(job.get("status", "")),
                 "updated_at": str(job.get("updated_at", "")),
+                "heartbeat_at": str(job.get("heartbeat_at", "")),
+                "pid": str(job.get("pid", "")),
+                "summary": str(job.get("summary", "")),
             }
         )
     return items
@@ -1244,9 +1471,23 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     plane_config = dict(task_backend.get("plane", {})) if isinstance(task_backend.get("plane", {}), dict) else {}
     worker_backend = normalize_worker_backend(start_context.get("worker_backend", {"mode": "codex"}))
     worker_backend_mode = str(worker_backend.get("mode", "codex"))
+    deployment_backend = dict(start_context.get("deployment_backend", {"mode": ""}))
+    deployment_mode = str(deployment_backend.get("mode", "") or "")
+    delivery_contract = dict(start_context.get("delivery_contract", {}))
+    delivery_contract_required = bool(delivery_contract.get("required", False))
+    delivery_contract_minimum = str(delivery_contract.get("minimum_evidence", "infrastructure") or "infrastructure")
+    delivery_contract_level = str(delivery_contract.get("evidence_level", "infrastructure") or "infrastructure")
+    delivery_contract_acceptance_count = str(delivery_contract.get("acceptance_count", 0))
+    delivery_contract_configured = bool(delivery_contract.get("configured", False))
     project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
     worker_job_items = "\n".join(
-        f"<li><span>{escape(item['role'])} / {escape(item['adapter'])}</span><code>{escape(item['status'])} · {escape(item['id'])}</code></li>"
+        (
+            f"<li><span>{escape(item['role'])} / {escape(item['adapter'])}</span>"
+            f"<code>{escape(item['status'])} · {escape(item['id'])}"
+            f"{' · pid ' + escape(item['pid']) if item['pid'] else ''}"
+            f"{' · heartbeat ' + escape(item['heartbeat_at']) if item['heartbeat_at'] else ''}"
+            f"{' · ' + escape(item['summary']) if item['summary'] else ''}</code></li>"
+        )
         for item in build_worker_job_items(project_root)
     )
     if not worker_job_items:
@@ -1282,6 +1523,14 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     role_overrides = dict(start_context.get("role_model_overrides", {}))
     role_overrides_text = "\n".join(f"{role}={model}" for role, model in sorted(role_overrides.items()))
+    worker_model = worker_model_label(state, start_context)
+    target_for_contract = load_project_target(Path(str(start_context["project_config"]))) if str(start_context.get("project_config", "")) and Path(str(start_context["project_config"])).is_file() else {}
+    delivery_contract_config_for_form = load_delivery_contract_config(target_for_contract) if target_for_contract else {"required": False, "minimum_evidence": "infrastructure", "fatal_output_patterns": [], "staging_acceptance": []}
+    delivery_contract_patterns_text = "\n".join(str(pattern) for pattern in delivery_contract_config_for_form.get("fatal_output_patterns", []))
+    delivery_contract_acceptance_text = "\n".join(
+        f"{item.get('id', '')}|{item.get('type', 'ssh_command')}|{item.get('command', '')}"
+        for item in delivery_contract_config_for_form.get("staging_acceptance", [])
+    )
     candidate_dirs = [dict(item) for item in start_context.get("candidate_dirs", [])]
     directory_options = "\n".join(
         f'<option value="{escape(str(item["path"]))}">{escape(str(item["name"]))}</option>'
@@ -1315,7 +1564,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           <div class="signal"><span>Next</span>{escape(state.next_node or state.current_node)}</div>
           <div class="signal"><span>Model Profile</span>{escape(state.model_profile)}</div>
           <div class="signal"><span>Delivery</span>{escape(state.delivery_mode)}</div>
-          <div class="signal"><span>Worker Model</span><code>gpt-5.5</code></div>
+          <div class="signal"><span>Worker Model</span><code>{escape(worker_model)}</code></div>
         </div>
         {blocker_html}
         """
@@ -1330,7 +1579,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <div class="signal"><span>Next</span>{escape(state.next_node or state.current_node)}</div>
             <div class="signal"><span>Model Profile</span>{escape(state.model_profile)}</div>
             <div class="signal"><span>Delivery</span>{escape(state.delivery_mode)}</div>
-            <div class="signal"><span>Worker Model</span><code>gpt-5.5</code></div>
+            <div class="signal"><span>Worker Model</span><code>{escape(worker_model)}</code></div>
           </div>
         {blocker_html}
         """
@@ -1385,7 +1634,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
               </label>
               <label>
                 Role Model Overrides
-                <textarea id="role-model-overrides" placeholder="architect=codex:gpt-5.5&#10;frontend=codex:gpt-5.5">{escape(role_overrides_text)}</textarea>
+                <textarea id="role-model-overrides" placeholder="architect=codex:gpt-5.5&#10;frontend=codex:gpt-5.3-codex">{escape(role_overrides_text)}</textarea>
               </label>
               <label>
                 Docs Directory
@@ -1415,10 +1664,17 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
               <label>
                 Worker Backend
                 <select id="worker-backend-mode">
-                  <option value="codex"{" selected" if worker_backend_mode == "codex" else ""}>Codex CLI / gpt-5.5</option>
+                  <option value="codex"{" selected" if worker_backend_mode == "codex" else ""}>Codex CLI / {escape(worker_model)}</option>
                   <option value="manual"{" selected" if worker_backend_mode == "manual" else ""}>Manual / human adapter</option>
                   <option value="noop"{" selected" if worker_backend_mode == "noop" else ""}>Noop / protocol dry run</option>
                   <option value="supervised"{" selected" if worker_backend_mode == "supervised" else ""}>Supervised CLI adapters</option>
+                </select>
+              </label>
+              <label>
+                Deployment Backend
+                <select id="deployment-backend-mode">
+                  <option value=""{" selected" if deployment_mode == "" else ""}>None</option>
+                  <option value="ssh_compose"{" selected" if deployment_mode == "ssh_compose" else ""}>Docker Compose + SSH</option>
                 </select>
               </label>
               <div class="adapter-config" id="plane-config">
@@ -1443,6 +1699,55 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
                   <input id="plane-mcp-server" value="{escape(str(plane_config.get("mcp_server", "plane")))}">
                 </label>
               </div>
+              <div class="adapter-config" id="deployment-config">
+                <label>
+                  Staging SSH Target
+                  <input id="staging-ssh-target" value="{escape(str(deployment_backend.get("staging_ssh_target", "")))}">
+                </label>
+                <label>
+                  Staging Remote Dir
+                  <input id="staging-remote-dir" value="{escape(str(deployment_backend.get("staging_remote_dir", "")))}">
+                </label>
+                <label>
+                  Staging Git Ref
+                  <input id="staging-git-ref" value="{escape(str(deployment_backend.get("staging_git_ref", "")))}">
+                </label>
+                <label>
+                  Staging Public URL
+                  <input id="staging-public-url" value="{escape(str(deployment_backend.get("staging_public_url", "")))}">
+                </label>
+                <label>
+                  Staging Deploy Command
+                  <input id="staging-deploy-command" value="{escape(str(deployment_backend.get("staging_deploy_command", "")))}">
+                </label>
+                <label>
+                  Staging Healthcheck Command
+                  <input id="staging-healthcheck-command" value="{escape(str(deployment_backend.get("staging_healthcheck_command", "")))}">
+                </label>
+                <label>
+                  Staging Smoke Command
+                  <input id="staging-smoke-command" value="{escape(str(deployment_backend.get("staging_smoke_command", "")))}">
+                </label>
+                <label class="checkbox-label">
+                  <input id="delivery-contract-required" type="checkbox"{" checked" if bool(delivery_contract_config_for_form.get("required", False)) else ""}>
+                  Require functional delivery evidence
+                </label>
+                <label>
+                  Minimum Evidence
+                  <select id="delivery-contract-minimum-evidence">
+                    <option value="infrastructure"{" selected" if str(delivery_contract_config_for_form.get("minimum_evidence", "infrastructure")) == "infrastructure" else ""}>Infrastructure</option>
+                    <option value="functional"{" selected" if str(delivery_contract_config_for_form.get("minimum_evidence", "infrastructure")) == "functional" else ""}>Functional</option>
+                  </select>
+                </label>
+                <label>
+                  Fatal Output Patterns
+                  <textarea id="delivery-contract-fatal-patterns" placeholder="migrate: executable file not found&#10;relation .* does not exist">{escape(delivery_contract_patterns_text)}</textarea>
+                </label>
+                <label>
+                  Staging Acceptance Checks
+                  <textarea id="delivery-contract-acceptance" placeholder="critical-user-journey|local_command|./scripts/e2e-critical.sh">{escape(delivery_contract_acceptance_text)}</textarea>
+                </label>
+              </div>
               <div class="actions">
                 <label class="checkbox-label">
                   <input id="dry-run" type="checkbox" checked>
@@ -1457,10 +1762,11 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <div class="signal"><span>Project</span>{escape(str(start_context["project_name"]))} / {escape(str(start_context["project_key"]))}</div>
             <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
             <div class="signal"><span>Delivery Mode</span>{escape(selected_delivery_mode)}</div>
-            <div class="signal"><span>Worker Model</span><code>gpt-5.5</code></div>
+            <div class="signal"><span>Worker Model</span><code>{escape(worker_model)}</code></div>
             <div class="signal"><span>Directory Base</span><code>{escape(str(start_context["project_base"]))}</code></div>
             <div class="signal"><span>Task Backend</span>{escape(task_sync_label)}</div>
             <div class="signal"><span>Worker Backend</span>{escape(worker_backend_mode)}</div>
+            <div class="signal"><span>Deployment Backend</span>{escape(deployment_mode or "none")}</div>
           </div>
           <code class="command-box" id="start-result">Adopt mode reads the project config first and generates takeover-context.md before PRD.</code>
     """
@@ -1517,8 +1823,10 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     document.getElementById("dry-run").addEventListener("change", updateStartState);
     function updateAdapterConfigVisibility() {{
       document.getElementById("plane-config").hidden = document.getElementById("task-sync").value !== "plane";
+      document.getElementById("deployment-config").hidden = document.getElementById("deployment-backend-mode").value !== "ssh_compose";
     }}
     document.getElementById("task-sync").addEventListener("change", updateAdapterConfigVisibility);
+    document.getElementById("deployment-backend-mode").addEventListener("change", updateAdapterConfigVisibility);
     document.querySelectorAll(".mode-button").forEach((button) => {{
       button.addEventListener("click", () => {{
         document.querySelectorAll(".mode-button").forEach((item) => item.classList.remove("active"));
@@ -1548,8 +1856,19 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             plane_project_id: document.getElementById("plane-project-id").value,
             plane_api_key_env: document.getElementById("plane-api-key-env").value,
             plane_mcp_server: document.getElementById("plane-mcp-server").value,
-            worker_backend_mode: document.getElementById("worker-backend-mode").value
-            ,
+            worker_backend_mode: document.getElementById("worker-backend-mode").value,
+            deployment_backend_mode: document.getElementById("deployment-backend-mode").value,
+            staging_ssh_target: document.getElementById("staging-ssh-target").value,
+            staging_remote_dir: document.getElementById("staging-remote-dir").value,
+            staging_git_ref: document.getElementById("staging-git-ref").value,
+            staging_public_url: document.getElementById("staging-public-url").value,
+            staging_deploy_command: document.getElementById("staging-deploy-command").value,
+            staging_healthcheck_command: document.getElementById("staging-healthcheck-command").value,
+            staging_smoke_command: document.getElementById("staging-smoke-command").value,
+            delivery_contract_required: document.getElementById("delivery-contract-required").checked,
+            delivery_contract_minimum_evidence: document.getElementById("delivery-contract-minimum-evidence").value,
+            delivery_contract_fatal_patterns: document.getElementById("delivery-contract-fatal-patterns").value,
+            delivery_contract_acceptance: document.getElementById("delivery-contract-acceptance").value,
             model_profile: document.getElementById("model-profile").value,
             delivery_mode: document.getElementById("delivery-mode").value,
             role_model_overrides: Object.fromEntries(
@@ -2409,6 +2728,13 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Delivery Mode</dt><dd>{escape(selected_delivery_mode)}</dd>
             <dt>Task Backend</dt><dd>{escape(task_sync_label)}</dd>
             <dt>Worker Backend</dt><dd>{escape(worker_backend_mode)}</dd>
+            <dt>Deployment Backend</dt><dd>{escape(deployment_mode or "none")}</dd>
+            <dt>Staging SSH</dt><dd>{escape(str(deployment_backend.get("staging_ssh_target", "")) or "not configured")}</dd>
+            <dt>Staging Remote Dir</dt><dd>{escape(str(deployment_backend.get("staging_remote_dir", "")) or "not configured")}</dd>
+            <dt>Delivery Contract</dt><dd>{'required' if delivery_contract_required else 'optional'} / {'configured' if delivery_contract_configured else 'insufficient'}</dd>
+            <dt>Minimum Evidence</dt><dd>{escape(delivery_contract_minimum)}</dd>
+            <dt>Evidence Level</dt><dd>{escape(delivery_contract_level)}</dd>
+            <dt>Acceptance Checks</dt><dd>{escape(delivery_contract_acceptance_count)}</dd>
           </dl>
         </section>
         <section>
@@ -2796,6 +3122,18 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         plane_api_key_env=str(request.get("plane_api_key_env", "")),
                         plane_mcp_server=str(request.get("plane_mcp_server", "")),
                         worker_backend_mode=str(request.get("worker_backend_mode", "codex")),
+                        deployment_backend_mode=str(request.get("deployment_backend_mode", "")),
+                        staging_ssh_target=str(request.get("staging_ssh_target", "")),
+                        staging_remote_dir=str(request.get("staging_remote_dir", "")),
+                        staging_git_ref=str(request.get("staging_git_ref", "")),
+                        staging_public_url=str(request.get("staging_public_url", "")),
+                        staging_deploy_command=str(request.get("staging_deploy_command", "")),
+                        staging_healthcheck_command=str(request.get("staging_healthcheck_command", "")),
+                        staging_smoke_command=str(request.get("staging_smoke_command", "")),
+                        delivery_contract_required=bool(request.get("delivery_contract_required", False)),
+                        delivery_contract_minimum_evidence=str(request.get("delivery_contract_minimum_evidence", "infrastructure")),
+                        delivery_contract_fatal_patterns=str(request.get("delivery_contract_fatal_patterns", "")),
+                        delivery_contract_acceptance=str(request.get("delivery_contract_acceptance", "")),
                         model_profile=str(request.get("model_profile", "balanced")),
                         delivery_mode=str(request.get("delivery_mode", "init_project")),
                         role_model_overrides=dict(request.get("role_model_overrides", {})),

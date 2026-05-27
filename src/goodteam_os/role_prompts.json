@@ -256,6 +256,15 @@
       "summary": "Check quality, security, performance, tests, RFC, and API contract alignment."
     },
     {
+      "key": "staging",
+      "title": "Staging",
+      "roles": "Release, Ops, Human",
+      "approval": "staging",
+      "artifact": "staging_report",
+      "node": "staging",
+      "summary": "Deploy the target project to staging, validate it, and decide whether release can proceed."
+    },
+    {
       "key": "release",
       "title": "Release",
       "roles": "Release",
@@ -286,6 +295,7 @@
     "takeover": "takeover",
     "prd": "prd",
     "rfc": "rfc",
+    "staging": "staging_report",
     "security": "review_report",
     "release": "release_notes"
   },
@@ -455,15 +465,30 @@
         }
       ]
     },
+    "staging_report": {
+      "title": "Staging Report",
+      "role": "release",
+      "purpose": "Record staging deployment evidence, delivery-contract validation, evidence sufficiency, environment metadata, and pass/fail outcome before final release approval.",
+      "sections": [
+        {
+          "title": "Staging Verification",
+          "items": [
+            "Record the staging target, deployment commands, validation commands, delivery-contract acceptance checks, evidence level, evidence sufficiency, and final pass/fail status.",
+            "Distinguish infrastructure readiness from functional product evidence.",
+            "Include any failed step, fatal output pattern, rollback context, and operator-visible caveats."
+          ]
+        }
+      ]
+    },
     "release_notes": {
       "title": "Release Notes",
       "role": "release",
-      "purpose": "Prepare verified work for deployment with release summary, smoke checks, rollback steps, and approval evidence.",
+      "purpose": "Prepare verified work for final approval using staging evidence, release summary, smoke checks, rollback steps, and approval evidence.",
       "sections": [
         {
           "title": "Release Checklist",
           "items": [
-            "List deployment steps, smoke checks, monitoring, rollback, and known caveats."
+            "List staging evidence, final approval checks, production rollout steps, monitoring, rollback, and known caveats."
           ]
         }
       ]

@@ -3,6 +3,7 @@ from pathlib import Path
 from shutil import which
 
 from goodteam_os.models import _parse_simple_yaml
+from goodteam_os.staging import deployment_backend_report, delivery_contract_report
 
 
 ProjectTarget = dict[str, object]
@@ -89,4 +90,6 @@ def check_project_target(target: ProjectTarget) -> dict[str, object]:
         "workers": workers,
         "providers": providers,
         "role_routes": target.get("role_routes", {}),
+        "deployment_backend": deployment_backend_report(target, ssh_available=bool(which("ssh"))),
+        "delivery_contract": delivery_contract_report(target),
     }

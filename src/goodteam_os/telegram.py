@@ -5,8 +5,6 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from goodteam_os.web import decide_approval
-
 
 TOKEN_ENV = "GOODTEAM_TG_BOT_TOKEN"
 CHAT_ID_ENV = "GOODTEAM_TG_CHAT_ID"
@@ -84,6 +82,53 @@ def build_approval_keyboard(*, project_key: str, run_id: str, gate: str) -> dict
     }
 
 
+def send_approval_notification(
+    *,
+    project_key: str,
+    run_id: str,
+    gate: str,
+    artifact_path: str = "",
+    summary: str = "",
+) -> dict[str, object]:
+    config = telegram_config_from_env()
+    if not config["enabled"]:
+        return {"status": "disabled", **config}
+
+    token = os.getenv(TOKEN_ENV, "")
+    text_lines = [
+        "GoodTeam approval needed",
+        f"Project: {project_key}",
+        f"Run: {run_id}",
+        f"Gate: {gate}",
+    ]
+    if artifact_path:
+        text_lines.append(f"Artifact: {artifact_path}")
+    if summary:
+        text_lines.append(f"Summary: {summary}")
+    payload = _telegram_request(
+        token,
+        "sendMessage",
+        {
+            "chat_id": str(config["chat_id"]),
+            "text": "\n".join(text_lines),
+            "reply_markup": build_approval_keyboard(
+                project_key=project_key,
+                run_id=run_id,
+                gate=gate,
+            ),
+        },
+    )
+    result = dict(payload.get("result", {}) or {})
+    return {
+        "status": "sent",
+        **config,
+        "project_key": project_key,
+        "run_id": run_id,
+        "gate": gate,
+        "message_id": str(result.get("message_id", "")),
+    }
+
+
 def poll_telegram_approvals(*, workspace: Path, project_key: str = "", once: bool = False) -> dict[str, object]:
     token = os.getenv(TOKEN_ENV, "")
     chat_id = os.getenv(CHAT_ID_ENV, "")
@@ -150,6 +195,12 @@ def process_telegram_update(
     )
     processed_callbacks.add(callback_id)
     return {"status": "processed", "callback_id": callback_id}
+
+
+def decide_approval(**kwargs) -> dict[str, object]:
+    from goodteam_os.web import decide_approval as web_decide_approval
+
+    return web_decide_approval(**kwargs)
 
 
 def _telegram_request(token: str, method: str, params: dict[str, object]) -> dict[str, object]:

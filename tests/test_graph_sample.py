@@ -8,6 +8,7 @@ from goodteam_os.graph import (
     resolve_project_runtime_root,
     render_downstream_artifact_markdown,
     render_prd_markdown,
+    run_implementation_workers,
     run_until_next_gate,
 )
 from goodteam_os.graph import run_adoption_until_next_gate
@@ -95,18 +96,50 @@ def test_prd_uses_project_roadmap_contract_instead_of_takeover_workflow(tmp_path
     assert "Do not bypass the configured GoodTeam local task flow" not in prd
 
 
-def test_prd_includes_decision_ready_prompt_and_multi_role_review(tmp_path):
+def test_prd_is_decision_ready_content_not_writing_instructions(tmp_path):
     project_config = write_project_fixture(tmp_path)
     state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
 
     prd = render_prd_markdown(state, project_config)
 
-    assert "Write a decision-ready PRD, not a template." in prd
-    assert "## Multi-Role PRD Review" in prd
-    assert "Product / Requirement self-check" in prd
-    assert "Architect feasibility review" in prd
-    assert "Review / QA verification review" in prd
-    assert "Could an architect start an RFC from this without asking what the product actually is?" in prd
+    assert "## Product Decision" in prd
+    assert "## Users And Value" in prd
+    assert "## V1 Scope" in prd
+    assert "## Non-Goals" in prd
+    assert "## Acceptance Criteria" in prd
+    assert "## Risks And Open Questions" in prd
+    assert "Write a decision-ready PRD" not in prd
+    assert "List the next product capabilities" not in prd
+    assert "PRD Writing Instructions" not in prd
+
+
+def test_contentops_prd_contains_actionable_v1_requirements_and_reuse_constraints(tmp_path):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state(
+        "run-1",
+        "CONTENTOPS",
+        "Build ContentOps Studio for reusable brand briefs, source capture, topic organization, "
+        "multi-platform drafts, review/publish board, and verification evidence. Prefer mature "
+        "open-source components and the existing Fastify/Zod/SQLite + React/Vite/Vitest stack over "
+        "custom infrastructure.",
+    )
+    state.delivery_mode = "init_project"
+
+    prd = render_prd_markdown(state, project_config)
+
+    assert "ContentOps Studio v1" in prd
+    assert "reusable brand brief" in prd
+    assert "source capture" in prd
+    assert "topic organization" in prd
+    assert "multi-platform draft" in prd
+    assert "review/publish board" in prd
+    assert "verification evidence" in prd
+    assert "mature open-source" in prd
+    assert "Fastify/Zod/SQLite" in prd
+    assert "React/Vite/Vitest" in prd
+    assert "Acceptance Criteria" in prd
+    assert "Write a decision-ready PRD" not in prd
+    assert "List the next product capabilities" not in prd
 
 
 def test_prd_includes_init_project_delivery_standard(tmp_path):
@@ -134,6 +167,39 @@ def test_rfc_includes_multi_service_delivery_standard(tmp_path):
     assert "service boundaries" in rfc
     assert "API or event contracts" in rfc
     assert "observability" in rfc
+
+
+def test_contentops_rfc_contains_executable_architecture_not_template_items(tmp_path):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state(
+        "run-1",
+        "CONTENTOPS",
+        "Build ContentOps Studio for reusable brand briefs, source capture, topic organization, "
+        "multi-platform drafts, review/publish board, and verification evidence. Prefer mature "
+        "open-source components and the existing Fastify/Zod/SQLite + React/Vite/Vitest stack over "
+        "custom infrastructure.",
+    )
+    state.delivery_mode = "init_project"
+    state.artifacts["prd"] = "/tmp/prd.md"
+
+    rfc = render_downstream_artifact_markdown("rfc", state, project_config)
+
+    assert "## Architecture Decision" in rfc
+    assert "## Data Model" in rfc
+    assert "brand_briefs" in rfc
+    assert "source_materials" in rfc
+    assert "topics" in rfc
+    assert "drafts" in rfc
+    assert "draft_evidence" in rfc
+    assert "## API Contract" in rfc
+    assert "POST /api/brand-brief" in rfc
+    assert "POST /api/source-materials" in rfc
+    assert "PATCH /api/drafts/:draftId/status" in rfc
+    assert "mature open-source" in rfc
+    assert "Fastify/Zod/SQLite" in rfc
+    assert "React/Vite/Vitest" in rfc
+    assert "Describe system boundaries" not in rfc
+    assert "Define tests, smoke checks" not in rfc
 
 
 def test_takeover_context_does_not_include_prd_review_prompt(tmp_path):
@@ -261,6 +327,78 @@ def test_advance_approved_workflow_can_complete_contentops_run(tmp_path, monkeyp
     assert (runtime_root / "README.md").is_file()
 
 
+def test_release_gate_artifacts_include_worker_evidence_not_placeholders(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state(
+        "run-1",
+        "CONTENTOPS",
+        "Build ContentOps Studio for reusable brand briefs, source capture, topic organization, "
+        "multi-platform drafts, review/publish board, and verification evidence.",
+    )
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.role_models = {
+        "implementation": {"primary": "codex:gpt-5.3-codex"},
+        "qa": {"primary": "codex:gpt-5.3-codex"},
+    }
+    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+
+    def fake_run_job(self, job_id):
+        job_root = self.root / job_id
+        job = json.loads((job_root / "job.json").read_text(encoding="utf-8"))
+        if job["role"] == "implementation":
+            result_text = (
+                "# Implementation Result\n\n"
+                "Verification commands run:\n"
+                "- `npm run test` passed with 16/16 tests.\n"
+                "- `npm run build` passed.\n\n"
+                "Unresolved risks:\n"
+                "- `better-sqlite3` may require `npm rebuild better-sqlite3` after Node ABI changes.\n"
+            )
+        else:
+            result_text = (
+                "# QA Result\n\n"
+                "Status: pass\n\n"
+                "- PASS live API smoke.\n"
+                "- Draft generation returns exactly 4 platforms: `tiktok`, `reddit`, `x`, `linkedin`.\n"
+                "- Coverage gaps: no real-browser interactive E2E run was executed.\n"
+            )
+        result_path = job_root / "result.md"
+        result_path.write_text(result_text, encoding="utf-8")
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "model": job["model"],
+            "status": "completed",
+            "summary": f"{job['role']} completed",
+            "result_path": str(result_path),
+            "artifacts": [],
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.current_node == "release_review_gate"
+    code_review = Path(result.artifacts["code_review"]).read_text(encoding="utf-8")
+    qa_report = Path(result.artifacts["qa_report"]).read_text(encoding="utf-8")
+    release_notes = Path(result.artifacts["release_notes"]).read_text(encoding="utf-8")
+    for content in [code_review, qa_report, release_notes]:
+        assert "gpt-5.3-codex" in content
+        assert "npm run test" in content
+        assert "npm run build" in content
+        assert "no real-browser interactive E2E" in content
+        assert "Lead with actionable issues" not in content
+        assert "List staging evidence" not in content
+        assert "Map requirements to tests" not in content
+    assert "Release recommendation: approve for local starter release with documented caveats" in release_notes
+
+
 def test_delivery_workflow_stops_when_codex_worker_fails(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state(
@@ -382,6 +520,40 @@ def test_multi_service_delivery_mode_expands_worker_expected_artifacts(tmp_path,
     assert "docker-compose.yml" in expected_by_role["implementation"]
     assert "database migrations" in expected_by_role["implementation"]
     assert "service-level QA notes" in expected_by_role["qa"]
+
+
+def test_implementation_workers_use_run_role_models(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build ContentOps Studio.")
+    state.role_models = {
+        "implementation": {"primary": "codex:gpt-5.3-codex"},
+        "qa": {"primary": "codex:gpt-5.3-codex"},
+    }
+    models_by_role = {}
+
+    def fake_create_job(self, **kwargs):
+        models_by_role[kwargs["role"]] = kwargs.get("model")
+        return {"id": f"job-{kwargs['role']}"}
+
+    def fake_run_job(self, job_id):
+        role = job_id.removeprefix("job-")
+        return {
+            "job_id": job_id,
+            "run_id": state.run_id,
+            "role": role,
+            "adapter": "codex",
+            "status": "completed",
+            "summary": f"{role} completed",
+            "artifacts": [],
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fake_create_job)
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    run_implementation_workers(state, project_config)
+
+    assert models_by_role == {"implementation": "gpt-5.3-codex", "qa": "gpt-5.3-codex"}
 
 
 def test_init_project_implementation_task_requests_product_scaffold():

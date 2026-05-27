@@ -7,6 +7,7 @@ from goodteam_os.smoke import run_smoke_suite
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import poll_telegram_approvals
 from goodteam_os.web import serve, start_workflow
+from goodteam_os.workers import WorkerJobStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     board = subparsers.add_parser("board")
     board.add_argument("--project-root", type=Path, required=True)
+
+    workers = subparsers.add_parser("workers")
+    workers.add_argument("--project-root", type=Path, required=True)
 
     smoke = subparsers.add_parser("smoke")
     smoke.add_argument("--workspace", type=Path, default=Path("."))
@@ -77,6 +81,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "board":
         payload = serialize_task_board(build_task_board(LocalTaskStore(args.project_root).list_tasks()))
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "workers":
+        payload = {
+            "project_root": str(args.project_root),
+            "jobs": WorkerJobStore(args.project_root).list_jobs(),
+        }
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "smoke":

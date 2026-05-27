@@ -37,6 +37,7 @@ def create_initial_state(run_id: str, project_key: str, idea: str) -> AgileDevSt
         approvals={
             "prd": ApprovalDecision.PENDING,
             "rfc": ApprovalDecision.PENDING,
+            "staging": ApprovalDecision.PENDING,
             "security": ApprovalDecision.PENDING,
             "release": ApprovalDecision.PENDING,
         },

@@ -83,6 +83,25 @@ def test_cli_board_outputs_task_board_json(tmp_path, capsys):
     assert payload["columns"]["backlog"][0]["title"] == "Run CONTENTOPS smoke"
 
 
+def test_cli_workers_outputs_worker_job_status_json(tmp_path, capsys):
+    from goodteam_os import cli
+    from goodteam_os.workers import WorkerJobStore
+
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    store = WorkerJobStore(project_root)
+    job = store.create_job(run_id="run-1", role="qa", adapter="human", task="Verify", context="Context")
+    store.run_job(job["id"])
+
+    result = cli.main(["workers", "--project-root", str(project_root)])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert payload["project_root"] == str(project_root)
+    assert payload["jobs"][0]["id"] == job["id"]
+    assert payload["jobs"][0]["status"] == "needs_review"
+
+
 def test_cli_start_accepts_model_profile_and_role_override(tmp_path):
     command = [
         sys.executable,
@@ -136,7 +155,7 @@ def test_cli_start_uses_project_model_profile_and_role_overrides(tmp_path):
                 "model_profile: cheap",
                 "delivery_mode: init_project",
                 "role_model_overrides:",
-                "  frontend: codex:gpt-5.5",
+                "  frontend: codex:gpt-5.3-codex",
             ]
         ),
         encoding="utf-8",
@@ -163,7 +182,7 @@ def test_cli_start_uses_project_model_profile_and_role_overrides(tmp_path):
     assert payload["model_profile"] == "cheap"
     assert payload["delivery_mode"] == "init_project"
     assert payload["role_models"]["planner"]["primary"] == "codex:gpt-5.5"
-    assert payload["role_models"]["frontend"]["primary"] == "codex:gpt-5.5"
+    assert payload["role_models"]["frontend"]["primary"] == "codex:gpt-5.3-codex"
 
 
 def test_cli_start_project_model_profile_wins_when_cli_profile_omitted(tmp_path):

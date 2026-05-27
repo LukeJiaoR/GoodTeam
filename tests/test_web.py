@@ -3,6 +3,7 @@ from pathlib import Path
 
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.tasks import LocalTaskStore
+from goodteam_os.workers import WorkerJobStore
 from goodteam_os.web import (
     build_action_items,
     build_agile_board,
@@ -73,7 +74,7 @@ def test_render_dashboard_shows_current_gate():
     assert "Edit Artifact" in html
     assert "Save Markdown" in html
     assert "Worker Model" in html
-    assert "gpt-5.5" in html
+    assert "gpt-5.3-codex" in html
     assert "Build AI Team OS" in html
     assert "artifact-preview" in html
     assert "Project Target" in html
@@ -106,6 +107,39 @@ def test_dashboard_renders_agile_board_from_project_task_ledger(tmp_path):
     assert "Agile Board" in html
     assert "Run CONTENTOPS smoke" in html
     assert "state/smoke-runs/latest.json exists" in html
+
+
+def test_dashboard_worker_tab_shows_live_worker_metadata(tmp_path):
+    project_root = tmp_path / "target"
+    job_store = WorkerJobStore(project_root)
+    job = job_store.create_job(run_id="run-1", role="qa", adapter="codex", task="Verify", context="Context")
+    job_root = project_root / ".goodteam" / "workers" / "jobs" / job["id"]
+    (job_root / "status.json").write_text(
+        json.dumps(
+            {
+                "job_id": job["id"],
+                "run_id": "run-1",
+                "role": "qa",
+                "adapter": "codex",
+                "status": "running",
+                "summary": "Codex CLI is running.",
+                "updated_at": "2026-05-27T00:00:00+00:00",
+                "heartbeat_at": "2026-05-27T00:00:00+00:00",
+                "pid": 4242,
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+
+    html = render_dashboard(state)
+
+    assert "Worker Jobs" in html
+    assert "qa / codex" in html
+    assert "4242" in html
+    assert "Codex CLI is running." in html
+    assert "heartbeat" in html.lower()
 
 
 def test_render_dashboard_shows_worker_blockers():
@@ -245,7 +279,7 @@ def test_build_role_observations_maps_artifacts_to_role_statuses():
         "orchestrator": {"primary": "codex:gpt-5.5", "mode": "short-context"},
         "product_requirement": {"primary": "codex:gpt-5.5", "draft": "codex:gpt-5.5"},
         "architect": {"primary": "codex:gpt-5.5"},
-        "implementation": {"primary": "codex:gpt-5.5", "mode": "worker-dispatch"},
+        "implementation": {"primary": "codex:gpt-5.3-codex", "mode": "worker-dispatch"},
     }
 
     observations = build_role_observations(state)
@@ -260,7 +294,7 @@ def test_build_role_observations_maps_artifacts_to_role_statuses():
     assert product["artifact"] == "prd"
     assert product["model"] == "codex:gpt-5.5"
     assert architect["status"] == "No activity"
-    assert implementation["model"] == "codex:gpt-5.5"
+    assert implementation["model"] == "codex:gpt-5.3-codex"
 
 
 def test_build_role_observations_marks_next_role_ready():
@@ -472,7 +506,7 @@ def test_save_artifact_rejects_path_outside_current_run(tmp_path):
 def test_build_start_console_context_reads_project_and_model_config(tmp_path):
     project_config = tmp_path / "real-project.local.yaml"
     project_config.write_text(
-        "name: Real Product\nkey: REAL\nmodel_profile: cheap\ndelivery_mode: multi_service\nrole_model_overrides:\n  architect: codex:gpt-5.5\n",
+        "name: Real Product\nkey: REAL\nmodel_profile: cheap\ndelivery_mode: multi_service\nrole_model_overrides:\n  architect: codex:gpt-5.5\ndeployment_backend:\n  mode: ssh_compose\n  staging_ssh_target: real-staging\n  staging_remote_dir: /srv/real\n  staging_deploy_command: docker compose up -d\n  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health\ndelivery_contract:\n  required: true\n  minimum_evidence: functional\n  fatal_output_patterns:\n    migration_error: migrate: executable file not found\n  staging_acceptance:\n    critical-user-journey:\n      type: local_command\n      command: ./scripts/e2e-critical.sh\n",
         encoding="utf-8",
     )
     context = build_start_console_context(
@@ -490,6 +524,10 @@ def test_build_start_console_context_reads_project_and_model_config(tmp_path):
     assert context["model_profile"] == "cheap"
     assert context["delivery_mode"] == "multi_service"
     assert context["role_model_overrides"]["architect"] == "codex:gpt-5.5"
+    assert context["deployment_backend"]["mode"] == "ssh_compose"
+    assert context["deployment_backend"]["staging_ssh_target"] == "real-staging"
+    assert context["delivery_contract"]["required"] is True
+    assert context["delivery_contract"]["acceptance_count"] == 1
 def test_build_start_console_context_scopes_directory_candidates_to_project_repos(tmp_path):
     project_root = tmp_path / "contentops"
     docs = project_root / "docs"
@@ -620,6 +658,18 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
         model_profile="cheap",
         delivery_mode="multi_service",
         role_model_overrides={"architect": "codex:gpt-5.5"},
+        deployment_backend_mode="ssh_compose",
+        staging_ssh_target="contentops-staging",
+        staging_remote_dir="/srv/contentops",
+        staging_git_ref="main",
+        staging_public_url="https://staging.contentops.example.com",
+        staging_deploy_command="docker compose up -d --build",
+        staging_healthcheck_command="curl -fsS http://127.0.0.1:8080/health",
+        staging_smoke_command="curl -fsS https://staging.contentops.example.com/health",
+        delivery_contract_required=True,
+        delivery_contract_minimum_evidence="functional",
+        delivery_contract_fatal_patterns="migrate: executable file not found\nrelation .* does not exist",
+        delivery_contract_acceptance="migrations|ssh_command|docker compose exec -T backend ./migrate status\ncritical-user-journey|local_command|./scripts/e2e-critical.sh",
     )
 
     config = Path(payload["project_config"])
@@ -644,9 +694,34 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert "  mode: codex" in content
     assert "model_profile: cheap" in content
     assert "delivery_mode: multi_service" in content
+    assert "deployment_backend:" in content
+    assert "  mode: ssh_compose" in content
+    assert "  staging_ssh_target: contentops-staging" in content
+    assert "  staging_remote_dir: /srv/contentops" in content
+    assert "  staging_git_ref: main" in content
+    assert "  staging_public_url: https://staging.contentops.example.com" in content
+    assert "  staging_deploy_command: docker compose up -d --build" in content
+    assert "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health" in content
+    assert "  staging_smoke_command: curl -fsS https://staging.contentops.example.com/health" in content
+    assert "delivery_contract:" in content
+    assert "  required: true" in content
+    assert "  minimum_evidence: functional" in content
+    assert "  fatal_output_patterns:" in content
+    assert "    pattern_1: migrate: executable file not found" in content
+    assert "    pattern_2: relation .* does not exist" in content
+    assert "  staging_acceptance:" in content
+    assert "    migrations:" in content
+    assert "      type: ssh_command" in content
+    assert "      command: docker compose exec -T backend ./migrate status" in content
+    assert "    critical-user-journey:" in content
+    assert "      type: local_command" in content
+    assert "      command: ./scripts/e2e-critical.sh" in content
     assert "role_model_overrides:" in content
     assert "  architect: codex:gpt-5.5" in content
     assert payload["worker_backend"] == {"mode": "codex"}
+    assert payload["deployment_backend"]["mode"] == "ssh_compose"
+    assert payload["delivery_contract"]["required"] is True
+    assert payload["delivery_contract"]["acceptance_count"] == 2
     assert payload["model_profile"] == "cheap"
     assert payload["delivery_mode"] == "multi_service"
     assert payload["role_model_overrides"] == {"architect": "codex:gpt-5.5"}
@@ -669,6 +744,8 @@ def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_pat
     assert "  sync:" in content
     assert "delivery_mode: init_project" in content
     assert payload["task_backend"] == {"mode": "local", "sync": []}
+    assert payload["deployment_backend"] == {"mode": ""}
+    assert payload["delivery_contract"]["required"] is False
     assert payload["delivery_mode"] == "init_project"
 
 
@@ -695,6 +772,34 @@ def test_start_workflow_writes_state_and_checkpoint(tmp_path):
     assert actions[0]["actor"] == "human"
     assert actions[1]["actor"] == "system"
     assert actions[1]["artifact"] == "prd"
+
+
+def test_start_workflow_notifies_when_prd_approval_gate_is_ready(tmp_path, monkeypatch):
+    notifications = []
+
+    def fake_notification(**kwargs):
+        notifications.append(kwargs)
+        return {"status": "sent"}
+
+    monkeypatch.setattr("goodteam_os.web.send_approval_notification", fake_notification)
+
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Build an AI content studio that collects source material and drafts posts for TikTok, Reddit, X, and LinkedIn.",
+        project_key="CONTENTOPS",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+    )
+
+    assert notifications == [
+        {
+            "project_key": "CONTENTOPS",
+            "run_id": payload["run_id"],
+            "gate": "prd",
+            "artifact_path": payload["artifacts"]["prd"],
+            "summary": "GoodTeam is waiting for PRD approval on CONTENTOPS.",
+        }
+    ]
 
 
 def test_start_workflow_can_adopt_existing_project_first(tmp_path):
@@ -726,6 +831,43 @@ def test_start_workflow_can_adopt_existing_project_first(tmp_path):
     assert Path(payload["artifacts"]["takeover"]).is_file()
     assert "prd" not in payload["artifacts"]
     assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / payload["run_id"] / "takeover_review_gate.json").is_file()
+
+
+def test_start_workflow_notifies_when_takeover_approval_gate_is_ready(tmp_path, monkeypatch):
+    notifications = []
+
+    def fake_notification(**kwargs):
+        notifications.append(kwargs)
+        return {"status": "sent"}
+
+    monkeypatch.setattr("goodteam_os.web.send_approval_notification", fake_notification)
+    project_config = tmp_path / "project.local.yaml"
+    docs = tmp_path / "content-research"
+    docs.mkdir()
+    project_config.write_text(
+        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        encoding="utf-8",
+    )
+
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Take over the AI content studio and prepare cross-platform publishing workflows.",
+        project_key="CONTENTOPS",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+        source_type="existing_project",
+        project_config=project_config,
+    )
+
+    assert notifications == [
+        {
+            "project_key": "CONTENTOPS",
+            "run_id": payload["run_id"],
+            "gate": "takeover",
+            "artifact_path": payload["artifacts"]["takeover"],
+            "summary": "GoodTeam is waiting for TAKEOVER approval on CONTENTOPS.",
+        }
+    ]
 
 
 def test_start_workflow_rejects_new_run_when_current_run_is_active(tmp_path):
@@ -813,7 +955,7 @@ def test_start_workflow_uses_project_model_profile_and_overrides(tmp_path):
                 "delivery_mode: mvp",
                 "role_model_overrides:",
                 "  architect: codex:gpt-5.5",
-                "  frontend: codex:gpt-5.5",
+                "  frontend: codex:gpt-5.3-codex",
             ]
         ),
         encoding="utf-8",
@@ -832,7 +974,7 @@ def test_start_workflow_uses_project_model_profile_and_overrides(tmp_path):
     assert payload["delivery_mode"] == "mvp"
     assert payload["role_models"]["planner"]["primary"] == "codex:gpt-5.5"
     assert payload["role_models"]["architect"]["primary"] == "codex:gpt-5.5"
-    assert payload["role_models"]["frontend"]["primary"] == "codex:gpt-5.5"
+    assert payload["role_models"]["frontend"]["primary"] == "codex:gpt-5.3-codex"
 
 
 def test_start_workflow_rejects_empty_goal(tmp_path):
@@ -871,6 +1013,48 @@ def test_decide_approval_approves_prd_and_generates_rfc(tmp_path):
     assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / "run-1" / "rfc_review_gate.json").is_file()
 
 
+def test_decide_approval_notifies_when_takeover_approval_generates_prd_gate(tmp_path, monkeypatch):
+    notifications = []
+
+    def fake_notification(**kwargs):
+        notifications.append(kwargs)
+        return {"status": "sent"}
+
+    monkeypatch.setattr("goodteam_os.web.send_approval_notification", fake_notification)
+    project_config = tmp_path / "project.local.yaml"
+    docs = tmp_path / "content-research"
+    docs.mkdir()
+    project_config.write_text(
+        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Take over AI Content Studio")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = "pending"
+    StateStore(tmp_path).write_project_current(state)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="takeover",
+        decision="approved",
+    )
+
+    assert payload["next_node"] == "await_prd_approval"
+    assert notifications == [
+        {
+            "project_key": "CONTENTOPS",
+            "run_id": "run-1",
+            "gate": "prd",
+            "artifact_path": payload["artifacts"]["prd"],
+            "summary": "GoodTeam is waiting for PRD approval on CONTENTOPS.",
+        }
+    ]
+
+
 def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeypatch):
     project = tmp_path / "contentops"
     for repo in ["docs", "backend", "frontend"]:
@@ -888,6 +1072,15 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
                 "  mode: codex",
+                "deployment_backend:",
+                "  mode: ssh_compose",
+                "  staging_ssh_target: contentops-staging",
+                "  staging_remote_dir: /srv/contentops",
+                "  staging_git_ref: main",
+                "  staging_public_url: https://staging.contentops.example.com",
+                "  staging_deploy_command: docker compose up -d --build",
+                "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health",
+                "  staging_smoke_command: curl -fsS https://staging.contentops.example.com/health",
             ]
         ),
         encoding="utf-8",
@@ -914,6 +1107,22 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
         }
 
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+    monkeypatch.setattr(
+        "goodteam_os.graph.run_staging_backend",
+        lambda project_config, command_runner=None: {
+            "status": "passed",
+            "failed_step": "",
+            "steps": [
+                {"label": "deploy", "exit_code": 0, "stdout": "ok", "stderr": "", "timeout": 1800},
+                {"label": "healthcheck", "exit_code": 0, "stdout": "ok", "stderr": "", "timeout": 300},
+                {"label": "smoke", "exit_code": 0, "stdout": "ok", "stderr": "", "timeout": 300},
+            ],
+            "ssh_target": "contentops-staging",
+            "remote_dir": "/srv/contentops",
+            "git_ref": "main",
+            "public_url": "https://staging.contentops.example.com",
+        },
+    )
 
     payload = decide_approval(
         workspace=tmp_path,
@@ -923,11 +1132,286 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
     )
 
     assert payload["approvals"]["rfc"] == "approved"
-    assert payload["current_node"] == "release_review_gate"
-    assert payload["next_node"] == "await_release_approval"
-    for artifact in ["review_report", "task_breakdown", "ui_spec", "implementation_handoff", "qa_report", "code_review", "release_notes"]:
+    assert payload["current_node"] == "staging_review_gate"
+    assert payload["next_node"] == "await_staging_approval"
+    for artifact in ["review_report", "task_breakdown", "ui_spec", "implementation_handoff", "qa_report", "code_review", "staging_report"]:
         assert artifact in payload["artifacts"]
         assert Path(payload["artifacts"][artifact]).is_file()
+    assert "release_notes" not in payload["artifacts"]
+
+
+def test_decide_approval_approves_staging_and_generates_release_notes(tmp_path):
+    staging_report = tmp_path / "artifacts" / "runs" / "run-1" / "staging_report" / "staging-report.md"
+    staging_report.parent.mkdir(parents=True)
+    staging_report.write_text("# Staging Report\n\nPassed", encoding="utf-8")
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.current_node = "staging_review_gate"
+    state.next_node = "await_staging_approval"
+    state.approvals.update({"prd": "approved", "rfc": "approved", "staging": "pending"})
+    state.artifacts["staging_report"] = str(staging_report)
+    StateStore(tmp_path).write_project_current(state)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="staging",
+        decision="approved",
+    )
+
+    assert payload["approvals"]["staging"] == "approved"
+    assert payload["current_node"] == "release_review_gate"
+    assert payload["next_node"] == "await_release_approval"
+    assert "release_notes" in payload["artifacts"]
+    assert Path(payload["artifacts"]["release_notes"]).is_file()
+
+
+def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch):
+    project = tmp_path / "contentops"
+    for repo in ["docs", "backend", "frontend"]:
+        (project / repo).mkdir(parents=True)
+    project_config = tmp_path / "projects" / "contentops.local.yaml"
+    project_config.parent.mkdir()
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: AI Content Studio",
+                "key: CONTENTOPS",
+                "repos:",
+                f"  docs: {project / 'docs'}",
+                f"  backend: {project / 'backend'}",
+                f"  frontend: {project / 'frontend'}",
+                "worker_backend:",
+                "  mode: codex",
+                "deployment_backend:",
+                "  mode: ssh_compose",
+                "  staging_ssh_target: contentops-staging",
+                "  staging_remote_dir: /srv/contentops",
+                "  staging_deploy_command: docker compose up -d --build",
+                "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "rfc_review_gate"
+    state.next_node = "await_rfc_approval"
+    state.approvals["prd"] = "approved"
+    StateStore(tmp_path).write_project_current(state)
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": "completed",
+            "summary": f"{job['role']} completed",
+            "artifacts": [],
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+    monkeypatch.setattr(
+        "goodteam_os.graph.run_staging_backend",
+        lambda project_config, command_runner=None: {
+            "status": "failed",
+            "failed_step": "deploy",
+            "steps": [{"label": "deploy", "exit_code": 1, "stdout": "", "stderr": "git pull failed", "timeout": 1800}],
+            "ssh_target": "contentops-staging",
+            "remote_dir": "/srv/contentops",
+            "git_ref": "",
+            "public_url": "",
+        },
+    )
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="rfc",
+        decision="approved",
+    )
+
+    assert payload["current_node"] == "implementation"
+    assert payload["next_node"] == "blocked"
+    assert payload["blockers"] == ["staging deploy failed"]
+    assert "staging_report" in payload["artifacts"]
+
+
+def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient(tmp_path, monkeypatch):
+    project = tmp_path / "contentops"
+    for repo in ["docs", "backend", "frontend"]:
+        (project / repo).mkdir(parents=True)
+    project_config = tmp_path / "projects" / "contentops.local.yaml"
+    project_config.parent.mkdir()
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: AI Content Studio",
+                "key: CONTENTOPS",
+                "repos:",
+                f"  docs: {project / 'docs'}",
+                f"  backend: {project / 'backend'}",
+                f"  frontend: {project / 'frontend'}",
+                "worker_backend:",
+                "  mode: codex",
+                "deployment_backend:",
+                "  mode: ssh_compose",
+                "  staging_ssh_target: contentops-staging",
+                "  staging_remote_dir: /srv/contentops",
+                "  staging_deploy_command: docker compose up -d --build",
+                "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health",
+                "delivery_contract:",
+                "  required: true",
+                "  minimum_evidence: functional",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "rfc_review_gate"
+    state.next_node = "await_rfc_approval"
+    state.approvals["prd"] = "approved"
+    StateStore(tmp_path).write_project_current(state)
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": "completed",
+            "summary": f"{job['role']} completed",
+            "artifacts": [],
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+    monkeypatch.setattr(
+        "goodteam_os.graph.run_staging_backend",
+        lambda project_config, command_runner=None: {
+            "status": "failed",
+            "failed_step": "acceptance",
+            "evidence_level": "infrastructure",
+            "evidence_sufficient": False,
+            "evidence_gap": "functional validation missing",
+            "steps": [
+                {"label": "deploy", "exit_code": 0, "stdout": "ok", "stderr": "", "timeout": 1800},
+                {"label": "healthcheck", "exit_code": 0, "stdout": "ok", "stderr": "", "timeout": 300},
+            ],
+            "ssh_target": "contentops-staging",
+            "remote_dir": "/srv/contentops",
+            "git_ref": "",
+            "public_url": "",
+        },
+    )
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="rfc",
+        decision="approved",
+    )
+
+    assert payload["current_node"] == "implementation"
+    assert payload["next_node"] == "blocked"
+    assert payload["blockers"] == ["staging acceptance failed: functional validation missing"]
+    assert "staging_report" in payload["artifacts"]
+    assert "Evidence sufficient: `False`" in Path(payload["artifacts"]["staging_report"]).read_text(encoding="utf-8")
+
+
+def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_path, monkeypatch):
+    project = tmp_path / "contentops"
+    for repo in ["docs", "backend", "frontend"]:
+        (project / repo).mkdir(parents=True)
+    project_config = tmp_path / "projects" / "contentops.local.yaml"
+    project_config.parent.mkdir()
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: AI Content Studio",
+                "key: CONTENTOPS",
+                "repos:",
+                f"  docs: {project / 'docs'}",
+                f"  backend: {project / 'backend'}",
+                f"  frontend: {project / 'frontend'}",
+                "deployment_backend:",
+                "  mode: ssh_compose",
+                "  staging_ssh_target: contentops-staging",
+                "  staging_remote_dir: /srv/contentops",
+                "  staging_deploy_command: docker compose up -d --build",
+                "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "implementation"
+    state.next_node = "blocked"
+    state.approvals.update({"prd": "approved", "rfc": "approved", "staging": "pending", "release": "pending"})
+    state.blockers = ["staging deploy failed"]
+    state.artifacts.update(
+        {
+            "review_report": str(tmp_path / "artifacts" / "runs" / "run-1" / "review_report" / "review-report.md"),
+            "task_breakdown": str(tmp_path / "artifacts" / "runs" / "run-1" / "task_breakdown" / "task-breakdown.md"),
+            "ui_spec": str(tmp_path / "artifacts" / "runs" / "run-1" / "ui_spec" / "ui-spec.md"),
+            "implementation_handoff": str(tmp_path / "artifacts" / "runs" / "run-1" / "implementation_handoff" / "implementation-handoff.md"),
+            "qa_report": str(tmp_path / "artifacts" / "runs" / "run-1" / "qa_report" / "qa-report.md"),
+            "code_review": str(tmp_path / "artifacts" / "runs" / "run-1" / "code_review" / "code-review.md"),
+        }
+    )
+    for path in state.artifacts.values():
+        artifact_path = Path(path)
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text("# Artifact\n", encoding="utf-8")
+    StateStore(tmp_path).write_project_current(state)
+
+    run_jobs = {"count": 0}
+
+    def fake_run_job(self, job_id):
+        run_jobs["count"] += 1
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": "completed",
+            "summary": f"{job['role']} completed",
+            "artifacts": [],
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+    monkeypatch.setattr(
+        "goodteam_os.web.run_staging_backend",
+        lambda project_config, command_runner=None: {
+            "status": "passed",
+            "failed_step": "",
+            "steps": [
+                {"label": "deploy", "exit_code": 0, "stdout": "ok", "stderr": "", "timeout": 1800},
+                {"label": "healthcheck", "exit_code": 0, "stdout": "ok", "stderr": "", "timeout": 300},
+            ],
+            "ssh_target": "contentops-staging",
+            "remote_dir": "/srv/contentops",
+            "git_ref": "",
+            "public_url": "",
+        },
+    )
+
+    payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS")
+
+    assert run_jobs["count"] == 0
+    assert payload["current_node"] == "staging_review_gate"
+    assert payload["next_node"] == "await_staging_approval"
+    assert payload["blockers"] == []
 
 
 def test_decide_approval_approves_release_and_completes_run(tmp_path):
@@ -1023,6 +1507,58 @@ def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeyp
     assert payload["blockers"] == []
     assert "release_notes" in payload["artifacts"]
     assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / "run-1" / "release_review_gate.json").is_file()
+
+
+def test_retry_blocked_workflow_refreshes_role_models_before_dispatch(tmp_path, monkeypatch):
+    project = tmp_path / "contentops"
+    for repo in ["docs", "backend", "frontend"]:
+        (project / repo).mkdir(parents=True)
+    project_config = tmp_path / "projects" / "contentops.local.yaml"
+    project_config.parent.mkdir()
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: AI Content Studio",
+                "key: CONTENTOPS",
+                "model_profile: balanced",
+                "repos:",
+                f"  docs: {project / 'docs'}",
+                f"  backend: {project / 'backend'}",
+                f"  frontend: {project / 'frontend'}",
+                "worker_backend:",
+                "  mode: codex",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "implementation"
+    state.next_node = "blocked"
+    state.model_profile = "balanced"
+    state.role_models = {
+        "implementation": {"primary": "codex:gpt-5.5"},
+        "qa": {"primary": "codex:gpt-5.5"},
+    }
+    state.approvals.update({"prd": "approved", "rfc": "approved", "release": "pending"})
+    state.blockers = ["implementation worker failed: Codex CLI exited with code 1."]
+    StateStore(tmp_path).write_project_current(state)
+
+    def fake_advance_approved_workflow(*, state, workspace, project_config):
+        persisted = StateStore(workspace).read_project_current("CONTENTOPS")
+        assert persisted.role_models["implementation"]["primary"] == "codex:gpt-5.3-codex"
+        assert persisted.role_models["qa"]["primary"] == "codex:gpt-5.3-codex"
+        state.current_node = "release_review_gate"
+        state.next_node = "await_release_approval"
+        return state
+
+    monkeypatch.setattr("goodteam_os.web.advance_approved_workflow", fake_advance_approved_workflow)
+
+    payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS")
+
+    assert payload["role_models"]["implementation"]["primary"] == "codex:gpt-5.3-codex"
+    assert payload["role_models"]["qa"]["primary"] == "codex:gpt-5.3-codex"
 
 
 def test_retry_blocked_workflow_rejects_non_blocked_run(tmp_path):
@@ -1123,6 +1659,48 @@ def test_decide_approval_rejects_prd_by_regenerating_for_review(tmp_path):
     assert actions[0]["decision"] == "rejected"
     assert actions[1]["actor"] == "system"
     assert actions[1]["artifact"] == "prd"
+
+
+def test_decide_approval_rejects_rfc_by_regenerating_for_review(tmp_path):
+    project_config = tmp_path / "project.local.yaml"
+    docs = tmp_path / "contentops" / "docs"
+    docs.mkdir(parents=True)
+    project_config.write_text(
+        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Build ContentOps Studio")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals["prd"] = "approved"
+    state.current_node = "rfc_review_gate"
+    state.next_node = "await_rfc_approval"
+    rfc = tmp_path / "artifacts" / "runs" / "run-1" / "rfc" / "rfc.md"
+    rfc.parent.mkdir(parents=True)
+    rfc.write_text("# Bad RFC\n\nToo vague.", encoding="utf-8")
+    state.artifacts["rfc"] = str(rfc)
+    StateStore(tmp_path).write_project_current(state)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="rfc",
+        decision="rejected",
+    )
+
+    assert payload["approvals"]["rfc"] == "pending"
+    assert payload["current_node"] == "rfc_review_gate"
+    assert payload["next_node"] == "await_rfc_approval"
+    content = Path(payload["artifacts"]["rfc"]).read_text(encoding="utf-8")
+    assert content.startswith("# Technical RFC")
+    assert "## Architecture Decision" in content
+    assert "Too vague." not in content
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [action["action"] for action in actions] == ["approval_decided", "rfc_regenerated"]
+    assert actions[1]["artifact"] == "rfc"
 
 
 def test_build_action_items_reads_action_log_newest_first(tmp_path):
@@ -1254,6 +1832,83 @@ def test_render_project_overview_includes_delete_project_action(tmp_path):
     assert 'data-project="CONTENTOPS"' in html
     assert "Delete project" in html
     assert "/project-delete" in html
+
+
+def test_render_dashboard_shows_deployment_backend_summary(tmp_path):
+    project_config = tmp_path / "real-project.local.yaml"
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: Real Product",
+                "key: REAL",
+                "deployment_backend:",
+                "  mode: ssh_compose",
+                "  staging_ssh_target: real-staging",
+                "  staging_remote_dir: /srv/real",
+                "  staging_public_url: https://staging.real.example.com",
+                "  staging_deploy_command: docker compose up -d",
+                "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "REAL", "Deploy real product")
+    state.current_node = "staging_review_gate"
+    state.next_node = "await_staging_approval"
+    context = build_start_console_context(workspace=tmp_path, model_config=Path("models.yaml"), project_config=project_config)
+
+    html = render_dashboard(state, context)
+
+    assert "Deployment Backend" in html
+    assert "ssh_compose" in html
+    assert "real-staging" in html
+    assert "/srv/real" in html
+
+
+def test_render_dashboard_shows_delivery_contract_summary(tmp_path):
+    project_config = tmp_path / "projects" / "real.local.yaml"
+    project_config.parent.mkdir()
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: Real Product",
+                "key: REAL",
+                "deployment_backend:",
+                "  mode: ssh_compose",
+                "  staging_ssh_target: real-staging",
+                "  staging_remote_dir: /srv/real",
+                "  staging_deploy_command: docker compose up -d",
+                "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health",
+                "delivery_contract:",
+                "  required: true",
+                "  minimum_evidence: functional",
+                "  staging_acceptance:",
+                "    critical-user-journey:",
+                "      type: local_command",
+                "      command: ./scripts/e2e-critical.sh",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "REAL", "Ship the real product")
+    state.source_ref = str(project_config)
+    state.source_type = "existing_project"
+    state.current_node = "staging_review_gate"
+    state.next_node = "await_staging_approval"
+
+    context = build_start_console_context(
+        workspace=tmp_path,
+        model_config=Path("models.yaml"),
+        project_config=project_config,
+    )
+    html = render_dashboard(state, start_context=context)
+
+    assert "Delivery Contract" in html
+    assert "functional" in html
+    assert "Acceptance Checks" in html
+    assert "1" in html
+    assert "Evidence Level" in html
 
 
 def test_render_project_overview_does_not_link_to_missing_gto_project(tmp_path):

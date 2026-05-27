@@ -8,17 +8,50 @@ def test_load_model_profile_reads_balanced_defaults():
 
     assert profile["orchestrator"]["primary"] == "codex:gpt-5.5"
     assert profile["research"]["primary"] == "codex:gpt-5.5"
-    assert profile["frontend"]["primary"] == "codex:gpt-5.5"
+    assert profile["frontend"]["primary"] == "codex:gpt-5.3-codex"
     assert profile["architect"]["primary"] == "codex:gpt-5.5"
     assert profile["implementation"]["mode"] == "worker-dispatch"
-    assert profile["qa"]["primary"] == "codex:gpt-5.5"
+    assert profile["implementation"]["primary"] == "codex:gpt-5.3-codex"
+    assert profile["qa"]["primary"] == "codex:gpt-5.3-codex"
 
 
-def test_all_model_profiles_route_primary_roles_to_codex_gpt_55():
+def test_all_model_profiles_route_programming_roles_to_codex_model():
     for profile_name in ["balanced", "cheap", "max_quality"]:
         profile = load_model_profile(Path("models.yaml"), profile_name)
-        for role, config in profile.items():
-            assert config.get("primary") == "codex:gpt-5.5", f"{profile_name}.{role}"
+        for role in ["implementation", "frontend", "backend", "qa", "code_review"]:
+            assert profile[role].get("primary") == "codex:gpt-5.3-codex", f"{profile_name}.{role}"
+        assert profile["architect"]["primary"] == "codex:gpt-5.5"
+        assert profile["product_requirement"]["primary"] == "codex:gpt-5.5"
+
+
+def test_all_model_profiles_follow_task_strength_routing_policy():
+    coding_and_debug_roles = {
+        "implementation": "daily coding / IDE agent workflow",
+        "frontend": "daily coding",
+        "backend": "daily coding",
+        "qa": "deep debugging",
+        "code_review": "maintenance / multi-file refactor / deep debugging",
+    }
+    reasoning_product_docs_roles = {
+        "orchestrator": "general orchestration",
+        "research": "docs / analysis / research",
+        "product_requirement": "product logic",
+        "architect": "architecture design",
+        "review": "complex reasoning",
+        "planner": "complex reasoning",
+        "ui": "product logic",
+        "release": "docs / analysis",
+        "retro_memory": "docs / analysis",
+    }
+
+    for profile_name in ["balanced", "cheap", "max_quality"]:
+        profile = load_model_profile(Path("models.yaml"), profile_name)
+
+        for role, scene in coding_and_debug_roles.items():
+            assert profile[role].get("primary") == "codex:gpt-5.3-codex", f"{profile_name}.{role} should use GPT-5.3-Codex for {scene}"
+
+        for role, scene in reasoning_product_docs_roles.items():
+            assert profile[role].get("primary") == "codex:gpt-5.5", f"{profile_name}.{role} should use GPT-5.5 for {scene}"
 
 
 def test_apply_role_overrides_replaces_primary_model():
@@ -35,7 +68,7 @@ def test_resolve_project_model_profile_applies_project_defaults_and_overrides():
         "model_profile": "cheap",
         "role_model_overrides": {
             "architect": "codex:gpt-5.5",
-            "frontend": "codex:gpt-5.5",
+            "frontend": "codex:gpt-5.3-codex",
         },
     }
 
@@ -49,7 +82,7 @@ def test_resolve_project_model_profile_applies_project_defaults_and_overrides():
     assert profile_name == "cheap"
     assert role_models["planner"]["primary"] == "codex:gpt-5.5"
     assert role_models["architect"]["primary"] == "codex:gpt-5.5"
-    assert role_models["frontend"]["primary"] == "codex:gpt-5.5"
+    assert role_models["frontend"]["primary"] == "codex:gpt-5.3-codex"
 
 
 def test_resolve_project_model_profile_explicit_overrides_win_last():

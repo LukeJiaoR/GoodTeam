@@ -81,7 +81,7 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
   --workspace /tmp/goodteam-os-run \
   --model-profile cheap \
   --role-model architect=codex:gpt-5.5 \
-  --role-model qa=codex:gpt-5.5
+  --role-model qa=codex:gpt-5.3-codex
 ```
 
 Preview the model matrix and planned artifact paths without writing state or artifacts:
@@ -166,6 +166,28 @@ task_backend:
   sync:
 worker_backend:
   mode: codex
+deployment_backend:
+  mode: ssh_compose
+  staging_ssh_target: my-product-staging
+  staging_remote_dir: /srv/my-product
+  staging_git_ref: main
+  staging_public_url: https://staging.example.com
+  staging_deploy_command: git fetch --all && git checkout main && git pull --ff-only origin main && docker compose -f deploy/docker-compose.staging.yml up -d --build --remove-orphans
+  staging_healthcheck_command: docker compose -f deploy/docker-compose.staging.yml ps && curl -fsS http://127.0.0.1:8080/health
+  staging_smoke_command: curl -fsS https://staging.example.com/health
+delivery_contract:
+  required: true
+  minimum_evidence: functional
+  fatal_output_patterns:
+    migration_missing: migrate: executable file not found
+    missing_relation: relation .* does not exist
+  staging_acceptance:
+    migrations:
+      type: ssh_command
+      command: docker compose -f deploy/docker-compose.staging.yml exec -T backend ./migrate status
+    critical-user-journey:
+      type: local_command
+      command: ./scripts/e2e-critical.sh https://staging.example.com
 ```
 
 Then check the project target:
@@ -176,6 +198,49 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
 ```
 
 Local project configs are intended to be machine-specific and may contain repo paths or tracker metadata. Keep secrets out of them; use environment variables or local secret files for credentials.
+
+Target projects can also declare an optional staging deployment backend. V1 supports `Docker Compose + SSH` only and is designed for hosts that are already provisioned:
+
+```yaml
+deployment_backend:
+  mode: ssh_compose
+  staging_ssh_target: my-product-staging
+  staging_remote_dir: /srv/my-product
+  staging_git_ref: main
+  staging_public_url: https://staging.example.com
+  staging_deploy_command: git fetch --all && git checkout main && git pull --ff-only origin main && docker compose -f deploy/docker-compose.staging.yml up -d --build --remove-orphans
+  staging_healthcheck_command: docker compose -f deploy/docker-compose.staging.yml ps && curl -fsS http://127.0.0.1:8080/health
+  staging_smoke_command: curl -fsS https://staging.example.com/health
+```
+
+GoodTeam is positioned as a full-cycle internet product team, not just a deploy runner. For staging-backed projects, add a delivery contract so GoodTeam can distinguish "infrastructure is alive" from "the product is functionally usable":
+
+```yaml
+delivery_contract:
+  required: true
+  minimum_evidence: functional
+  fatal_output_patterns:
+    migration_missing: migrate: executable file not found
+    missing_relation: relation .* does not exist
+  staging_acceptance:
+    critical-user-journey:
+      type: local_command
+      command: ./scripts/e2e-critical.sh https://staging.example.com
+```
+
+`staging_acceptance` checks are project-declared representative user journeys or operational readiness checks. GoodTeam does not guess product behavior; it executes the contract, records evidence, and blocks staging when required functional evidence is missing.
+
+When `deployment_backend.mode: ssh_compose` is configured for an adopted existing project, GoodTeam inserts a staging gate between QA/code review and final release approval:
+
+- QA/code review complete
+- deploy to staging over SSH
+- validate staging health/smoke commands
+- run delivery-contract acceptance checks
+- block if fatal output patterns appear, even when a command exits 0
+- human staging approval
+- final release approval
+
+Doctor reports whether the staging backend is fully configured, whether `ssh` is available locally, and whether the delivery contract has enough evidence for the requested gate. GoodTeam only records command metadata and result evidence; it does not copy secrets, manage SSH keys, initialize remote hosts, or upload files with rsync in this version.
 
 Project management actions are scoped to GoodTeam metadata:
 
@@ -189,7 +254,7 @@ Projects can carry their own default model strategy:
 model_profile: balanced
 role_model_overrides:
   architect: codex:gpt-5.5
-  frontend: codex:gpt-5.5
+  frontend: codex:gpt-5.3-codex
 ```
 
 At run start, GoodTeam resolves models in this order: the global `models.yaml` profile, the project `model_profile`, the project `role_model_overrides`, then any one-run `--role-model` or dashboard override.
@@ -267,12 +332,14 @@ Supported V1 modes are `codex`, `manual`, `noop`, and `supervised`. The worker j
 
 Early CONTENTOPS E2E worker execution uses Codex CLI for every role:
 
-- Command: `codex exec --model gpt-5.5 --skip-git-repo-check`
+- Command: `codex exec --model gpt-5.3-codex --skip-git-repo-check`
 - Adapter: `worker_backend.mode: codex`
 - Evidence: each job stores command, exit code, stdout, stderr, preflight diagnostics, and final result under `.goodteam/workers/jobs/<job_id>/`.
 
 Codex CLI uses the locally configured provider and credentials. Provider credentials must come from environment variables or a secret manager when future adapters need them. Do not commit API keys or paste secrets into GoodTeam project configs.
 Codex worker preflight records only non-secret facts, such as whether `OPENAI_API_KEY`, `CODEX_API_KEY`, or `CODEX_ACCESS_TOKEN` is present; it never stores credential values.
+
+Staging deploy commands follow the same local-only rule: SSH authentication must come from the user's existing SSH config, agent, and known_hosts; GoodTeam never stores or writes keys.
 
 ## Boundary
 
