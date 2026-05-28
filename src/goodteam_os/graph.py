@@ -599,6 +599,7 @@ def render_downstream_artifact_markdown(
             ]
         )
         lines.extend(format_contentops_acceptance_evidence(results))
+        lines.extend(format_ui_delivery_acceptance_evidence(results))
     if artifact_key == "code_review":
         lines.extend(
             [
@@ -680,6 +681,25 @@ def format_contentops_acceptance_evidence(worker_results: list[dict[str, object]
     return lines
 
 
+def format_ui_delivery_acceptance_evidence(worker_results: list[dict[str, object]]) -> list[str]:
+    ui_results = [result for result in worker_results if str(result.get("role", "")) == "ui"]
+    lines = ["", "## UI Delivery Evidence", ""]
+    if not ui_results:
+        return [*lines, "- UI delivery worker did not run; do not approve release for user-facing products without a direct UI implementation pass."]
+    combined = "\n".join(read_worker_result_excerpt(result) for result in ui_results).lower()
+    checks = [
+        ("Direct frontend implementation", ["changed frontend", "frontend files", "src/", "css"]),
+        ("Homepage/first-screen usability", ["homepage", "brand brief", "first screen"]),
+        ("Review board visual usability", ["review board", "draft board", "draft cards"]),
+        ("Evidence dossier readability", ["evidence dossier", "verification", "provenance"]),
+        ("Browser screenshot evidence", ["screenshot", ".png", "browser"]),
+    ]
+    for label, needles in checks:
+        status = "covered" if any(needle in combined for needle in needles) else "not evidenced in UI worker summary"
+        lines.append(f"- {label}: {status}.")
+    return lines
+
+
 def format_code_review_evidence_lines(worker_results: list[dict[str, object]]) -> list[str]:
     if not worker_results:
         return ["- No release-blocking findings can be assessed without worker evidence."]
@@ -690,6 +710,8 @@ def format_code_review_evidence_lines(worker_results: list[dict[str, object]]) -
     combined = "\n".join(read_worker_result_excerpt(result) for result in worker_results).lower()
     if "no real-browser interactive e2e" in combined:
         lines.append("- Residual risk: browser interaction coverage is lower than API/data coverage because no real-browser interactive E2E run was executed.")
+    if "ui delivery worker did not run" in combined:
+        lines.append("- Release blocker: direct UI delivery evidence is missing for the user-facing product.")
     if "better-sqlite3" in combined:
         lines.append("- Operational caveat: `better-sqlite3` may require `npm rebuild better-sqlite3` after Node ABI changes.")
     lines.extend(["", "## Worker Evidence", ""])
@@ -756,6 +778,10 @@ def extract_worker_signals(text: str) -> list[str]:
         r"`npm run build[^`]*`[^.\n]*(?:passed|pass|succeeded)[^.\n]*",
         r"PASS live API smoke[^.\n]*",
         r"Draft generation returns exactly 4 platforms[^.\n]*",
+        r"Changed frontend files[^.\n]*",
+        r"Homepage Brand Brief first screen[^.\n]*",
+        r"Review board draft cards[^.\n]*",
+        r"Browser screenshot evidence[^\n]*",
         r"no real-browser interactive E2E[^.\n]*",
         r"`better-sqlite3`[^.\n]*",
     ]
@@ -967,6 +993,22 @@ def run_implementation_workers(
     jobs = [
         store.create_job(
             run_id=state.run_id,
+            role="ui",
+            adapter=adapter,
+            model=ui_delivery_worker_model(state),
+            task=contentops_ui_delivery_task(getattr(state, "delivery_mode", "init_project")),
+            context=worker_context(state),
+            constraints=[
+                "Directly implement UI changes in the configured frontend project; do not stop at ui-spec.md.",
+                "Keep generated files inside the configured CONTENTOPS runtime root.",
+                "Do not touch real product repositories outside this isolated workspace.",
+                "Do not store secrets.",
+                "Capture browser screenshot evidence when a local frontend can run.",
+            ],
+            expected_artifacts=ui_delivery_expected_artifacts(getattr(state, "delivery_mode", "init_project")),
+        ),
+        store.create_job(
+            run_id=state.run_id,
             role="implementation",
             adapter=adapter,
             model=worker_model_for_role(state, "implementation"),
@@ -995,6 +1037,15 @@ def run_implementation_workers(
         ),
     ]
     return [store.run_job(job["id"]) for job in jobs]
+
+
+def ui_delivery_worker_model(state: AgileDevState) -> str:
+    return (
+        worker_model_for_role(state, "frontend")
+        or worker_model_for_role(state, "implementation")
+        or worker_model_for_role(state, "ui")
+        or "gpt-5.3-codex"
+    )
 
 
 def worker_model_for_role(state: AgileDevState, role: str) -> str:
@@ -1068,7 +1119,30 @@ def qa_expected_artifacts(delivery_mode: str) -> list[str]:
         return ["QA notes in worker result", "local test command"]
     if mode == "multi_service":
         return ["service-level QA notes", "contract smoke checks", "compose or orchestration smoke command"]
-    return ["API/UI QA notes", "data-layer verification", "local startup and test commands"]
+    return ["API/UI QA notes", "visual acceptance notes", "data-layer verification", "local startup and test commands"]
+
+
+def ui_delivery_expected_artifacts(delivery_mode: str) -> list[str]:
+    mode = normalize_delivery_mode(delivery_mode)
+    if mode == "mvp":
+        return ["frontend files", "visual acceptance notes"]
+    if mode == "multi_service":
+        return ["web service frontend files", "design system or component updates", "browser screenshot evidence"]
+    return ["frontend files", "design system or CSS updates", "browser screenshot evidence", "visual acceptance notes"]
+
+
+def contentops_ui_delivery_task(delivery_mode: str = "init_project") -> str:
+    mode = normalize_delivery_mode(delivery_mode)
+    scope = "the MVP interface" if mode == "mvp" else "the production-starter interface"
+    return (
+        f"directly implement a polished ContentOps Studio UI for {scope}; do not stop at documentation. "
+        "Improve the homepage/Brand Brief experience, source/topic creation flow, review board, draft cards, "
+        "and evidence dossier so the product is immediately usable without reading documentation. "
+        "Use the existing React/Vite frontend and mature installed components or project-local helpers before "
+        "adding dependencies. Include responsive layout, clear empty/loading/error states, accessible controls, "
+        "professional typography/spacing/color, and screenshot-backed visual acceptance. "
+        "Record changed frontend files, browser URL/ports used, screenshots, and unresolved UI risks."
+    )
 
 
 def contentops_implementation_task(delivery_mode: str = "init_project") -> str:

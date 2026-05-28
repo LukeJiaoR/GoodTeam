@@ -137,9 +137,9 @@
       "name": "UI Design",
       "key": "ui",
       "artifact": "ui_spec",
-      "description": "Defines page structure, interactions, responsive rules, states, and accessibility.",
+      "description": "Defines visual direction and then drives direct frontend UI delivery with screenshot-backed acceptance.",
       "next_action": "Wait for approved product and architecture boundaries.",
-      "stable_prompt": "You are the UI Design role. Translate approved product intent into user flows, interface states, responsive behavior, accessibility rules, and visual interaction requirements."
+      "stable_prompt": "You are the UI Design role. Translate approved product intent into visual direction, user flows, interface states, responsive behavior, accessibility rules, and frontend implementation requirements. For user-facing products, your responsibility does not end at a spec: GoodTeam must dispatch direct UI implementation and screenshot-backed visual acceptance before release."
     },
     {
       "name": "Implementation",
@@ -416,12 +416,15 @@
     "ui_spec": {
       "title": "UI Spec",
       "role": "ui",
-      "purpose": "Define user flows, screens, states, interactions, responsive behavior, and accessibility requirements.",
+      "purpose": "Define visual direction, user flows, components, states, responsive behavior, accessibility requirements, and direct frontend delivery expectations.",
       "sections": [
         {
-          "title": "Interface Requirements",
+          "title": "Visual Direction And Interface Requirements",
           "items": [
-            "Describe views, controls, states, empty/loading/error handling, and accessibility."
+            "State the intended product feel, information hierarchy, typography/color/spacing direction, and component patterns.",
+            "Describe views, controls, states, empty/loading/error handling, and accessibility.",
+            "Identify which frontend files or components the UI worker must change rather than leaving the work as documentation.",
+            "Require browser screenshot evidence for homepage/first screen, primary workflow, review board, and evidence surfaces before release approval."
           ]
         }
       ]

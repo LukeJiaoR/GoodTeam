@@ -103,6 +103,7 @@ def test_send_approval_notification_posts_message_with_inline_keyboard(monkeypat
 
 def test_send_approval_notification_skips_when_env_is_incomplete(monkeypatch):
     monkeypatch.delenv("GOODTEAM_TG_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("GOODTEAM_TG_ALLOWED_USERS", raising=False)
     monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
 
     result = telegram.send_approval_notification(project_key="CONTENTOPS", run_id="run-1", gate="prd")

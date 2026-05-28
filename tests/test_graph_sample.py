@@ -357,6 +357,15 @@ def test_release_gate_artifacts_include_worker_evidence_not_placeholders(tmp_pat
                 "Unresolved risks:\n"
                 "- `better-sqlite3` may require `npm rebuild better-sqlite3` after Node ABI changes.\n"
             )
+        elif job["role"] == "ui":
+            result_text = (
+                "# UI Delivery Result\n\n"
+                "Status: pass\n\n"
+                "- Changed frontend files under `frontend/src/` and updated CSS tokens.\n"
+                "- Homepage Brand Brief first screen is polished and directly usable.\n"
+                "- Review board draft cards and evidence dossier readability were improved.\n"
+                "- Browser screenshot evidence saved to screenshots/contentops-ui.png.\n"
+            )
         else:
             result_text = (
                 "# QA Result\n\n"
@@ -392,10 +401,15 @@ def test_release_gate_artifacts_include_worker_evidence_not_placeholders(tmp_pat
         assert "gpt-5.3-codex" in content
         assert "npm run test" in content
         assert "npm run build" in content
+        assert "Homepage Brand Brief first screen" in content
+        assert "screenshots/contentops-ui.png" in content
         assert "no real-browser interactive E2E" in content
         assert "Lead with actionable issues" not in content
         assert "List staging evidence" not in content
         assert "Map requirements to tests" not in content
+    assert "## UI Delivery Evidence" in qa_report
+    assert "Direct frontend implementation: covered" in qa_report
+    assert "Browser screenshot evidence: covered" in qa_report
     assert "Release recommendation: approve for local starter release with documented caveats" in release_notes
 
 
@@ -526,6 +540,8 @@ def test_implementation_workers_use_run_role_models(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build ContentOps Studio.")
     state.role_models = {
+        "ui": {"primary": "codex:gpt-5.5"},
+        "frontend": {"primary": "codex:gpt-5.3-codex"},
         "implementation": {"primary": "codex:gpt-5.3-codex"},
         "qa": {"primary": "codex:gpt-5.3-codex"},
     }
@@ -553,7 +569,89 @@ def test_implementation_workers_use_run_role_models(tmp_path, monkeypatch):
 
     run_implementation_workers(state, project_config)
 
-    assert models_by_role == {"implementation": "gpt-5.3-codex", "qa": "gpt-5.3-codex"}
+    assert models_by_role == {
+        "implementation": "gpt-5.3-codex",
+        "ui": "gpt-5.3-codex",
+        "qa": "gpt-5.3-codex",
+    }
+
+
+def test_ui_worker_task_requires_direct_frontend_delivery(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Make ContentOps Studio directly usable with a polished UI.")
+    tasks_by_role = {}
+
+    def fake_create_job(self, **kwargs):
+        tasks_by_role[kwargs["role"]] = {
+            "task": kwargs["task"],
+            "expected_artifacts": kwargs.get("expected_artifacts", []),
+        }
+        return {"id": f"job-{kwargs['role']}"}
+
+    def fake_run_job(self, job_id):
+        role = job_id.removeprefix("job-")
+        return {
+            "job_id": job_id,
+            "run_id": state.run_id,
+            "role": role,
+            "adapter": "codex",
+            "status": "completed",
+            "summary": f"{role} completed",
+            "artifacts": [],
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fake_create_job)
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    run_implementation_workers(state, project_config)
+
+    ui_task = tasks_by_role["ui"]["task"]
+    assert "directly implement" in ui_task
+    assert "frontend" in ui_task
+    assert "homepage" in ui_task
+    assert "screenshots" in ui_task
+    assert "visual acceptance" in ui_task
+    assert "ui-spec.md" not in ui_task
+    assert "frontend files" in tasks_by_role["ui"]["expected_artifacts"]
+    assert "browser screenshot evidence" in tasks_by_role["ui"]["expected_artifacts"]
+
+
+def test_delivery_workflow_stops_when_ui_worker_fails(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state(
+        "run-1",
+        "CONTENTOPS",
+        "Build a polished ContentOps Studio interface that can be used directly.",
+    )
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        status = "failed" if job["role"] == "ui" else "completed"
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": status,
+            "summary": "Homepage visual delivery failed." if job["role"] == "ui" else f"{job['role']} completed",
+            "artifacts": [],
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.current_node == "implementation"
+    assert result.next_node == "blocked"
+    assert any("ui worker failed" in blocker for blocker in result.blockers)
+    assert "release_notes" not in result.artifacts
 
 
 def test_init_project_implementation_task_requests_product_scaffold():
