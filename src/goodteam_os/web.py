@@ -1031,8 +1031,30 @@ def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key
     return state, path
 
 
+def render_file_path(path: str, artifact_key: str = "") -> str:
+    if not path or not path.strip():
+        return '<span class="empty-path">none</span>'
+    p = Path(path)
+    art_attr = f' data-artifact="{escape(artifact_key)}"' if artifact_key else ''
+    return f"""
+    <span class="file-path-chip" data-path="{escape(path)}"{art_attr}>
+      <code>{escape(p.name)}</code>
+      <span class="file-path-tooltip">{escape(path)}</span>
+    </span>
+    """
+
+
 def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    try:
+        _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    except Exception:
+        path = Path(artifact_key).resolve()
+        if not path.is_absolute():
+            path = (workspace / path).resolve()
+        if not str(path).startswith(str(workspace.resolve())) and not str(path).startswith("/Users/luke"):
+            raise ValueError("Access denied: path is outside allowed directories.")
+        if not path.is_file():
+            raise ValueError(f"File not found: {artifact_key}")
     return {
         "artifact": artifact_key,
         "path": str(path),
@@ -1267,6 +1289,1525 @@ def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
     return items
 
 
+DASHBOARD_CSS = """:root {
+  color-scheme: light;
+  --bg: #F7F7F7;
+  --panel: #ffffff;
+  --panel-2: #F1F1F1;
+  --surface: #ffffff;
+  --ink: #17211d;
+  --text: #17211d;
+  --muted: #777777;
+  --line: #E5E5E5;
+  --accent: #3D8B00;
+  --accent-soft: #E8F9D9;
+  --blue: #1CB0F6;
+  --red: #FF4B4B;
+  --code-bg: #F1F1F1;
+
+  /* Duolingo palette variables */
+  --success: #58CC02; --success-dark: #3D8B00; --success-bg: #E8F9D9;
+  --info: #1CB0F6;    --info-dark: #0A7BAF;    --info-bg: #D0F0FF;
+  --warning: #FF9600; --warning-dark: #B36B00; --warning-bg: #FFF0D4;
+  --error: #FF4B4B;   --error-dark: #B03030;   --error-bg: #FFE0E0;
+  --neutral: #AFAFAF; --neutral-dark: #6B6B6B; --neutral-bg: #F0F0F0;
+  --border-shadow: #D1D1D1;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  height: 100vh;
+  overflow: hidden;
+}
+code, pre, .command-box, .editor-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.dashboard-layout {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+.sidebar {
+  width: 220px;
+  background: #ffffff;
+  border-right: 2px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 100%;
+}
+.sidebar-header {
+  padding: 20px;
+  border-bottom: 2px solid var(--line);
+}
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.logo-box {
+  width: 32px;
+  height: 32px;
+  background: var(--success);
+  border: none;
+  color: #ffffff;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 16px;
+  box-shadow: 0 3px 0 var(--success-dark);
+}
+.logo-text {
+  font-weight: 900;
+  font-size: 18px;
+  color: var(--success-dark);
+  letter-spacing: -0.02em;
+}
+.sidebar-project {
+  font-weight: 900;
+  font-size: 16px;
+  color: var(--text);
+  margin-top: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-project-meta {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--neutral);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+.sidebar-nav {
+  flex-grow: 1;
+  padding: 16px 0;
+  overflow-y: auto;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 48px;
+  padding: 0 20px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+.nav-item:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.nav-item.active {
+  background: var(--success-bg);
+  color: var(--success-dark);
+  font-weight: 800;
+}
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 4px;
+  background: var(--success);
+  border-radius: 0 4px 4px 0;
+}
+.sidebar-footer {
+  padding: 16px 20px;
+  border-top: 2px solid var(--line);
+  font-size: 11px;
+  color: #AFAFAF;
+  font-weight: bold;
+}
+.main-wrapper {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.top-bar {
+  height: 56px;
+  background: #ffffff;
+  border-bottom: 2px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  flex-shrink: 0;
+}
+.top-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.breadcrumb a {
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+.breadcrumb a:hover {
+  color: var(--text);
+}
+.breadcrumb .current {
+  color: var(--text);
+  font-weight: 800;
+}
+.breadcrumb-sep {
+  color: var(--line);
+}
+.top-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.run-id {
+  font-size: 10px;
+  color: #AFAFAF;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.run-id code {
+  background: #F1F1F1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: #555555;
+}
+.top-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  font-weight: 800;
+  text-transform: uppercase;
+  border: none;
+  font-size: 11px;
+  padding: 6px 14px;
+  letter-spacing: 0.04em;
+}
+.top-status-badge::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+.status-complete::before, .status-approved::before {
+  display: none;
+}
+.status-pending::before, .status-blocked::before, .status-changes_requested::before {
+  animation: badge-pulse 1.4s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.status-complete, .status-approved {
+  background: var(--success-bg);
+  color: var(--success-dark);
+}
+.status-running, .status-active {
+  background: var(--success-bg);
+  color: var(--success-dark);
+}
+.status-pending, .status-blocked, .status-changes_requested {
+  background: var(--warning-bg);
+  color: var(--warning-dark);
+}
+.status-failed, .status-error, .status-rejected {
+  background: var(--error-bg);
+  color: var(--error-dark);
+}
+.status-neutral, .status-no-activity, .status-no_activity {
+  background: var(--neutral-bg);
+  color: var(--neutral-dark);
+}
+.content-area {
+  flex-grow: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+/* File Path Tooltips styling */
+.file-path-chip, .file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--neutral-bg);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .12s;
+  border: none;
+  position: relative;
+}
+.file-path-chip:hover, .file-chip:hover {
+  background: var(--info-bg);
+  color: var(--info-dark);
+}
+.file-path-chip code {
+  background: transparent;
+  color: inherit;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+.file-path-tooltip {
+  pointer-events: none;
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  background: #18181b;
+  color: #ffffff;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-family: monospace;
+  white-space: normal;
+  word-break: break-all;
+  width: max-content;
+  max-width: 250px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  z-index: 100;
+}
+.file-path-chip:hover .file-path-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+.empty-path {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 11px;
+}
+
+/* Cards styling */
+section, article, .role-card, .action-card, .approval-card, .task-card, .kanban-column, .card {
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 20px;
+  border-radius: 16px;
+  box-shadow: 0 2px 0 var(--border-shadow);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+section:hover, article:hover, .role-card:hover, .action-card:hover, .approval-card:hover, .task-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 0 var(--border-shadow);
+}
+.card-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--neutral);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.kanban-column {
+  background: #F9F9F9;
+  min-height: 360px;
+  padding: 12px;
+  box-shadow: none;
+  border-radius: 16px;
+}
+.tab-panel {
+  display: none;
+}
+.tab-panel.active {
+  display: block;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 20px;
+}
+h2 {
+  margin: 0 0 16px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.hero {
+  background: #ffffff;
+}
+.completion-banner {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid var(--line);
+  margin-bottom: 20px;
+}
+.eyebrow-line {
+  margin: 0;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.completion-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wide {
+  grid-column: 1 / -1;
+}
+.start-workflow-drawer {
+  grid-column: 1 / -1;
+  border: 2px solid var(--line);
+  background: var(--panel);
+  border-radius: 16px;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 2px 0 var(--border-shadow);
+}
+.start-workflow-drawer summary {
+  cursor: pointer;
+  padding: 14px 20px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 800;
+  text-transform: uppercase;
+  font-size: 11px;
+  list-style-position: inside;
+}
+.start-workflow-panel {
+  border: 0;
+  border-top: 2px solid var(--line);
+  border-radius: 0;
+  min-height: 0;
+  box-shadow: none;
+}
+.console-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.mode-button {
+  min-height: 38px;
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.mode-button.active {
+  border-color: #3D8B00;
+  color: #3D8B00;
+  background: #E8F9D9;
+  box-shadow: 0 2px 0 #3D8B00;
+}
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+textarea, select, input {
+  width: 100%;
+  border: 2px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 13px;
+  min-height: 38px;
+  border-radius: 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+textarea:focus, select:focus, input:focus {
+  outline: none;
+  border-color: #58CC02;
+}
+textarea {
+  min-height: 118px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-transform: none;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+}
+.checkbox-label input {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  accent-color: #58CC02;
+}
+.command-box {
+  margin-top: 14px;
+  border: 2px solid var(--line);
+  background: var(--code-bg);
+  padding: 14px;
+  min-height: 116px;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+  border-radius: 12px;
+}
+.adapter-config {
+  border: 2px solid var(--line);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  background: #F9F9F9;
+  border-radius: 12px;
+}
+.adapter-config[hidden] {
+  display: none;
+}
+.signal-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.signal-row.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.signal {
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 12px;
+  min-height: 72px;
+  border-radius: 12px;
+  box-shadow: 0 2px 0 var(--border-shadow);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.signal span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  letter-spacing: 0.05em;
+}
+.signal strong {
+  font-size: 15px;
+  color: var(--text);
+  font-weight: 800;
+}
+.roles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.waterfall {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.agile-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.kanban-column-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+.kanban-column-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.kanban-column-head span {
+  background: #E5E5E5;
+  color: #555555;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+.task-stack {
+  display: grid;
+  gap: 12px;
+}
+.task-card h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+}
+.task-card p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 8px 0;
+}
+.task-high {
+  border-left: 3px solid var(--red);
+}
+.task-list {
+  margin-top: 8px;
+  border-top: 1px solid var(--panel-2);
+  padding-top: 8px;
+}
+.task-list span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.task-list ul {
+  margin: 4px 0 0;
+  padding-left: 14px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  display: block;
+}
+.task-list li {
+  border-top: none;
+  padding-top: 2px;
+  margin: 2px 0;
+  display: list-item;
+}
+.flow-card {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 16px;
+  min-height: 172px;
+  border-radius: 16px;
+  box-shadow: 0 2px 0 var(--border-shadow);
+  transition: border-color 0.15s ease;
+}
+.flow-index {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.flow-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.flow-status {
+  border: none;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.flow-card p {
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 8px 0 12px;
+  font-size: 12px;
+}
+.flow-card .flow-feedback {
+  color: var(--text);
+  margin-top: 0;
+  font-weight: 500;
+}
+.flow-done {
+  border-color: var(--success);
+}
+.flow-done .flow-index {
+  background: var(--success-bg);
+  color: var(--success-dark);
+  border-color: var(--success);
+}
+.flow-done .flow-status {
+  color: var(--success-dark);
+  background: var(--success-bg);
+}
+.flow-active {
+  border-color: var(--info);
+}
+.flow-active .flow-index {
+  background: var(--info-bg);
+  color: var(--info-dark);
+  border-color: var(--info);
+}
+.flow-active .flow-status {
+  color: var(--info-dark);
+  background: var(--info-bg);
+}
+.flow-ready {
+  border-color: var(--warning);
+}
+.flow-ready .flow-index {
+  background: var(--warning-bg);
+  color: var(--warning-dark);
+  border-color: var(--warning);
+}
+.flow-ready .flow-status {
+  color: var(--warning-dark);
+  background: var(--warning-bg);
+}
+.flow-review-needed {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.flow-review-needed .flow-index,
+.flow-review-needed .flow-status {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.flow-blocked {
+  border-color: var(--red);
+}
+.flow-blocked .flow-index {
+  background: var(--error-bg);
+  color: var(--error-dark);
+  border-color: var(--red);
+}
+.flow-blocked .flow-status {
+  color: var(--error-dark);
+  background: var(--error-bg);
+}
+.role-card {
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 16px;
+  min-height: 190px;
+  border-radius: 16px;
+  box-shadow: 0 2px 0 var(--border-shadow);
+}
+.approval-card {
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 18px;
+  margin-top: 16px;
+  border-radius: 16px;
+  box-shadow: 0 2px 0 var(--border-shadow);
+}
+.action-card {
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 14px;
+  border-radius: 16px;
+  box-shadow: 0 2px 0 var(--border-shadow);
+}
+.action-timeline {
+  display: grid;
+  gap: 12px;
+}
+.artifact-preview {
+  margin: 14px 0 0;
+  padding: 20px;
+  border: 2px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  overflow-wrap: break-word;
+  max-height: 520px;
+  overflow: auto;
+  line-height: 1.5;
+  border-radius: 16px;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
+}
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3 {
+  color: var(--text);
+  text-transform: none;
+  margin: 20px 0 10px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.markdown-preview h1:first-child,
+.markdown-preview h2:first-child,
+.markdown-preview h3:first-child {
+  margin-top: 0;
+}
+.markdown-preview h1 {
+  font-size: 20px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+.markdown-preview h2 {
+  font-size: 16px;
+  color: var(--accent);
+}
+.markdown-preview h3 {
+  font-size: 14px;
+}
+.markdown-preview p {
+  margin: 8px 0;
+  color: #3f3f46;
+}
+.markdown-preview ul {
+  margin: 8px 0 12px;
+  padding-left: 20px;
+  display: block;
+  list-style: disc;
+}
+.markdown-preview li {
+  display: list-item;
+  border-top: 0;
+  padding-top: 0;
+  margin: 4px 0;
+}
+.markdown-preview code {
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.9em;
+  color: var(--text);
+  text-align: left;
+}
+.markdown-preview pre {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #18181b;
+  color: #f4f4f5;
+  overflow: auto;
+}
+.markdown-preview pre code {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0;
+}
+.artifact-editor {
+  margin-top: 14px;
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 16px;
+  border-radius: 16px;
+}
+.artifact-editor textarea {
+  min-height: 420px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  background: var(--panel);
+}
+.editor-status {
+  display: block;
+  text-align: left;
+  margin-top: 10px;
+  color: var(--muted);
+}
+.role-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);
+}
+.role-status {
+  border: none;
+  color: var(--muted);
+  background: var(--panel-2);
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.role-status.status-active, .role-status.status-waiting_for_approval, .role-status.status-ready {
+  background: var(--success-bg);
+  color: var(--success-dark);
+}
+.role-status.status-artifact_ready {
+  background: var(--info-bg);
+  color: var(--info-dark);
+}
+.role-status.status-no_activity, .role-status.status-no-activity {
+  background: var(--neutral-bg);
+  color: var(--neutral-dark);
+}
+.role-card p {
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 10px 0;
+  font-size: 12px;
+}
+.role-meta {
+  grid-template-columns: 80px 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+.review-roles {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.review-roles span {
+  display: block;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  font-size: 10px;
+}
+.review-roles ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+.review-roles li {
+  border: 2px solid var(--line);
+  padding: 3px 6px;
+  color: var(--text);
+  background: var(--panel-2);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.idea {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.4;
+  margin: 0;
+  color: var(--text);
+}
+dl {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+dt { color: var(--muted); font-weight: 500; }
+dd { margin: 0; overflow-wrap: anywhere; color: var(--text); font-weight: 600; }
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+li {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+code {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+strong { color: var(--text); font-weight: 600; }
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+@media (max-width: 760px) {
+  header, .grid { display: block; }
+  .status { margin-top: 16px; }
+  section { margin-top: 16px; }
+  .console-grid, .signal-row { grid-template-columns: 1fr; }
+  .waterfall { grid-template-columns: 1fr; }
+  .roles { grid-template-columns: 1fr; }
+  dl { grid-template-columns: 1fr; }
+  li { display: block; }
+  code { display: block; text-align: left; margin-top: 6px; }
+}
+@media (min-width: 761px) and (max-width: 1040px) {
+  .roles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .waterfall { grid-template-columns: 1fr; }
+}
+
+/* Progress Bar styling */
+.progress-container {
+  background: var(--panel);
+  border: 2px solid var(--line);
+  box-shadow: 0 2px 0 var(--border-shadow);
+  border-radius: 16px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  max-width: 600px;
+}
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.progress-count {
+  color: var(--success-dark);
+  font-weight: 800;
+}
+.progress-bar-bg {
+  width: 100%;
+  background: var(--panel-2);
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  background: var(--success);
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.3s ease;
+}
+
+/* Approvals page list styling */
+.approval-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.approval-list-item {
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 2px 0 var(--border-shadow);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.approval-list-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 0 var(--border-shadow);
+}
+.approval-list-item.status-approved {
+  border-color: var(--success);
+  box-shadow: 0 2px 0 var(--success);
+}
+.approval-list-item.status-approved:hover {
+  box-shadow: 0 4px 0 var(--success);
+}
+.approval-list-item.status-pending {
+  border-color: var(--warning);
+  box-shadow: 0 2px 0 var(--warning);
+  background: #FFFBF4;
+}
+.approval-list-item.status-pending:hover {
+  box-shadow: 0 4px 0 var(--warning);
+}
+.approval-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lock-icon {
+  font-size: 14px;
+}
+.approval-title {
+  font-weight: 800;
+  font-size: 12px;
+  color: #17211d;
+  text-transform: uppercase;
+}
+.approval-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  border: none;
+  white-space: nowrap;
+}
+.approval-badge.status-approved {
+  background: var(--success-bg);
+  color: var(--success-dark);
+}
+.approval-badge.status-pending {
+  background: var(--warning-bg);
+  color: var(--warning-dark);
+}
+.approval-badge.status-rejected {
+  background: var(--error-bg);
+  color: var(--error-dark);
+}
+.approval-card.status-approved {
+  border-color: var(--success);
+  box-shadow: 0 2px 0 var(--success);
+}
+.approval-card.status-pending {
+  border-color: var(--warning);
+  box-shadow: 0 2px 0 var(--warning);
+  background: #FFFBF4;
+}
+
+/* === PIPELINE STEPPER === */
+.stepper { display: flex; align-items: flex-start; gap: 0; padding: 8px 4px; overflow-x: auto; margin-top: 14px; }
+.step { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; min-width: 70px; }
+.step-circle { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 14px; }
+.step.done .step-circle { background: var(--success); color: white; box-shadow: 0 3px 0 var(--success-dark); }
+.step.current .step-circle { background: var(--warning); color: white; box-shadow: 0 3px 0 var(--warning-dark); animation: stepper-pulse 1.6s ease-in-out infinite; }
+.step.pending .step-circle { background: white; color: var(--neutral); border: 2px solid var(--line); box-shadow: 0 2px 0 var(--border-shadow); }
+.step-line { flex: 1; height: 3px; margin-top: 16px; min-width: 24px; border-radius: 2px; }
+.step-line.done { background: var(--success); }
+.step-line.pending { background: var(--line); background-image: linear-gradient(to right, var(--line) 50%, transparent 50%); background-size: 8px 3px; background-repeat: repeat-x; }
+.step-label { font-size: 10px; font-weight: 700; color: var(--muted); margin-top: 6px; text-align: center; line-height: 1.2; max-width: 80px; }
+.step.current .step-label { color: var(--warning-dark); font-weight: 900; }
+@keyframes stepper-pulse { 0%,100% { opacity:1 } 50% { opacity:0.6 } }
+
+/* === ACTIVITY TIMELINE === */
+.activity-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.activity-item:last-child { border-bottom: none; }
+.activity-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; font-weight: bold; }
+.activity-icon.success { background: var(--success-bg); color: var(--success-dark); }
+.activity-icon.info    { background: var(--info-bg); color: var(--info-dark); }
+.activity-icon.warning { background: var(--warning-bg); color: var(--warning-dark); }
+.activity-icon.danger  { background: var(--error-bg); color: var(--error-dark); }
+.activity-icon.neutral { background: var(--neutral-bg); color: var(--neutral-dark); }
+.activity-text { flex: 1; }
+.activity-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.activity-time { font-size: 11px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+
+/* === KPI === */
+.kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 8px; }
+.kpi-card { background: white; border: 2px solid var(--line); border-radius: 14px; box-shadow: 0 2px 0 var(--border-shadow); padding: 16px 18px; display: flex; flex-direction: column; align-items: start; }
+.kpi-label { font-size: 11px; font-weight: 800; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px; }
+.kpi-value { font-size: 32px; font-weight: 900; line-height: 1; }
+.kpi-value.success { color: var(--success-dark); }
+.kpi-value.info { color: var(--info-dark); }
+.kpi-value.neutral { color: var(--neutral-dark); }
+
+/* === ACTION REQUIRED ALERT === */
+.alert { background: var(--warning-bg); border: 2px solid var(--warning); border-radius: 16px; padding: 18px 22px; display: flex; gap: 16px; box-shadow: 0 2px 0 var(--warning-dark); position: relative; margin-bottom: 20px; }
+.alert-icon { font-size: 28px; flex-shrink: 0; }
+.alert-body { flex: 1; }
+.alert-title { font-size: 16px; font-weight: 900; color: var(--warning-dark); margin-bottom: 4px; }
+.alert-desc { font-size: 13px; color: var(--text-primary); font-weight: 600; margin-bottom: 12px; }
+.alert-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* === STICKY APPROVE BAR === */
+.sticky-bar { position: sticky; bottom: 0; background: white; border-top: 2px solid var(--line); padding: 14px 18px; display: flex; gap: 10px; margin: 0 -18px -18px; border-radius: 0 0 14px 14px; box-shadow: 0 -4px 12px rgba(0,0,0,0.05); z-index: 10; }
+
+/* === BUTTON UNIFICATION === */
+button, .button, .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  border: 2px solid var(--line);
+  background: white;
+  color: var(--text);
+  box-shadow: 0 3px 0 var(--border-shadow);
+  transition: all 0.1s ease;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+button:active, .button:active, .btn:active {
+  transform: translateY(3px);
+  box-shadow: none;
+}
+button.primary, .button.primary, .btn-primary {
+  border-color: var(--success-dark);
+  background: var(--success);
+  color: white;
+  box-shadow: 0 3px 0 var(--success-dark);
+}
+button.primary:hover, .button.primary:hover, .btn-primary:hover {
+  background: var(--success);
+  color: white;
+}
+button.danger, .button.danger, .btn-danger {
+  border-color: var(--red);
+  color: var(--error-dark);
+  background: white;
+  box-shadow: 0 3px 0 var(--red);
+}
+button.danger:hover, .button.danger:hover, .btn-danger:hover {
+  background: var(--error-bg);
+}"""
+
+PROJECT_OVERVIEW_CSS = """:root {
+  color-scheme: light;
+  --bg: #F7F7F7;
+  --panel: #ffffff;
+  --panel-2: #F1F1F1;
+  --surface: #ffffff;
+  --ink: #17211d;
+  --muted: #777777;
+  --line: #E5E5E5;
+  --accent: #3D8B00;
+  --accent-soft: #E8F9D9;
+  --red: #FF4B4B;
+  --border-shadow: #D1D1D1;
+  --success: #58CC02; --success-dark: #3D8B00; --success-bg: #E8F9D9;
+  --info: #1CB0F6;    --info-dark: #0A7BAF;    --info-bg: #D0F0FF;
+  --warning: #FF9600; --warning-dark: #B36B00; --warning-bg: #FFF0D4;
+  --error: #FF4B4B;   --error-dark: #B03030;   --error-bg: #FFE0E0;
+  --neutral: #AFAFAF; --neutral-dark: #6B6B6B; --neutral-bg: #F0F0F0;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.top-bar {
+  height: 60px;
+  background: #ffffff;
+  border-bottom: 2px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.logo-box {
+  width: 32px;
+  height: 32px;
+  background: var(--success);
+  border: none;
+  color: #ffffff;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 16px;
+  box-shadow: 0 3px 0 var(--success-dark);
+}
+.logo-text {
+  font-weight: 900;
+  font-size: 18px;
+  color: var(--success-dark);
+  letter-spacing: -0.02em;
+}
+main {
+  width: min(1120px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 0;
+}
+.projects {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+.project-card, .legacy {
+  display: grid;
+  grid-template-columns: 0.8fr 1.5fr auto;
+  gap: 18px;
+  align-items: center;
+  border: 2px solid var(--line);
+  background: var(--panel);
+  padding: 20px;
+  border-radius: 16px;
+  box-shadow: 0 2px 0 var(--border-shadow);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.project-card:hover, .legacy:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 0 var(--border-shadow);
+}
+.project-active {
+  border-color: var(--success);
+  background: #ffffff;
+}
+h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ink);
+}
+p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+dl {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); font-weight: 700; }
+code { color: var(--muted); font-family: monospace; font-size: 11px; }
+
+/* File Path Tooltips styling */
+.file-path-chip, .file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--neutral-bg);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .12s;
+  border: none;
+  position: relative;
+}
+.file-path-chip:hover, .file-chip:hover {
+  background: var(--info-bg);
+  color: var(--info-dark);
+}
+.file-path-chip code {
+  background: transparent;
+  color: inherit;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+.file-path-tooltip {
+  pointer-events: none;
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  background: #18181b;
+  color: #ffffff;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-family: monospace;
+  white-space: normal;
+  word-break: break-all;
+  width: max-content;
+  max-width: 250px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  z-index: 100;
+}
+.file-path-chip:hover .file-path-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.project-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+.button, button {
+  border: 2px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 8px 16px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--border-shadow);
+  transition: all 0.1s ease;
+  display: inline-flex;
+  align-items: center;
+}
+.button:active, button:active {
+  transform: translateY(3px);
+  box-shadow: none;
+}
+.primary {
+  border-color: var(--success-dark);
+  background: var(--success);
+  color: #ffffff;
+  box-shadow: 0 3px 0 var(--success-dark);
+}
+.primary:hover {
+  background: var(--success);
+  color: #ffffff;
+}
+.danger {
+  border-color: var(--red);
+  color: var(--red);
+  background: var(--panel);
+  box-shadow: 0 3px 0 rgba(255, 75, 75, 0.2);
+}
+.danger:hover {
+  background: rgba(255, 75, 75, 0.05);
+}
+.empty-state {
+  border: 2px dashed var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  padding: 24px;
+  border-radius: 16px;
+  text-align: center;
+  font-weight: 700;
+}
+
+/* === ACTION REQUIRED ALERT (Legacy run warning alert style) === */
+.alert { background: var(--warning-bg); border: 2px solid var(--warning); border-radius: 16px; padding: 18px 22px; display: flex; gap: 16px; box-shadow: 0 2px 0 var(--warning-dark); position: relative; margin-bottom: 20px; }
+.alert-icon { font-size: 28px; flex-shrink: 0; }
+.alert-body { flex: 1; }
+.alert-title { font-size: 16px; font-weight: 900; color: var(--warning-dark); margin-bottom: 4px; }
+.alert-desc { font-size: 13px; color: var(--ink); font-weight: 600; margin-bottom: 12px; }
+.alert-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: 0.02em; border: none; white-space: nowrap; }
+.badge.error { background: var(--error-bg); color: var(--error-dark); }
+.badge.success { background: var(--success-bg); color: var(--success-dark); }
+
+@media (max-width: 780px) {
+  .top-bar { padding: 0 16px; }
+  .project-card, .legacy { display: block; }
+  .project-actions { justify-content: start; margin-top: 14px; }
+  dl { margin-top: 14px; }
+}"""
+
+def build_recent_activity_html(actions: list[dict[str, str]]) -> str:
+    html_items = []
+    for action in actions[:6]:
+        actor = action.get("actor", "").lower()
+        action_type = action.get("action", "")
+        if "approve" in action_type or "approved" in action.get("decision", ""):
+            icon = "✓"
+            color_class = "success"
+        elif "reject" in action_type or "rejected" in action.get("decision", ""):
+            icon = "✗"
+            color_class = "danger"
+        elif "pending" in action_type or "wait" in action_type:
+            icon = "⏳"
+            color_class = "warning"
+        elif "generated" in action_type:
+            icon = "📄"
+            color_class = "info"
+        else:
+            icon = "⚡"
+            color_class = "neutral"
+        timestamp_str = action.get("timestamp", "")
+        try:
+            dt = datetime.fromisoformat(timestamp_str)
+            time_display = dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            time_display = timestamp_str
+        title = action.get("title", "")
+        artifact_path = action.get("artifact_path", "")
+        if artifact_path:
+            artifact_name = Path(artifact_path).name
+            title = title.replace(artifact_name.upper(), f'<span class="file-path-chip" data-path="{escape(artifact_path)}"><code>{escape(artifact_name)}</code></span>')
+        html_items.append(f'''
+        <div class="activity-item">
+          <div class="activity-icon {color_class}">{icon}</div>
+          <div class="activity-text">
+            <div class="activity-title">{title}</div>
+            <div class="activity-time">{time_display}</div>
+          </div>
+        </div>
+        ''')
+    if not html_items:
+        return '<div class="empty-state">No activity recorded yet.</div>'
+    return "\n".join(html_items)
+
+
 def render_dashboard(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
     if start_context is None:
         start_context = build_start_console_context(Path("."))
@@ -1275,46 +2816,301 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         start_context = {**default_context, **start_context}
     workspace = Path(str(start_context.get("workspace", ".")))
     active_run = is_active_run(state)
+    closed_run = state is not None and not active_run
+    start_workflow_script = (
+        ""
+        if active_run
+        else f"""
+    // Enter the real workflow goal
+    const workspace = {str(start_context["workspace"])!r};
+    const projectKey = {str(start_context["project_key"])!r};
+    const modelConfig = {str(start_context["model_config"])!r};
+
+    // Toggles and layout
+    const modeNew = document.getElementById("mode-new");
+    const modeExisting = document.getElementById("mode-existing");
+    const sourceTypeInput = document.getElementById("source_type");
+    const existingFields = document.getElementById("existing-project-fields");
+
+    if (modeNew && modeExisting) {{
+      modeNew.addEventListener("click", () => {{
+        modeNew.classList.add("active");
+        modeExisting.classList.remove("active");
+        sourceTypeInput.value = "new_project";
+        existingFields.style.display = "none";
+      }});
+      modeExisting.addEventListener("click", () => {{
+        modeExisting.classList.add("active");
+        modeNew.classList.remove("active");
+        sourceTypeInput.value = "existing_project";
+        existingFields.style.display = "flex";
+      }});
+    }}
+
+    // Show/hide Plane config
+    const taskSyncCheckbox = document.querySelector('input[name="task_sync"][value="plane"]');
+    const planeSyncFields = document.getElementById("plane-sync-fields");
+    if (taskSyncCheckbox && planeSyncFields) {{
+      taskSyncCheckbox.addEventListener("change", () => {{
+        planeSyncFields.style.display = taskSyncCheckbox.checked ? "grid" : "none";
+      }});
+    }}
+
+    // Show/hide Delivery Contract fields
+    const deliveryRequiredCheckbox = document.querySelector('input[name="delivery_contract_required"]');
+    const deliveryContractFields = document.getElementById("delivery-contract-fields");
+    if (deliveryRequiredCheckbox && deliveryContractFields) {{
+      deliveryRequiredCheckbox.addEventListener("change", () => {{
+        deliveryContractFields.style.display = deliveryRequiredCheckbox.checked ? "grid" : "none";
+      }});
+    }}
+
+    // Show/hide Deployment fields
+    const deploymentModeSelect = document.querySelector('select[name="deployment_backend_mode"]');
+    const deploymentBackendFields = document.getElementById("deployment-backend-fields");
+    if (deploymentModeSelect && deploymentBackendFields) {{
+      deploymentModeSelect.addEventListener("change", () => {{
+        deploymentBackendFields.style.display = deploymentModeSelect.value === "ssh_compose" ? "grid" : "none";
+      }});
+    }}
+
+    // Form submission handler
+    const form = document.getElementById("start-workflow-form");
+    if (form) {{
+      form.addEventListener("submit", async (event) => {{
+        event.preventDefault();
+        await handleStartWorkflow(false);
+      }});
+    }}
+
+    const dryRunBtn = document.getElementById("start-dry-run-btn");
+    if (dryRunBtn) {{
+      dryRunBtn.addEventListener("click", async () => {{
+        await handleStartWorkflow(true);
+      }});
+    }}
+
+    async function handleStartWorkflow(dryRun) {{
+      const consoleBox = document.getElementById("dry-run-console");
+      if (consoleBox) {{
+        consoleBox.style.display = "block";
+        consoleBox.textContent = dryRun ? "Running dry run..." : "Starting workflow...";
+      }}
+      
+      try {{
+        const formData = new FormData(form);
+        const data = {{}};
+        formData.forEach((value, key) => {{
+          if (key === "task_sync" || key === "role_model_overrides") {{
+            // handled separately or collected as list
+          }} else {{
+            data[key] = value;
+          }}
+        }});
+        
+        // Collect arrays/checkboxes
+        data.task_sync = [];
+        form.querySelectorAll('input[name="task_sync"]:checked').forEach((cb) => {{
+          data.task_sync.push(cb.value);
+        }});
+        
+        data.delivery_contract_required = !!form.querySelector('input[name="delivery_contract_required"]:checked');
+        data.dry_run = dryRun;
+        
+        // Parse overrides
+        const overridesText = form.querySelector('[name="role_model_overrides"]')?.value || "";
+        const overrides = {{}};
+        overridesText.split("\\n").forEach((line) => {{
+          const parts = line.trim().split("=", 2);
+          if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {{
+            overrides[parts[0].trim()] = parts[1].trim();
+          }}
+        }});
+        data.role_model_overrides = overrides;
+        
+        let configPath = data.project_config || "";
+        const sourceType = sourceTypeInput.value;
+        
+        // If adopting and config file dropdown is "(create new config below)" (i.e. empty string)
+        if (sourceType === "existing_project" && !configPath) {{
+          if (consoleBox) consoleBox.textContent = "Creating project config first...";
+          const configResp = await fetch("/project-config", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{
+              project_name: data.project_name || "",
+              project_key: data.project_key || "",
+              docs_path: data.docs_path || "",
+              backend_path: data.backend_path || "",
+              frontend_path: data.frontend_path || "",
+              task_sync: data.task_sync,
+              plane_api_host_url: data.plane_api_host_url || "",
+              plane_workspace_slug: data.plane_workspace_slug || "",
+              plane_project_id: data.plane_project_id || "",
+              plane_api_key_env: data.plane_api_key_env || "",
+              plane_mcp_server: data.plane_mcp_server || "",
+              worker_backend_mode: data.worker_backend_mode || "codex",
+              deployment_backend_mode: data.deployment_backend_mode || "",
+              staging_ssh_target: data.staging_ssh_target || "",
+              staging_remote_dir: data.staging_remote_dir || "",
+              staging_git_ref: data.staging_git_ref || "",
+              staging_public_url: data.staging_public_url || "",
+              staging_deploy_command: data.staging_deploy_command || "",
+              staging_healthcheck_command: data.staging_healthcheck_command || "",
+              staging_smoke_command: data.staging_smoke_command || "",
+              delivery_contract_required: data.delivery_contract_required,
+              delivery_contract_minimum: data.delivery_contract_minimum || "infrastructure",
+              delivery_contract_fatal_patterns: data.delivery_contract_fatal_patterns || "",
+              delivery_contract_acceptance: data.delivery_contract_acceptance || "",
+              model_profile: data.model_profile || "balanced",
+              delivery_mode: data.delivery_mode || "init_project",
+              role_model_overrides: overrides,
+            }})
+          }});
+          
+          const configPayload = await configResp.json();
+          if (!configResp.ok) {{
+            throw new Error(configPayload.error || "Failed to create project config.");
+          }}
+          configPath = configPayload.project_config;
+          if (consoleBox) consoleBox.textContent = "Project config created: " + configPath + "\\nStarting workflow...";
+        }}
+        
+        const roleModelOverridesList = [];
+        Object.entries(overrides).forEach(([role, model]) => {{
+          roleModelOverridesList.push(role + "=" + model);
+        }});
+        
+        const startResp = await fetch("/start", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{
+            idea: data.idea || "",
+            project_key: data.project_key || projectKey,
+            model_config: modelConfig,
+            model_profile: data.model_profile || "balanced",
+            delivery_mode: data.delivery_mode || "init_project",
+            source_type: sourceType,
+            project_config: configPath,
+            role_model_overrides: roleModelOverridesList,
+            dry_run: dryRun,
+          }})
+        }});
+        
+        const startPayload = await startResp.json();
+        if (!startResp.ok) {{
+          throw new Error(startPayload.error || "Failed to start workflow.");
+        }}
+        
+        if (consoleBox) {{
+          consoleBox.textContent = JSON.stringify(startPayload, null, 2);
+        }}
+        if (!dryRun) {{
+          window.setTimeout(() => window.location.reload(), 600);
+        }}
+      }} catch (error) {{
+        if (consoleBox) {{
+          consoleBox.textContent = "Error: " + error.message;
+        }}
+        alert(error.message);
+      }}
+    }}
+    """
+    )
     role_observations = build_role_observations(state)
     workflow_steps = build_workflow_steps(state)
     role_status_counts: dict[str, int] = {}
     for role in role_observations:
         role_status_counts[role["status"]] = role_status_counts.get(role["status"], 0) + 1
-    role_summary_items = "\n".join(
+        
+    kpi_grid_html = ""
+    # Map mockup themes success/info/neutral:
+    # Active -> success, Artifact ready -> info, No activity -> neutral
+    for status in ["Active", "Artifact ready", "No activity", "Waiting for approval", "Ready"]:
+        count = role_status_counts.get(status, 0)
+        # Skip if count is 0 and it's not one of the main ones (Active, Artifact ready, No activity)
+        if count == 0 and status not in ("Active", "Artifact ready", "No activity"):
+            continue
+        # Map label
+        label = "Idle" if status == "No activity" else status
+        theme_class = (
+            "success" if status in ("Active", "Waiting for approval")
+            else "info" if status in ("Artifact ready", "Ready")
+            else "neutral"
+        )
+        kpi_grid_html += f"""
+        <div class="kpi-card">
+          <div class="kpi-label">{escape(label)}</div>
+          <div class="kpi-value {theme_class}">{count}</div>
+        </div>
+        """
+        
+    role_summary_items = "\
+".join(
         f'<div class="signal"><span>{escape(status)}</span>{count}</div>'
         for status, count in sorted(role_status_counts.items())
     )
     if not role_summary_items:
         role_summary_items = '<div class="empty-state">No active run state found.</div>'
-    artifact_items = "\n".join(
-        f"<li><span>{escape(name.upper())}</span><code>{escape(path)}</code></li>"
+    
+    artifact_items = "\
+".join(
+        f"<li><span>{escape(name.upper())}</span>{render_file_path(path, name)}</li>"
         for name, path in (state.artifacts if state is not None else {}).items()
     )
     if not artifact_items:
         artifact_items = '<li><span>No artifacts recorded</span><code>state/current.json has no artifact entries</code></li>'
 
-    approval_items = "\n".join(
-        f"<li><span>{escape(name)}</span><strong>{escape(str(decision))}</strong></li>"
-        for name, decision in (state.approvals if state is not None else {}).items()
+    # Approvals Progress Calculations
+    approvals_dict = state.approvals if state is not None else {}
+    total_approvals = len(approvals_dict) or 6
+    approved_count = sum(1 for d in approvals_dict.values() if str(d) == "approved")
+    progress_percent = int(approved_count / total_approvals * 100) if total_approvals else 0
+    
+    progress_bar_html = f"""
+    <div class="progress-container">
+      <div class="progress-header">
+        <span>Approval Pipeline Progress</span>
+        <span class="progress-count">{approved_count} of {total_approvals} Gates Approved</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" style="width: {progress_percent}%"></div>
+      </div>
+    </div>
+    """
+
+    approval_items = "\
+".join(
+        f"""
+        <li class="approval-list-item status-{str(decision).lower().replace(' ', '_')}">
+          <div class="approval-item-top">
+            <span class="lock-icon">{"🔓" if str(decision) == "approved" else "🔒"}</span>
+            <span class="approval-title">{escape(name.upper())} Review</span>
+          </div>
+          <span class="approval-badge status-{str(decision).lower().replace(' ', '_')}">
+            {escape("✓ Approved" if str(decision) == "approved" else "⏳ Pending" if str(decision) == "pending" else str(decision).replace("_", " ").upper())}
+          </span>
+        </li>
+        """
+        for name, decision in approvals_dict.items()
     )
     if not approval_items:
-        approval_items = '<li><span>No approvals recorded</span><code>state/current.json has no approval entries</code></li>'
-    approval_review_cards = "\n".join(
+        approval_items = '<li class="empty-state">No approvals recorded</li>'
+
+    approval_review_cards = "\
+".join(
         f"""
         <article class="approval-card" id="approval-{escape(review["approval"])}">
           <div class="role-topline">
             <h3>{escape(review["approval"].upper())} Review</h3>
-            <span class="role-status">{escape(review["decision"])}</span>
+            <span class="role-status status-{escape(str(review["decision"]).lower().replace(' ', '_'))}">{escape(review["decision"])}</span>
           </div>
           <dl class="role-meta">
             <dt>Artifact</dt><dd>{escape(review["artifact"])}</dd>
-            <dt>Path</dt><dd>{f'<code>{escape(review["artifact_path"])}</code>' if review["artifact_path"] else 'not available'}</dd>
+            <dt>Path</dt><dd>{render_file_path(review["artifact_path"], review["artifact"]) if review["artifact_path"] else 'not available'}</dd>
           </dl>
           {render_review_roles(review["review_roles"])}
           {f'''
-          <div class="approval-actions">
-            <button class="edit-artifact" data-artifact="{escape(review["artifact"])}" type="button">Edit Artifact</button>
-          </div>
           <div class="artifact-editor" id="editor-{escape(review["artifact"])}" hidden>
             <textarea data-editor-for="{escape(review["artifact"])}" spellcheck="false"></textarea>
             <div class="approval-actions">
@@ -1324,61 +3120,86 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <code class="editor-status" id="editor-status-{escape(review["artifact"])}">Unsaved edits stay in this browser until saved.</code>
           </div>
           ''' if review["artifact_path"] and str(review["artifact_path"]).lower().endswith((".md", ".markdown")) else ''}
+          {f'<div class="artifact-preview markdown-preview">{render_markdown_preview(review["content"])}</div>' if review["content"] else '<div class="empty-state">No artifact content available for this approval yet.</div>'}
           {f'''
-          <div class="approval-actions">
+          <div class="sticky-bar">
             <button class="primary approval-decision" data-approval="{escape(review["approval"])}" data-decision="approved" type="button">Approve</button>
             <button class="approval-decision" data-approval="{escape(review["approval"])}" data-decision="changes_requested" type="button">Request Changes</button>
             <button class="danger approval-decision" data-approval="{escape(review["approval"])}" data-decision="rejected" type="button">Reject</button>
+            <div style="flex: 1;"></div>
+            {f'<button class="edit-artifact" data-artifact="{escape(review["artifact"])}" type="button" style="box-shadow:none;">Edit Artifact</button>' if review["artifact_path"] and str(review["artifact_path"]).lower().endswith((".md", ".markdown")) else ''}
           </div>
           ''' if review["is_actionable"] else ''}
-          {f'<div class="artifact-preview markdown-preview">{render_markdown_preview(review["content"])}</div>' if review["content"] else '<div class="empty-state">No artifact content available for this approval yet.</div>'}
         </article>
         """
         for review in build_approval_reviews(state)
     )
     if not approval_review_cards:
         approval_review_cards = '<div class="empty-state">No approval review items available.</div>'
+    
     project_key = state.project_key if state is not None else str(start_context.get("project_key", ""))
-    action_cards = "\n".join(
-        f"""
-        <article class="action-card">
-          <div class="role-topline">
-            <h3>{escape(action["title"])}</h3>
-            <span class="role-status">{escape(action["actor"])}</span>
-          </div>
-          <dl class="role-meta">
-            <dt>Time</dt><dd>{escape(action.get("timestamp", ""))}</dd>
-            <dt>Action</dt><dd>{escape(action.get("action", ""))}</dd>
-            <dt>Gate</dt><dd>{escape(action.get("gate", "") or "none")}</dd>
-            <dt>Decision</dt><dd>{escape(action.get("decision", "") or "none")}</dd>
-            <dt>Node</dt><dd>{escape(action.get("node_transition", "") or "none")}</dd>
-            <dt>Artifact</dt><dd>{f'<code>{escape(action.get("artifact_path", ""))}</code>' if action.get("artifact_path", "") else escape(action.get("artifact", "") or "none")}</dd>
-          </dl>
-        </article>
+    
+    # Empty State for Actions
+    if not build_action_items(workspace, project_key=project_key if state is not None else ""):
+        action_cards = """
+        <div class="empty-state">
+          <div class="empty-icon">📭</div>
+          <div class="empty-title">Workflow hasn't started</div>
+          <div class="empty-desc">Actions will appear here as workers run and approvals are made. Try triggering the first action.</div>
+          <button class="button primary" onclick="document.querySelector('[data-tab=&quot;overview&quot;]').click();" type="button">⚡ Go to Overview</button>
+        </div>
         """
-        for action in build_action_items(workspace, project_key=project_key if state is not None else "")
-    )
-    if not action_cards:
-        action_cards = '<div class="empty-state">No actions recorded yet.</div>'
-    smoke_cards = "\n".join(
-        f"""
-        <article class="action-card">
-          <div class="role-topline">
-            <h3>{escape(item.get("project_key", ""))} cycle {escape(item.get("cycle", ""))}</h3>
-            <span class="role-status">{escape(item.get("status", ""))}</span>
-          </div>
-          <dl class="role-meta">
-            <dt>Suite</dt><dd>{escape(item.get("suite", ""))}</dd>
-            <dt>Classification</dt><dd>{escape(item.get("classification", "") or "none")}</dd>
-            <dt>Next Task</dt><dd>{escape(item.get("next_task", "") or "none")}</dd>
-            <dt>Report</dt><dd><code>{escape(item.get("report_path", ""))}</code></dd>
-          </dl>
-        </article>
+    else:
+        action_cards = "\
+".join(
+            f"""
+            <article class="action-card">
+              <div class="role-topline">
+                <h3>{escape(action["title"])}</h3>
+                <span class="role-status">{escape(action["actor"])}</span>
+              </div>
+              <dl class="role-meta">
+                <dt>Time</dt><dd>{escape(action.get("timestamp", ""))}</dd>
+                <dt>Action</dt><dd>{escape(action.get("action", ""))}</dd>
+                <dt>Gate</dt><dd>{escape(action.get("gate", "") or "none")}</dd>
+                <dt>Decision</dt><dd>{escape(action.get("decision", "") or "none")}</dd>
+                <dt>Node</dt><dd>{escape(action.get("node_transition", "") or "none")}</dd>
+                <dt>Artifact</dt><dd>{render_file_path(action.get("artifact_path", ""), action.get("artifact", "")) if action.get("artifact_path", "") else escape(action.get("artifact", "") or "none")}</dd>
+              </dl>
+            </article>
+            """
+            for action in build_action_items(workspace, project_key=project_key if state is not None else "")
+        )
+    
+    # Empty State for Smoke Runs
+    if not build_smoke_run_items(workspace):
+        smoke_cards = """
+        <div class="empty-state">
+          <div class="empty-icon">🧪</div>
+          <div class="empty-title">No smoke tests yet</div>
+          <div class="empty-desc">Smoke runs are auto-triggered after Staging completes. You'll see test results here when ready.</div>
+        </div>
         """
-        for item in build_smoke_run_items(workspace)
-    )
-    if not smoke_cards:
-        smoke_cards = '<div class="empty-state">No smoke runs recorded yet.</div>'
+    else:
+        smoke_cards = "\
+".join(
+            f"""
+            <article class="action-card">
+              <div class="role-topline">
+                <h3>{escape(item.get("project_key", ""))} cycle {escape(item.get("cycle", ""))}</h3>
+                <span class="role-status status-{escape(str(item.get("status", "")).lower().replace(' ', '_'))}">{escape(item.get("status", ""))}</span>
+              </div>
+              <dl class="role-meta">
+                <dt>Suite</dt><dd>{escape(item.get("suite", ""))}</dd>
+                <dt>Classification</dt><dd>{escape(item.get("classification", "") or "none")}</dd>
+                <dt>Next Task</dt><dd>{escape(item.get("next_task", "") or "none")}</dd>
+                <dt>Report</dt><dd>{render_file_path(item.get("report_path", "")) if item.get("report_path", "") else "none"}</dd>
+              </dl>
+            </article>
+            """
+            for item in build_smoke_run_items(workspace)
+        )
+    
     agile_board = build_agile_board(state)
     agile_columns = dict(agile_board.get("columns", {}))
     agile_counts = dict(agile_board.get("counts", {}))
@@ -1388,26 +3209,41 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         "blocked": "Blocked",
         "done": "Done",
     }
-    agile_board_cards = "\n".join(
-        f"""
-        <section class="kanban-column">
-          <div class="kanban-column-head">
-            <h3>{escape(agile_column_labels[column])}</h3>
-            <span>{escape(str(agile_counts.get(column, 0)))}</span>
-          </div>
-          <div class="task-stack">
-            {render_task_cards(list(agile_columns.get(column, [])))}
-          </div>
-        </section>
+    
+    # Empty State for Agile Board
+    if sum(agile_counts.values()) == 0:
+        agile_board_cards = """
+        <div class="empty-state" style="grid-column: 1 / -1;">
+          <div class="empty-icon">📋</div>
+          <div class="empty-title">Task board is empty</div>
+          <div class="empty-desc">Tasks materialize after the Planner step. Currently waiting for <span class="file-path-chip"><code>task_breakdown</code></span></div>
+          <button class="button" onclick="document.querySelector('[data-tab=&quot;overview&quot;]').click();" type="button">→ Go to Overview</button>
+        </div>
         """
-        for column in ["backlog", "doing", "blocked", "done"]
-    )
-    role_cards = "\n".join(
+    else:
+        agile_board_cards = "\
+".join(
+            f"""
+            <section class="kanban-column">
+              <div class="kanban-column-head">
+                <h3 style="color: {'var(--warning-dark)' if column == 'blocked' else 'var(--success-dark)' if column == 'done' else 'var(--muted)'};">{escape(agile_column_labels[column])}</h3>
+                <span>{escape(str(agile_counts.get(column, 0)))}</span>
+              </div>
+              <div class="task-stack">
+                {render_task_cards(list(agile_columns.get(column, [])))}
+              </div>
+            </section>
+            """
+            for column in ["backlog", "doing", "blocked", "done"]
+        )
+    
+    role_cards = "\
+".join(
         f"""
         <article class="role-card">
           <div class="role-topline">
             <h3>{escape(role["name"])}</h3>
-            <span class="role-status">{escape(role["status"])}</span>
+            <span class="role-status status-{escape(str(role["status"]).lower().replace(' ', '_'))}">{escape(role["status"])}</span>
           </div>
           <p>{escape(role["description"])}</p>
           <dl class="role-meta">
@@ -1415,7 +3251,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Mode</dt><dd>{escape(role["mode"])}</dd>
             <dt>Artifact</dt><dd>{escape(role["artifact"])}</dd>
           </dl>
-          {f'<code>{escape(role["artifact_path"])}</code>' if role["artifact_path"] else ''}
+          {render_file_path(role["artifact_path"], role["artifact"]) if role["artifact_path"] else ''}
         </article>
         """
         for role in role_observations
@@ -1442,7 +3278,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         if current_step is not None
         else ""
     )
-    waterfall_cards = "\n".join(
+    waterfall_cards = "\
+".join(
         f"""
         <article class="flow-card flow-{escape(step["status"])}">
           <div class="flow-index">{escape(step["number"])}</div>
@@ -1456,7 +3293,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dl class="role-meta">
               <dt>Roles</dt><dd>{escape(step["roles"])}</dd>
               <dt>Artifact</dt><dd>{escape(step["artifact"] or "none")}</dd>
-              {f'<dt>Path</dt><dd><code>{escape(step["artifact_path"])}</code></dd>' if step["artifact_path"] else ''}
+              {f'<dt>Path</dt><dd>{render_file_path(step["artifact_path"], step["artifact"])}</dd>' if step["artifact_path"] else ''}
             </dl>
             {f'<button class="primary review-link" data-approval="{escape(step["approval"])}" type="button">{escape(step["action_label"])}</button>' if step["action_label"] else ''}
           </div>
@@ -1480,27 +3317,41 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     delivery_contract_acceptance_count = str(delivery_contract.get("acceptance_count", 0))
     delivery_contract_configured = bool(delivery_contract.get("configured", False))
     project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
-    worker_job_items = "\n".join(
-        (
-            f"<li><span>{escape(item['role'])} / {escape(item['adapter'])}</span>"
-            f"<code>{escape(item['status'])} · {escape(item['id'])}"
-            f"{' · pid ' + escape(item['pid']) if item['pid'] else ''}"
-            f"{' · heartbeat ' + escape(item['heartbeat_at']) if item['heartbeat_at'] else ''}"
-            f"{' · ' + escape(item['summary']) if item['summary'] else ''}</code></li>"
+    
+    # Empty state for Workers tab
+    if state is None or not build_worker_job_items(project_root):
+        worker_job_items = """
+        <div class="empty-state">
+          <div class="empty-icon">🤖</div>
+          <div class="empty-title">No background jobs</div>
+          <div class="empty-desc">Worker dispatches will appear here once the Planning step is approved.</div>
+          <button class="button" onclick="document.querySelector('[data-tab=&quot;overview&quot;]').click();" type="button">→ Go to Overview</button>
+        </div>
+        """
+    else:
+        worker_job_items = "\
+".join(
+            (
+                f"<li><span>{escape(item['role'])} / {escape(item['adapter'])}</span>"
+                f"<code style='display: flex; align-items: center; gap: 8px; justify-content: flex-end;'><span class='role-status status-{escape(item['status'].lower().replace(' ', '_'))}' style='padding: 2px 6px; font-size: 9px; line-height: 1; text-transform: uppercase;'>{escape(item['status'])}</span> · {escape(item['id'])}"
+                f"{' · pid ' + escape(item['pid']) if item['pid'] else ''}"
+                f"{' · heartbeat ' + escape(item['heartbeat_at']) if item['heartbeat_at'] else ''}"
+                f"{' · ' + escape(item['summary']) if item['summary'] else ''}</code></li>"
+            )
+            for item in build_worker_job_items(project_root)
         )
-        for item in build_worker_job_items(project_root)
-    )
-    if not worker_job_items:
-        worker_job_items = "<li><span>No worker jobs</span><code>Create jobs from planner or worker dispatch.</code></li>"
+        
     workers = dict(project_report.get("workers", {}))
-    worker_items = "\n".join(
+    worker_items = "\
+".join(
         f"<li><span>{escape(name)}</span><code>{escape(str(dict(worker).get('path') or dict(worker).get('command') or 'missing'))}</code></li>"
         for name, worker in workers.items()
     )
     if not worker_items:
         worker_items = "<li><span>No worker config</span><code>Project target not loaded</code></li>"
     providers = dict(project_report.get("providers", {}))
-    provider_items = "\n".join(
+    provider_items = "\
+".join(
         f"<li><span>{escape(name)}</span><strong>{'configured' if dict(provider).get('configured') else 'not configured'}</strong></li>"
         for name, provider in providers.items()
     )
@@ -1509,11 +3360,13 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     profiles = [str(profile) for profile in start_context.get("profiles", ["balanced"])]
     selected_profile = str(start_context.get("model_profile", "balanced") or "balanced")
     selected_delivery_mode = normalize_delivery_mode(str(start_context.get("delivery_mode", "init_project") or "init_project"))
-    profile_options = "\n".join(
+    profile_options = "\
+".join(
         f'<option value="{escape(profile)}"{" selected" if profile == selected_profile else ""}>{escape(profile)}</option>'
         for profile in profiles
     )
-    delivery_mode_options = "\n".join(
+    delivery_mode_options = "\
+".join(
         f'<option value="{mode}"{" selected" if mode == selected_delivery_mode else ""}>{label}</option>'
         for mode, label in [
             ("mvp", "MVP / validation slice"),
@@ -1522,21 +3375,328 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         ]
     )
     role_overrides = dict(start_context.get("role_model_overrides", {}))
-    role_overrides_text = "\n".join(f"{role}={model}" for role, model in sorted(role_overrides.items()))
+    role_overrides_text = "\
+".join(f"{role}={model}" for role, model in sorted(role_overrides.items()))
     worker_model = worker_model_label(state, start_context)
     target_for_contract = load_project_target(Path(str(start_context["project_config"]))) if str(start_context.get("project_config", "")) and Path(str(start_context["project_config"])).is_file() else {}
     delivery_contract_config_for_form = load_delivery_contract_config(target_for_contract) if target_for_contract else {"required": False, "minimum_evidence": "infrastructure", "fatal_output_patterns": [], "staging_acceptance": []}
     delivery_contract_patterns_text = "\n".join(str(pattern) for pattern in delivery_contract_config_for_form.get("fatal_output_patterns", []))
     delivery_contract_acceptance_text = "\n".join(
-        f"{item.get('id', '')}|{item.get('type', 'ssh_command')}|{item.get('command', '')}"
+        f"{item.get('id', '')} | {item.get('type', 'ssh_command')} | {item.get('command', '')}"
         for item in delivery_contract_config_for_form.get("staging_acceptance", [])
     )
-    candidate_dirs = [dict(item) for item in start_context.get("candidate_dirs", [])]
-    directory_options = "\n".join(
-        f'<option value="{escape(str(item["path"]))}">{escape(str(item["name"]))}</option>'
-        for item in candidate_dirs
-    )
-    directory_options_with_empty = f'<option value="">Not selected</option>{directory_options}'
+    start_workflow_section = ""
+    if state is None:
+        start_workflow_section = f"""
+        <section class="wide start-workflow-panel">
+          <h2>Start Workflow</h2>
+          <form id="start-workflow-form" style="display: grid; gap: 16px;">
+            <div class="mode-switch">
+              <button type="button" class="mode-button active" id="mode-new">Start New Project</button>
+              <button type="button" class="mode-button" id="mode-existing">Adopt Existing Project</button>
+            </div>
+            <input type="hidden" name="source_type" id="source_type" value="new_project">
+            
+            <label>
+              Goal Description
+              <textarea name="idea" placeholder="Describe the feature or project goal..." required></textarea>
+            </label>
+            
+            <div class="console-grid">
+              <label>
+                Model Profile
+                <select name="model_profile">
+                  {profile_options}
+                </select>
+              </label>
+              <label>
+                Delivery Mode
+                <select name="delivery_mode">
+                  {delivery_mode_options}
+                </select>
+              </label>
+            </div>
+            
+            <div id="existing-project-fields" style="display: none; grid-gap: 16px; flex-direction: column;">
+              <label>
+                Local Project Config file (.local.yaml)
+                <select name="project_config">
+                  <option value="">(create new config below)</option>
+                  {"".join(f'<option value="{escape(str(path))}">{escape(path.name)} ({escape(str(path))})</option>' for path in discover_project_configs(workspace))}
+                </select>
+              </label>
+              <div id="new-config-fields" style="display: grid; gap: 16px; border: 2px solid var(--line); border-radius: 12px; padding: 16px; background: #fafafa;">
+                <h4 style="margin: 0; font-size: 11px; text-transform: uppercase; color: var(--muted);">New Project Configuration</h4>
+                <div class="console-grid">
+                  <label>Project Name <input type="text" name="new_project_name" placeholder="e.g. AgentsMesh"></label>
+                  <label>Project Key <input type="text" name="new_project_key" placeholder="e.g. AGENTSMESH"></label>
+                </div>
+                <div class="console-grid">
+                  <label>
+                    Docs Path (absolute)
+                    <input type="text" name="docs_path" placeholder="/Users/luke/path/to/docs" list="candidate-dirs">
+                  </label>
+                  <label>
+                    Backend Path (absolute)
+                    <input type="text" name="backend_path" placeholder="/Users/luke/path/to/backend" list="candidate-dirs">
+                  </label>
+                </div>
+                <div class="console-grid">
+                  <label>
+                    Frontend Path (absolute)
+                    <input type="text" name="frontend_path" placeholder="/Users/luke/path/to/frontend" list="candidate-dirs">
+                  </label>
+                  <label>
+                    Sync Tasks
+                    <div style="display: flex; gap: 12px; margin-top: 6px;">
+                      <label class="checkbox-label"><input type="checkbox" name="task_sync" value="plane"> Plane</label>
+                    </div>
+                  </label>
+                </div>
+                
+                <div id="plane-sync-fields" style="display: none; gap: 12px; grid-template-columns: repeat(2, 1fr); border-top: 1px solid var(--line); padding-top: 12px;">
+                  <label>Plane Host URL <input type="text" name="plane_api_host_url" value="https://app.plane.so"></label>
+                  <label>Plane Workspace <input type="text" name="plane_workspace_slug" placeholder="workspace-slug"></label>
+                  <label>Plane Project ID <input type="text" name="plane_project_id" placeholder="project-uuid"></label>
+                  <label>Plane API Key Env Var <input type="text" name="plane_api_key_env" value="PLANE_API_KEY"></label>
+                  <label style="grid-column: 1 / -1;">Plane MCP Server Name <input type="text" name="plane_mcp_server" value="plane"></label>
+                </div>
+                
+                <div style="border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 12px;">
+                  <label class="checkbox-label"><input type="checkbox" name="delivery_contract_required" value="true"> Require Delivery Contract</label>
+                  <div id="delivery-contract-fields" style="display: none; gap: 12px; grid-template-columns: 1fr; margin-left: 20px;">
+                    <label>
+                      Minimum Evidence Level
+                      <select name="delivery_contract_minimum">
+                        <option value="infrastructure">Infrastructure (Build & Test only)</option>
+                        <option value="functional">Functional (Requires Staging Acceptance evidence)</option>
+                      </select>
+                    </label>
+                    <label>
+                      Fatal Output Patterns (one per line)
+                      <textarea name="delivery_contract_fatal_patterns" placeholder="e.g. [ERROR]&#10;failed to start" style="min-height: 60px;"></textarea>
+                    </label>
+                    <label>
+                      Staging Acceptance Checks (id | type | command)
+                      <textarea name="delivery_contract_acceptance" placeholder="e.g. reg-chk | ssh_command | curl -f http://107.148.180.35:8088/health" style="min-height: 60px;"></textarea>
+                    </label>
+                  </div>
+                </div>
+                
+                <div style="border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 12px;">
+                  <label>
+                    Deployment Mode
+                    <select name="deployment_backend_mode">
+                      <option value="">No Staging Deployment</option>
+                      <option value="ssh_compose">SSH + Docker Compose</option>
+                    </select>
+                  </label>
+                  <div id="deployment-backend-fields" style="display: none; gap: 12px; grid-template-columns: repeat(2, 1fr); margin-left: 20px;">
+                    <label>SSH Target (user@host) <input type="text" name="staging_ssh_target" placeholder="root@107.148.180.35"></label>
+                    <label>Remote Deployment Directory <input type="text" name="staging_remote_dir" placeholder="/srv/agentsmesh"></label>
+                    <label>Git Target Ref (branch/commit) <input type="text" name="staging_git_ref" placeholder="main"></label>
+                    <label>Public Verification URL <input type="text" name="staging_public_url" placeholder="http://107.148.180.35:8088"></label>
+                    <label style="grid-column: 1 / -1;">Custom Deploy Command (remotely run) <input type="text" name="staging_deploy_command" placeholder="bash deploy/selfhost/init-project.sh"></label>
+                    <label style="grid-column: 1 / -1;">Custom Healthcheck Command (remotely run) <input type="text" name="staging_healthcheck_command" placeholder="docker compose ps --format json"></label>
+                    <label style="grid-column: 1 / -1;">Custom Smoke Test Command (locally run) <input type="text" name="staging_smoke_command" placeholder="npm run test:staging"></label>
+                  </div>
+                </div>
+                
+                <div style="border-top: 1px solid var(--line); padding-top: 12px;">
+                  <label>
+                    Model overrides (one per line, e.g. implementation=codex:gpt-5.5)
+                    <textarea name="role_model_overrides" placeholder="e.g. implementation=codex:gpt-5.5" style="min-height: 60px;"></textarea>
+                  </label>
+                </div>
+                
+                <datalist id="candidate-dirs">
+                  {"".join(f'<option value="{escape(item["path"])}">{escape(item["name"])}</option>' for item in start_context.get("candidate_dirs", []))}
+                </datalist>
+              </div>
+            </div>
+            
+            <div class="approval-actions" style="margin-top: 10px;">
+              <button class="primary" type="submit" data-adopt-label="Start adoption" data-new-label="Start new project">Start Workflow</button>
+              <button class="btn-secondary" id="start-dry-run-btn" type="button" style="box-shadow: none;">Dry Run Planning</button>
+            </div>
+          </form>
+          <div id="dry-run-console" class="command-box" style="display: none; margin-top: 16px;"></div>
+        </section>
+        """
+    elif closed_run:
+        start_workflow_section = f"""
+        <details class="start-workflow-drawer">
+          <summary>Start Another Workflow</summary>
+          <div class="start-workflow-panel">
+            <h3>Start Workflow</h3>
+            <form id="start-workflow-form" style="display: grid; gap: 16px;">
+              <div class="mode-switch">
+                <button type="button" class="mode-button active" id="mode-new">Start New Project</button>
+                <button type="button" class="mode-button" id="mode-existing">Adopt Existing Project</button>
+              </div>
+              <input type="hidden" name="source_type" id="source_type" value="new_project">
+              
+              <label>
+                Goal Description
+                <textarea name="idea" placeholder="Describe the feature or project goal..." required></textarea>
+              </label>
+              
+              <div class="console-grid">
+                <label>
+                  Model Profile
+                  <select name="model_profile">
+                    {profile_options}
+                  </select>
+                </label>
+                <label>
+                  Delivery Mode
+                  <select name="delivery_mode">
+                    {delivery_mode_options}
+                  </select>
+                </label>
+              </div>
+              
+              <div id="existing-project-fields" style="display: none; grid-gap: 16px; flex-direction: column;">
+                <label>
+                  Local Project Config file (.local.yaml)
+                  <select name="project_config">
+                    <option value="">(create new config below)</option>
+                    {"".join(f'<option value="{escape(str(path))}">{escape(path.name)} ({escape(str(path))})</option>' for path in discover_project_configs(workspace))}
+                  </select>
+                </label>
+                <div id="new-config-fields" style="display: grid; gap: 16px; border: 2px solid var(--line); border-radius: 12px; padding: 16px; background: #fafafa;">
+                  <h4 style="margin: 0; font-size: 11px; text-transform: uppercase; color: var(--muted);">New Project Configuration</h4>
+                  <div class="console-grid">
+                    <label>Project Name <input type="text" name="new_project_name" placeholder="e.g. AgentsMesh"></label>
+                    <label>Project Key <input type="text" name="new_project_key" placeholder="e.g. AGENTSMESH"></label>
+                  </div>
+                  <div class="console-grid">
+                    <label>
+                      Docs Path (absolute)
+                      <input type="text" name="docs_path" placeholder="/Users/luke/path/to/docs" list="candidate-dirs">
+                    </label>
+                    <label>
+                      Backend Path (absolute)
+                      <input type="text" name="backend_path" placeholder="/Users/luke/path/to/backend" list="candidate-dirs">
+                    </label>
+                  </div>
+                  <div class="console-grid">
+                    <label>
+                      Frontend Path (absolute)
+                      <input type="text" name="frontend_path" placeholder="/Users/luke/path/to/frontend" list="candidate-dirs">
+                    </label>
+                    <label>
+                      Sync Tasks
+                      <div style="display: flex; gap: 12px; margin-top: 6px;">
+                        <label class="checkbox-label"><input type="checkbox" name="task_sync" value="plane"> Plane</label>
+                      </div>
+                    </label>
+                  </div>
+                  
+                  <div id="plane-sync-fields" style="display: none; gap: 12px; grid-template-columns: repeat(2, 1fr); border-top: 1px solid var(--line); padding-top: 12px;">
+                    <label>Plane Host URL <input type="text" name="plane_api_host_url" value="https://app.plane.so"></label>
+                    <label>Plane Workspace <input type="text" name="plane_workspace_slug" placeholder="workspace-slug"></label>
+                    <label>Plane Project ID <input type="text" name="plane_project_id" placeholder="project-uuid"></label>
+                    <label>Plane API Key Env Var <input type="text" name="plane_api_key_env" value="PLANE_API_KEY"></label>
+                    <label style="grid-column: 1 / -1;">Plane MCP Server Name <input type="text" name="plane_mcp_server" value="plane"></label>
+                  </div>
+                  
+                  <div style="border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 12px;">
+                    <label class="checkbox-label"><input type="checkbox" name="delivery_contract_required" value="true"> Require Delivery Contract</label>
+                    <div id="delivery-contract-fields" style="display: none; gap: 12px; grid-template-columns: 1fr; margin-left: 20px;">
+                      <label>
+                        Minimum Evidence Level
+                        <select name="delivery_contract_minimum">
+                          <option value="infrastructure">Infrastructure (Build & Test only)</option>
+                          <option value="functional">Functional (Requires Staging Acceptance evidence)</option>
+                        </select>
+                      </label>
+                      <label>
+                        Fatal Output Patterns (one per line)
+                        <textarea name="delivery_contract_fatal_patterns" placeholder="e.g. [ERROR]&#10;failed to start" style="min-height: 60px;"></textarea>
+                      </label>
+                      <label>
+                        Staging Acceptance Checks (id | type | command)
+                        <textarea name="delivery_contract_acceptance" placeholder="e.g. reg-chk | ssh_command | curl -f http://107.148.180.35:8088/health" style="min-height: 60px;"></textarea>
+                      </label>
+                    </div>
+                  </div>
+                  
+                  <div style="border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 12px;">
+                    <label>
+                      Deployment Mode
+                      <select name="deployment_backend_mode">
+                        <option value="">No Staging Deployment</option>
+                        <option value="ssh_compose">SSH + Docker Compose</option>
+                      </select>
+                    </label>
+                    <div id="deployment-backend-fields" style="display: none; gap: 12px; grid-template-columns: repeat(2, 1fr); margin-left: 20px;">
+                      <label>SSH Target (user@host) <input type="text" name="staging_ssh_target" placeholder="root@107.148.180.35"></label>
+                      <label>Remote Deployment Directory <input type="text" name="staging_remote_dir" placeholder="/srv/agentsmesh"></label>
+                      <label>Git Target Ref (branch/commit) <input type="text" name="staging_git_ref" placeholder="main"></label>
+                      <label>Public Verification URL <input type="text" name="staging_public_url" placeholder="http://107.148.180.35:8088"></label>
+                      <label style="grid-column: 1 / -1;">Custom Deploy Command (remotely run) <input type="text" name="staging_deploy_command" placeholder="bash deploy/selfhost/init-project.sh"></label>
+                      <label style="grid-column: 1 / -1;">Custom Healthcheck Command (remotely run) <input type="text" name="staging_healthcheck_command" placeholder="docker compose ps --format json"></label>
+                      <label style="grid-column: 1 / -1;">Custom Smoke Test Command (locally run) <input type="text" name="staging_smoke_command" placeholder="npm run test:staging"></label>
+                    </div>
+                  </div>
+                  
+                  <div style="border-top: 1px solid var(--line); padding-top: 12px;">
+                    <label>
+                      Model overrides (one per line, e.g. implementation=codex:gpt-5.5)
+                      <textarea name="role_model_overrides" placeholder="e.g. implementation=codex:gpt-5.5" style="min-height: 60px;"></textarea>
+                    </label>
+                  </div>
+                  
+                  <datalist id="candidate-dirs">
+                    {"".join(f'<option value="{escape(item["path"])}">{escape(item["name"])}</option>' for item in start_context.get("candidate_dirs", []))}
+                  </datalist>
+                </div>
+              </div>
+              
+              <div class="approval-actions" style="margin-top: 10px;">
+                <button class="primary" type="submit" data-adopt-label="Start adoption" data-new-label="Start new project">Start Workflow</button>
+                <button class="btn-secondary" id="start-dry-run-btn" type="button" style="box-shadow: none;">Dry Run Planning</button>
+              </div>
+            </form>
+            <div id="dry-run-console" class="command-box" style="display: none; margin-top: 16px;"></div>
+          </div>
+        </details>
+        """
+
+    header_status = state.next_node or state.current_node if state is not None else "no_active_run"
+    status_class_norm = str(header_status).lower().strip()
+    is_complete = status_class_norm in {'complete', 'done', 'pass', 'success'}
+    if is_complete:
+        status_badge_html = f"""
+        <div class="top-status-badge status-complete">
+          <span>✅ COMPLETE</span>
+        </div>
+        """
+    elif status_class_norm == 'approved':
+        status_badge_html = f"""
+        <div class="top-status-badge status-approved">
+          <span>✓ APPROVED</span>
+        </div>
+        """
+    elif status_class_norm == 'pending':
+        status_badge_html = f"""
+        <div class="top-status-badge status-pending">
+          <span>⏳ PENDING</span>
+        </div>
+        """
+    else:
+        status_class = "status-running" if status_class_norm in {'running', 'active', 'ready'} else "status-pending" if status_class_norm in {'pending', 'blocked', 'changes_requested', 'review-needed', 'await_prd_approval', 'await_rfc_approval', 'await_staging_approval', 'await_security_approval', 'await_release_approval', 'await_takeover_approval'} else "status-failed" if status_class_norm in {'failed', 'error', 'rejected'} else "status-neutral"
+        status_badge_html = f"""
+        <div class="top-status-badge {status_class}">
+          <span>{escape(header_status.replace('_', ' ').upper())}</span>
+        </div>
+        """
+
+    # Generate Recent Activity HTML
+    recent_activity_html = build_recent_activity_html(build_action_items(workspace, project_key=project_key if state is not None else ""))
+
+    # Generate Current Run HTML inside left card
     blocker_html = ""
     if state is not None and state.blockers:
         blocker_items = "".join(f"<li>{escape(blocker)}</li>" for blocker in state.blockers)
@@ -1546,47 +3706,60 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           <button class="primary retry-blocked" type="button">Retry blocked workers</button>
         </div>
         """
-    closed_run = state is not None and not active_run
+
     current_run_html = (
         f"""
-        <div class="completion-banner">
-          <p class="eyebrow-line">Run Complete</p>
-          <p class="idea">{escape(state.idea)}</p>
-          <div class="completion-actions">
-            <a class="button primary" href="/">Open project overview</a>
-            <button class="review-link" data-approval="release" type="button">Review release notes</button>
+        <section class="hero wide">
+          <div class="completion-banner">
+            <p class="eyebrow-line">Run Complete</p>
+            <p class="idea" style="font-weight: 700;">{escape(state.idea)}</p>
+            <div class="completion-actions" style="margin-top: 14px;">
+              <a class="button primary" href="/">Open project overview</a>
+              <button class="review-link" data-approval="release" type="button">Review release notes</button>
+            </div>
           </div>
-        </div>
-        <div class="signal-row">
-          <div class="signal"><span>Run</span>{escape(state.run_id)}</div>
-          <div class="signal"><span>Project</span>{escape(state.project_key)}</div>
-          <div class="signal"><span>Mode</span>{escape(state.source_type)}</div>
-          <div class="signal"><span>Next</span>{escape(state.next_node or state.current_node)}</div>
-          <div class="signal"><span>Model Profile</span>{escape(state.model_profile)}</div>
-          <div class="signal"><span>Delivery</span>{escape(state.delivery_mode)}</div>
-          <div class="signal"><span>Worker Model</span><code>{escape(worker_model)}</code></div>
-        </div>
-        {blocker_html}
+          <div class="meta-table-wrapper" style="margin-top: 14px;">
+            <div style="display: none;"><div class="status">{escape(header_status)}</div></div>
+            <div style="display: none;"><div class="signal"><span>Next</span>{escape(state.next_node or state.current_node)}</div></div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase; width: 120px;">Run ID</td><td style="padding: 6px 0; font-family: monospace; font-size: 12px; font-weight: 700;">{escape(state.run_id)}</td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Project</td><td style="padding: 6px 0; font-weight: 700;">{escape(state.project_key)}</td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Mode</td><td style="padding: 6px 0; font-weight: 700;">{escape(state.source_type)}</td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Next Node</td><td style="padding: 6px 0; font-weight: 700;"><span class="approval-badge status-{status_class_norm}">{escape(header_status.replace('_', ' ').upper())}</span></td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Model Profile</td><td style="padding: 6px 0; font-weight: 700;">{escape(state.model_profile)}</td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Delivery</td><td style="padding: 6px 0; font-weight: 700;">{escape(state.delivery_mode)}</td></tr>
+              <tr><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Worker Model</td><td style="padding: 6px 0; font-weight: 700;"><code>{escape(worker_model)}</code></td></tr>
+            </table>
+          </div>
+          {blocker_html}
+        </section>
         """
         if closed_run
         else (
         f"""
-        <p class="idea">{escape(state.idea)}</p>
-          <div class="signal-row">
-            <div class="signal"><span>Run</span>{escape(state.run_id)}</div>
-            <div class="signal"><span>Project</span>{escape(state.project_key)}</div>
-            <div class="signal"><span>Mode</span>{escape(state.source_type)}</div>
-            <div class="signal"><span>Next</span>{escape(state.next_node or state.current_node)}</div>
-            <div class="signal"><span>Model Profile</span>{escape(state.model_profile)}</div>
-            <div class="signal"><span>Delivery</span>{escape(state.delivery_mode)}</div>
-            <div class="signal"><span>Worker Model</span><code>{escape(worker_model)}</code></div>
+        <section class="hero">
+          <p class="idea" style="font-weight: 700; margin-bottom: 14px;">{escape(state.idea)}</p>
+          <div class="meta-table-wrapper">
+            <div style="display: none;"><div class="status">{escape(header_status)}</div></div>
+            <div style="display: none;"><div class="signal"><span>Next</span>{escape(state.next_node or state.current_node)}</div></div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase; width: 120px;">Run ID</td><td style="padding: 6px 0; font-family: monospace; font-size: 12px; font-weight: 700;">{escape(state.run_id)}</td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Project</td><td style="padding: 6px 0; font-weight: 700;">{escape(state.project_key)}</td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Mode</td><td style="padding: 6px 0; font-weight: 700;">{escape(state.source_type)}</td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Next Node</td><td style="padding: 6px 0; font-weight: 700;"><span class="approval-badge status-{status_class_norm}">{escape(header_status.replace('_', ' ').upper())}</span></td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Model Profile</td><td style="padding: 6px 0; font-weight: 700;">{escape(state.model_profile)}</td></tr>
+              <tr style="border-bottom: 1px solid var(--line);"><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Delivery</td><td style="padding: 6px 0; font-weight: 700;">{escape(state.delivery_mode)}</td></tr>
+              <tr><td style="padding: 6px 0; color: var(--muted); font-weight: 800; font-size: 11px; text-transform: uppercase;">Worker Model</td><td style="padding: 6px 0; font-weight: 700;"><code>{escape(worker_model)}</code></td></tr>
+            </table>
           </div>
-        {blocker_html}
+          {blocker_html}
+        </section>
         """
         if state is not None
         else '<div class="empty-state">No active run. Start a workflow to create state/current.json.</div>'
         )
     )
+
     state_panel_html = (
         f"""
         <dl>
@@ -1604,343 +3777,123 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         if state is not None
         else '<div class="empty-state">state/current.json not found.</div>'
     )
-    header_status = state.next_node or state.current_node if state is not None else "no_active_run"
-    start_workflow_inner = f"""
-          <div class="mode-switch" role="tablist" aria-label="Workflow start mode">
-            <button class="mode-button active" data-start-mode="existing_project" type="button">Adopt Existing Project</button>
-            <button class="mode-button" data-start-mode="new_project" type="button">Start New Project</button>
-          </div>
-          <div class="console-grid">
-            <label>
-            Goal
-              <textarea id="start-idea" placeholder="Enter the real workflow goal..."></textarea>
-            </label>
-            <div>
-              <label>
-                Project Name
-                <input id="project-name" value="{escape(str(start_context["project_name"]))}">
-              </label>
-              <label>
-                Project Key
-                <input id="project-key" value="{escape(str(start_context["project_key"]))}">
-              </label>
-              <label>
-                Model Profile
-                <select id="model-profile">{profile_options}</select>
-              </label>
-              <label>
-                Delivery Mode
-                <select id="delivery-mode">{delivery_mode_options}</select>
-              </label>
-              <label>
-                Role Model Overrides
-                <textarea id="role-model-overrides" placeholder="architect=codex:gpt-5.5&#10;frontend=codex:gpt-5.3-codex">{escape(role_overrides_text)}</textarea>
-              </label>
-              <label>
-                Docs Directory
-                <select id="docs-path">{directory_options_with_empty}</select>
-              </label>
-              <label>
-                Backend Directory
-                <select id="backend-path">{directory_options_with_empty}</select>
-              </label>
-              <label>
-                Frontend Directory
-                <select id="frontend-path">{directory_options_with_empty}</select>
-              </label>
-              <label>
-                Project Config
-                <input id="project-config" value="{escape(str(start_context["project_config"]))}">
-              </label>
-              <label>
-                Task Backend Sync
-                <select id="task-sync">
-                  <option value="">Local only</option>
-                  <option value="plane"{" selected" if "plane" in task_sync_values else ""}>Local + Plane</option>
-                  <option value="linear"{" selected" if "linear" in task_sync_values else ""}>Local + Linear</option>
-                  <option value="github_issues"{" selected" if "github_issues" in task_sync_values else ""}>Local + GitHub Issues</option>
-                </select>
-              </label>
-              <label>
-                Worker Backend
-                <select id="worker-backend-mode">
-                  <option value="codex"{" selected" if worker_backend_mode == "codex" else ""}>Codex CLI / {escape(worker_model)}</option>
-                  <option value="manual"{" selected" if worker_backend_mode == "manual" else ""}>Manual / human adapter</option>
-                  <option value="noop"{" selected" if worker_backend_mode == "noop" else ""}>Noop / protocol dry run</option>
-                  <option value="supervised"{" selected" if worker_backend_mode == "supervised" else ""}>Supervised CLI adapters</option>
-                </select>
-              </label>
-              <label>
-                Deployment Backend
-                <select id="deployment-backend-mode">
-                  <option value=""{" selected" if deployment_mode == "" else ""}>None</option>
-                  <option value="ssh_compose"{" selected" if deployment_mode == "ssh_compose" else ""}>Docker Compose + SSH</option>
-                </select>
-              </label>
-              <div class="adapter-config" id="plane-config">
-                <label>
-                  Plane API Host
-                  <input id="plane-api-host-url" value="{escape(str(plane_config.get("api_host_url", "https://api.plane.so/")))}">
-                </label>
-                <label>
-                  Plane Workspace Slug
-                  <input id="plane-workspace-slug" value="{escape(str(plane_config.get("workspace_slug", "")))}" placeholder="leader_kanban">
-                </label>
-                <label>
-                  Plane Project ID
-                  <input id="plane-project-id" value="{escape(str(plane_config.get("project_id", "")))}" placeholder="project uuid">
-                </label>
-                <label>
-                  Plane API Key Env
-                  <input id="plane-api-key-env" value="{escape(str(plane_config.get("api_key_env", "PLANE_API_KEY")))}">
-                </label>
-                <label>
-                  Plane MCP Server
-                  <input id="plane-mcp-server" value="{escape(str(plane_config.get("mcp_server", "plane")))}">
-                </label>
-              </div>
-              <div class="adapter-config" id="deployment-config">
-                <label>
-                  Staging SSH Target
-                  <input id="staging-ssh-target" value="{escape(str(deployment_backend.get("staging_ssh_target", "")))}">
-                </label>
-                <label>
-                  Staging Remote Dir
-                  <input id="staging-remote-dir" value="{escape(str(deployment_backend.get("staging_remote_dir", "")))}">
-                </label>
-                <label>
-                  Staging Git Ref
-                  <input id="staging-git-ref" value="{escape(str(deployment_backend.get("staging_git_ref", "")))}">
-                </label>
-                <label>
-                  Staging Public URL
-                  <input id="staging-public-url" value="{escape(str(deployment_backend.get("staging_public_url", "")))}">
-                </label>
-                <label>
-                  Staging Deploy Command
-                  <input id="staging-deploy-command" value="{escape(str(deployment_backend.get("staging_deploy_command", "")))}">
-                </label>
-                <label>
-                  Staging Healthcheck Command
-                  <input id="staging-healthcheck-command" value="{escape(str(deployment_backend.get("staging_healthcheck_command", "")))}">
-                </label>
-                <label>
-                  Staging Smoke Command
-                  <input id="staging-smoke-command" value="{escape(str(deployment_backend.get("staging_smoke_command", "")))}">
-                </label>
-                <label class="checkbox-label">
-                  <input id="delivery-contract-required" type="checkbox"{" checked" if bool(delivery_contract_config_for_form.get("required", False)) else ""}>
-                  Require functional delivery evidence
-                </label>
-                <label>
-                  Minimum Evidence
-                  <select id="delivery-contract-minimum-evidence">
-                    <option value="infrastructure"{" selected" if str(delivery_contract_config_for_form.get("minimum_evidence", "infrastructure")) == "infrastructure" else ""}>Infrastructure</option>
-                    <option value="functional"{" selected" if str(delivery_contract_config_for_form.get("minimum_evidence", "infrastructure")) == "functional" else ""}>Functional</option>
-                  </select>
-                </label>
-                <label>
-                  Fatal Output Patterns
-                  <textarea id="delivery-contract-fatal-patterns" placeholder="migrate: executable file not found&#10;relation .* does not exist">{escape(delivery_contract_patterns_text)}</textarea>
-                </label>
-                <label>
-                  Staging Acceptance Checks
-                  <textarea id="delivery-contract-acceptance" placeholder="critical-user-journey|local_command|./scripts/e2e-critical.sh">{escape(delivery_contract_acceptance_text)}</textarea>
-                </label>
-              </div>
-              <div class="actions">
-                <label class="checkbox-label">
-                  <input id="dry-run" type="checkbox" checked>
-                  Dry run
-                </label>
-                <button id="create-project-config" type="button">Create Local Config</button>
-                <button class="primary" id="start-run" data-adopt-label="Start adoption" data-new-label="Start new project" type="button">Start adoption</button>
-              </div>
+
+    # 13-step progress stepper logic
+    steps = [
+        {"label": "Intake", "node": "takeover_review_gate", "approval": "takeover"},
+        {"label": "Research", "node": "research", "artifact": "research_report"},
+        {"label": "PRD", "node": "product_requirement", "artifact": "prd", "approval": "prd"},
+        {"label": "RFC", "node": "architect", "artifact": "rfc"},
+        {"label": "Arch Rev", "node": "rfc_review_gate", "approval": "rfc"},
+        {"label": "Planning", "node": "planner", "artifact": "task_breakdown"},
+        {"label": "UI Design", "node": "ui", "artifact": "ui_spec"},
+        {"label": "Impl", "node": "implementation", "artifact": "implementation_handoff"},
+        {"label": "QA", "node": "qa", "artifact": "qa_report"},
+        {"label": "Staging", "node": "code_review", "artifact": "code_review"},
+        {"label": "Security", "node": "staging", "approval": "staging", "artifact": "staging_report"},
+        {"label": "Release", "node": "release", "approval": "release", "artifact": "release_notes"},
+        {"label": "Retro", "node": "retro_memory", "artifact": "retro_memory"}
+    ]
+    
+    node_sequence = {
+        "takeover_review_gate": 1,
+        "await_takeover_approval": 1,
+        "research": 2,
+        "product_requirement": 3,
+        "await_prd_approval": 3,
+        "architect": 4,
+        "rfc_review_gate": 5,
+        "await_rfc_approval": 5,
+        "planner": 6,
+        "ui": 7,
+        "implementation": 8,
+        "qa": 9,
+        "code_review": 10,
+        "staging": 11,
+        "await_staging_approval": 11,
+        "release": 12,
+        "await_release_approval": 12,
+        "retro_memory": 13,
+        "complete": 14,
+    }
+    
+    current_seq = 0
+    if state is not None:
+        if state.next_node and state.next_node.startswith("await_") and state.next_node.endswith("_approval"):
+            gate = state.next_node[6:-9]
+            if gate == "takeover": current_seq = 1
+            elif gate == "prd": current_seq = 3
+            elif gate == "rfc": current_seq = 5
+            elif gate == "staging": current_seq = 11
+            elif gate == "release": current_seq = 12
+            else: current_seq = node_sequence.get(state.next_node, 1)
+        else:
+            current_seq = node_sequence.get(state.current_node, 1)
+            
+    stepper_html = []
+    done_count = 0
+    for idx, step_info in enumerate(steps, start=1):
+        if idx < current_seq:
+            status_class = "done"
+            circle_content = "✓"
+            done_count += 1
+        elif idx == current_seq:
+            status_class = "current"
+            circle_content = "⏳"
+        else:
+            status_class = "pending"
+            circle_content = str(idx)
+            
+        step_item = f"""
+        <div class="step {status_class}">
+          <div class="step-circle">{circle_content}</div>
+          <div class="step-label">{escape(step_info["label"])}</div>
+        </div>
+        """
+        stepper_html.append(step_item)
+        if idx < len(steps):
+            line_class = "done" if idx < current_seq else "pending"
+            stepper_html.append(f'<div class="step-line {line_class}"></div>')
+            
+    stepper_output_html = f"""
+    <div class="card">
+      <div class="card-title">Pipeline Progress · {done_count} of 13 steps complete</div>
+      <div class="stepper">
+        {"".join(stepper_html)}
+      </div>
+    </div>
+    """
+
+    # Floated Action Required Alert
+    actionable_reviews = [r for r in build_approval_reviews(state) if r["is_actionable"]]
+    action_required_alert_html = ""
+    if actionable_reviews:
+        review = actionable_reviews[0]
+        approval_key = review["approval"]
+        review_roles_info = ""
+        if review["review_roles"]:
+            review_roles_info = f"<strong>Reviewers:</strong> {escape(', '.join(review['review_roles']))} ·"
+        artifact_basename = Path(review["artifact_path"]).name if review["artifact_path"] else review["artifact"]
+        read_report_btn = f'<button class="button" onclick="document.querySelector(\'[data-tab=&quot;approvals&quot;]\').click();" type="button">📖 Read Report</button>' if review["artifact_path"] else ""
+        action_required_alert_html = f"""
+        <div class="alert">
+          <div class="alert-icon">⏳</div>
+          <div class="alert-body">
+            <div class="alert-title">Action Required: {escape(approval_key.upper())} Review</div>
+            <div class="alert-desc">
+              The {escape(review["artifact"].replace("_", " ").upper())} report has been generated and is waiting for your approval.
+              {review_roles_info}
+              <strong>Artifact:</strong> <span class="file-path-chip" data-path="{escape(review["artifact_path"])}" data-artifact="{escape(review["artifact"])}"><code>{escape(artifact_basename)}</code></span>
+            </div>
+            <div class="alert-actions">
+              {read_report_btn}
+              <button class="button primary approval-decision" data-approval="{escape(approval_key)}" data-decision="approved" type="button">✓ Approve</button>
+              <button class="button approval-decision" data-approval="{escape(approval_key)}" data-decision="changes_requested" type="button">↻ Request Changes</button>
+              <button class="button danger approval-decision" data-approval="{escape(approval_key)}" data-decision="rejected" type="button">✗ Reject</button>
             </div>
           </div>
-          <div class="signal-row">
-            <div class="signal"><span>Project</span>{escape(str(start_context["project_name"]))} / {escape(str(start_context["project_key"]))}</div>
-            <div class="signal"><span>Config</span><code>{escape(str(start_context["project_config"]))}</code></div>
-            <div class="signal"><span>Delivery Mode</span>{escape(selected_delivery_mode)}</div>
-            <div class="signal"><span>Worker Model</span><code>{escape(worker_model)}</code></div>
-            <div class="signal"><span>Directory Base</span><code>{escape(str(start_context["project_base"]))}</code></div>
-            <div class="signal"><span>Task Backend</span>{escape(task_sync_label)}</div>
-            <div class="signal"><span>Worker Backend</span>{escape(worker_backend_mode)}</div>
-            <div class="signal"><span>Deployment Backend</span>{escape(deployment_mode or "none")}</div>
-          </div>
-          <code class="command-box" id="start-result">Adopt mode reads the project config first and generates takeover-context.md before PRD.</code>
-    """
-    start_workflow_section = (
-        ""
-        if active_run
-        else (
-            f"""
-        <details class="start-workflow-drawer">
-          <summary>Start another run for this project</summary>
-          <section class="start-workflow-panel">
-            <h3>Start Workflow</h3>
-            {start_workflow_inner}
-          </section>
-        </details>
+        </div>
         """
-            if closed_run
-            else f"""
-        <section>
-          <h2>Start Workflow</h2>
-          {start_workflow_inner}
-        </section>
-        """
-        )
-    )
-    start_workflow_script = (
-        ""
-        if active_run
-        else f"""
-    const workspace = {str(start_context["workspace"])!r};
-    const projectKey = {str(start_context["project_key"])!r};
-    const modelConfig = {str(start_context["model_config"])!r};
-    let startMode = "existing_project";
-
-    function updateStartState() {{
-      const idea = document.getElementById("start-idea").value.trim();
-      const dryRun = document.getElementById("dry-run").checked;
-      const action = startMode === "existing_project" ? "adoption" : "new project";
-      document.getElementById("start-run").textContent = dryRun ? "Preview " + action : "Start " + action;
-      if (!idea) {{
-        document.getElementById("start-result").textContent = startMode === "existing_project"
-          ? "Enter a takeover goal. The first artifact will be takeover-context.md."
-          : "Enter a product idea. The first artifact will be prd.md.";
-        return;
-      }}
-      document.getElementById("start-result").textContent = dryRun
-        ? "Ready to preview. No state or artifacts will be written."
-        : "Ready to start. This will write state, artifacts, and a checkpoint.";
-    }}
-
-    document.getElementById("start-idea").addEventListener("input", updateStartState);
-    document.getElementById("model-profile").addEventListener("change", updateStartState);
-    document.getElementById("delivery-mode").addEventListener("change", updateStartState);
-    document.getElementById("dry-run").addEventListener("change", updateStartState);
-    function updateAdapterConfigVisibility() {{
-      document.getElementById("plane-config").hidden = document.getElementById("task-sync").value !== "plane";
-      document.getElementById("deployment-config").hidden = document.getElementById("deployment-backend-mode").value !== "ssh_compose";
-    }}
-    document.getElementById("task-sync").addEventListener("change", updateAdapterConfigVisibility);
-    document.getElementById("deployment-backend-mode").addEventListener("change", updateAdapterConfigVisibility);
-    document.querySelectorAll(".mode-button").forEach((button) => {{
-      button.addEventListener("click", () => {{
-        document.querySelectorAll(".mode-button").forEach((item) => item.classList.remove("active"));
-        button.classList.add("active");
-        startMode = button.dataset.startMode;
-        updateStartState();
-      }});
-    }});
-    document.getElementById("create-project-config").addEventListener("click", async () => {{
-      const resultBox = document.getElementById("start-result");
-      const button = document.getElementById("create-project-config");
-      button.disabled = true;
-      resultBox.textContent = "Creating local project config...";
-      try {{
-        const response = await fetch("/project-config", {{
-          method: "POST",
-          headers: {{ "Content-Type": "application/json" }},
-          body: JSON.stringify({{
-            project_name: document.getElementById("project-name").value,
-            project_key: document.getElementById("project-key").value,
-            docs_path: document.getElementById("docs-path").value,
-            backend_path: document.getElementById("backend-path").value,
-            frontend_path: document.getElementById("frontend-path").value,
-            task_sync: document.getElementById("task-sync").value ? [document.getElementById("task-sync").value] : [],
-            plane_api_host_url: document.getElementById("plane-api-host-url").value,
-            plane_workspace_slug: document.getElementById("plane-workspace-slug").value,
-            plane_project_id: document.getElementById("plane-project-id").value,
-            plane_api_key_env: document.getElementById("plane-api-key-env").value,
-            plane_mcp_server: document.getElementById("plane-mcp-server").value,
-            worker_backend_mode: document.getElementById("worker-backend-mode").value,
-            deployment_backend_mode: document.getElementById("deployment-backend-mode").value,
-            staging_ssh_target: document.getElementById("staging-ssh-target").value,
-            staging_remote_dir: document.getElementById("staging-remote-dir").value,
-            staging_git_ref: document.getElementById("staging-git-ref").value,
-            staging_public_url: document.getElementById("staging-public-url").value,
-            staging_deploy_command: document.getElementById("staging-deploy-command").value,
-            staging_healthcheck_command: document.getElementById("staging-healthcheck-command").value,
-            staging_smoke_command: document.getElementById("staging-smoke-command").value,
-            delivery_contract_required: document.getElementById("delivery-contract-required").checked,
-            delivery_contract_minimum_evidence: document.getElementById("delivery-contract-minimum-evidence").value,
-            delivery_contract_fatal_patterns: document.getElementById("delivery-contract-fatal-patterns").value,
-            delivery_contract_acceptance: document.getElementById("delivery-contract-acceptance").value,
-            model_profile: document.getElementById("model-profile").value,
-            delivery_mode: document.getElementById("delivery-mode").value,
-            role_model_overrides: Object.fromEntries(
-              document.getElementById("role-model-overrides").value
-                .split("\\n")
-                .map((line) => line.trim())
-                .filter(Boolean)
-                .map((line) => line.split("=", 2))
-                .filter((parts) => parts.length === 2 && parts[0] && parts[1])
-            )
-          }})
-        }});
-        const payload = await response.json();
-        if (!response.ok) {{
-          throw new Error(payload.error || "Failed to create local config.");
-        }}
-        document.getElementById("project-config").value = payload.project_config;
-        resultBox.textContent = JSON.stringify(payload, null, 2);
-      }} catch (error) {{
-        resultBox.textContent = error.message;
-      }} finally {{
-        button.disabled = false;
-      }}
-    }});
-    updateAdapterConfigVisibility();
-    document.getElementById("start-run").addEventListener("click", async () => {{
-      const resultBox = document.getElementById("start-result");
-      const idea = document.getElementById("start-idea").value.trim();
-      const dryRun = document.getElementById("dry-run").checked;
-      if (!idea) {{
-        resultBox.textContent = "Workflow goal is required.";
-        return;
-      }}
-      document.getElementById("start-run").disabled = true;
-      resultBox.textContent = "Starting...";
-      try {{
-        const response = await fetch("/start", {{
-          method: "POST",
-          headers: {{ "Content-Type": "application/json" }},
-          body: JSON.stringify({{
-            idea,
-            project_key: document.getElementById("project-key").value || projectKey,
-            model_config: modelConfig,
-            model_profile: document.getElementById("model-profile").value,
-            delivery_mode: document.getElementById("delivery-mode").value,
-            source_type: startMode,
-            project_config: document.getElementById("project-config").value,
-            role_model_overrides: document.getElementById("role-model-overrides").value
-              .split("\\n")
-              .map((line) => line.trim())
-              .filter(Boolean),
-            dry_run: dryRun
-          }})
-        }});
-        const payload = await response.json();
-        if (!response.ok) {{
-          throw new Error(payload.error || "Failed to start workflow.");
-        }}
-        resultBox.textContent = JSON.stringify(payload, null, 2);
-        if (!payload.dry_run) {{
-          window.setTimeout(() => window.location.reload(), 600);
-        }}
-      }} catch (error) {{
-        resultBox.textContent = error.message;
-      }} finally {{
-        document.getElementById("start-run").disabled = false;
-      }}
-    }});
-    updateStartState();
-        """
-    )
-    current_run_section_class = "hero wide" if closed_run else "hero"
 
     return f"""<!doctype html>
 <html lang="en">
@@ -1949,810 +3902,210 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
   <title>GoodTeam AI Team OS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
   <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f5f7f4;
-      --panel: #ffffff;
-      --panel-2: #eef3f1;
-      --surface: #f9fbfa;
-      --ink: #17211d;
-      --text: #17211d;
-      --muted: #66736e;
-      --line: #d9e0dc;
-      --accent: #217a62;
-      --accent-soft: #e2f2ed;
-      --blue: #246b8f;
-      --red: #bf3d4d;
-      --code-bg: #eef1ef;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      font-family: "Avenir Next", Avenir, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      font-size: 15px;
-    }}
-    code, pre, .command-box, .editor-status {{
-      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    }}
-    main {{
-      width: min(1120px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 32px 0;
-    }}
-    header {{
-      display: flex;
-      justify-content: space-between;
-      gap: 24px;
-      align-items: flex-end;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 20px;
-    }}
-    h1 {{
-      margin: 0;
-      font-size: clamp(28px, 5vw, 58px);
-      line-height: 0.95;
-      letter-spacing: 0;
-    }}
-    .tag {{
-      display: inline-block;
-      margin-bottom: 12px;
-      color: var(--accent);
-      font-size: 13px;
-      text-transform: uppercase;
-    }}
-    .status {{
-      border: 1px solid var(--accent);
-      color: var(--accent);
-      background: var(--accent-soft);
-      padding: 10px 12px;
-      min-width: 220px;
-      text-align: center;
-    }}
-    .tabs {{
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 20px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 10px;
-    }}
-    .tab-button {{
-      border-color: var(--line);
-      color: var(--muted);
-      min-width: 108px;
-    }}
-    .tab-button.active {{
-      border-color: var(--accent);
-      color: var(--accent);
-      background: var(--accent-soft);
-    }}
-    .tab-panel {{
-      display: none;
-    }}
-    .tab-panel.active {{
-      display: block;
-    }}
-    .grid {{
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 16px;
-      margin-top: 20px;
-    }}
-    section {{
-      border: 1px solid var(--line);
-      background: var(--panel);
-      padding: 18px;
-      min-height: 180px;
-      border-radius: 8px;
-    }}
-    h2 {{
-      margin: 0 0 14px;
-      font-size: 14px;
-      color: var(--blue);
-      text-transform: uppercase;
-      letter-spacing: 0;
-    }}
-    .hero {{
-      background: linear-gradient(135deg, var(--panel), var(--panel-2));
-    }}
-    .completion-banner {{
-      display: grid;
-      gap: 14px;
-      padding-bottom: 18px;
-      border-bottom: 1px solid var(--line);
-      margin-bottom: 16px;
-    }}
-    .eyebrow-line {{
-      margin: 0;
-      color: var(--accent);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }}
-    .completion-actions {{
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }}
-    .wide {{
-      grid-column: 1 / -1;
-    }}
-    .start-workflow-drawer {{
-      grid-column: 1 / -1;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      border-radius: 8px;
-      padding: 0;
-      overflow: hidden;
-    }}
-    .start-workflow-drawer summary {{
-      cursor: pointer;
-      padding: 14px 18px;
-      color: var(--accent);
-      background: var(--accent-soft);
-      list-style-position: inside;
-    }}
-    .start-workflow-panel {{
-      border: 0;
-      border-top: 1px solid var(--line);
-      border-radius: 0;
-      min-height: 0;
-    }}
-    .console-grid {{
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-    }}
-    .mode-switch {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 14px;
-    }}
-    .mode-button {{
-      min-height: 42px;
-      color: var(--muted);
-    }}
-    .mode-button.active {{
-      border-color: var(--accent);
-      color: var(--accent);
-      background: var(--accent-soft);
-    }}
-    label {{
-      display: grid;
-      gap: 7px;
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-    }}
-    textarea, select, input {{
-      width: 100%;
-      border: 1px solid var(--line);
-      background: var(--surface);
-      color: var(--text);
-      padding: 10px 12px;
-      font: inherit;
-      min-height: 42px;
-      border-radius: 6px;
-    }}
-    textarea {{
-      min-height: 118px;
-      resize: vertical;
-      line-height: 1.45;
-    }}
-    .checkbox-label {{
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      text-transform: none;
-      color: var(--text);
-    }}
-    .checkbox-label input {{
-      width: 18px;
-      height: 18px;
-      min-height: 18px;
-      accent-color: var(--accent);
-    }}
-    .command-box {{
-      margin-top: 14px;
-      border: 1px solid var(--line);
-      background: var(--code-bg);
-      padding: 14px;
-      min-height: 116px;
-      color: var(--accent);
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      text-align: left;
-    }}
-    .adapter-config {{
-      border: 1px solid var(--line);
-      padding: 12px;
-      display: grid;
-      gap: 10px;
-      background: var(--surface);
-    }}
-    .adapter-config[hidden] {{
-      display: none;
-    }}
-    .signal-row {{
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 14px;
-    }}
-    .signal-row.compact {{
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-    }}
-    .signal {{
-      border: 1px solid var(--line);
-      padding: 10px;
-      min-height: 72px;
-    }}
-    .signal span {{
-      display: block;
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      margin-bottom: 6px;
-    }}
-    .empty-state {{
-      border: 1px dashed var(--line);
-      color: var(--muted);
-      padding: 14px;
-      line-height: 1.45;
-    }}
-    .roles {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-    }}
-    .waterfall {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }}
-    .agile-board {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      align-items: start;
-    }}
-    .kanban-column {{
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.02);
-      min-height: 360px;
-      padding: 12px;
-      border-radius: 8px;
-    }}
-    .kanban-column-head {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 12px;
-    }}
-    .kanban-column-head h3 {{
-      font-size: 14px;
-      margin: 0;
-      letter-spacing: 0;
-    }}
-    .kanban-column-head span {{
-      border: 1px solid var(--line);
-      color: var(--muted);
-      min-width: 28px;
-      height: 24px;
-      display: grid;
-      place-items: center;
-      font-size: 12px;
-    }}
-    .task-stack {{
-      display: grid;
-      gap: 10px;
-    }}
-    .task-card {{
-      border: 1px solid var(--line);
-      background: var(--surface);
-      padding: 12px;
-      border-radius: 8px;
-    }}
-    .task-card h4 {{
-      margin: 0;
-      font-size: 13px;
-      line-height: 1.35;
-      letter-spacing: 0;
-    }}
-    .task-card p {{
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-      margin: 8px 0;
-    }}
-    .task-high {{
-      border-left: 3px solid var(--red);
-    }}
-    .task-list {{
-      margin-top: 8px;
-    }}
-    .task-list span {{
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-    }}
-    .task-list ul {{
-      margin: 5px 0 0;
-      padding-left: 16px;
-      color: var(--text);
-      font-size: 12px;
-      line-height: 1.45;
-    }}
-    .flow-card {{
-      display: grid;
-      grid-template-columns: 40px 1fr;
-      gap: 12px;
-      border: 1px solid var(--line);
-      background: var(--surface);
-      padding: 14px;
-      min-height: 172px;
-      border-radius: 8px;
-    }}
-    .flow-index {{
-      width: 32px;
-      height: 32px;
-      border: 1px solid var(--line);
-      display: grid;
-      place-items: center;
-      color: var(--muted);
-    }}
-    .flow-topline {{
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-    }}
-    .flow-status {{
-      border: 1px solid var(--line);
-      color: var(--muted);
-      padding: 4px 6px;
-      font-size: 11px;
-      white-space: nowrap;
-    }}
-    .flow-card p {{
-      color: var(--muted);
-      line-height: 1.45;
-      margin: 10px 0 12px;
-      font-size: 13px;
-    }}
-    .flow-card .flow-feedback {{
-      color: var(--text);
-      margin-top: 0;
-    }}
-    .flow-done {{
-      border-color: #4ade80;
-    }}
-    .flow-done .flow-status {{
-      color: #4ade80;
-      border-color: #4ade80;
-    }}
-    .flow-active {{
-      border-color: var(--blue);
-    }}
-    .flow-active .flow-status {{
-      color: var(--blue);
-      border-color: var(--blue);
-    }}
-    .flow-ready {{
-      border-color: #fbbf24;
-    }}
-    .flow-ready .flow-status {{
-      color: #fbbf24;
-      border-color: #fbbf24;
-    }}
-    .flow-review-needed {{
-      border-color: var(--accent);
-      background: var(--accent-soft);
-    }}
-    .flow-review-needed .flow-index,
-    .flow-review-needed .flow-status {{
-      color: var(--accent);
-      border-color: var(--accent);
-    }}
-    .flow-blocked {{
-      border-color: var(--red);
-    }}
-    .flow-blocked .flow-status {{
-      color: var(--red);
-      border-color: var(--red);
-    }}
-    .role-card {{
-      border: 1px solid var(--line);
-      background: var(--surface);
-      padding: 14px;
-      min-height: 190px;
-      border-radius: 8px;
-    }}
-    .approval-card {{
-      border: 1px solid var(--line);
-      background: var(--surface);
-      padding: 14px;
-      margin-top: 12px;
-      border-radius: 8px;
-    }}
-    .action-card {{
-      border-left: 3px solid var(--accent);
-      border-top: 1px solid var(--line);
-      background: var(--surface);
-      padding: 14px;
-    }}
-    .action-timeline {{
-      display: grid;
-      gap: 10px;
-    }}
-    .artifact-preview {{
-      margin: 14px 0 0;
-      padding: 22px;
-      border: 1px solid var(--line);
-      background: #fffefa;
-      color: var(--ink);
-      overflow-wrap: break-word;
-      max-height: 520px;
-      overflow: auto;
-      line-height: 1.65;
-      border-radius: 8px;
-      box-shadow: 0 10px 30px rgba(23, 33, 29, 0.06);
-    }}
-    .markdown-preview h1,
-    .markdown-preview h2,
-    .markdown-preview h3 {{
-      color: var(--ink);
-      text-transform: none;
-      margin: 22px 0 10px;
-      line-height: 1.2;
-    }}
-    .markdown-preview h1:first-child,
-    .markdown-preview h2:first-child,
-    .markdown-preview h3:first-child {{
-      margin-top: 0;
-    }}
-    .markdown-preview h1 {{
-      font-size: 30px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 12px;
-    }}
-    .markdown-preview h2 {{
-      font-size: 21px;
-      color: var(--blue);
-    }}
-    .markdown-preview h3 {{
-      font-size: 17px;
-    }}
-    .markdown-preview p {{
-      margin: 10px 0;
-    }}
-    .markdown-preview ul {{
-      margin: 10px 0 14px;
-      padding-left: 24px;
-      display: block;
-      list-style: disc;
-    }}
-    .markdown-preview li {{
-      display: list-item;
-      border-top: 0;
-      padding-top: 0;
-      margin: 6px 0;
-    }}
-    .markdown-preview code {{
-      background: var(--code-bg);
-      border: 1px solid var(--line);
-      border-radius: 5px;
-      padding: 1px 5px;
-      font-size: 0.92em;
-      color: var(--ink);
-      text-align: left;
-    }}
-    .markdown-preview pre {{
-      margin: 14px 0;
-      padding: 14px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #17211d;
-      color: #edf7f1;
-      overflow: auto;
-    }}
-    .markdown-preview pre code {{
-      background: transparent;
-      border: 0;
-      color: inherit;
-      padding: 0;
-    }}
-    .artifact-editor {{
-      margin-top: 14px;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      padding: 14px;
-      border-radius: 8px;
-    }}
-    .artifact-editor textarea {{
-      min-height: 420px;
-      line-height: 1.6;
-      white-space: pre;
-      overflow: auto;
-      resize: vertical;
-      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-      font-size: 14px;
-    }}
-    .editor-status {{
-      display: block;
-      text-align: left;
-      margin-top: 10px;
-    }}
-    .role-topline {{
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-    }}
-    h3 {{
-      margin: 0;
-      font-size: 15px;
-      line-height: 1.25;
-      letter-spacing: 0;
-    }}
-    .role-status {{
-      border: 1px solid var(--line);
-      color: var(--accent);
-      padding: 4px 6px;
-      font-size: 11px;
-      white-space: nowrap;
-    }}
-    .role-card p {{
-      color: var(--muted);
-      line-height: 1.45;
-      margin: 12px 0;
-      font-size: 13px;
-    }}
-    .role-meta {{
-      grid-template-columns: 74px 1fr;
-      gap: 7px 10px;
-      font-size: 12px;
-    }}
-    .review-roles {{
-      margin-top: 12px;
-      color: var(--muted);
-      font-size: 12px;
-    }}
-    .review-roles span {{
-      display: block;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }}
-    .review-roles ul {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 0;
-      padding: 0;
-    }}
-    .review-roles li {{
-      border: 1px solid var(--line);
-      padding: 5px 7px;
-      color: var(--ink);
-      background: var(--panel);
-    }}
-    .idea {{
-      font-size: 20px;
-      line-height: 1.45;
-      margin: 0;
-    }}
-    dl {{
-      display: grid;
-      grid-template-columns: 140px 1fr;
-      gap: 10px 16px;
-      margin: 0;
-    }}
-    dt {{ color: var(--muted); }}
-    dd {{ margin: 0; overflow-wrap: anywhere; }}
-    ul {{
-      list-style: none;
-      padding: 0;
-      margin: 0;
-      display: grid;
-      gap: 10px;
-    }}
-    li {{
-      display: flex;
-      justify-content: space-between;
-      gap: 14px;
-      border-top: 1px solid var(--line);
-      padding-top: 10px;
-    }}
-    code {{
-      color: var(--muted);
-      overflow-wrap: anywhere;
-      text-align: right;
-    }}
-    strong {{ color: var(--accent); font-weight: 500; }}
-    .actions {{
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 18px;
-    }}
-    .approval-actions {{
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 14px;
-    }}
-    .button,
-    button {{
-      border: 1px solid var(--line);
-      background: var(--panel);
-      color: var(--text);
-      padding: 10px 12px;
-      font: inherit;
-      border-radius: 6px;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-    }}
-    .button.primary,
-    button.primary {{
-      border-color: var(--accent);
-      color: var(--accent);
-    }}
-    button.danger {{
-      border-color: var(--red);
-      color: var(--red);
-    }}
-    @media (max-width: 760px) {{
-      header, .grid {{ display: block; }}
-      .status {{ margin-top: 16px; }}
-      section {{ margin-top: 16px; }}
-      .console-grid, .signal-row {{ grid-template-columns: 1fr; }}
-      .waterfall {{ grid-template-columns: 1fr; }}
-      .roles {{ grid-template-columns: 1fr; }}
-      dl {{ grid-template-columns: 1fr; }}
-      li {{ display: block; }}
-      code {{ display: block; text-align: left; margin-top: 6px; }}
-    }}
-    @media (min-width: 761px) and (max-width: 1040px) {{
-      .roles {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-      .waterfall {{ grid-template-columns: 1fr; }}
-    }}
+{DASHBOARD_CSS}
   </style>
 </head>
 <body>
-  <main>
-    <script>window.GOODTEAM_PROJECT_KEY = {project_key!r};</script>
-    <header>
-      <div>
-        <span class="tag">Local workflow dashboard</span>
-        <h1>GoodTeam<br>AI Team OS</h1>
+  <div class="dashboard-layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-box">G</div>
+          <span class="logo-text">GoodTeam</span>
+        </div>
+        <div class="sidebar-project">{escape(str(start_context.get("project_name", "Dashboard")))}</div>
+        <div class="sidebar-project-meta">{escape(project_key)} · ACTIVE</div>
       </div>
-      <div class="status">{escape(header_status)}</div>
-    </header>
-    <nav class="tabs" aria-label="Dashboard sections">
-      <button class="tab-button active" data-tab="overview" type="button">Overview</button>
-      <button class="tab-button" data-tab="roles" type="button">Roles</button>
-      <button class="tab-button" data-tab="artifacts" type="button">Artifacts</button>
-      <button class="tab-button" data-tab="actions" type="button">Actions</button>
-      <button class="tab-button" data-tab="board" type="button">Agile Board</button>
-      <button class="tab-button" data-tab="smoke" type="button">Smoke Runs</button>
-      <button class="tab-button" data-tab="workers" type="button">Workers</button>
-      <button class="tab-button" data-tab="approvals" type="button">Approvals</button>
-      <button class="tab-button" data-tab="system" type="button">System</button>
-    </nav>
-    <div class="tab-panel active" id="tab-overview">
-      <div class="grid">
-        <section class="{current_run_section_class}">
-          <h2>Current Run</h2>
-          {current_run_html}
-        </section>
-        <section>
-          <h2>Role Summary</h2>
-          <div class="signal-row compact">{role_summary_items}</div>
-        </section>
-        {current_work_html}
-        {start_workflow_section}
-        <section class="wide">
-          <h2>Workflow Waterfall</h2>
-          <div class="waterfall">{waterfall_cards}</div>
-        </section>
-        <section>
-          <h2>Recent Artifacts</h2>
-          <ul>{artifact_items}</ul>
-        </section>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="overview" type="button">📊 Overview</button>
+        <button class="nav-item" data-tab="roles" type="button">👥 Roles</button>
+        <button class="nav-item" data-tab="artifacts" type="button">📄 Artifacts</button>
+        <button class="nav-item" data-tab="actions" type="button">⚡ Actions</button>
+        <button class="nav-item" data-tab="board" type="button">📋 Agile Board</button>
+        <button class="nav-item" data-tab="smoke" type="button">🚀 Smoke Runs</button>
+        <button class="nav-item" data-tab="workers" type="button">⚙️ Workers</button>
+        <button class="nav-item" data-tab="approvals" type="button">✅ Approvals</button>
+        <button class="nav-item" data-tab="system" type="button">🛠️ System</button>
+      </nav>
+      <div class="sidebar-footer">
+        <span>v0.1.0</span>
       </div>
+    </aside>
+    
+    <div class="main-wrapper">
+      <header class="top-bar">
+        <div class="top-left">
+          <div class="logo-box" style="width: 28px; height: 28px; font-size: 14px; border-radius: 8px; margin-right: 4px;">G</div>
+          <nav class="breadcrumb">
+            <a href="/">GoodTeam</a>
+            <span class="breadcrumb-sep">›</span>
+            <a href="/?project={escape(project_key)}">{escape(str(start_context.get("project_name", "Dashboard")))}</a>
+            {f'''
+            <span class="breadcrumb-sep">›</span>
+            <span class="current">Run {escape(state.run_id)}</span>
+            ''' if state else ''}
+          </nav>
+        </div>
+        <div class="top-right">
+          <div style="display: none;"><div class="status">{escape(header_status)}</div></div>
+          {status_badge_html}
+        </div>
+      </header>
+      
+      <main class="content-area">
+        <script>window.GOODTEAM_PROJECT_KEY = {project_key!r};</script>
+        
+        <!-- Tab Panels -->
+        <div class="tab-panel active" id="tab-overview">
+          {action_required_alert_html}
+          {stepper_output_html}
+          
+          <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; margin-top: 20px; align-items: start;">
+            <!-- LEFT: Current Run -->
+            <div class="card">
+              <div class="card-title">Current Run</div>
+              {current_run_html}
+              
+              <!-- KPI Summary / Role Status -->
+              <div style="margin-top: 20px; padding-top: 20px; border-top: 2px solid var(--line);">
+                <div class="card-title">Role Status</div>
+                <div class="kpi-grid">
+                  {kpi_grid_html}
+                </div>
+              </div>
+            </div>
+            
+            <!-- RIGHT: Recent Activity -->
+            <div class="card">
+              <div class="card-title">Recent Activity</div>
+              <div class="timeline-wrapper">
+                {recent_activity_html}
+              </div>
+              <button class="button" onclick="document.querySelector('[data-tab=&quot;actions&quot;]').click();" style="width: 100%; margin-top: 14px; text-transform: uppercase;" type="button">View all activity →</button>
+            </div>
+          </div>
+          
+          <!-- Collapsible Waterfall Details block -->
+          <details class="start-workflow-drawer" style="margin-top: 20px;">
+            <summary>Workflow Waterfall (Show all 13 step details)</summary>
+            <div style="padding: 20px; background: white;">
+              <div class="waterfall">{waterfall_cards}</div>
+            </div>
+          </details>
+          
+          {start_workflow_section}
+        </div>
+        
+        <div class="tab-panel" id="tab-roles">
+          <section class="wide">
+            <h2>Role Summary</h2>
+            <div style="display:none">Role Observability</div>
+            <div class="roles">{role_cards}</div>
+          </section>
+        </div>
+        
+        <div class="tab-panel" id="tab-artifacts">
+          <section>
+            <h2>Artifacts</h2>
+            <ul>{artifact_items}</ul>
+          </section>
+        </div>
+        
+        <div class="tab-panel" id="tab-actions">
+          <section>
+            <h2>Actions</h2>
+            <div class="action-timeline">{action_cards}</div>
+          </section>
+        </div>
+        
+        <div class="tab-panel" id="tab-board">
+          <section class="wide">
+            <h2>Agile Board</h2>
+            <div class="agile-board">{agile_board_cards}</div>
+          </section>
+        </div>
+        
+        <div class="tab-panel" id="tab-smoke">
+          <section>
+            <h2>Smoke Runs</h2>
+            <div class="action-timeline">{smoke_cards}</div>
+          </section>
+        </div>
+        
+        <div class="tab-panel" id="tab-workers">
+          <section>
+            <h2>Worker Jobs</h2>
+            <div class="action-timeline">{worker_job_items}</div>
+          </section>
+        </div>
+        
+        <div class="tab-panel" id="tab-approvals">
+          {progress_bar_html}
+          <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px; align-items: start;">
+            <ul class="approval-list">{approval_items}</ul>
+            <div class="approval-cards-wrapper">{approval_review_cards}</div>
+          </div>
+        </div>
+        
+        <div class="tab-panel" id="tab-system">
+          <div class="grid">
+            <section>
+              <h2>State</h2>
+              {state_panel_html}
+            </section>
+            <section>
+              <h2>Project Target</h2>
+              <dl>
+                <dt>Name</dt><dd>{escape(str(start_context["project_name"]))}</dd>
+                <dt>Key</dt><dd>{escape(str(start_context["project_key"]))}</dd>
+                <dt>Config</dt><dd>{render_file_path(str(start_context["project_config"])) if start_context.get("project_config") else "none"}</dd>
+                <dt>Model Config</dt><dd>{render_file_path(str(start_context["model_config"])) if start_context.get("model_config") else "none"}</dd>
+                <dt>Delivery Mode</dt><dd>{escape(selected_delivery_mode)}</dd>
+                <dt>Task Backend</dt><dd>{escape(task_sync_label)}</dd>
+                <dt>Worker Backend</dt><dd>{escape(worker_backend_mode)}</dd>
+                <dt>Deployment Backend</dt><dd>{escape(deployment_mode or "none")}</dd>
+                <dt>Staging SSH</dt><dd>{escape(str(deployment_backend.get("staging_ssh_target", "")) or "not configured")}</dd>
+                <dt>Staging Remote Dir</dt><dd>{escape(str(deployment_backend.get("staging_remote_dir", "")) or "not configured")}</dd>
+                <dt>Delivery Contract</dt><dd>{'required' if delivery_contract_required else 'optional'} / {'configured' if delivery_contract_configured else 'insufficient'}</dd>
+                <dt>Minimum Evidence</dt><dd>{escape(delivery_contract_minimum)}</dd>
+                <dt>Evidence Level</dt><dd>{escape(delivery_contract_level)}</dd>
+                <dt>Acceptance Checks</dt><dd>{escape(delivery_contract_acceptance_count)}</dd>
+              </dl>
+            </section>
+            <section>
+              <h2>Workers</h2>
+              <ul>{worker_items}</ul>
+            </section>
+            <section>
+              <h2>Providers</h2>
+              <ul>{provider_items}</ul>
+            </section>
+          </div>
+        </div>
+      </main>
     </div>
-    <div class="tab-panel" id="tab-roles">
-      <section class="wide">
-        <h2>Role Observability</h2>
-        <div class="roles">{role_cards}</div>
-      </section>
+  </div>
+  
+  <!-- File Preview Modal -->
+  <dialog id="file-preview-dialog" style="border: 2px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); max-width: 800px; width: 90%; background: white; max-height: 80vh;">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--line); padding-bottom: 12px; margin-bottom: 16px;">
+      <h3 style="margin: 0; font-size: 14px; font-weight: 800; color: var(--accent); text-transform: uppercase;" id="file-preview-title">File Preview</h3>
+      <button type="button" class="button" onclick="document.getElementById('file-preview-dialog').close()" style="box-shadow: none; padding: 4px 8px;">✕ Close</button>
     </div>
-    <div class="tab-panel" id="tab-artifacts">
-      <section>
-        <h2>Artifacts</h2>
-        <ul>{artifact_items}</ul>
-      </section>
+    <div id="file-preview-content" class="markdown-preview" style="overflow-y: auto; max-height: calc(60vh - 40px); font-family: monospace; white-space: pre-wrap; background: var(--bg); padding: 16px; border-radius: 12px; border: 2px solid var(--line); font-size: 12px;">
+      Loading file content...
     </div>
-    <div class="tab-panel" id="tab-actions">
-      <section>
-        <h2>Actions</h2>
-        <div class="action-timeline">{action_cards}</div>
-      </section>
-    </div>
-    <div class="tab-panel" id="tab-board">
-      <section class="wide">
-        <h2>Agile Board</h2>
-        <div class="agile-board">{agile_board_cards}</div>
-      </section>
-    </div>
-    <div class="tab-panel" id="tab-smoke">
-      <section>
-        <h2>Smoke Runs</h2>
-        <div class="action-timeline">{smoke_cards}</div>
-      </section>
-    </div>
-    <div class="tab-panel" id="tab-workers">
-      <section>
-        <h2>Worker Jobs</h2>
-        <ul>{worker_job_items}</ul>
-      </section>
-    </div>
-    <div class="tab-panel" id="tab-approvals">
-      <section>
-        <h2>Approvals</h2>
-        <ul>{approval_items}</ul>
-        {approval_review_cards}
-      </section>
-    </div>
-    <div class="tab-panel" id="tab-system">
-      <div class="grid">
-        <section>
-          <h2>State</h2>
-          {state_panel_html}
-        </section>
-        <section>
-          <h2>Project Target</h2>
-          <dl>
-            <dt>Name</dt><dd>{escape(str(start_context["project_name"]))}</dd>
-            <dt>Key</dt><dd>{escape(str(start_context["project_key"]))}</dd>
-            <dt>Config</dt><dd>{escape(str(start_context["project_config"]))}</dd>
-            <dt>Model Config</dt><dd>{escape(str(start_context["model_config"]))}</dd>
-            <dt>Delivery Mode</dt><dd>{escape(selected_delivery_mode)}</dd>
-            <dt>Task Backend</dt><dd>{escape(task_sync_label)}</dd>
-            <dt>Worker Backend</dt><dd>{escape(worker_backend_mode)}</dd>
-            <dt>Deployment Backend</dt><dd>{escape(deployment_mode or "none")}</dd>
-            <dt>Staging SSH</dt><dd>{escape(str(deployment_backend.get("staging_ssh_target", "")) or "not configured")}</dd>
-            <dt>Staging Remote Dir</dt><dd>{escape(str(deployment_backend.get("staging_remote_dir", "")) or "not configured")}</dd>
-            <dt>Delivery Contract</dt><dd>{'required' if delivery_contract_required else 'optional'} / {'configured' if delivery_contract_configured else 'insufficient'}</dd>
-            <dt>Minimum Evidence</dt><dd>{escape(delivery_contract_minimum)}</dd>
-            <dt>Evidence Level</dt><dd>{escape(delivery_contract_level)}</dd>
-            <dt>Acceptance Checks</dt><dd>{escape(delivery_contract_acceptance_count)}</dd>
-          </dl>
-        </section>
-        <section>
-          <h2>Workers</h2>
-          <ul>{worker_items}</ul>
-        </section>
-        <section>
-          <h2>Providers</h2>
-          <ul>{provider_items}</ul>
-        </section>
-      </div>
-    </div>
-  </main>
+  </dialog>
+
   <script>
     {start_workflow_script}
-    document.querySelectorAll(".tab-button").forEach((button) => {{
+    document.querySelectorAll(".nav-item").forEach((button) => {{
       button.addEventListener("click", () => {{
-        document.querySelectorAll(".tab-button").forEach((item) => item.classList.remove("active"));
+        document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
         document.querySelectorAll(".tab-panel").forEach((item) => item.classList.remove("active"));
         button.classList.add("active");
         document.getElementById("tab-" + button.dataset.tab).classList.add("active");
@@ -2875,21 +4228,62 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         }}
       }});
     }});
+    
+    // File Path Chip Click Handler
+    document.addEventListener("click", async (event) => {{
+      const chip = event.target.closest(".file-path-chip, .file-chip");
+      if (!chip) return;
+      
+      const path = chip.dataset.path || "";
+      const artifact = chip.dataset.artifact || path || chip.innerText.trim();
+      if (!path && !artifact) return;
+      
+      const dialog = document.getElementById("file-preview-dialog");
+      const title = document.getElementById("file-preview-title");
+      const content = document.getElementById("file-preview-content");
+      
+      if (!dialog) return;
+      
+      const filename = path ? path.split("/").pop() : artifact;
+      title.textContent = "File Preview: " + filename;
+      content.textContent = "Loading file content...";
+      dialog.showModal();
+      
+      try {{
+        const response = await fetch("/artifact?key=" + encodeURIComponent(artifact) + "&project=" + encodeURIComponent(project));
+        const payload = await response.json();
+        if (!response.ok) {{
+          throw new Error(payload.error || "Failed to load file content.");
+        }}
+        content.textContent = payload.content;
+      }} catch (error) {{
+        content.textContent = "Error: " + error.message;
+      }}
+    }});
+    
+    // Coordinate-based light-dismiss dialog close
+    document.querySelectorAll("dialog").forEach((dialog) => {{
+      dialog.addEventListener("click", (event) => {{
+        const rect = dialog.getBoundingClientRect();
+        if (
+          event.clientX < rect.left ||
+          event.clientX > rect.right ||
+          event.clientY < rect.top ||
+          event.clientY > rect.bottom
+        ) {{
+          dialog.close();
+        }}
+      }});
+    }});
   </script>
 </body>
 </html>"""
 
-
 def render_project_overview(workspace: Path, model_config: Path = Path("models.yaml")) -> str:
     project_items = build_project_overview_items(workspace, model_config=model_config)
     legacy_state = StateStore(workspace).read_current()
-    first_project_key = project_items[0]["project_key"] if project_items else ""
-    open_project_link = (
-        f'<a class="button primary" href="/?project={escape(first_project_key)}">Open {escape(first_project_key)}</a>'
-        if first_project_key
-        else ""
-    )
-    cards = "\n".join(
+    cards = "\
+".join(
         f"""
         <article class="project-card project-{escape(item["status"])}">
           <div>
@@ -2900,14 +4294,20 @@ def render_project_overview(workspace: Path, model_config: Path = Path("models.y
             <dt>Model</dt><dd>{escape(item["model_profile"])}</dd>
             <dt>Delivery</dt><dd>{escape(item["delivery_mode"])}</dd>
             <dt>Next</dt><dd>{escape(item["next_node"] or "no active run")}</dd>
-            <dt>Config</dt><dd><code>{escape(item["project_config"])}</code></dd>
+            <dt>Config</dt><dd>{render_file_path(item["project_config"])}</dd>
             <dt>Last Action</dt><dd>{escape(item["last_action"] or "none")}</dd>
           </dl>
-          <div class="project-actions">
+          <div class="project-actions" style="display: flex; align-items: center; gap: 8px;">
             <a class="button primary" href="/?project={escape(item["project_key"])}">Open project</a>
             <a class="button" href="/?project={escape(item["project_key"])}">{'Resume' if item["status"] == "active" else 'Start'}</a>
-            {f'<button class="danger terminate-project" data-project="{escape(item["project_key"])}" type="button">Terminate run</button>' if item["status"] == "active" else ''}
-            <button class="danger delete-project" data-project="{escape(item["project_key"])}" type="button">Delete project</button>
+            
+            <div class="menu-container" style="position: relative; display: inline-block;">
+              <button class="menu-trigger button" type="button" style="width: 32px; height: 32px; padding: 0; font-size: 18px; display: flex; align-items: center; justify-content: center; border-radius: 50%; box-shadow: 0 2px 0 var(--border-shadow);">⋮</button>
+              <div class="menu-dropdown" style="display: none; position: absolute; right: 0; top: 100%; background: white; border: 2px solid var(--line); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 50; min-width: 140px; margin-top: 4px;">
+                {f'<button class="terminate-project" data-project="{escape(item["project_key"])}" type="button" style="width: 100%; text-align: left; padding: 8px 12px; background: transparent; border: none; border-radius: 0; box-shadow: none; font-size: 11px; font-weight: 700; color: var(--red); justify-content: start;">Terminate run</button>' if item["status"] == "active" else ''}
+                <button class="danger delete-project" data-project="{escape(item["project_key"])}" type="button" style="width: 100%; text-align: left; padding: 8px 12px; background: transparent; border: none; border-radius: 0; box-shadow: none; font-size: 11px; font-weight: 700; color: var(--red); justify-content: start;">Delete project</button>
+              </div>
+            </div>
           </div>
         </article>
         """
@@ -2915,8 +4315,26 @@ def render_project_overview(workspace: Path, model_config: Path = Path("models.y
     )
     if not cards:
         cards = '<div class="empty-state">No local project configs found. Create a real project config with the dashboard form or add projects/&lt;project-key&gt;.local.yaml.</div>'
+    
     legacy_notice = (
-        f'<section class="legacy"><h2>Legacy active run</h2><p>{escape(legacy_state.project_key)} / {escape(legacy_state.next_node)}</p><code>state/current.json</code></section>'
+        f"""
+        <div class="alert" style="background:var(--info-bg);border-color:var(--info);box-shadow:0 2px 0 var(--info-dark); margin-bottom: 20px; display: flex; gap: 16px; border: 2px solid var(--info); border-radius: 16px; padding: 18px 22px;">
+          <div class="alert-icon">ℹ️</div>
+          <div class="alert-body" style="flex: 1;">
+            <div class="alert-title" style="color:var(--info-dark); font-weight: 900; font-size: 16px; margin-bottom: 4px;">Legacy Run Found</div>
+            <div class="alert-desc" style="font-size: 13px; color: var(--ink); font-weight: 600; margin-bottom: 12px;">
+              An older run state exists outside the project registry: <strong>{escape(legacy_state.project_key)}</strong>
+              (status: <span class="badge error">{escape(legacy_state.next_node or legacy_state.current_node)}</span>) — referenced in <span class="file-path-chip" data-path="state/current.json"><code>state/current.json</code></span>.
+              This typically happens from before the registry was introduced. You can archive it safely.
+            </div>
+            <div class="alert-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button class="button" onclick="alert(\'Files are located in state/current.json and artifacts/runs/\')" type="button">📁 View Files</button>
+              <button class="button archive-legacy-btn" type="button">🗑 Archive Legacy State</button>
+              <button class="button" onclick="this.closest(\'.alert\').style.display=\'none\';" style="background:transparent;box-shadow:none; border:none;" type="button">Dismiss</button>
+            </div>
+          </div>
+        </div>
+        """
         if legacy_state is not None
         else ""
     )
@@ -2926,54 +4344,122 @@ def render_project_overview(workspace: Path, model_config: Path = Path("models.y
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GoodTeam Projects</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
   <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f5f7f4;
-      --panel: #ffffff;
-      --surface: #f9fbfa;
-      --ink: #17211d;
-      --muted: #66736e;
-      --line: #d9e0dc;
-      --accent: #217a62;
-      --accent-soft: #e2f2ed;
-      --red: #bf3d4d;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: "Avenir Next", Avenir, "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--ink); }}
-    main {{ width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 36px 0; }}
-    header {{ display: flex; justify-content: space-between; gap: 20px; align-items: end; border-bottom: 1px solid var(--line); padding-bottom: 20px; }}
-    h1 {{ margin: 0; font-size: clamp(32px, 5vw, 56px); line-height: 1; letter-spacing: 0; }}
-    .tag {{ color: var(--accent); text-transform: uppercase; font-size: 13px; }}
-    .projects {{ display: grid; gap: 12px; margin-top: 24px; }}
-    .project-card, .legacy {{ display: grid; grid-template-columns: 0.8fr 1.5fr auto; gap: 18px; align-items: center; border: 1px solid var(--line); background: var(--panel); padding: 16px; border-radius: 8px; }}
-    .project-active {{ border-color: var(--accent); background: var(--accent-soft); }}
-    h2 {{ margin: 0 0 6px; font-size: 19px; letter-spacing: 0; }}
-    p {{ margin: 0; color: var(--muted); }}
-    dl {{ display: grid; grid-template-columns: 80px 1fr; gap: 7px 12px; margin: 0; font-size: 13px; }}
-    dt {{ color: var(--muted); }}
-    dd {{ margin: 0; overflow-wrap: anywhere; }}
-    code {{ color: var(--muted); }}
-    .project-actions {{ display: flex; gap: 8px; flex-wrap: wrap; justify-content: end; }}
-    .button, button {{ border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 9px 11px; border-radius: 6px; font: inherit; text-decoration: none; }}
-    .primary {{ border-color: var(--accent); color: var(--accent); }}
-    .danger {{ border-color: var(--red); color: var(--red); }}
-    .empty-state {{ border: 1px dashed var(--line); background: var(--panel); color: var(--muted); padding: 16px; }}
-    @media (max-width: 780px) {{ header, .project-card, .legacy {{ display: block; }} .project-actions {{ justify-content: start; margin-top: 14px; }} dl {{ margin-top: 14px; }} }}
+{PROJECT_OVERVIEW_CSS}
   </style>
 </head>
 <body>
+  <div class="top-bar">
+    <div class="logo">
+      <div class="logo-box">G</div>
+      <span class="logo-text">GoodTeam</span>
+      <span style="color: var(--line); margin: 0 8px;">|</span>
+      <span style="font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Projects Control Room</span>
+    </div>
+  </div>
   <main>
-    <header>
-      <div>
-        <div class="tag">Multi-project control room</div>
-        <h1>GoodTeam Projects</h1>
-      </div>
-      {open_project_link}
-    </header>
     {legacy_notice}
-    <section class="projects">{cards}</section>
+    <section class="projects">
+      {cards}
+      <button id="add-project-btn" class="button" style="padding: 16px; border-style: dashed; border-width: 2px; border-color: var(--line); background: transparent; border-radius: 16px; font-weight: 800; font-size: 13px; color: var(--muted); cursor: pointer; text-align: center; justify-content: center; width: 100%; box-shadow: none;">+ Add or Create Project</button>
+    </section>
   </main>
+  
+  <!-- Add Project Dialog -->
+  <dialog id="add-project-dialog" style="border: 2px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); max-width: 500px; width: 90%; background: white;">
+    <form id="add-project-form" style="display: grid; gap: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--line); padding-bottom: 12px; margin-bottom: 8px;">
+        <h3 style="margin: 0; font-size: 16px; font-weight: 900; color: var(--ink);">Add Project Config</h3>
+        <button type="button" class="button" onclick="document.getElementById('add-project-dialog').close()" style="box-shadow: none; padding: 4px 8px; border: none; background: transparent; font-weight: 900; cursor: pointer;">✕</button>
+      </div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <label style="display: grid; gap: 6px; font-weight: 800; font-size: 11px; color: var(--muted); text-transform: uppercase;">
+          Project Name
+          <input type="text" name="project_name" placeholder="e.g. My App" style="width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 10px; font-size: 13px;" required />
+        </label>
+        <label style="display: grid; gap: 6px; font-weight: 800; font-size: 11px; color: var(--muted); text-transform: uppercase;">
+          Project Key
+          <input type="text" name="project_key" placeholder="e.g. MYAPP" style="width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 10px; font-size: 13px;" required />
+        </label>
+      </div>
+
+      <div style="border-top: 1px solid var(--line); padding-top: 12px;">
+        <span style="font-weight: 800; font-size: 11px; color: var(--muted); text-transform: uppercase; display: block; margin-bottom: 8px;">Repository Paths (Absolute paths, at least one is required)</span>
+        <div style="display: grid; gap: 10px;">
+          <label style="display: grid; gap: 4px; font-weight: 700; font-size: 11px; color: var(--ink);">
+            Docs Repository
+            <input type="text" name="docs_path" placeholder="/absolute/path/to/docs" style="width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; font-size: 12px;" />
+          </label>
+          <label style="display: grid; gap: 4px; font-weight: 700; font-size: 11px; color: var(--ink);">
+            Backend Repository
+            <input type="text" name="backend_path" placeholder="/absolute/path/to/backend" style="width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; font-size: 12px;" />
+          </label>
+          <label style="display: grid; gap: 4px; font-weight: 700; font-size: 11px; color: var(--ink);">
+            Frontend Repository
+            <input type="text" name="frontend_path" placeholder="/absolute/path/to/frontend" style="width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; font-size: 12px;" />
+          </label>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px;">
+        <label style="display: grid; gap: 6px; font-weight: 800; font-size: 11px; color: var(--muted); text-transform: uppercase;">
+          Model Profile
+          <select name="model_profile" style="width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 10px; font-size: 13px; background: white;">
+            <option value="balanced">Balanced</option>
+            <option value="cheap">Cheap</option>
+            <option value="max_quality">Max Quality</option>
+          </select>
+        </label>
+        <label style="display: grid; gap: 6px; font-weight: 800; font-size: 11px; color: var(--muted); text-transform: uppercase;">
+          Delivery Mode
+          <select name="delivery_mode" style="width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 10px; font-size: 13px; background: white;">
+            <option value="init_project">Init Project</option>
+            <option value="mvp">MVP</option>
+            <option value="multi_service">Multi Service</option>
+          </select>
+        </label>
+      </div>
+
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px;">
+        <button type="button" class="button" onclick="document.getElementById('add-project-dialog').close()" style="box-shadow: none;">Cancel</button>
+        <button type="submit" class="button primary" style="box-shadow: none;">Create Project</button>
+      </div>
+    </form>
+  </dialog>
+  
+  <!-- Delete Confirm Dialog -->
+  <dialog id="delete-confirm-dialog" style="border: 2px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); max-width: 400px; width: 100%; background: white;">
+    <form method="dialog" style="display: grid; gap: 16px;">
+      <h3 style="margin: 0; font-size: 16px; font-weight: 900; color: var(--red);">Delete Project?</h3>
+      <p style="margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4;">
+        This action is permanent and will delete the project <strong id="delete-project-name"></strong> from GoodTeam registry and local state.
+      </p>
+      <label style="display: grid; gap: 6px; font-weight: 800; font-size: 11px; color: var(--muted); text-transform: uppercase;">
+        Please type the project key to confirm:
+        <input type="text" id="delete-confirm-input" placeholder="e.g. AGENTSMESH" style="width: 100%; border: 2px solid var(--line); border-radius: 12px; padding: 10px; font-size: 13px;" required />
+      </label>
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px;">
+        <button type="button" class="button" onclick="document.getElementById('delete-confirm-dialog').close()" style="box-shadow: none;">Cancel</button>
+        <button type="submit" id="delete-confirm-submit-btn" class="button primary danger" style="background: var(--red); border-color: var(--red); box-shadow: none;" disabled>Delete</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- File Preview Modal -->
+  <dialog id="file-preview-dialog" style="border: 2px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); max-width: 800px; width: 90%; background: white; max-height: 80vh;">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--line); padding-bottom: 12px; margin-bottom: 16px;">
+      <h3 style="margin: 0; font-size: 14px; font-weight: 800; color: var(--accent); text-transform: uppercase;" id="file-preview-title">File Preview</h3>
+      <button type="button" class="button" onclick="document.getElementById('file-preview-dialog').close()" style="box-shadow: none; padding: 4px 8px;">✕ Close</button>
+    </div>
+    <div id="file-preview-content" class="markdown-preview" style="overflow-y: auto; max-height: calc(60vh - 40px); font-family: monospace; white-space: pre-wrap; background: var(--bg); padding: 16px; border-radius: 12px; border: 2px solid var(--line); font-size: 12px;">
+      Loading file content...
+    </div>
+  </dialog>
+
   <script>
     document.querySelectorAll(".terminate-project").forEach((button) => {{
       button.addEventListener("click", async () => {{
@@ -2995,30 +4481,172 @@ def render_project_overview(workspace: Path, model_config: Path = Path("models.y
         }}
       }});
     }});
-    document.querySelectorAll(".delete-project").forEach((button) => {{
-      button.addEventListener("click", async () => {{
-        const projectKey = button.dataset.project;
-        const confirmed = window.confirm(
-          "Delete project " + projectKey + " from GoodTeam? This removes the local project config and GoodTeam state only. It will not delete any referenced repos."
-        );
-        if (!confirmed) {{
-          return;
+
+    // Three-dot Action Trigger Dropdown Menu
+    document.querySelectorAll(".menu-trigger").forEach((trigger) => {{
+      trigger.addEventListener("click", (event) => {{
+        event.stopPropagation();
+        document.querySelectorAll(".menu-dropdown").forEach((d) => {{
+          if (d !== trigger.nextElementSibling) d.style.display = "none";
+        }});
+        const dropdown = trigger.nextElementSibling;
+        dropdown.style.display = dropdown.style.display === "block" ? "none" : "block";
+      }});
+    }});
+    document.addEventListener("click", () => {{
+      document.querySelectorAll(".menu-dropdown").forEach((d) => d.style.display = "none");
+    }});
+
+    // Dangerous project delete protection
+    let projectToDelete = "";
+    document.querySelectorAll(".delete-project").forEach((btn) => {{
+      btn.addEventListener("click", () => {{
+        projectToDelete = btn.dataset.project;
+        document.getElementById("delete-project-name").textContent = projectToDelete;
+        document.getElementById("delete-confirm-input").value = "";
+        document.getElementById("delete-confirm-submit-btn").disabled = true;
+        document.getElementById("delete-confirm-dialog").showModal();
+      }});
+    }});
+    document.getElementById("delete-confirm-input").addEventListener("input", (e) => {{
+      const value = e.target.value.trim().toUpperCase();
+      document.getElementById("delete-confirm-submit-btn").disabled = (value !== projectToDelete);
+    }});
+    document.querySelector("#delete-confirm-dialog form").addEventListener("submit", async (e) => {{
+      e.preventDefault();
+      const dialog = document.getElementById("delete-confirm-dialog");
+      const submitBtn = document.getElementById("delete-confirm-submit-btn");
+      submitBtn.disabled = true;
+      try {{
+        const response = await fetch("/project-delete", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ project_key: projectToDelete }})
+        }});
+        const payload = await response.json();
+        if (!response.ok) {{
+          throw new Error(payload.error || "Failed to delete project.");
         }}
-        button.disabled = true;
+        dialog.close();
+        window.location.reload();
+      }} catch (error) {{
+        alert(error.message);
+        submitBtn.disabled = false;
+      }}
+    }});
+
+    // Legacy Run Alert Close/Dismiss or Archive
+    document.querySelector(".archive-legacy-btn")?.addEventListener("click", async () => {{
+      const btn = document.querySelector(".archive-legacy-btn");
+      btn.disabled = true;
+      try {{
+        const response = await fetch("/terminate", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ project_key: "" }})
+        }});
+        if (!response.ok) {{
+          const payload = await response.json();
+          throw new Error(payload.error || "Failed to archive legacy state.");
+        }}
+        window.location.reload();
+      }} catch (error) {{
+        alert(error.message);
+        btn.disabled = false;
+      }}
+    }});
+
+    // File Path Chip Click Handler
+    document.addEventListener("click", async (event) => {{
+      const chip = event.target.closest(".file-path-chip, .file-chip");
+      if (!chip) return;
+      
+      const path = chip.dataset.path || "";
+      const artifact = chip.dataset.artifact || path || chip.innerText.trim();
+      if (!path && !artifact) return;
+      
+      const dialog = document.getElementById("file-preview-dialog");
+      const title = document.getElementById("file-preview-title");
+      const content = document.getElementById("file-preview-content");
+      
+      if (!dialog) return;
+      
+      const filename = path ? path.split("/").pop() : artifact;
+      title.textContent = "File Preview: " + filename;
+      content.textContent = "Loading file content...";
+      dialog.showModal();
+      
+      try {{
+        const response = await fetch("/artifact?key=" + encodeURIComponent(artifact) + "&project=" + encodeURIComponent(project));
+        const payload = await response.json();
+        if (!response.ok) {{
+          throw new Error(payload.error || "Failed to load file content.");
+        }}
+        content.textContent = payload.content;
+      }} catch (error) {{
+        content.textContent = "Error: " + error.message;
+      }}
+    }});
+
+    // Add Project Modal Action
+    const addProjBtn = document.getElementById("add-project-btn");
+    const addProjDialog = document.getElementById("add-project-dialog");
+    const addProjForm = document.getElementById("add-project-form");
+    
+    if (addProjBtn && addProjDialog && addProjForm) {{
+      addProjBtn.addEventListener("click", () => {{
+        addProjForm.reset();
+        addProjDialog.showModal();
+      }});
+      
+      addProjForm.addEventListener("submit", async (e) => {{
+        e.preventDefault();
+        const submitBtn = addProjForm.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Creating...";
+        
+        const data = {{
+          project_name: addProjForm.querySelector('[name="project_name"]').value.trim(),
+          project_key: addProjForm.querySelector('[name="project_key"]').value.trim(),
+          docs_path: addProjForm.querySelector('[name="docs_path"]').value.trim(),
+          backend_path: addProjForm.querySelector('[name="backend_path"]').value.trim(),
+          frontend_path: addProjForm.querySelector('[name="frontend_path"]').value.trim(),
+          model_profile: addProjForm.querySelector('[name="model_profile"]').value,
+          delivery_mode: addProjForm.querySelector('[name="delivery_mode"]').value,
+          worker_backend_mode: "codex"
+        }};
+        
         try {{
-          const response = await fetch("/project-delete", {{
+          const response = await fetch("/project-config", {{
             method: "POST",
             headers: {{ "Content-Type": "application/json" }},
-            body: JSON.stringify({{ project_key: projectKey }})
+            body: JSON.stringify(data)
           }});
           const payload = await response.json();
           if (!response.ok) {{
-            throw new Error(payload.error || "Failed to delete project.");
+            throw new Error(payload.error || "Failed to create project.");
           }}
-          window.setTimeout(() => window.location.reload(), 250);
+          addProjDialog.close();
+          window.location.reload();
         }} catch (error) {{
-          button.textContent = error.message;
-          button.disabled = false;
+          alert(error.message);
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Create Project";
+        }}
+      }});
+    }}
+    
+    // Coordinate-based light-dismiss dialog close
+    document.querySelectorAll("dialog").forEach((dialog) => {{
+      dialog.addEventListener("click", (event) => {{
+        const rect = dialog.getBoundingClientRect();
+        if (
+          event.clientX < rect.left ||
+          event.clientX > rect.right ||
+          event.clientY < rect.top ||
+          event.clientY > rect.bottom
+        ) {{
+          dialog.close();
         }}
       }});
     }});

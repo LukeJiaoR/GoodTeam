@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  --color-duo-green: #58CC02;
+  --color-duo-green-text: #3D8B00;
+  --color-duo-green-bg: #E8F9D9;
+  
+  --color-duo-blue: #1CB0F6;
+  --color-duo-blue-text: #0A7BAF;
+  --color-duo-blue-bg: #D0F0FF;
+  
+  --color-duo-orange: #FF9600;
+  --color-duo-orange-text: #B36B00;
+  --color-duo-orange-bg: #FFF0D4;
+  
+  --color-duo-red: #FF4B4B;
+  --color-duo-red-text: #EA2B2B;
+  --color-duo-red-bg: #FFE2E2;
+  
+  --color-duo-gray: #AFAFAF;
+  --color-duo-gray-text: #777777;
+  --color-duo-gray-bg: #F1F1F1;
+  
+  --color-duo-bg: #F7F7F7;
+  --color-duo-border: #E5E5E5;
+  --color-duo-shadow: #D1D1D1;
+  
+  --animate-pulse-slow: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+body {
+  background-color: var(--color-duo-bg);
+  color: #1a202c;
+  font-family: var(--font-sans);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbars for code and artifact elements */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-duo-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-duo-gray);
+}
+
+/* Duolingo button physical active state feedback */
+.duo-button-physics {
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.duo-button-physics:active {
+  transform: translateY(4px) !important;
+  box-shadow: 0 0 0 transparent !important;
+}
