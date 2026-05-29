@@ -778,6 +778,7 @@ def test_start_workflow_notifies_when_prd_approval_gate_is_ready(tmp_path, monke
     notifications = []
 
     def fake_notification(**kwargs):
+        kwargs.pop("workspace", None)
         notifications.append(kwargs)
         return {"status": "sent"}
 
@@ -837,6 +838,7 @@ def test_start_workflow_notifies_when_takeover_approval_gate_is_ready(tmp_path, 
     notifications = []
 
     def fake_notification(**kwargs):
+        kwargs.pop("workspace", None)
         notifications.append(kwargs)
         return {"status": "sent"}
 
@@ -1017,6 +1019,7 @@ def test_decide_approval_notifies_when_takeover_approval_generates_prd_gate(tmp_
     notifications = []
 
     def fake_notification(**kwargs):
+        kwargs.pop("workspace", None)
         notifications.append(kwargs)
         return {"status": "sent"}
 

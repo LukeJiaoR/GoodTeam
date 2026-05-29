@@ -72,7 +72,7 @@ def append_action(
         handle.write(json.dumps(event) + "\n")
 
 
-def notify_current_approval_gate(state: AgileDevState | None) -> dict[str, object]:
+def notify_current_approval_gate(state: AgileDevState | None, workspace: Path = Path(".")) -> dict[str, object]:
     gate = current_approval_gate(state)
     if state is None or not gate:
         return {"status": "skipped", "reason": "no approval gate"}
@@ -84,6 +84,7 @@ def notify_current_approval_gate(state: AgileDevState | None) -> dict[str, objec
             gate=gate,
             artifact_path=state.artifacts.get(artifact_key, ""),
             summary=f"GoodTeam is waiting for {gate.upper()} approval on {state.project_key}.",
+            workspace=workspace,
         )
     except Exception as exc:
         return {"status": "failed", "error": exc.__class__.__name__}
@@ -534,7 +535,7 @@ def start_workflow(
             artifact=artifact,
             artifact_path=artifact_path,
         )
-    notify_current_approval_gate(result)
+    notify_current_approval_gate(result, workspace=workspace)
     payload = asdict(result)
     payload["dry_run"] = False
     return payload
@@ -651,7 +652,19 @@ def decide_approval(*, workspace: Path, approval: str, decision: str, project_ke
         )
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
-    notify_current_approval_gate(state)
+    notify_current_approval_gate(state, workspace=workspace)
+
+    try:
+        from goodteam_os.telegram import update_active_tg_review_on_web_decision
+        update_active_tg_review_on_web_decision(
+            workspace=workspace,
+            project_key=key,
+            gate=approval,
+            decision=decision,
+        )
+    except Exception:
+        pass
+
     payload = asdict(state)
     payload["decision"] = str(approval_decision)
     return payload
@@ -749,7 +762,7 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
             artifact_path=state.artifacts.get(artifact, ""),
         )
 
-    notify_current_approval_gate(state)
+    notify_current_approval_gate(state, workspace=workspace)
     payload = asdict(state)
     payload["retried"] = True
     return payload

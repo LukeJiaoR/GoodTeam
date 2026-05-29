@@ -79,21 +79,37 @@ def test_send_approval_notification_posts_message_with_inline_keyboard(monkeypat
     assert result["enabled"] is True
     assert result["chat_id"] == "12345"
     assert result["gate"] == "prd"
+
+    session_id = result["session_id"]
+    expected_text = (
+        "🔔 *GoodTeam Approval Needed*\n"
+        "*Project*: CONTENTOPS\n"
+        "*Run*: run-1\n"
+        "*Gate*: PRD\n"
+        "*Summary*: ContentOps Studio v1 PRD is ready for review."
+    )
+    expected_keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ 快速批准", "callback_data": f"v1:A:{session_id}"},
+                {"text": "🔍 逐项 review", "callback_data": f"v1:R:{session_id}"},
+            ],
+            [
+                {"text": "❌ 拒绝", "callback_data": f"v1:J:{session_id}"},
+                {"text": "📖 完整报告", "url": "http://localhost:8788/?project=CONTENTOPS"},
+            ]
+        ]
+    }
+
     assert calls == [
         {
             "token": "secret-token",
             "method": "sendMessage",
             "params": {
                 "chat_id": "12345",
-                "text": (
-                    "GoodTeam approval needed\n"
-                    "Project: CONTENTOPS\n"
-                    "Run: run-1\n"
-                    "Gate: prd\n"
-                    "Artifact: /tmp/artifacts/runs/run-1/prd/prd.md\n"
-                    "Summary: ContentOps Studio v1 PRD is ready for review."
-                ),
-                "reply_markup": build_approval_keyboard(project_key="CONTENTOPS", run_id="run-1", gate="prd"),
+                "text": expected_text,
+                "parse_mode": "Markdown",
+                "reply_markup": expected_keyboard,
             },
         }
     ]
