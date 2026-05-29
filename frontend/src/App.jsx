@@ -356,7 +356,7 @@ export default function App() {
     if (!window.confirm(`Are you sure you want to terminate the active run for project ${key}?`)) return;
     setActionLoading(true);
     try {
-      const response = await fetch('/terminate', {
+      const response = await fetch('/api/terminate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_key: key }),
@@ -376,7 +376,7 @@ export default function App() {
     if (!window.confirm(`Delete project ${key} from GoodTeam? This removes the local project config and GoodTeam state only. It will not delete referenced repos.`)) return;
     setActionLoading(true);
     try {
-      const response = await fetch('/project-delete', {
+      const response = await fetch('/api/project-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_key: key }),
@@ -399,7 +399,7 @@ export default function App() {
   const handleRetryBlocked = async () => {
     setActionLoading(true);
     try {
-      const response = await fetch('/retry', {
+      const response = await fetch('/api/retry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_key: projectKey }),
@@ -428,7 +428,7 @@ export default function App() {
           .filter((parts) => parts.length === 2 && parts[0] && parts[1])
       );
 
-      const response = await fetch('/project-config', {
+      const response = await fetch('/api/project-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -486,7 +486,7 @@ export default function App() {
         .map((line) => line.trim())
         .filter(Boolean);
 
-      const response = await fetch('/start', {
+      const response = await fetch('/api/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -521,7 +521,7 @@ export default function App() {
   const handleApproveDecision = async (approvalKey, decision) => {
     setActionLoading(true);
     try {
-      const response = await fetch('/approve', {
+      const response = await fetch('/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -550,7 +550,7 @@ export default function App() {
     if (!editingArtifact) return;
     setActionLoading(true);
     try {
-      const response = await fetch('/artifact', {
+      const response = await fetch('/api/artifact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

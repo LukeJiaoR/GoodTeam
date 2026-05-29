@@ -56,6 +56,34 @@ The root dashboard is a multi-project overview. Open a project detail page with:
 http://localhost:8788/?project=<PROJECT_KEY>
 ```
 
+### Frontend-Backend Separation & Local Development
+
+GoodTeam OS operates under a clean frontend-backend separated architecture.
+
+#### 1. Backend Server
+The Python backend manages the APIs, workflow state transitions, and file system interactions:
+```bash
+# Start backend server on port 8788
+PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --port 8788
+```
+
+#### 2. Frontend Development (Independent Dev Server)
+The React dashboard runs as a separate dev server with proxy settings forwarding `/api/*` requests to the backend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open `http://localhost:5173/` in your browser. All operations (e.g., loading project overview, submitting approvals, starts, and edits) will route seamlessly through the dev server proxy to the backend.
+
+#### 3. Production Hosting (Backend Static File Serving)
+To deploy or host the React dashboard directly via the Python backend, compile the static files:
+```bash
+cd frontend
+npm run build
+```
+Once compiled to `frontend/dist/`, starting the backend server (`goodteam_os.cli serve`) will automatically serve the built React application on `http://localhost:8788/` (falling back to legacy template rendering if the directory is missing or unbuilt).
+
 ## Model Profiles
 
 Default role-to-model routing lives in `models.yaml`.

@@ -4724,13 +4724,77 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             project_key = query.get("project", [""])[0]
             if maybe_send_favicon_response(self, parsed.path):
                 return
-            if parsed.path == "/artifact":
+            if parsed.path in {"/artifact", "/api/artifact"}:
                 try:
                     artifact_key = query.get("key", [""])[0]
                     self._send_json(200, read_artifact(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return
+            if parsed.path == "/api/state":
+                try:
+                    if not project_key:
+                        legacy_state = StateStore(workspace).read_current()
+                        res_data = {
+                            "type": "overview",
+                            "project_items": build_project_overview_items(workspace),
+                            "legacy_state": asdict(legacy_state) if legacy_state is not None else None,
+                        }
+                    else:
+                        project_config = _project_config_for_key(workspace, project_key)
+                        start_context = build_start_console_context(workspace, project_config=project_config)
+                        state = resolve_dashboard_state(workspace, project_key=project_key)
+                        project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
+                        
+                        res_data = {
+                            "type": "project",
+                            "state": asdict(state) if state is not None else None,
+                            "start_context": start_context,
+                            "active_run": is_active_run(state),
+                            "role_observations": build_role_observations(state),
+                            "workflow_steps": build_workflow_steps(state),
+                            "approval_reviews": build_approval_reviews(state),
+                            "action_items": build_action_items(workspace, project_key=project_key),
+                            "smoke_run_items": build_smoke_run_items(workspace),
+                            "agile_board": build_agile_board(state),
+                            "worker_jobs": build_worker_job_items(project_root),
+                        }
+                    self._send_json(200, res_data)
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+
+            # Try serving from frontend/dist first
+            dist_dir = (workspace / "frontend" / "dist").resolve()
+            if not parsed.path.startswith("/api/"):
+                rel_path = parsed.path.lstrip("/")
+                if not rel_path or rel_path == "index.html":
+                    filepath = dist_dir / "index.html"
+                else:
+                    filepath = (dist_dir / rel_path).resolve()
+                
+                if filepath.is_file() and filepath.is_relative_to(dist_dir):
+                    try:
+                        import mimetypes
+                        content_type, _ = mimetypes.guess_type(str(filepath))
+                        if not content_type:
+                            if filepath.suffix == ".css":
+                                content_type = "text/css"
+                            elif filepath.suffix == ".js":
+                                content_type = "application/javascript"
+                            else:
+                                content_type = "application/octet-stream"
+                        body = filepath.read_bytes()
+                        self.send_response(200)
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+                    except Exception:
+                        pass
+
             if parsed.path not in {"/", "/index.html"}:
                 self.send_error(404)
                 return
@@ -4743,18 +4807,23 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if self.path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/open-path"}:
+            normalized_path = self.path
+            if normalized_path.startswith("/api/"):
+                normalized_path = normalized_path[4:]
+
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/open-path"}:
                 self.send_error(404)
                 return
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length)
                 request = json.loads(raw_body.decode("utf-8") or "{}")
-                if self.path == "/start":
+                if normalized_path == "/start":
                     result = start_workflow(
                         workspace=workspace,
                         idea=str(request.get("idea", "")),
@@ -4767,36 +4836,36 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         role_model_overrides=[str(value) for value in request.get("role_model_overrides", [])],
                         dry_run=bool(request.get("dry_run", False)),
                     )
-                elif self.path == "/approve":
+                elif normalized_path == "/approve":
                     result = decide_approval(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                         approval=str(request.get("approval", "")),
                         decision=str(request.get("decision", "")),
                     )
-                elif self.path == "/artifact":
+                elif normalized_path == "/artifact":
                     result = save_artifact(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
                         content=str(request.get("content", "")),
                     )
-                elif self.path == "/terminate":
+                elif normalized_path == "/terminate":
                     result = terminate_project_run(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                     )
-                elif self.path == "/project-delete":
+                elif normalized_path == "/project-delete":
                     result = delete_project(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                     )
-                elif self.path == "/retry":
+                elif normalized_path == "/retry":
                     result = retry_blocked_workflow(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                     )
-                elif self.path == "/open-path":
+                elif normalized_path == "/open-path":
                     result = open_path_in_file_manager(
                         workspace=workspace,
                         relative_path=str(request.get("path", "")),
@@ -4836,11 +4905,19 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             except Exception as exc:
                 self._send_json(400, {"error": str(exc)})
 
+        def do_OPTIONS(self) -> None:
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.end_headers()
+
         def _send_json(self, status: int, payload: dict[str, object]) -> None:
             body = json.dumps(payload, indent=2).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
 
