@@ -832,6 +832,33 @@ def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
     }
 
 
+def open_path_in_file_manager(*, workspace: Path, relative_path: str) -> dict[str, object]:
+    target_path = (workspace / relative_path).resolve()
+    if not str(target_path).startswith(str(workspace.resolve())):
+        raise ValueError("Access denied: Path is outside workspace.")
+
+    if not target_path.exists():
+        if target_path.parent.exists():
+            target_path = target_path.parent
+        else:
+            target_path = workspace.resolve()
+
+    import sys
+    import subprocess
+    path_str = str(target_path)
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", path_str], check=False)
+        elif sys.platform == "win32":
+            os.startfile(path_str)
+        else:
+            subprocess.run(["xdg-open", path_str], check=False)
+        return {"opened": True, "path": path_str}
+    except Exception as exc:
+        return {"opened": False, "error": str(exc)}
+
+
+
 def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]:
     if state is None:
         return []
@@ -4328,7 +4355,7 @@ def render_project_overview(workspace: Path, model_config: Path = Path("models.y
               This typically happens from before the registry was introduced. You can archive it safely.
             </div>
             <div class="alert-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
-              <button class="button" onclick="alert(\'Files are located in state/current.json and artifacts/runs/\')" type="button">📁 View Files</button>
+              <button class="button view-files-btn" type="button">📁 View Files</button>
               <button class="button archive-legacy-btn" type="button">🗑 Archive Legacy State</button>
               <button class="button" onclick="this.closest(\'.alert\').style.display=\'none\';" style="background:transparent;box-shadow:none; border:none;" type="button">Dismiss</button>
             </div>
@@ -4556,6 +4583,27 @@ def render_project_overview(workspace: Path, model_config: Path = Path("models.y
       }}
     }});
 
+    // View Files Button Action
+    document.querySelector(".view-files-btn")?.addEventListener("click", async () => {{
+      const btn = document.querySelector(".view-files-btn");
+      btn.disabled = true;
+      try {{
+        const response = await fetch("/open-path", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ path: "artifacts/runs" }})
+        }});
+        if (!response.ok) {{
+          const payload = await response.json();
+          throw new Error(payload.error || "Failed to open folder.");
+        }}
+      }} catch (error) {{
+        alert(error.message);
+      }} finally {{
+        btn.disabled = false;
+      }}
+    }});
+
     // File Path Chip Click Handler
     document.addEventListener("click", async (event) => {{
       const chip = event.target.closest(".file-path-chip, .file-chip");
@@ -4686,7 +4734,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if self.path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry"}:
+            if self.path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/open-path"}:
                 self.send_error(404)
                 return
             try:
@@ -4734,6 +4782,11 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     result = retry_blocked_workflow(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
+                    )
+                elif self.path == "/open-path":
+                    result = open_path_in_file_manager(
+                        workspace=workspace,
+                        relative_path=str(request.get("path", "")),
                     )
                 else:
                     result = create_local_project_config(
