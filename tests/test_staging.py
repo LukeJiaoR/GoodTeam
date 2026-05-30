@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from goodteam_os.staging import (

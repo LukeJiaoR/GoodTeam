@@ -23,7 +23,6 @@ from goodteam_os.projects import check_project_target, load_project_target
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.staging import (
     deployment_backend_config,
-    delivery_contract_config as load_delivery_contract_config,
     delivery_contract_report,
     run_staging_backend,
 )
@@ -2806,7 +2805,6 @@ code { color: var(--muted); font-family: monospace; font-size: 11px; }
 def build_recent_activity_html(actions: list[dict[str, str]]) -> str:
     html_items = []
     for action in actions[:6]:
-        actor = action.get("actor", "").lower()
         action_type = action.get("action", "")
         if "approve" in action_type or "approved" in action.get("decision", ""):
             icon = "✓"
@@ -3298,26 +3296,6 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     if not role_cards:
         role_cards = '<div class="empty-state">No role state available because there is no active run.</div>'
-    current_step = next(
-        (step for step in workflow_steps if step["status"] in {"active", "ready", "review-needed", "blocked"}),
-        None,
-    )
-    current_work_html = (
-        f"""
-        <section>
-          <h2>Current Work</h2>
-          <dl>
-            <dt>Step</dt><dd>{escape(current_step["title"])}</dd>
-            <dt>Status</dt><dd>{escape(current_step["status_label"])}</dd>
-            <dt>Roles</dt><dd>{escape(current_step["roles"])}</dd>
-            <dt>Artifact</dt><dd>{escape(current_step["artifact"] or "none")}</dd>
-            <dt>Feedback</dt><dd>{escape(current_step["feedback"])}</dd>
-          </dl>
-        </section>
-        """
-        if current_step is not None
-        else ""
-    )
     waterfall_cards = "\
 ".join(
         f"""
@@ -3345,7 +3323,6 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     task_backend = normalize_task_backend(start_context.get("task_backend", {"mode": "local", "sync": []}))
     task_sync_values = [str(value) for value in task_backend.get("sync", [])]
     task_sync_label = "Local only" if not task_sync_values else "Local + " + ", ".join(task_sync_values)
-    plane_config = dict(task_backend.get("plane", {})) if isinstance(task_backend.get("plane", {}), dict) else {}
     worker_backend = normalize_worker_backend(start_context.get("worker_backend", {"mode": "codex"}))
     worker_backend_mode = str(worker_backend.get("mode", "codex"))
     deployment_backend = dict(start_context.get("deployment_backend", {"mode": ""}))
@@ -3414,17 +3391,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             ("multi_service", "Multi-service product"),
         ]
     )
-    role_overrides = dict(start_context.get("role_model_overrides", {}))
-    role_overrides_text = "\
-".join(f"{role}={model}" for role, model in sorted(role_overrides.items()))
     worker_model = worker_model_label(state, start_context)
-    target_for_contract = load_project_target(Path(str(start_context["project_config"]))) if str(start_context.get("project_config", "")) and Path(str(start_context["project_config"])).is_file() else {}
-    delivery_contract_config_for_form = load_delivery_contract_config(target_for_contract) if target_for_contract else {"required": False, "minimum_evidence": "infrastructure", "fatal_output_patterns": [], "staging_acceptance": []}
-    delivery_contract_patterns_text = "\n".join(str(pattern) for pattern in delivery_contract_config_for_form.get("fatal_output_patterns", []))
-    delivery_contract_acceptance_text = "\n".join(
-        f"{item.get('id', '')} | {item.get('type', 'ssh_command')} | {item.get('command', '')}"
-        for item in delivery_contract_config_for_form.get("staging_acceptance", [])
-    )
     start_workflow_section = ""
     if state is None:
         start_workflow_section = f"""
@@ -3708,19 +3675,19 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     status_class_norm = str(header_status).lower().strip()
     is_complete = status_class_norm in {'complete', 'done', 'pass', 'success'}
     if is_complete:
-        status_badge_html = f"""
+        status_badge_html = """
         <div class="top-status-badge status-complete">
           <span>✅ COMPLETE</span>
         </div>
         """
     elif status_class_norm == 'approved':
-        status_badge_html = f"""
+        status_badge_html = """
         <div class="top-status-badge status-approved">
           <span>✓ APPROVED</span>
         </div>
         """
     elif status_class_norm == 'pending':
-        status_badge_html = f"""
+        status_badge_html = """
         <div class="top-status-badge status-pending">
           <span>⏳ PENDING</span>
         </div>
@@ -3861,12 +3828,18 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     if state is not None:
         if state.next_node and state.next_node.startswith("await_") and state.next_node.endswith("_approval"):
             gate = state.next_node[6:-9]
-            if gate == "takeover": current_seq = 1
-            elif gate == "prd": current_seq = 3
-            elif gate == "rfc": current_seq = 5
-            elif gate == "staging": current_seq = 11
-            elif gate == "release": current_seq = 12
-            else: current_seq = node_sequence.get(state.next_node, 1)
+            if gate == "takeover":
+                current_seq = 1
+            elif gate == "prd":
+                current_seq = 3
+            elif gate == "rfc":
+                current_seq = 5
+            elif gate == "staging":
+                current_seq = 11
+            elif gate == "release":
+                current_seq = 12
+            else:
+                current_seq = node_sequence.get(state.next_node, 1)
         else:
             current_seq = node_sequence.get(state.current_node, 1)
             
@@ -3914,7 +3887,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         if review["review_roles"]:
             review_roles_info = f"<strong>Reviewers:</strong> {escape(', '.join(review['review_roles']))} ·"
         artifact_basename = Path(review["artifact_path"]).name if review["artifact_path"] else review["artifact"]
-        read_report_btn = f'<button class="button" onclick="document.querySelector(\'[data-tab=&quot;approvals&quot;]\').click();" type="button">📖 Read Report</button>' if review["artifact_path"] else ""
+        read_report_btn = '<button class="button" onclick="document.querySelector(\'[data-tab=&quot;approvals&quot;]\').click();" type="button">📖 Read Report</button>' if review["artifact_path"] else ""
         action_required_alert_html = f"""
         <div class="alert">
           <div class="alert-icon">⏳</div>

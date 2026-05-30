@@ -3,10 +3,10 @@ import os
 import shlex
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Any
+from typing import Callable
 
 from goodteam_os.state import StateStore
 from goodteam_os.tasks import LocalTaskStore
@@ -150,7 +150,7 @@ def _execute_project_cycle(
     smoke_task_id = _ensure_smoke_task(project, cycle)
     run["task_id"] = smoke_task_id
     try:
-        payload = start_workflow(
+        start_workflow(
             workspace=workspace,
             idea=project.idea,
             project_key=project.project_key,

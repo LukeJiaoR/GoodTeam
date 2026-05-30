@@ -1,7 +1,4 @@
-import json
-from pathlib import Path
 from datetime import datetime, UTC, timedelta
-import pytest
 
 from goodteam_os.telegram import (
     TelegramReviewSessionStore,
@@ -9,10 +6,6 @@ from goodteam_os.telegram import (
     split_artifact_into_review_items,
     process_telegram_update,
     update_active_tg_review_on_web_decision,
-    render_item_card_text,
-    render_summary_card_text,
-    render_final_card_text,
-    send_approval_notification,
 )
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore
 
