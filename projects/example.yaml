@@ -1,0 +1,46 @@
+# GoodTeam project config — committed reference template.
+#
+# Copy this to `projects/<yourkey>.local.yaml` (the `.local.yaml` suffix is
+# gitignored so your machine-specific paths stay private), or just run:
+#
+#   goodteam-os init --key MYAPP --name "My App" --repo /path/to/repo
+#
+# The parser is a small indentation-based YAML subset: every non-comment line
+# is `key: value` or a `key:` that opens a nested block. No list syntax.
+
+name: Example App
+key: EXAMPLE
+model_profile: balanced          # see profiles in models.yaml
+delivery_mode: mvp               # mvp | init_project | multi_service
+source_type: existing_project    # new_project | existing_project
+
+# Repos GoodTeam may read/write. Add one entry per service for multi_service.
+repos:
+  app: /absolute/path/to/your/repo
+
+# How worker jobs run. `fake` needs no credentials and is great for a first
+# end-to-end run. For real runs, use `anthropic` (drives the `claude` CLI, set
+# ANTHROPIC_API_KEY) or `codex` (drives the `codex` CLI). With `anthropic`,
+# pick model_profile: anthropic above.
+worker_backend:
+  mode: fake                     # fake | anthropic | codex | noop
+workers:
+  implementation: fake
+  frontend: fake
+  qa: fake
+
+# Local task ledger lives under the target repo's .goodteam/; no external
+# tracker required.
+task_backend:
+  mode: local
+
+# Optional: declare a real model provider so doctor can verify credentials.
+# providers:
+#   anthropic:
+#     type: anthropic
+#     api_key_env: ANTHROPIC_API_KEY
+#     env_file: .env
+
+# Optional: require functional staging evidence before release (see staging.py).
+delivery_contract:
+  required: false

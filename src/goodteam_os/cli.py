@@ -1,8 +1,15 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from goodteam_os.projects import check_project_target, load_project_target
+from goodteam_os.projects import (
+    DELIVERY_MODES,
+    WORKER_MODES,
+    check_project_target,
+    init_project,
+    load_project_target,
+)
 from goodteam_os.smoke import run_smoke_suite
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import poll_telegram_approvals
@@ -30,6 +37,16 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8788)
     serve_command.add_argument("--workspace", type=Path, default=Path("."))
+
+    init = subparsers.add_parser("init", help="Scaffold a project config and run doctor")
+    init.add_argument("--key", required=True, help="Short project key, e.g. MYAPP")
+    init.add_argument("--name", default="", help="Human project name (defaults to --key)")
+    init.add_argument("--repo", default=".", help="Path to the target repo")
+    init.add_argument("--projects-dir", type=Path, default=Path("projects"))
+    init.add_argument("--model-profile", default="balanced")
+    init.add_argument("--worker-mode", choices=list(WORKER_MODES), default="fake")
+    init.add_argument("--delivery-mode", choices=list(DELIVERY_MODES), default="mvp")
+    init.add_argument("--force", action="store_true")
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--project-config", type=Path, required=True)
@@ -74,6 +91,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "serve":
         serve(workspace=args.workspace, host=args.host, port=args.port)
+        return 0
+    if args.command == "init":
+        result = init_project(
+            projects_dir=args.projects_dir,
+            key=args.key,
+            name=args.name or args.key,
+            repo_path=args.repo,
+            model_profile=args.model_profile,
+            worker_mode=args.worker_mode,
+            delivery_mode=args.delivery_mode,
+            force=args.force,
+        )
+        print(json.dumps(result, indent=2))
+        print(
+            f"\nWrote {result['config_path']}. Next:\n"
+            f"  goodteam-os start \"Your idea\" --project-key {args.key.upper()} "
+            f"--project-config {result['config_path']} --workspace ./run\n"
+            f"  goodteam-os serve --workspace ./run",
+            file=sys.stderr,
+        )
         return 0
     if args.command == "doctor":
         target = load_project_target(args.project_config)

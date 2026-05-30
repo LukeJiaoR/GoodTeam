@@ -180,3 +180,62 @@ profiles:
       primary: codex:gpt-5.5
       draft: codex:gpt-5.5
       mode: memory-writing
+  anthropic:
+    orchestrator:
+      primary: anthropic:opus
+      fallback: anthropic:sonnet
+      mode: short-context
+    research:
+      primary: anthropic:sonnet
+      fallback: anthropic:sonnet
+      mode: long-context
+    product_requirement:
+      primary: anthropic:opus
+      draft: anthropic:sonnet
+      mode: spec-writing
+    architect:
+      primary: anthropic:opus
+      reviewer: anthropic:opus
+      mode: high-reasoning
+    review:
+      primary: anthropic:opus
+      reviewer: anthropic:opus
+      mode: adversarial-review
+    planner:
+      primary: anthropic:sonnet
+      reviewer: anthropic:sonnet
+      mode: structured-breakdown
+    ui:
+      primary: anthropic:sonnet
+      fallback: anthropic:sonnet
+      mode: multimodal
+    implementation:
+      primary: anthropic:sonnet
+      fallback: anthropic:sonnet
+      assistant: anthropic:sonnet
+      mode: worker-dispatch
+    frontend:
+      primary: anthropic:sonnet
+      fallback: anthropic:sonnet
+      mode: implementation
+    backend:
+      primary: anthropic:sonnet
+      assistant: anthropic:sonnet
+      mode: implementation
+    qa:
+      primary: anthropic:sonnet
+      fallback: anthropic:sonnet
+      mode: test-design
+    code_review:
+      first_pass: anthropic:sonnet
+      primary: anthropic:sonnet
+      architecture_review: anthropic:opus
+      mode: multi-pass-review
+    release:
+      primary: anthropic:opus
+      checklist: anthropic:opus
+      mode: release-control
+    retro_memory:
+      primary: anthropic:opus
+      draft: anthropic:sonnet
+      mode: memory-writing

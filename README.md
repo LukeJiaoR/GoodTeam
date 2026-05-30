@@ -13,36 +13,39 @@ V1 focuses on the workflow foundation:
 
 GoodTeam can operate without Plane, Linear, or any external tracker. External systems are optional sync surfaces; the local project runtime is the source of truth for memory, artifacts, decisions, and tasks.
 
-The long-term design lives in Obsidian under:
-
-```text
-/Users/luke/Documents/note/note/GoodTeam/AI Team OS
-```
-
-Plane tracking:
-
-```text
-Project: GoodTeam AI Team OS
-Key: GTO
-URL: https://app.plane.so/leader_kanban/projects/11b3926b-7464-438b-b419-6555802677fa
-```
-
 ## Quick Start
+
+Install the package (this pulls in `langgraph`, `rank-bm25`, and the `goodteam-os` CLI):
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install pytest
-PYTHONPATH=src .venv/bin/python -m pytest tests -q
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" --workspace /tmp/goodteam-os-run
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --workspace /tmp/goodteam-os-run --port 8788
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest -q
+```
+
+Scaffold a project and reach your first approval gate — **no model credentials required**, because the PRD gate is generated deterministically and the default worker backend is `fake`:
+
+```bash
+# 1. Create a project config (writes projects/myapp.local.yaml + runs doctor)
+goodteam-os init --key MYAPP --name "My App" --repo /path/to/your/repo
+
+# 2. Start a run from an idea
+goodteam-os start "Build a task tracker" --project-key MYAPP \
+  --project-config projects/myapp.local.yaml --workspace ./run
+
+# 3. Open the dashboard
+goodteam-os serve --workspace ./run --port 8788
 ```
 
 Expected result:
 
-- `artifacts/runs/<run_id>/prd/prd.md`
-- `state/projects/GTO/current.json`
-- `state/projects/GTO/checkpoints/<run_id>/prd_review_gate.json`
+- `run/artifacts/runs/<run_id>/prd/prd.md`
+- `run/state/projects/MYAPP/current.json`
+- `run/state/projects/MYAPP/checkpoints/<run_id>/prd_review_gate.json`
 - `next_node` is `await_prd_approval`
+
+See [`projects/example.yaml`](projects/example.yaml) for the full project-config schema. For live implementation/QA jobs, switch `worker_backend.mode` from `fake` to `anthropic` (drives the `claude` CLI — set `ANTHROPIC_API_KEY` and use `--model-profile anthropic`) or `codex` (drives the `codex` CLI).
 
 Open the dashboard at:
 
@@ -162,6 +165,7 @@ Supported smoke worker modes:
 - `fake`: deterministic local worker adapter for smoke-loop verification.
 - `noop`: records protocol-only worker completion.
 - `codex`: invokes the configured Codex CLI worker adapter.
+- `anthropic`: drives the `claude` CLI (Claude Code) headless worker; set `ANTHROPIC_API_KEY` and pair with `model_profile: anthropic`.
 
 On failure, GoodTeam classifies the failure (`auth/provider`, `worker timeout`, `GoodTeam workflow`, `target scaffold`, `QA/browser/UI`, or `unknown`) and writes a blocker task into the target's `.goodteam/tasks/tasks.json`.
 
@@ -356,7 +360,7 @@ worker_backend:
   mode: codex
 ```
 
-Supported V1 modes are `codex`, `manual`, `noop`, and `supervised`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth. Each job includes `role_prompt.md`, `task.md`, `context.md`, `constraints.md`, `expected_artifacts.json`, `role_memory_paths.json`, `role_pickup_packet.json`, `result.md`, `stdout.txt`, `stderr.txt`, and `status.json`. The stable role prompt stays separate from the concrete task. `role_memory_paths.json` points workers at their role-specific long-, mid-, and short-term project memory files; `role_pickup_packet.json` is the default token-light pickup packet.
+Supported V1 modes are `codex` (Codex CLI), `anthropic` (Claude Code `claude` CLI), `fake`, `noop`, and `human`. The `codex` and `anthropic` workers share one run loop — they dispatch the job protocol to an agentic coding CLI, stream heartbeats, and capture the result (codex via `--output-last-message`, claude via stdout). Override the executables with `GOODTEAM_CODEX_PATH` / `GOODTEAM_CLAUDE_PATH`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth. Each job includes `role_prompt.md`, `task.md`, `context.md`, `constraints.md`, `expected_artifacts.json`, `role_memory_paths.json`, `role_pickup_packet.json`, `result.md`, `stdout.txt`, `stderr.txt`, and `status.json`. The stable role prompt stays separate from the concrete task. `role_memory_paths.json` points workers at their role-specific long-, mid-, and short-term project memory files; `role_pickup_packet.json` is the default token-light pickup packet.
 
 Early CONTENTOPS E2E worker execution uses Codex CLI for every role:
 

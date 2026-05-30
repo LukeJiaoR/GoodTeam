@@ -44,9 +44,10 @@ class FakePopen:
             self.snapshot()
         if self.raise_timeout:
             raise subprocess.TimeoutExpired(self.command, timeout, output=self.stdout_text, stderr=self.stderr_text)
-        output_path = self.command[self.command.index("--output-last-message") + 1]
-        with open(output_path, "w", encoding="utf-8") as handle:
-            handle.write(self.result_text)
+        if "--output-last-message" in self.command:
+            output_path = self.command[self.command.index("--output-last-message") + 1]
+            with open(output_path, "w", encoding="utf-8") as handle:
+                handle.write(self.result_text)
         return (self.stdout_text, self.stderr_text)
 
     def kill(self):
@@ -231,6 +232,69 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
     assert status["stdout_path"].endswith("/stdout.txt")
     assert status["stderr_path"].endswith("/stderr.txt")
     assert (job_root / "result.md").read_text(encoding="utf-8").startswith("# Worker Result")
+
+
+def test_anthropic_adapter_invokes_claude_cli_and_captures_stdout_result(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    calls = []
+    install_fake_popen(
+        monkeypatch,
+        stdout_text="# Worker Result\n\nStatus: pass\n\nClaude implemented the feature.\n",
+        stderr_text="",
+        calls=calls,
+    )
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="anthropic",
+        model="anthropic:claude-sonnet-4-6",
+        task="Implement the CONTENTOPS MVP.",
+        context="Approved artifacts are available.",
+        expected_artifacts=["README.md"],
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["adapter"] == "anthropic"
+    assert result["model"] == "claude-sonnet-4-6"
+    assert result["exit_code"] == 0
+    assert calls[0]["cwd"] == tmp_path
+    assert calls[0]["command"] == [
+        "/fake/bin/claude",
+        "-p",
+        "--model",
+        "claude-sonnet-4-6",
+        "--dangerously-skip-permissions",
+    ]
+    assert "Implement the CONTENTOPS MVP." in calls[0]["input"]
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
+    assert status["preflight"]["claude_available"] is True
+    assert "ANTHROPIC_API_KEY" in status["preflight"]["auth_env"]
+    assert "value" not in json.dumps(status["preflight"]).lower()
+    # claude -p prints the final message to stdout, so it becomes the result.
+    assert "Claude implemented the feature." in (job_root / "result.md").read_text(encoding="utf-8")
+
+
+def test_anthropic_adapter_reports_missing_cli(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: None)
+    monkeypatch.setattr("goodteam_os.workers.DEFAULT_CLAUDE_PATH", "/no/such/claude")
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="anthropic",
+        task="Implement the CONTENTOPS MVP.",
+        context="ctx",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "failed"
+    assert "not available" in result["summary"].lower()
+    assert result["exit_code"] is None
 
 
 def test_codex_adapter_marks_job_running_before_cli_exits(tmp_path, monkeypatch):

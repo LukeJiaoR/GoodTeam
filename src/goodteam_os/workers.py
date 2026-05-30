@@ -13,9 +13,12 @@ from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.roles import role_definition, stable_role_prompt
 
 
-DEFAULT_CODEX_PATH = "/opt/homebrew/bin/codex"
+DEFAULT_CODEX_PATH = os.getenv("GOODTEAM_CODEX_PATH", "/opt/homebrew/bin/codex")
 DEFAULT_CODEX_MODEL = "gpt-5.3-codex"
 CODEX_AUTH_ENV_NAMES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
+DEFAULT_CLAUDE_PATH = os.getenv("GOODTEAM_CLAUDE_PATH", "claude")
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
 
@@ -64,7 +67,10 @@ class WorkerJobStore:
             job_root / "role_memory_paths.json",
             {horizon: str(path) for horizon, path in role_memory_paths.items()},
         )
-        self._write_json(job_root / "role_pickup_packet.json", role_memory_store.build_pickup_packet(role))
+        self._write_json(
+            job_root / "role_pickup_packet.json",
+            role_memory_store.build_pickup_packet(role, query=task),
+        )
         (job_root / "task.md").write_text(task, encoding="utf-8")
         (job_root / "context.md").write_text(context, encoding="utf-8")
         (job_root / "constraints.md").write_text("\n".join(f"- {item}" for item in constraints or []), encoding="utf-8")
@@ -121,6 +127,8 @@ class WorkerJobStore:
             return self._wait_for_human(job_root, job)
         if adapter == "codex":
             return self._run_codex(job_root, job)
+        if adapter in ("anthropic", "claude"):
+            return self._run_claude(job_root, job)
         raise ValueError(f"Unsupported worker adapter: {adapter}")
 
     def _complete_noop(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
@@ -158,10 +166,6 @@ class WorkerJobStore:
                     "preflight": preflight,
                 },
             )
-        result_path = job_root / "result.md"
-        stdout_path = job_root / "stdout.txt"
-        stderr_path = job_root / "stderr.txt"
-        prompt = self._codex_prompt(job_root, job)
         command = [
             codex,
             "exec",
@@ -172,11 +176,86 @@ class WorkerJobStore:
             str(self.project_root),
             "--dangerously-bypass-approvals-and-sandbox",
             "--output-last-message",
-            str(result_path),
+            str(job_root / "result.md"),
             "-",
         ]
+        return self._run_cli_worker(
+            job_root,
+            job,
+            command=command,
+            model=model,
+            preflight=preflight,
+            label="Codex CLI",
+            capture="output_file",
+            summarize=self._codex_summary,
+        )
+
+    def _run_claude(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        claude = which("claude") or DEFAULT_CLAUDE_PATH
+        model = _claude_model_name(str(job.get("model", "")))
+        preflight = self._claude_preflight(claude=claude, model=model)
+        if not preflight["claude_available"]:
+            summary = (
+                "Claude Code CLI is not available. Install `claude` or add it to PATH "
+                "before running anthropic workers."
+            )
+            return self._write_status(
+                job_root,
+                job,
+                "failed",
+                summary,
+                extra={
+                    "command": [claude, "-p", "--model", model],
+                    "model": model,
+                    "exit_code": None,
+                    "preflight": preflight,
+                },
+            )
+        command = [claude, "-p", "--model", model, "--dangerously-skip-permissions"]
+        return self._run_cli_worker(
+            job_root,
+            job,
+            command=command,
+            model=model,
+            preflight=preflight,
+            label="Claude Code CLI",
+            capture="stdout",
+            summarize=self._claude_summary,
+        )
+
+    def _run_cli_worker(
+        self,
+        job_root: Path,
+        job: dict[str, Any],
+        *,
+        command: list[str],
+        model: str,
+        preflight: dict[str, Any],
+        label: str,
+        capture: str,
+        summarize: Any,
+        timeout_seconds: int = 1800,
+    ) -> dict[str, Any]:
+        """Run an agentic coding CLI (codex/claude) over the job protocol files.
+
+        ``capture`` controls where the worker result comes from: ``output_file``
+        means the CLI wrote it (codex ``--output-last-message``); ``stdout`` means
+        the final message is printed to stdout (claude ``-p``)."""
+        result_path = job_root / "result.md"
+        stdout_path = job_root / "stdout.txt"
+        stderr_path = job_root / "stderr.txt"
+        prompt = self._worker_prompt(job_root, job)
         started_at = self._now()
-        timeout_seconds = 1800
+        running_summary = f"{label} is running."
+        base_extra = {
+            "command": command,
+            "model": model,
+            "started_at": started_at,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "result_path": str(result_path),
+            "preflight": preflight,
+        }
         stdout_path.write_text("", encoding="utf-8")
         stderr_path.write_text("", encoding="utf-8")
         process: subprocess.Popen[str] | None = None
@@ -190,43 +269,18 @@ class WorkerJobStore:
                 stderr=subprocess.PIPE,
                 text=True,
             )
+            running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": process.pid}
             self._write_status(
                 job_root,
                 job,
                 "running",
-                "Codex CLI is running.",
-                extra={
-                    "command": command,
-                    "model": model,
-                    "exit_code": None,
-                    "started_at": started_at,
-                    "heartbeat_at": self._now(),
-                    "pid": process.pid,
-                    "stdout_path": str(stdout_path),
-                    "stderr_path": str(stderr_path),
-                    "result_path": str(result_path),
-                    "timeout_seconds": timeout_seconds,
-                    "preflight": preflight,
-                },
+                running_summary,
+                extra={**running_extra, "heartbeat_at": self._now()},
             )
             heartbeat_thread = threading.Thread(
                 target=self._heartbeat_until_stopped,
                 args=(job_root, job, stop_heartbeat),
-                kwargs={
-                    "summary": "Codex CLI is running.",
-                    "extra": {
-                        "command": command,
-                        "model": model,
-                        "exit_code": None,
-                        "started_at": started_at,
-                        "pid": process.pid,
-                        "stdout_path": str(stdout_path),
-                        "stderr_path": str(stderr_path),
-                        "result_path": str(result_path),
-                        "timeout_seconds": timeout_seconds,
-                        "preflight": preflight,
-                    },
-                },
+                kwargs={"summary": running_summary, "extra": running_extra},
                 daemon=True,
             )
             heartbeat_thread.start()
@@ -237,7 +291,7 @@ class WorkerJobStore:
             stderr_path.write_text(_timeout_text(exc.stderr), encoding="utf-8")
             if process is not None:
                 process.kill()
-            summary = f"Codex CLI timed out after {timeout_seconds} seconds."
+            summary = f"{label} timed out after {timeout_seconds} seconds."
             result_path.write_text(
                 f"# Worker Result\n\nStatus: failed\n\n{summary}\n",
                 encoding="utf-8",
@@ -247,17 +301,7 @@ class WorkerJobStore:
                 job,
                 "failed",
                 summary,
-                extra={
-                    "command": command,
-                    "model": model,
-                    "exit_code": None,
-                    "started_at": started_at,
-                    "stdout_path": str(stdout_path),
-                    "stderr_path": str(stderr_path),
-                    "result_path": str(result_path),
-                    "timeout_seconds": timeout_seconds,
-                    "preflight": preflight,
-                },
+                extra={**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds},
             )
         finally:
             stop_heartbeat.set()
@@ -265,7 +309,9 @@ class WorkerJobStore:
         stderr_path.write_text(stderr or "", encoding="utf-8")
         returncode = int(process.returncode if process is not None and process.returncode is not None else 1)
         status = "completed" if returncode == 0 else "failed"
-        summary = self._codex_summary(returncode, stderr or "")
+        summary = summarize(returncode, stderr or "")
+        if capture == "stdout" and returncode == 0 and (stdout or "").strip():
+            result_path.write_text(stdout, encoding="utf-8")
         if not result_path.is_file() or not result_path.read_text(encoding="utf-8").strip():
             result_path.write_text(
                 f"# Worker Result\n\nStatus: {status}\n\n{summary}\n\nSee stdout.txt and stderr.txt.\n",
@@ -276,16 +322,7 @@ class WorkerJobStore:
             job,
             status,
             summary,
-            extra={
-                "command": command,
-                "model": model,
-                "exit_code": returncode,
-                "started_at": started_at,
-                "stdout_path": str(stdout_path),
-                "stderr_path": str(stderr_path),
-                "result_path": str(result_path),
-                "preflight": preflight,
-            },
+            extra={**base_extra, "exit_code": returncode},
         )
 
     def _heartbeat_until_stopped(
@@ -318,6 +355,29 @@ class WorkerJobStore:
             "https_proxy": bool(os.getenv("https_proxy") or os.getenv("HTTPS_PROXY")),
         }
 
+    def _claude_preflight(self, *, claude: str, model: str) -> dict[str, Any]:
+        executable = Path(claude)
+        return {
+            "claude_command": claude,
+            "claude_available": bool(which("claude") or executable.is_file()),
+            "model": model,
+            "auth_env": {name: bool(os.getenv(name)) for name in CLAUDE_AUTH_ENV_NAMES},
+            "http_proxy": bool(os.getenv("http_proxy") or os.getenv("HTTP_PROXY")),
+            "https_proxy": bool(os.getenv("https_proxy") or os.getenv("HTTPS_PROXY")),
+        }
+
+    def _claude_summary(self, exit_code: int, stderr: str) -> str:
+        if exit_code == 0:
+            return "Claude Code CLI exited with code 0."
+        normalized = stderr.lower()
+        if "invalid_api_key" in normalized or "invalid api key" in normalized or "authentication" in normalized:
+            return f"Claude Code CLI exited with code {exit_code}: authentication failed (check ANTHROPIC_API_KEY)."
+        if "401 unauthorized" in normalized:
+            return f"Claude Code CLI exited with code {exit_code}: 401 Unauthorized."
+        if "rate limit" in normalized or " 429 " in f" {normalized} ":
+            return f"Claude Code CLI exited with code {exit_code}: rate limited."
+        return f"Claude Code CLI exited with code {exit_code}."
+
     def _codex_summary(self, exit_code: int, stderr: str) -> str:
         if exit_code == 0:
             return "Codex CLI exited with code 0."
@@ -335,7 +395,7 @@ class WorkerJobStore:
             return f"Codex CLI exited with code {exit_code}: stream disconnected before response.completed."
         return f"Codex CLI exited with code {exit_code}."
 
-    def _codex_prompt(self, job_root: Path, job: dict[str, Any]) -> str:
+    def _worker_prompt(self, job_root: Path, job: dict[str, Any]) -> str:
         model = _codex_model_name(str(job.get("model", "")))
         return "\n\n".join(
             [
@@ -411,6 +471,13 @@ def _codex_model_name(value: str) -> str:
     model = value.strip() or DEFAULT_CODEX_MODEL
     if ":" in model:
         return model.split(":", 1)[1].strip() or DEFAULT_CODEX_MODEL
+    return model
+
+
+def _claude_model_name(value: str) -> str:
+    model = value.strip() or DEFAULT_CLAUDE_MODEL
+    if ":" in model:
+        return model.split(":", 1)[1].strip() or DEFAULT_CLAUDE_MODEL
     return model
 
 
