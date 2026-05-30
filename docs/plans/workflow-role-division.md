@@ -5,6 +5,27 @@ A reference for future multi-agent tasks in this repo. It captures how the first
 roles, and a fuller role map to borrow from next time. GoodTeam itself defines
 ~13 roles; dogfooding that role model on GoodTeam's own development is the point.
 
+## 0. Operating mode (default collaboration convention)
+
+This is the standing default for this repo, regardless of who opens the session:
+
+- **Claude is the planner / architect / reviewer / QA-analyst / retro role.**
+  Claude investigates code (read-only), defines the contract, reviews diffs,
+  finds bugs, and **produces role-targeted, copy-paste-ready prompts** for the
+  implementing agents.
+- **The human dispatches** each prompt to the matching agent (Gemini = frontend,
+  Codex = backend, …) and lands the change manually.
+- **Claude does not edit implementation code by default.** Exception: only when
+  the human explicitly says "you fix it" / "直接改" (e.g. a tiny, low-risk
+  cleanup). Even then, prefer handing it off once the workflow is mature.
+- **Claude still does read-only investigation and verification** to make each
+  prompt accurate — this is where the value is (e.g. catching that a constant was
+  render-scoped and unavailable in a handler, so the FE prompt got it right on
+  the first try). Investigate/verify = Claude; edits = the role's agent.
+
+Why: routing edits through role agents exercises and hardens the real multi-agent
+workflow, and surfaces process gaps faster than Claude doing everything inline.
+
 ## What this round actually used (4 effective roles)
 
 | Effective role | Who | Output |
@@ -67,8 +88,44 @@ feature:
 ## Templates produced so far (borrow these)
 - Per-track plan: `worker-backends-panel-backend.md`, `worker-backends-panel-frontend.md`
 - QA / live integration: `worker-backends-panel-qa.md`
-- Patch handoff: `patch-project-config-routing.md`
+- Patch handoff: `patch-project-config-routing.md`, `patch-worker-backends-save-role-filter.md`
 - (TODO) PRD/intent stub, architecture-decision stub — add when a task warrants.
+
+## Writing a good role prompt (checklist + skeleton)
+
+Hard rules distilled from the rounds so far — a prompt that an agent gets right
+on the first pass:
+
+1. **Cold-start self-contained.** Assume zero memory of any prior conversation.
+2. **Pin the workspace.** Absolute repo root + the agent's working dir + which
+   files it edits.
+3. **Declare the lane boundary.** "Only touch X; do NOT touch Y" (the other
+   track, tests, the other plan docs).
+4. **State the shared contract** (API shape / types) so parallel tracks don't
+   diverge; note fallbacks if the other side isn't merged yet.
+5. **Give the precise change**, not just the goal — file + ~line + the exact
+   snippet — and pre-flag scope/contract gotchas you found during investigation
+   (e.g. "this constant is render-scoped, read it from state instead").
+6. **Setup + verification commands** the agent can run, and concrete acceptance.
+7. **Commit policy.** Usually "do not commit" — the human lands after QA.
+8. **Point to the full doc** (`docs/plans/...`) for detail.
+
+Copy-paste skeleton:
+
+```text
+You're doing <FE bug fix | BE feature | cleanup> in the GoodTeam repo.
+Repo root: /Users/luke/WorkSpace/codeAi/GoodTeam
+Only touch <dir>. Do NOT touch <other dir>/tests/other plan docs. Do not commit.
+
+Setup: <venv / npm install line>
+
+Background: <symptom + root cause, 2-4 lines>
+
+Fix: <file path ~line> — <exact snippet>. Gotcha: <scope/contract trap you found>.
+
+Verify: <build/lint/test commands> pass. Report what you changed.
+Full detail: docs/plans/<doc>.md
+```
 
 ## The one-line takeaway
 We proved the **planner → split-implement → QA** spine works with three model
