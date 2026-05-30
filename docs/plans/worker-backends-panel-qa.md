@@ -98,11 +98,13 @@ Open `http://127.0.0.1:8799/?project=QATEST`.
 8. **Error handling (optional):** if reachable, attempt an invalid save and
    confirm the UI surfaces the error message rather than silently failing.
 
-### Known expected quirk (not a bug)
-`goodteam-os init` seeds the config's `workers:` map with a `frontend` entry, but
-the panel only manages the dispatched roles `ui`/`implementation`/`qa`. The first
-panel Save rewrites the `workers:` block and the unused `frontend` entry
-disappears. That is expected — do not report it as a failure.
+### Role scope (correct behavior)
+The panel manages only the dispatched roles `ui`/`implementation`/`qa`. A config
+may contain other roles (e.g. a `frontend` entry seeded by older
+`goodteam-os init`, or hand-added roles) — the panel must **ignore** those and
+submit only the managed roles. If Save fails with `400 Unknown worker role:
+<role>`, that is a **bug**, not expected behavior (it was fixed via
+`patch-worker-backends-save-role-filter.md`; flag it if it reappears).
 
 ## Pass criteria
 
