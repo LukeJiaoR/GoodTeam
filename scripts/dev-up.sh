@@ -77,6 +77,22 @@ else
   echo "[dev-up] workspace already seeded ($WS); use --reset to rebuild"
 fi
 
+# 2b. Drive the DEMO run to completion (fake workers) so every artifact stage
+# (PRD, RFC, QA, review, release) is populated — otherwise the dashboard only
+# shows the PRD and everything downstream looks empty. Idempotent: returns
+# immediately if the run is already complete. This is the isolated demo
+# workspace, NOT the `smoke` CLI, and never touches real projects.
+env PYTHONPATH="$ROOT/src" "$PY" - "$WS" <<'PYEOF' || true
+import sys
+from pathlib import Path
+from goodteam_os.smoke import _approve_until_complete
+try:
+    _approve_until_complete(Path(sys.argv[1]), "DEMO")
+    print("[dev-up] DEMO run advanced through its gates (artifacts populated)")
+except Exception as exc:
+    print(f"[dev-up] note: could not fully advance DEMO run: {exc}")
+PYEOF
+
 # 3. serve resolves dist at <workspace>/frontend/dist, so link the built dist in.
 mkdir -p "$WS/frontend"
 ln -sfn "$ROOT/frontend/dist" "$WS/frontend/dist"
