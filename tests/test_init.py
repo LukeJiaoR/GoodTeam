@@ -65,3 +65,8 @@ def test_init_project_writes_config_and_returns_doctor_report(tmp_path):
     assert report["project"]["key"] == "MYAPP"
     assert "app" in report["repos"]
     assert report["repos"]["app"]["exists"] is True
+    # doctor surfaces worker-backend readiness so credential gaps are caught
+    # at init time, not after a worker fails repeatedly.
+    preflight = report["worker_backend_preflight"]
+    assert preflight["mode"] == "fake"
+    assert preflight["ready"] is True

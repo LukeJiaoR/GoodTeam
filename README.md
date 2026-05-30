@@ -229,6 +229,8 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
   --project-config projects/my-project.local.yaml
 ```
 
+`doctor` (and the `init` command, which runs it automatically) reports a `worker_backend_preflight` section: whether the configured worker CLI is on `PATH`, whether credentials are present (presence only — never the secret value), and an actionable `hint`. For example it flags when a stale `CODEX_API_KEY` could shadow `~/.codex/auth.json`, or when `claude login` is needed for the `anthropic` worker — so credential gaps surface before a worker fails.
+
 Local project configs are intended to be machine-specific and may contain repo paths or tracker metadata. Keep secrets out of them; use environment variables or local secret files for credentials.
 
 Target projects can also declare an optional staging deployment backend. V1 supports `Docker Compose + SSH` only and is designed for hosts that are already provisioned:

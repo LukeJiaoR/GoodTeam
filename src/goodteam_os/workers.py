@@ -19,6 +19,7 @@ CODEX_AUTH_ENV_NAMES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
 DEFAULT_CLAUDE_PATH = os.getenv("GOODTEAM_CLAUDE_PATH", "claude")
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 CLAUDE_AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+BUILTIN_WORKER_MODES = ("fake", "noop", "human")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
 
@@ -479,6 +480,89 @@ def _claude_model_name(value: str) -> str:
     if ":" in model:
         return model.split(":", 1)[1].strip() or DEFAULT_CLAUDE_MODEL
     return model
+
+
+def worker_backend_doctor(mode: str) -> dict[str, Any]:
+    """Report whether the configured worker backend can actually run, so a
+    user sees missing CLIs or credentials at doctor/init time instead of after
+    a worker fails repeatedly. Never echoes secret values, only their presence."""
+    mode = (mode or "").strip() or "codex"
+    if mode in BUILTIN_WORKER_MODES:
+        return {
+            "mode": mode,
+            "kind": "builtin",
+            "ready": True,
+            "hint": f"The `{mode}` worker runs locally and needs no CLI or credentials.",
+        }
+    if mode == "codex":
+        command = which("codex") or DEFAULT_CODEX_PATH
+        available = bool(which("codex") or Path(command).is_file())
+        auth_env = {name: bool(os.getenv(name)) for name in CODEX_AUTH_ENV_NAMES}
+        codex_home = os.getenv("CODEX_HOME", "") or os.path.expanduser("~/.codex")
+        auth_file = Path(codex_home) / "auth.json"
+        auth_file_present = auth_file.is_file()
+        auth_present = any(auth_env.values()) or auth_file_present
+        return {
+            "mode": mode,
+            "kind": "cli",
+            "command": "codex",
+            "command_path": command if available else "",
+            "available": available,
+            "auth_env": auth_env,
+            "auth_file": str(auth_file),
+            "auth_file_present": auth_file_present,
+            "auth_present": auth_present,
+            "ready": available and auth_present,
+            "hint": _codex_auth_hint(available, auth_env, auth_file_present),
+        }
+    if mode in ("anthropic", "claude"):
+        command = which("claude") or DEFAULT_CLAUDE_PATH
+        available = bool(which("claude") or Path(command).is_file())
+        auth_env = {name: bool(os.getenv(name)) for name in CLAUDE_AUTH_ENV_NAMES}
+        auth_present = any(auth_env.values())
+        # The claude CLI can also run from a `claude login` session we can't
+        # detect here, so the binary being present is the hard requirement.
+        return {
+            "mode": mode,
+            "kind": "cli",
+            "command": "claude",
+            "command_path": command if available else "",
+            "available": available,
+            "auth_env": auth_env,
+            "auth_present": auth_present,
+            "ready": available,
+            "hint": _claude_auth_hint(available, auth_present),
+        }
+    return {
+        "mode": mode,
+        "kind": "unknown",
+        "ready": False,
+        "hint": f"Unknown worker_backend.mode '{mode}'. Use one of: fake, codex, anthropic, noop, human.",
+    }
+
+
+def _codex_auth_hint(available: bool, auth_env: dict[str, bool], auth_file_present: bool) -> str:
+    if not available:
+        return "Codex CLI not found. Install `codex`, add it to PATH, or set GOODTEAM_CODEX_PATH."
+    if auth_env.get("CODEX_API_KEY") and auth_file_present:
+        return (
+            "CODEX_API_KEY is set and can shadow ~/.codex/auth.json. If workers hit "
+            "INVALID_API_KEY, retry with `env -u CODEX_API_KEY` so the auth.json session is used."
+        )
+    if not any(auth_env.values()) and not auth_file_present:
+        return "No Codex credentials found. Run `codex login` or set OPENAI_API_KEY / CODEX_API_KEY."
+    return "Ready: Codex CLI and credentials detected."
+
+
+def _claude_auth_hint(available: bool, auth_present: bool) -> str:
+    if not available:
+        return "Claude Code CLI not found. Install `claude`, add it to PATH, or set GOODTEAM_CLAUDE_PATH."
+    if not auth_present:
+        return (
+            "No ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN set. Workers will use your `claude login` "
+            "session if you have one; otherwise run `claude login` or export ANTHROPIC_API_KEY."
+        )
+    return "Ready: Claude Code CLI and credentials detected."
 
 
 def _is_stale_heartbeat(value: str) -> bool:

@@ -2,7 +2,7 @@ import json
 import subprocess
 from datetime import UTC, datetime
 
-from goodteam_os.workers import WorkerJobStore
+from goodteam_os.workers import WorkerJobStore, worker_backend_doctor
 
 
 class FakePopen:
@@ -232,6 +232,58 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
     assert status["stdout_path"].endswith("/stdout.txt")
     assert status["stderr_path"].endswith("/stderr.txt")
     assert (job_root / "result.md").read_text(encoding="utf-8").startswith("# Worker Result")
+
+
+def test_worker_backend_doctor_builtin_modes_are_always_ready():
+    report = worker_backend_doctor("fake")
+    assert report["kind"] == "builtin"
+    assert report["ready"] is True
+    assert "no" in report["hint"].lower()  # "needs no CLI or credentials"
+
+
+def test_worker_backend_doctor_anthropic_ready_with_cli_and_key(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xxx")
+    report = worker_backend_doctor("anthropic")
+    assert report["kind"] == "cli"
+    assert report["command"] == "claude"
+    assert report["available"] is True
+    assert report["auth_present"] is True
+    assert report["ready"] is True
+    # never echo the secret value
+    assert "sk-ant-xxx" not in json.dumps(report)
+
+
+def test_worker_backend_doctor_anthropic_hint_when_no_key(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    report = worker_backend_doctor("anthropic")
+    assert report["available"] is True
+    assert report["auth_present"] is False
+    assert "login" in report["hint"].lower()
+
+
+def test_worker_backend_doctor_codex_not_available(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: None)
+    monkeypatch.setattr("goodteam_os.workers.DEFAULT_CODEX_PATH", "/no/such/codex")
+    report = worker_backend_doctor("codex")
+    assert report["available"] is False
+    assert report["ready"] is False
+    assert "path" in report["hint"].lower()
+
+
+def test_worker_backend_doctor_codex_warns_about_env_shadowing_auth_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    (tmp_path / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_API_KEY", "stale-token")
+    report = worker_backend_doctor("codex")
+    assert report["available"] is True
+    assert report["auth_file_present"] is True
+    # the hard-won footprint lesson: a stale env var shadows ~/.codex/auth.json
+    assert "env -u CODEX_API_KEY" in report["hint"]
+    assert "stale-token" not in json.dumps(report)
 
 
 def test_anthropic_adapter_invokes_claude_cli_and_captures_stdout_result(tmp_path, monkeypatch):

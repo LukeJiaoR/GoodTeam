@@ -9,3 +9,5 @@ logs/
 projects/*.local.yaml
 .env
 .env.*
+.DS_Store
+.antigravitycli/
