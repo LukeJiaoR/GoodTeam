@@ -1,5 +1,5 @@
 
-from goodteam_os.projects import check_project_target, load_project_target
+from goodteam_os.projects import check_project_target, load_project_target, update_worker_backend_config
 
 
 def test_load_project_target_reads_project_config(tmp_path):
@@ -83,6 +83,100 @@ def test_check_project_target_reports_per_role_worker_backends(monkeypatch):
     assert set(preflight) == {"anthropic", "codex"}
     assert preflight["anthropic"]["command"] == "claude"
     assert preflight["codex"]["command"] == "codex"
+
+
+def test_update_worker_backend_config_preserves_unrelated_blocks(tmp_path):
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        """# local machine config
+name: Real Product
+key: REAL
+repos:
+  docs: /tmp/docs
+  backend: /tmp/backend
+worker_backend:
+  mode: fake
+  old_child: should disappear
+workers:
+  implementation: fake
+  qa: fake
+providers:
+  deepseek:
+    type: openai-compatible
+    base_url: https://api.deepseek.com/v1
+delivery_contract:
+  required: true
+  staging_acceptance:
+    smoke:
+      type: local_command
+      command: npm run smoke
+""",
+        encoding="utf-8",
+    )
+    before = config.read_text(encoding="utf-8")
+    repos_block = before[before.index("repos:") : before.index("worker_backend:")]
+    providers_and_delivery = before[before.index("providers:") :]
+
+    update_worker_backend_config(
+        config,
+        mode="codex",
+        workers={"implementation": "anthropic", "qa": "codex"},
+    )
+
+    after = config.read_text(encoding="utf-8")
+    target = load_project_target(config)
+    assert target["worker_backend"]["mode"] == "codex"
+    assert target["workers"] == {"implementation": "anthropic", "qa": "codex"}
+    assert repos_block in after
+    assert providers_and_delivery in after
+    assert "old_child" not in after
+
+
+def test_update_worker_backend_config_omitted_role_removes_override(tmp_path):
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        """name: Real Product
+key: REAL
+worker_backend:
+  mode: fake
+workers:
+  implementation: anthropic
+  qa: codex
+""",
+        encoding="utf-8",
+    )
+
+    update_worker_backend_config(config, mode="codex", workers={"qa": "codex"})
+
+    target = load_project_target(config)
+    assert target["worker_backend"]["mode"] == "codex"
+    assert target["workers"] == {"qa": "codex"}
+
+
+def test_update_worker_backend_config_empty_workers_removes_block(tmp_path):
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        """name: Real Product
+key: REAL
+worker_backend:
+  mode: anthropic
+workers:
+  implementation: anthropic
+  qa: codex
+task_backend:
+  mode: local
+""",
+        encoding="utf-8",
+    )
+
+    update_worker_backend_config(config, mode="human", workers={})
+
+    after = config.read_text(encoding="utf-8")
+    target = load_project_target(config)
+    assert target["worker_backend"]["mode"] == "human"
+    assert "workers:" not in after
+    assert "task_backend:\n  mode: local\n" in after
+    assert "workers" not in target
 
 
 def test_check_project_target_reports_deepseek_provider_from_env(monkeypatch):

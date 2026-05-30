@@ -19,7 +19,7 @@ from goodteam_os.graph import (
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.nodes.review_gate import gate_next_node
-from goodteam_os.projects import check_project_target, load_project_target
+from goodteam_os.projects import check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.staging import (
     deployment_backend_config,
@@ -29,7 +29,7 @@ from goodteam_os.staging import (
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import send_approval_notification
-from goodteam_os.workers import WorkerJobStore
+from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 
 PRD_REVIEW_ROLES = [
@@ -37,6 +37,14 @@ PRD_REVIEW_ROLES = [
     "Architect",
     "Review / QA",
 ]
+
+_PREFERRED_WORKER_BACKEND_ORDER = ("fake", "codex", "anthropic", "noop", "human")
+WORKER_BACKEND_OPTIONS = [
+    mode
+    for mode in _PREFERRED_WORKER_BACKEND_ORDER
+    if mode in {*BUILTIN_WORKER_MODES, *CLI_BACKENDS}
+]
+WORKER_ROLES = ["ui", "implementation", "qa"]
 
 
 def append_action(
@@ -1190,6 +1198,8 @@ def build_start_console_context(
         "role_model_overrides": dict(target.get("role_model_overrides", {})) if isinstance(target.get("role_model_overrides", {}), dict) else {},
         "task_backend": normalize_task_backend(target.get("task_backend", {"mode": "local", "sync": []})),
         "worker_backend": normalize_worker_backend(target.get("worker_backend", {"mode": "codex"})),
+        "worker_backend_options": WORKER_BACKEND_OPTIONS,
+        "worker_roles": WORKER_ROLES,
         "deployment_backend": deployment_backend,
         "delivery_contract": delivery_contract,
         "project_base": str(directory_base),
@@ -1258,6 +1268,58 @@ def normalize_task_backend(value: object) -> dict[str, object]:
 def normalize_worker_backend(value: object) -> dict[str, object]:
     backend = dict(value) if isinstance(value, dict) else {}
     return {"mode": str(backend.get("mode", "codex") or "codex")}
+
+
+def update_project_worker_backend_settings(workspace: Path, request: dict[str, object]) -> dict[str, object]:
+    project_key = str(request.get("project", "") or request.get("project_key", "")).strip()
+    if not project_key:
+        raise ValueError("project is required")
+    mode = str(request.get("worker_backend_mode", "") or "").strip()
+    if not mode:
+        raise ValueError("worker_backend_mode is required")
+    workers_value = request.get("workers", {})
+    if not isinstance(workers_value, dict):
+        raise ValueError("workers must be an object")
+    workers = {str(role).strip(): str(backend).strip() for role, backend in workers_value.items()}
+    _validate_worker_backend_config(mode=mode, workers=workers)
+
+    config_path = _project_config_for_key(workspace, project_key)
+    update_worker_backend_config(
+        config_path,
+        mode=mode,
+        workers=_ordered_worker_overrides(workers),
+    )
+    report = check_project_target(load_project_target(config_path))
+    return {
+        "ok": True,
+        "role_worker_backends": report["role_worker_backends"],
+        "worker_backends_preflight": report["worker_backends_preflight"],
+    }
+
+
+def _validate_worker_backend_config(*, mode: str, workers: dict[str, str]) -> None:
+    valid_backends = set(WORKER_BACKEND_OPTIONS)
+    if mode not in valid_backends:
+        raise ValueError(f"Unknown worker backend: {mode}. Use one of: {', '.join(WORKER_BACKEND_OPTIONS)}")
+    valid_roles = set(WORKER_ROLES)
+    for role, backend in workers.items():
+        if not role:
+            raise ValueError("worker role cannot be empty")
+        if role not in valid_roles:
+            raise ValueError(f"Unknown worker role: {role}. Use one of: {', '.join(WORKER_ROLES)}")
+        if backend not in valid_backends:
+            raise ValueError(f"Unknown worker backend for {role}: {backend}. Use one of: {', '.join(WORKER_BACKEND_OPTIONS)}")
+
+
+def _ordered_worker_overrides(workers: dict[str, str]) -> dict[str, str]:
+    ordered: dict[str, str] = {}
+    for role in WORKER_ROLES:
+        if workers.get(role):
+            ordered[role] = workers[role]
+    for role in sorted(set(workers) - set(WORKER_ROLES)):
+        if workers.get(role):
+            ordered[role] = workers[role]
+    return ordered
 
 
 def normalize_delivery_mode(value: str) -> str:
@@ -4863,6 +4925,11 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     result = open_path_in_file_manager(
                         workspace=workspace,
                         relative_path=str(request.get("path", "")),
+                    )
+                elif "project" in request or "workers" in request:
+                    result = update_project_worker_backend_settings(
+                        workspace=workspace,
+                        request=request,
                     )
                 else:
                     result = create_local_project_config(

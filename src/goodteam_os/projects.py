@@ -9,7 +9,7 @@ from goodteam_os.workers import worker_backend_doctor
 
 ProjectTarget = dict[str, object]
 
-WORKER_MODES = ("fake", "codex", "anthropic", "noop")
+WORKER_MODES = ("fake", "codex", "anthropic", "noop", "human")
 DELIVERY_MODES = ("mvp", "init_project", "multi_service")
 
 
@@ -54,8 +54,8 @@ repos:
 worker_backend:
   mode: {worker_mode}
 workers:
+  ui: {worker_mode}
   implementation: {worker_mode}
-  frontend: {worker_mode}
   qa: {worker_mode}
 task_backend:
   mode: local
@@ -121,6 +121,46 @@ def init_project(
         "config_path": str(path),
         "doctor": check_project_target(target),
     }
+
+
+def update_worker_backend_config(config_path: Path, *, mode: str, workers: dict[str, str]) -> None:
+    """Update only worker backend blocks in a local project config."""
+    lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    worker_backend_block = ["worker_backend:\n", f"  mode: {mode}\n"]
+    worker_lines = [f"  {role}: {backend}\n" for role, backend in workers.items()]
+    workers_block = ["workers:\n", *worker_lines] if worker_lines else []
+
+    lines = _replace_or_append_top_level_block(lines, "worker_backend", worker_backend_block)
+    lines = _replace_or_append_top_level_block(lines, "workers", workers_block)
+    config_path.write_text("".join(lines), encoding="utf-8")
+
+
+def _replace_or_append_top_level_block(lines: list[str], key: str, replacement: list[str]) -> list[str]:
+    block = _find_top_level_block(lines, key)
+    if block is not None:
+        start, end = block
+        return [*lines[:start], *replacement, *lines[end:]]
+    if not replacement:
+        return lines
+    appended = list(lines)
+    if appended and not appended[-1].endswith("\n"):
+        appended[-1] = f"{appended[-1]}\n"
+    return [*appended, *replacement]
+
+
+def _find_top_level_block(lines: list[str], key: str) -> tuple[int, int] | None:
+    header = f"{key}:"
+    for index, line in enumerate(lines):
+        if line.startswith(header):
+            end = index + 1
+            while end < len(lines) and (_is_more_indented(lines[end]) or not lines[end].strip()):
+                end += 1
+            return index, end
+    return None
+
+
+def _is_more_indented(line: str) -> bool:
+    return line.startswith(" ") or line.startswith("\t")
 
 
 def _read_env_file(env_file: Path) -> dict[str, str]:

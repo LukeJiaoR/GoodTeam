@@ -13,10 +13,8 @@ import {
   Moon,
   Menu,
   X,
-  Plus,
   Trash2,
   Play,
-  StopCircle,
   RefreshCw,
   Edit,
   Save,
@@ -24,7 +22,6 @@ import {
   AlertTriangle,
   Folder,
   ChevronDown,
-  ChevronRight,
   Info,
   ExternalLink,
   Lock,
@@ -32,8 +29,6 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  ArrowRight,
-  Terminal,
   FileCode
 } from 'lucide-react';
 
@@ -146,6 +141,9 @@ function formatHumanTime(timestamp) {
   }
 }
 
+const DEFAULT_BACKEND_OPTIONS = ["fake", "codex", "anthropic", "noop", "human"];
+const DEFAULT_WORKER_ROLES = ["ui", "implementation", "qa"];
+
 export default function App() {
   // Sync project key from URL search query parameter '?project='
   const getUrlProject = () => {
@@ -159,6 +157,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
+
+  // Worker backend settings states
+  const [panelGlobalMode, setPanelGlobalMode] = useState('codex');
+  const [panelRoleOverrides, setPanelRoleOverrides] = useState({});
+  const [savingBackends, setSavingBackends] = useState(false);
+
   
   // Theme state
   const [darkMode, setDarkMode] = useState(() => {
@@ -216,18 +220,7 @@ export default function App() {
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
   const [editorContent, setEditorContent] = useState('');
 
-  // Auto-refresh timer when there is an active run
-  useEffect(() => {
-    let interval = null;
-    if (projectKey && data && data.active_run) {
-      interval = setInterval(() => {
-        fetchState(projectKey, false);
-      }, 5000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [projectKey, data]);
+
 
   // Sync state when URL updates
   useEffect(() => {
@@ -252,11 +245,6 @@ export default function App() {
       localStorage.setItem('color-scheme', 'light');
     }
   }, [darkMode]);
-
-  // Fetch state on mount and projectKey changes
-  useEffect(() => {
-    fetchState(projectKey, true);
-  }, [projectKey]);
 
   const updateUrl = (key) => {
     const newUrl = key ? `${window.location.pathname}?project=${key}` : window.location.pathname;
@@ -324,6 +312,11 @@ export default function App() {
           setStagingSmokeCommand(db.staging_smoke_command || '');
         }
 
+        if (showLoading) {
+          setPanelGlobalMode(sc.worker_backend?.mode || 'codex');
+          setPanelRoleOverrides(sc.project_report?.role_worker_backends || {});
+        }
+
         // Delivery Contract
         if (sc.delivery_contract) {
           const dc = sc.delivery_contract;
@@ -350,6 +343,25 @@ export default function App() {
       if (showLoading) setLoading(false);
     }
   };
+
+  // Auto-refresh timer when there is an active run
+  useEffect(() => {
+    let interval = null;
+    if (projectKey && data && data.active_run) {
+      interval = setInterval(() => {
+        fetchState(projectKey, false);
+      }, 5000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [projectKey, data]);
+
+  // Fetch state on mount and projectKey changes
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchState(projectKey, true);
+  }, [projectKey]);
 
   // POST action handlers
   const handleTerminate = async (key) => {
@@ -568,6 +580,41 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleSaveWorkerBackends = async () => {
+    setSavingBackends(true);
+    try {
+      // Build workers object containing ONLY explicit overrides for managed roles (exclude empty strings or "default")
+      const workers = {};
+      const managedRoles = data?.start_context?.worker_roles || DEFAULT_WORKER_ROLES;
+      managedRoles.forEach((role) => {
+        const backend = panelRoleOverrides[role];
+        if (backend && backend !== 'default' && backend !== '') {
+          workers[role] = backend;
+        }
+      });
+
+      const response = await fetch('/api/project-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project: projectKey,
+          worker_backend_mode: panelGlobalMode,
+          workers: workers,
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) {
+        throw new Error(res.error || 'Failed to save worker backends');
+      }
+      showToast('Worker backends updated successfully');
+      await fetchState(projectKey, false); // Fetch state without full screen loader
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setSavingBackends(false);
     }
   };
 
@@ -1109,16 +1156,21 @@ export default function App() {
   // Dashboard Detailed View for a single project
   const state = data?.state;
   const startContext = data?.start_context || {};
+  const backendOptions = startContext.worker_backend_options || DEFAULT_BACKEND_OPTIONS;
+  const workerRoles = startContext.worker_roles || DEFAULT_WORKER_ROLES;
+  const usedBackends = Array.from(new Set([
+    panelGlobalMode,
+    ...workerRoles.map(role => panelRoleOverrides[role]).filter(b => b && b !== 'default' && b !== '')
+  ])).filter(Boolean);
+
   const activeRun = data?.active_run || false;
   const roleObservations = data?.role_observations || [];
-  const workflowSteps = data?.workflow_steps || [];
   const approvalReviews = data?.approval_reviews || [];
   const actionItems = data?.action_items || [];
   const smokeRunItems = data?.smoke_run_items || [];
   const agileBoard = data?.agile_board || { columns: {}, counts: {} };
   const workerJobs = data?.worker_jobs || [];
 
-  const closedRun = state && !activeRun;
   const headerStatus = state?.next_node || state?.current_node || 'no_active_run';
   const headBadge = getBadgeStyle(headerStatus);
 
@@ -1774,6 +1826,131 @@ export default function App() {
               {/* Tab: Workers */}
               {activeTab === 'workers' && (
                 <div className="space-y-6">
+                  {/* Worker Backends config panel */}
+                  <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-6 rounded-2xl space-y-6">
+                    <div className="border-b border-[#F1F1F1] dark:border-zinc-900 pb-3">
+                      <h3 className="text-sm font-extrabold text-zinc-800 dark:text-zinc-200">Worker Routing Configuration</h3>
+                      <p className="text-xs text-[#AFAFAF] mt-0.5">Configure which agent CLI execution backends are used for each project role.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                      {/* Left Column: Form Controls */}
+                      <div className="space-y-4">
+                        {/* Global default selection */}
+                        <div>
+                          <label className="block text-[10px] text-zinc-550 mb-1.5 uppercase font-bold tracking-wider">Global Default Mode</label>
+                          <select
+                            value={panelGlobalMode}
+                            onChange={(e) => setPanelGlobalMode(e.target.value)}
+                            disabled={savingBackends || actionLoading}
+                            className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                          >
+                            {backendOptions.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt === 'codex' ? 'Codex CLI' : opt === 'anthropic' || opt === 'claude' ? 'Claude CLI' : opt}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Role configurations */}
+                        <div className="space-y-3">
+                          <span className="block text-[10px] text-zinc-550 uppercase font-bold tracking-wider">Per-Role Routing Overrides</span>
+                          {workerRoles.map((role) => (
+                            <div key={role} className="flex items-center justify-between space-x-4 border-b border-[#F1F1F1] dark:border-zinc-900 pb-2.5">
+                              <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 capitalize">{role} Role</span>
+                              <select
+                                value={panelRoleOverrides[role] || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setPanelRoleOverrides(prev => ({
+                                    ...prev,
+                                    [role]: val
+                                  }));
+                                }}
+                                disabled={savingBackends || actionLoading}
+                                className="w-48 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                              >
+                                <option value="">Use default</option>
+                                {backendOptions.map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt === 'codex' ? 'Codex CLI' : opt === 'anthropic' || opt === 'claude' ? 'Claude CLI' : opt}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Save Button */}
+                        <div className="pt-2 flex justify-end">
+                          <button
+                            onClick={handleSaveWorkerBackends}
+                            disabled={savingBackends || actionLoading}
+                            className="bg-[#58CC02] hover:bg-[#46A302] text-white border-b-4 border-[#3D8B00] active:border-b-0 active:translate-y-1 px-5 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center space-x-2"
+                          >
+                            {savingBackends ? (
+                              <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                <span>Saving...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Check className="h-3.5 w-3.5" />
+                                <span>Save Configurations</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Right Column: Preflight / Readiness Badges */}
+                      <div className="space-y-4 border-t lg:border-t-0 lg:border-l border-[#F1F1F1] dark:border-zinc-900 lg:pl-8 pt-4 lg:pt-0">
+                        <div className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Backend Readiness Preflight</div>
+                        
+                        <div className="space-y-3.5">
+                          {usedBackends.map((backend) => {
+                            const preflight = startContext.project_report?.worker_backends_preflight?.[backend] || {};
+                            const isReady = preflight.ready ?? false;
+                            const badge = getBadgeStyle(isReady ? 'success' : 'error');
+                            const Icon = badge.icon;
+                            
+                            return (
+                              <div key={backend} className="bg-zinc-50 dark:bg-zinc-900/30 border border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3.5 space-y-2">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-xs font-extrabold text-zinc-800 dark:text-zinc-200 capitalize">
+                                    {backend === 'codex' ? 'Codex CLI' : backend === 'anthropic' || backend === 'claude' ? 'Claude CLI' : backend}
+                                    {backend === panelGlobalMode && <span className="text-[9px] text-[#AFAFAF] font-normal ml-1.5 lowercase">(global default)</span>}
+                                  </span>
+                                  
+                                  <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold border uppercase tracking-wider ${badge.bg} ${badge.text} ${badge.border}`}>
+                                    <Icon className="h-3 w-3" />
+                                    <span>{isReady ? 'Ready' : 'Not Ready'}</span>
+                                  </span>
+                                </div>
+                                
+                                {preflight.hint ? (
+                                  <p className="text-[10px] text-zinc-550 dark:text-zinc-400 font-medium leading-relaxed bg-white dark:bg-zinc-950/40 p-2 rounded-lg border border-[#F1F1F1] dark:border-zinc-900 font-mono select-all">
+                                    {preflight.hint}
+                                  </p>
+                                ) : (
+                                  <p className="text-[10px] text-[#AFAFAF] italic font-medium leading-relaxed">
+                                    No additional hints or warnings available.
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {usedBackends.length === 0 && (
+                            <div className="text-xs text-[#AFAFAF] italic">
+                              No backends are currently configured or in use.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Worker Jobs</h2>
                     <p className="text-xs text-[#AFAFAF]">Live observation of background Codex CLI and agent executors.</p>

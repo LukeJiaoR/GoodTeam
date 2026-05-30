@@ -21,6 +21,11 @@ def test_build_project_config_round_trips_through_parser(tmp_path):
     assert parsed["model_profile"] == "balanced"
     assert parsed["delivery_mode"] == "mvp"
     assert parsed["worker_backend"]["mode"] == "fake"
+    assert parsed["workers"] == {
+        "ui": "fake",
+        "implementation": "fake",
+        "qa": "fake",
+    }
     assert parsed["repos"]["app"] == "/home/dev/myapp"
 
 
