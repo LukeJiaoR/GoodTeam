@@ -4926,12 +4926,16 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         workspace=workspace,
                         relative_path=str(request.get("path", "")),
                     )
-                elif "project" in request or "workers" in request:
+                # `/project-config` carries two operations: the worker-backends
+                # panel sends `project` + `workers` for an existing project; the
+                # create-config form sends neither. Route both explicitly so an
+                # unrelated path can never silently fall through to create-config.
+                elif normalized_path == "/project-config" and ("project" in request or "workers" in request):
                     result = update_project_worker_backend_settings(
                         workspace=workspace,
                         request=request,
                     )
-                else:
+                elif normalized_path == "/project-config":
                     result = create_local_project_config(
                         workspace=workspace,
                         project_name=str(request.get("project_name", "")),

@@ -1,5 +1,10 @@
 # Patch — make `/api/project-config` routing explicit
 
+> **Status: RESOLVED** — Option B applied (`web.py` POST dispatch: both
+> `/project-config` operations are now path-explicit `elif normalized_path ==
+> "/project-config"` branches; the silent global `else`-is-create fallthrough is
+> gone). Kept on file as the reusable patch-handoff template.
+
 > **This doubles as the reusable template for a "patch handoff".** A patch is a
 > small, targeted fix found during review/QA. Keep the shape: *Meta → Symptom
 > (with file:line) → Fix (one recommended option) → Acceptance → Out of scope.*
