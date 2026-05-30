@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from goodteam_os.projects import check_project_target, load_project_target
 
@@ -62,6 +61,28 @@ def test_check_project_target_reports_repo_and_cli_status():
 
     assert report["repos"]["docs"]["exists"] is False
     assert report["workers"]["backend"]["available"] is False
+
+
+def test_check_project_target_reports_per_role_worker_backends(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    target = {
+        "worker_backend": {"mode": "codex"},
+        "workers": {"implementation": "anthropic", "qa": "codex", "ui": ""},
+    }
+
+    report = check_project_target(target)
+
+    # ui has no explicit backend, so it resolves to the global default.
+    assert report["role_worker_backends"] == {
+        "implementation": "anthropic",
+        "qa": "codex",
+        "ui": "codex",
+    }
+    # every distinct backend referenced gets its own readiness report.
+    preflight = report["worker_backends_preflight"]
+    assert set(preflight) == {"anthropic", "codex"}
+    assert preflight["anthropic"]["command"] == "claude"
+    assert preflight["codex"]["command"] == "codex"
 
 
 def test_check_project_target_reports_deepseek_provider_from_env(monkeypatch):

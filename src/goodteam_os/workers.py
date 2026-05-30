@@ -3,6 +3,8 @@ import os
 import re
 import subprocess
 import threading
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import which
@@ -22,6 +24,128 @@ CLAUDE_AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 BUILTIN_WORKER_MODES = ("fake", "noop", "human")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
+
+
+@dataclass(frozen=True)
+class CliBackendSpec:
+    """One agentic coding CLI worker backend. Register a spec in CLI_BACKENDS to
+    add a new CLI (e.g. an antigravity/gemini CLI) without touching dispatch."""
+
+    name: str
+    which_name: str
+    # default_path is a callable so it re-reads the (env-overridable, test-monkeypatchable)
+    # module global on each run instead of freezing the value at import time.
+    default_path: Callable[[], str]
+    model_default: str
+    auth_env: tuple[str, ...]
+    capture: str  # "output_file" | "stdout"
+    label: str
+    build_command: Callable[[str, str, Path, Path], list[str]]
+    summarize: Callable[[int, str], str]
+    not_available_message: str
+
+
+def _codex_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
+    return [
+        binary,
+        "exec",
+        "--model",
+        model,
+        "--skip-git-repo-check",
+        "--cd",
+        str(project_root),
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--output-last-message",
+        str(result_path),
+        "-",
+    ]
+
+
+def _claude_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
+    return [binary, "-p", "--model", model, "--dangerously-skip-permissions"]
+
+
+def _codex_summary(exit_code: int, stderr: str) -> str:
+    if exit_code == 0:
+        return "Codex CLI exited with code 0."
+    relevant_error = _last_relevant_error(stderr)
+    normalized_relevant_error = relevant_error.lower()
+    normalized = normalized_relevant_error or stderr.lower()
+    if "invalid_api_key" in normalized or "invalid api key" in normalized:
+        return f"Codex CLI exited with code {exit_code}: invalid API key."
+    if "401 unauthorized" in normalized:
+        return f"Codex CLI exited with code {exit_code}: 401 Unauthorized."
+    status_match = re.search(r"unexpected status\s+(\d{3})\s+([^:,.\n]+(?:\s+[^:,.\n]+)?)", relevant_error, re.IGNORECASE)
+    if status_match:
+        return f"Codex CLI exited with code {exit_code}: {status_match.group(1)} {status_match.group(2).strip()}."
+    if "stream disconnected" in normalized:
+        return f"Codex CLI exited with code {exit_code}: stream disconnected before response.completed."
+    return f"Codex CLI exited with code {exit_code}."
+
+
+def _claude_summary(exit_code: int, stderr: str) -> str:
+    if exit_code == 0:
+        return "Claude Code CLI exited with code 0."
+    normalized = stderr.lower()
+    if "invalid_api_key" in normalized or "invalid api key" in normalized or "authentication" in normalized:
+        return f"Claude Code CLI exited with code {exit_code}: authentication failed (check ANTHROPIC_API_KEY)."
+    if "401 unauthorized" in normalized:
+        return f"Claude Code CLI exited with code {exit_code}: 401 Unauthorized."
+    if "rate limit" in normalized or " 429 " in f" {normalized} ":
+        return f"Claude Code CLI exited with code {exit_code}: rate limited."
+    return f"Claude Code CLI exited with code {exit_code}."
+
+
+def _cli_preflight(spec: CliBackendSpec, binary: str, model: str) -> dict[str, Any]:
+    executable = Path(binary)
+    preflight: dict[str, Any] = {
+        f"{spec.which_name}_command": binary,
+        f"{spec.which_name}_available": bool(which(spec.which_name) or executable.is_file()),
+        "model": model,
+        "auth_env": {name: bool(os.getenv(name)) for name in spec.auth_env},
+        "http_proxy": bool(os.getenv("http_proxy") or os.getenv("HTTP_PROXY")),
+        "https_proxy": bool(os.getenv("https_proxy") or os.getenv("HTTPS_PROXY")),
+    }
+    if spec.which_name == "codex":
+        preflight["codex_home"] = os.getenv("CODEX_HOME", "")
+    return preflight
+
+
+CODEX_BACKEND = CliBackendSpec(
+    name="codex",
+    which_name="codex",
+    default_path=lambda: DEFAULT_CODEX_PATH,
+    model_default=DEFAULT_CODEX_MODEL,
+    auth_env=CODEX_AUTH_ENV_NAMES,
+    capture="output_file",
+    label="Codex CLI",
+    build_command=_codex_build_command,
+    summarize=_codex_summary,
+    not_available_message="Codex CLI is not available. Install codex or add it to PATH before running codex workers.",
+)
+
+CLAUDE_BACKEND = CliBackendSpec(
+    name="anthropic",
+    which_name="claude",
+    default_path=lambda: DEFAULT_CLAUDE_PATH,
+    model_default=DEFAULT_CLAUDE_MODEL,
+    auth_env=CLAUDE_AUTH_ENV_NAMES,
+    capture="stdout",
+    label="Claude Code CLI",
+    build_command=_claude_build_command,
+    summarize=_claude_summary,
+    not_available_message=(
+        "Claude Code CLI is not available. Install `claude` or add it to PATH before running anthropic workers."
+    ),
+)
+
+# Registry of agentic CLI worker backends. Add a CliBackendSpec here to support a
+# new CLI; `anthropic` and `claude` are aliases for the same Claude Code backend.
+CLI_BACKENDS: dict[str, CliBackendSpec] = {
+    "codex": CODEX_BACKEND,
+    "anthropic": CLAUDE_BACKEND,
+    "claude": CLAUDE_BACKEND,
+}
 
 
 class WorkerJobStore:
@@ -126,10 +250,9 @@ class WorkerJobStore:
             return self._complete_fake(job_root, job)
         if adapter == "human":
             return self._wait_for_human(job_root, job)
-        if adapter == "codex":
-            return self._run_codex(job_root, job)
-        if adapter in ("anthropic", "claude"):
-            return self._run_claude(job_root, job)
+        spec = CLI_BACKENDS.get(adapter)
+        if spec is not None:
+            return self._run_cli_backend(job_root, job, spec)
         raise ValueError(f"Unsupported worker adapter: {adapter}")
 
     def _complete_noop(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
@@ -149,79 +272,43 @@ class WorkerJobStore:
         summary = "Fill result.md manually, then update status.json when ready."
         return self._write_status(job_root, job, "needs_review", summary)
 
-    def _run_codex(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
-        codex = which("codex") or DEFAULT_CODEX_PATH
-        model = _codex_model_name(str(job.get("model", "")))
-        preflight = self._codex_preflight(codex=codex, model=model)
-        if not preflight["codex_available"]:
-            summary = "Codex CLI is not available. Install codex or add it to PATH before running codex workers."
+    def _run_cli_backend(
+        self,
+        job_root: Path,
+        job: dict[str, Any],
+        spec: "CliBackendSpec",
+    ) -> dict[str, Any]:
+        """Run any registered agentic coding CLI (codex, claude, ...). Adding a
+        new CLI means adding a CliBackendSpec to CLI_BACKENDS — no new branch."""
+        binary = which(spec.which_name) or spec.default_path()
+        raw = str(job.get("model", ""))
+        bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
+        model = bare or spec.model_default
+        result_path = job_root / "result.md"
+        preflight = _cli_preflight(spec, binary, model)
+        command = spec.build_command(binary, model, self.project_root, result_path)
+        if not preflight[f"{spec.which_name}_available"]:
             return self._write_status(
                 job_root,
                 job,
                 "failed",
-                summary,
+                spec.not_available_message,
                 extra={
-                    "command": [codex, "exec", "--model", model],
+                    "command": command,
                     "model": model,
                     "exit_code": None,
                     "preflight": preflight,
                 },
             )
-        command = [
-            codex,
-            "exec",
-            "--model",
-            model,
-            "--skip-git-repo-check",
-            "--cd",
-            str(self.project_root),
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--output-last-message",
-            str(job_root / "result.md"),
-            "-",
-        ]
         return self._run_cli_worker(
             job_root,
             job,
             command=command,
             model=model,
             preflight=preflight,
-            label="Codex CLI",
-            capture="output_file",
-            summarize=self._codex_summary,
-        )
-
-    def _run_claude(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
-        claude = which("claude") or DEFAULT_CLAUDE_PATH
-        model = _claude_model_name(str(job.get("model", "")))
-        preflight = self._claude_preflight(claude=claude, model=model)
-        if not preflight["claude_available"]:
-            summary = (
-                "Claude Code CLI is not available. Install `claude` or add it to PATH "
-                "before running anthropic workers."
-            )
-            return self._write_status(
-                job_root,
-                job,
-                "failed",
-                summary,
-                extra={
-                    "command": [claude, "-p", "--model", model],
-                    "model": model,
-                    "exit_code": None,
-                    "preflight": preflight,
-                },
-            )
-        command = [claude, "-p", "--model", model, "--dangerously-skip-permissions"]
-        return self._run_cli_worker(
-            job_root,
-            job,
-            command=command,
-            model=model,
-            preflight=preflight,
-            label="Claude Code CLI",
-            capture="stdout",
-            summarize=self._claude_summary,
+            label=spec.label,
+            capture=spec.capture,
+            summarize=spec.summarize,
         )
 
     def _run_cli_worker(
@@ -344,58 +431,6 @@ class WorkerJobStore:
                 extra={**extra, "heartbeat_at": self._now()},
             )
 
-    def _codex_preflight(self, *, codex: str, model: str) -> dict[str, Any]:
-        executable = Path(codex)
-        return {
-            "codex_command": codex,
-            "codex_available": bool(which("codex") or executable.is_file()),
-            "model": model,
-            "auth_env": {name: bool(os.getenv(name)) for name in CODEX_AUTH_ENV_NAMES},
-            "codex_home": os.getenv("CODEX_HOME", ""),
-            "http_proxy": bool(os.getenv("http_proxy") or os.getenv("HTTP_PROXY")),
-            "https_proxy": bool(os.getenv("https_proxy") or os.getenv("HTTPS_PROXY")),
-        }
-
-    def _claude_preflight(self, *, claude: str, model: str) -> dict[str, Any]:
-        executable = Path(claude)
-        return {
-            "claude_command": claude,
-            "claude_available": bool(which("claude") or executable.is_file()),
-            "model": model,
-            "auth_env": {name: bool(os.getenv(name)) for name in CLAUDE_AUTH_ENV_NAMES},
-            "http_proxy": bool(os.getenv("http_proxy") or os.getenv("HTTP_PROXY")),
-            "https_proxy": bool(os.getenv("https_proxy") or os.getenv("HTTPS_PROXY")),
-        }
-
-    def _claude_summary(self, exit_code: int, stderr: str) -> str:
-        if exit_code == 0:
-            return "Claude Code CLI exited with code 0."
-        normalized = stderr.lower()
-        if "invalid_api_key" in normalized or "invalid api key" in normalized or "authentication" in normalized:
-            return f"Claude Code CLI exited with code {exit_code}: authentication failed (check ANTHROPIC_API_KEY)."
-        if "401 unauthorized" in normalized:
-            return f"Claude Code CLI exited with code {exit_code}: 401 Unauthorized."
-        if "rate limit" in normalized or " 429 " in f" {normalized} ":
-            return f"Claude Code CLI exited with code {exit_code}: rate limited."
-        return f"Claude Code CLI exited with code {exit_code}."
-
-    def _codex_summary(self, exit_code: int, stderr: str) -> str:
-        if exit_code == 0:
-            return "Codex CLI exited with code 0."
-        relevant_error = _last_relevant_error(stderr)
-        normalized_relevant_error = relevant_error.lower()
-        normalized = normalized_relevant_error or stderr.lower()
-        if "invalid_api_key" in normalized or "invalid api key" in normalized:
-            return f"Codex CLI exited with code {exit_code}: invalid API key."
-        if "401 unauthorized" in normalized:
-            return f"Codex CLI exited with code {exit_code}: 401 Unauthorized."
-        status_match = re.search(r"unexpected status\s+(\d{3})\s+([^:,.\n]+(?:\s+[^:,.\n]+)?)", relevant_error, re.IGNORECASE)
-        if status_match:
-            return f"Codex CLI exited with code {exit_code}: {status_match.group(1)} {status_match.group(2).strip()}."
-        if "stream disconnected" in normalized:
-            return f"Codex CLI exited with code {exit_code}: stream disconnected before response.completed."
-        return f"Codex CLI exited with code {exit_code}."
-
     def _worker_prompt(self, job_root: Path, job: dict[str, Any]) -> str:
         model = _codex_model_name(str(job.get("model", "")))
         return "\n\n".join(
@@ -475,18 +510,15 @@ def _codex_model_name(value: str) -> str:
     return model
 
 
-def _claude_model_name(value: str) -> str:
-    model = value.strip() or DEFAULT_CLAUDE_MODEL
-    if ":" in model:
-        return model.split(":", 1)[1].strip() or DEFAULT_CLAUDE_MODEL
-    return model
-
-
 def worker_backend_doctor(mode: str) -> dict[str, Any]:
     """Report whether the configured worker backend can actually run, so a
     user sees missing CLIs or credentials at doctor/init time instead of after
-    a worker fails repeatedly. Never echoes secret values, only their presence."""
+    a worker fails repeatedly. Never echoes secret values, only their presence.
+
+    Routes through CLI_BACKENDS, so a newly registered spec is reported here too."""
     mode = (mode or "").strip() or "codex"
+    if mode == "manual":  # config alias for the human worker
+        mode = "human"
     if mode in BUILTIN_WORKER_MODES:
         return {
             "mode": mode,
@@ -494,51 +526,69 @@ def worker_backend_doctor(mode: str) -> dict[str, Any]:
             "ready": True,
             "hint": f"The `{mode}` worker runs locally and needs no CLI or credentials.",
         }
-    if mode == "codex":
-        command = which("codex") or DEFAULT_CODEX_PATH
-        available = bool(which("codex") or Path(command).is_file())
-        auth_env = {name: bool(os.getenv(name)) for name in CODEX_AUTH_ENV_NAMES}
+    spec = CLI_BACKENDS.get(mode)
+    if spec is None:
+        known = ", ".join(["fake", *sorted(CLI_BACKENDS), "noop", "human"])
+        return {
+            "mode": mode,
+            "kind": "unknown",
+            "ready": False,
+            "hint": f"Unknown worker_backend.mode '{mode}'. Use one of: {known}.",
+        }
+    binary = which(spec.which_name) or spec.default_path()
+    available = bool(which(spec.which_name) or Path(binary).is_file())
+    auth_env = {name: bool(os.getenv(name)) for name in spec.auth_env}
+    report: dict[str, Any] = {
+        "mode": mode,
+        "kind": "cli",
+        "command": spec.which_name,
+        "command_path": binary if available else "",
+        "available": available,
+        "auth_env": auth_env,
+    }
+    if spec.which_name == "codex":
         codex_home = os.getenv("CODEX_HOME", "") or os.path.expanduser("~/.codex")
         auth_file = Path(codex_home) / "auth.json"
         auth_file_present = auth_file.is_file()
         auth_present = any(auth_env.values()) or auth_file_present
-        return {
-            "mode": mode,
-            "kind": "cli",
-            "command": "codex",
-            "command_path": command if available else "",
-            "available": available,
-            "auth_env": auth_env,
-            "auth_file": str(auth_file),
-            "auth_file_present": auth_file_present,
-            "auth_present": auth_present,
-            "ready": available and auth_present,
-            "hint": _codex_auth_hint(available, auth_env, auth_file_present),
-        }
-    if mode in ("anthropic", "claude"):
-        command = which("claude") or DEFAULT_CLAUDE_PATH
-        available = bool(which("claude") or Path(command).is_file())
-        auth_env = {name: bool(os.getenv(name)) for name in CLAUDE_AUTH_ENV_NAMES}
+        report.update(
+            {
+                "auth_file": str(auth_file),
+                "auth_file_present": auth_file_present,
+                "auth_present": auth_present,
+                "ready": available and auth_present,
+                "hint": _codex_auth_hint(available, auth_env, auth_file_present),
+            }
+        )
+    elif spec.which_name == "claude":
         auth_present = any(auth_env.values())
         # The claude CLI can also run from a `claude login` session we can't
         # detect here, so the binary being present is the hard requirement.
-        return {
-            "mode": mode,
-            "kind": "cli",
-            "command": "claude",
-            "command_path": command if available else "",
-            "available": available,
-            "auth_env": auth_env,
-            "auth_present": auth_present,
-            "ready": available,
-            "hint": _claude_auth_hint(available, auth_present),
-        }
-    return {
-        "mode": mode,
-        "kind": "unknown",
-        "ready": False,
-        "hint": f"Unknown worker_backend.mode '{mode}'. Use one of: fake, codex, anthropic, noop, human.",
-    }
+        report.update(
+            {
+                "auth_present": auth_present,
+                "ready": available,
+                "hint": _claude_auth_hint(available, auth_present),
+            }
+        )
+    else:
+        auth_present = any(auth_env.values())
+        report.update(
+            {
+                "auth_present": auth_present,
+                "ready": available,
+                "hint": _generic_cli_hint(spec, available, auth_present),
+            }
+        )
+    return report
+
+
+def _generic_cli_hint(spec: CliBackendSpec, available: bool, auth_present: bool) -> str:
+    if not available:
+        return f"{spec.label} not found. Install `{spec.which_name}` or add it to PATH."
+    if spec.auth_env and not auth_present:
+        return f"No {' / '.join(spec.auth_env)} set for the {spec.name} worker."
+    return f"Ready: {spec.label} detected."
 
 
 def _codex_auth_hint(available: bool, auth_env: dict[str, bool], auth_file_present: bool) -> str:

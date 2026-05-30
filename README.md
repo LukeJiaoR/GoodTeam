@@ -355,14 +355,17 @@ task_backend:
 
 Do not put the Plane API key itself in project config. `api_key_env` names the local environment variable or MCP-side secret source.
 
-Worker execution is also configured separately from the workflow protocol:
+Worker execution is also configured separately from the workflow protocol. Set a global default and, optionally, override the backend per role:
 
 ```yaml
 worker_backend:
-  mode: codex
+  mode: codex            # global default for any role not listed below
+workers:
+  implementation: anthropic   # this role runs on the claude CLI
+  qa: codex                   # this role runs on the codex CLI
 ```
 
-Supported V1 modes are `codex` (Codex CLI), `anthropic` (Claude Code `claude` CLI), `fake`, `noop`, and `human`. The `codex` and `anthropic` workers share one run loop — they dispatch the job protocol to an agentic coding CLI, stream heartbeats, and capture the result (codex via `--output-last-message`, claude via stdout). Override the executables with `GOODTEAM_CODEX_PATH` / `GOODTEAM_CLAUDE_PATH`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth. Each job includes `role_prompt.md`, `task.md`, `context.md`, `constraints.md`, `expected_artifacts.json`, `role_memory_paths.json`, `role_pickup_packet.json`, `result.md`, `stdout.txt`, `stderr.txt`, and `status.json`. The stable role prompt stays separate from the concrete task. `role_memory_paths.json` points workers at their role-specific long-, mid-, and short-term project memory files; `role_pickup_packet.json` is the default token-light pickup packet.
+Supported V1 modes are `codex` (Codex CLI), `anthropic` (Claude Code `claude` CLI), `fake`, `noop`, and `human`. Each role resolves its backend from `workers.<role>`, falling back to `worker_backend.mode`, then `codex`; `doctor` reports readiness for every backend you reference (`worker_backends_preflight`). Backends are a registry (`CLI_BACKENDS` in `workers.py`) — adding a new agentic CLI is a single `CliBackendSpec`. The `codex` and `anthropic` workers share one run loop — they dispatch the job protocol to an agentic coding CLI, stream heartbeats, and capture the result (codex via `--output-last-message`, claude via stdout). Override the executables with `GOODTEAM_CODEX_PATH` / `GOODTEAM_CLAUDE_PATH`. The worker job protocol is local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; CLI tools are adapters, not the source of truth. Each job includes `role_prompt.md`, `task.md`, `context.md`, `constraints.md`, `expected_artifacts.json`, `role_memory_paths.json`, `role_pickup_packet.json`, `result.md`, `stdout.txt`, `stderr.txt`, and `status.json`. The stable role prompt stays separate from the concrete task. `role_memory_paths.json` points workers at their role-specific long-, mid-, and short-term project memory files; `role_pickup_packet.json` is the default token-light pickup packet.
 
 Early CONTENTOPS E2E worker execution uses Codex CLI for every role:
 

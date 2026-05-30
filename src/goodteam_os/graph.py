@@ -976,6 +976,18 @@ def run_retro_until_complete(
     return state
 
 
+def resolve_role_adapter(target: dict[str, object], role: str) -> str:
+    """Pick the worker backend for a single role: per-role `workers.<role>`
+    overrides the global `worker_backend.mode`, defaulting to codex. This is what
+    lets a project run, say, implementation on claude and qa on codex."""
+    default_mode = str(dict(target.get("worker_backend", {})).get("mode", "codex") or "codex")
+    per_role = str(dict(target.get("workers", {})).get(role, "") or "").strip()
+    adapter = per_role or default_mode
+    if adapter == "manual":
+        adapter = "human"
+    return adapter
+
+
 def run_implementation_workers(
     state: AgileDevState,
     project_config: Path | None = None,
@@ -986,15 +998,12 @@ def run_implementation_workers(
     runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if runtime_root is None:
         return []
-    adapter = str(dict(target.get("worker_backend", {})).get("mode", "codex") or "codex")
-    if adapter == "manual":
-        adapter = "human"
     store = WorkerJobStore(runtime_root)
     jobs = [
         store.create_job(
             run_id=state.run_id,
             role="ui",
-            adapter=adapter,
+            adapter=resolve_role_adapter(target, "ui"),
             model=ui_delivery_worker_model(state),
             task=contentops_ui_delivery_task(getattr(state, "delivery_mode", "init_project")),
             context=worker_context(state),
@@ -1010,7 +1019,7 @@ def run_implementation_workers(
         store.create_job(
             run_id=state.run_id,
             role="implementation",
-            adapter=adapter,
+            adapter=resolve_role_adapter(target, "implementation"),
             model=worker_model_for_role(state, "implementation"),
             task=contentops_implementation_task(getattr(state, "delivery_mode", "init_project")),
             context=worker_context(state),
@@ -1024,7 +1033,7 @@ def run_implementation_workers(
         store.create_job(
             run_id=state.run_id,
             role="qa",
-            adapter=adapter,
+            adapter=resolve_role_adapter(target, "qa"),
             model=worker_model_for_role(state, "qa"),
             task="Verify the CONTENTOPS MVP with reproducible commands and record any gaps.",
             context=worker_context(state),

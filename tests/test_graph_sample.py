@@ -6,6 +6,7 @@ from goodteam_os.graph import (
     collect_project_context,
     contentops_implementation_task,
     resolve_project_runtime_root,
+    resolve_role_adapter,
     render_downstream_artifact_markdown,
     render_prd_markdown,
     run_implementation_workers,
@@ -13,6 +14,22 @@ from goodteam_os.graph import (
 )
 from goodteam_os.graph import run_adoption_until_next_gate
 from goodteam_os.state import create_initial_state
+
+
+def test_resolve_role_adapter_prefers_per_role_then_global_then_default():
+    target = {
+        "worker_backend": {"mode": "codex"},
+        "workers": {"implementation": "anthropic", "qa": "codex"},
+    }
+    # per-role override wins
+    assert resolve_role_adapter(target, "implementation") == "anthropic"
+    assert resolve_role_adapter(target, "qa") == "codex"
+    # role not listed falls back to the global mode
+    assert resolve_role_adapter(target, "ui") == "codex"
+    # nothing configured at all falls back to codex
+    assert resolve_role_adapter({}, "ui") == "codex"
+    # `manual` is an alias for the human worker
+    assert resolve_role_adapter({"worker_backend": {"mode": "manual"}}, "ui") == "human"
 
 
 def test_graph_reaches_prd_gate(tmp_path):

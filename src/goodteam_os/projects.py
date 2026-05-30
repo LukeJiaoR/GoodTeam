@@ -190,6 +190,13 @@ def check_project_target(target: ProjectTarget) -> dict[str, object]:
             "configured": bool(_env_value(api_key_env, env_file)),
         }
 
+    global_mode = str(dict(target.get("worker_backend", {})).get("mode", "codex") or "codex")
+    role_worker_backends = {
+        str(role): (str(backend).strip() or global_mode)
+        for role, backend in dict(target.get("workers", {})).items()
+        if str(role).strip()
+    }
+    distinct_backends = sorted({global_mode, *role_worker_backends.values()})
     return {
         "project": {
             "name": target.get("name", ""),
@@ -200,9 +207,9 @@ def check_project_target(target: ProjectTarget) -> dict[str, object]:
         "workers": workers,
         "providers": providers,
         "role_routes": target.get("role_routes", {}),
-        "worker_backend_preflight": worker_backend_doctor(
-            str(dict(target.get("worker_backend", {})).get("mode", "codex") or "codex")
-        ),
+        "worker_backend_preflight": worker_backend_doctor(global_mode),
+        "role_worker_backends": role_worker_backends,
+        "worker_backends_preflight": {backend: worker_backend_doctor(backend) for backend in distinct_backends},
         "deployment_backend": deployment_backend_report(target, ssh_available=bool(which("ssh"))),
         "delivery_contract": delivery_contract_report(target),
     }
