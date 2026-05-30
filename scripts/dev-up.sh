@@ -97,6 +97,15 @@ PYEOF
 mkdir -p "$WS/frontend"
 ln -sfn "$ROOT/frontend/dist" "$WS/frontend/dist"
 
+# Free the port so a leftover previous dev-up instance can't shadow this one
+# (otherwise the new serve fails to bind and you keep viewing the old server).
+existing="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+if [ -n "$existing" ]; then
+  echo "[dev-up] stopping previous server on :$PORT (pid $existing)"
+  kill $existing 2>/dev/null || true
+  sleep 1
+fi
+
 echo ""
 echo "[dev-up] GoodTeam dev instance is alive:"
 echo "          Dashboard    : http://localhost:$PORT/"
