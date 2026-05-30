@@ -11,3 +11,4 @@ projects/*.local.yaml
 .env.*
 .DS_Store
 .antigravitycli/
+dev-workspace/
