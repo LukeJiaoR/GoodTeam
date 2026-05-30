@@ -5,6 +5,7 @@ description = "LangGraph-based AI Native agile development team system"
 requires-python = ">=3.11"
 dependencies = [
   "langgraph>=0.2.0",
+  "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]

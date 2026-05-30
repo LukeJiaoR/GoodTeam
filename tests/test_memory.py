@@ -131,6 +131,102 @@ def test_pickup_packet_uses_index_summaries_without_loading_long_mid_full_text(t
     assert packet["summaries"]["mid-term"]
 
 
+def test_retrieve_relevant_events_ranks_matching_event_first(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="better-sqlite3 native addon ABI drift breaks tests when Node version changes.",
+        source="job-1/result.md",
+    )
+    store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Telegram approval channel masks sensitive data before sending messages.",
+        source="job-2/result.md",
+    )
+    store.append_memory_event(
+        "architect",
+        horizon="long-term",
+        text="CONTENTOPS draft generation produces four platform variants per topic.",
+        source="job-3/result.md",
+    )
+
+    results = store.retrieve_relevant_events(
+        "architect",
+        query="sqlite native addon ABI rebuild after node upgrade",
+        top_k=2,
+    )
+
+    assert results, "expected at least one retrieved event"
+    assert "better-sqlite3" in results[0]["text"]
+    assert all("Telegram" not in item["text"] for item in results)
+    assert len(results) <= 2
+
+
+def test_retrieve_relevant_events_returns_empty_without_query_or_events(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("planner", "Planner", "AI Content Studio")
+
+    assert store.retrieve_relevant_events("planner", query="anything") == []
+
+    store.append_memory_event(
+        "planner",
+        horizon="short-term",
+        text="Resume roadmap review for memory moat.",
+        source="job-9/result.md",
+    )
+    assert store.retrieve_relevant_events("planner", query="   ") == []
+
+
+def test_retrieved_event_carries_stable_mem_handle(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Use $SHELL -lc for target verification to match the login shell environment.",
+        source="job-7/result.md",
+    )
+
+    first = store.retrieve_relevant_events("architect", query="shell verification login environment")
+    second = store.retrieve_relevant_events("architect", query="shell verification login environment")
+
+    assert first[0]["id"].startswith("mem:")
+    assert first[0]["id"] == second[0]["id"]
+
+
+def test_pickup_packet_includes_relevant_events_only_when_query_given(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="npm registry npmmirror intermittently returns 502/504; retry with backoff.",
+        source="job-5/result.md",
+    )
+
+    without_query = store.build_pickup_packet("architect")
+    assert "relevant_events" not in without_query
+
+    with_query = store.build_pickup_packet(
+        "architect",
+        query="npm install fails with 504 from registry",
+    )
+    assert with_query["relevant_events"], "expected retrieved events in packet"
+    assert "npm registry" in with_query["relevant_events"][0]["text"]
+    assert with_query["relevant_events"][0]["id"].startswith("mem:")
+
+
 def test_role_memory_store_rebuilds_memory_from_events(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()

@@ -1,10 +1,18 @@
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+try:  # BM25 is a declared dependency; degrade gracefully if unavailable.
+    from rank_bm25 import BM25Okapi
+except ImportError:  # pragma: no cover - exercised only without the optional wheel
+    BM25Okapi = None
+
 
 MEMORY_HORIZONS = ("long-term", "mid-term", "short-term")
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def slug(value: str) -> str:
@@ -29,6 +37,20 @@ def summarize_markdown(content: str) -> str:
     if bullets:
         parts.append("Signals: " + "; ".join(bullets))
     return " | ".join(parts) if parts else content.strip()[:600]
+
+
+def tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall(text.lower())
+
+
+def _bm25_scores(corpus: list[list[str]], query_tokens: list[str]) -> list[float]:
+    """Rank corpus docs against the query. Uses BM25 when available, else a
+    deterministic token-overlap score so retrieval still works (and stays
+    testable) without the optional wheel."""
+    if BM25Okapi is not None:
+        return list(BM25Okapi(corpus).get_scores(query_tokens))
+    wanted = set(query_tokens)
+    return [float(sum(1 for token in doc if token in wanted)) for doc in corpus]
 
 
 class ProjectMemoryStore:
@@ -211,11 +233,61 @@ class RoleMemoryStore:
             return self.refresh_memory_index(role_key)
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def retrieve_relevant_events(
+        self,
+        role_key: str,
+        query: str,
+        *,
+        top_k: int = 5,
+        horizons: tuple[str, ...] | None = None,
+    ) -> list[dict[str, object]]:
+        """Return the top-K events most relevant to ``query``, ranked by BM25.
+
+        Each result carries a stable ``mem:<id>`` handle so artifacts can cite
+        the exact event a fact came from (grounded citations, M8)."""
+        query_tokens = tokenize(query)
+        if not query_tokens:
+            return []
+        events = self._read_events(role_key)
+        if horizons:
+            events = [event for event in events if event.get("horizon") in horizons]
+        if not events:
+            return []
+        corpus = [tokenize(str(event.get("text", ""))) for event in events]
+        scores = _bm25_scores(corpus, query_tokens)
+        wanted = set(query_tokens)
+        # Gate relevance on token overlap (BM25 gives terms that appear in every
+        # document a zero/negative IDF, which would drop legitimate matches in a
+        # tiny corpus); use the BM25 score only to rank the overlapping events.
+        candidates = [
+            (score, event)
+            for score, event, doc in zip(scores, events, corpus)
+            if wanted.intersection(doc)
+        ]
+        ranked = sorted(candidates, key=lambda pair: pair[0], reverse=True)
+        results: list[dict[str, object]] = []
+        for score, event in ranked:
+            results.append(
+                {
+                    "id": self._event_id(event),
+                    "score": float(score),
+                    "horizon": event.get("horizon", ""),
+                    "text": event.get("text", ""),
+                    "source": event.get("source", ""),
+                    "timestamp": event.get("timestamp", ""),
+                }
+            )
+            if len(results) >= top_k:
+                break
+        return results
+
     def build_pickup_packet(
         self,
         role_key: str,
         *,
         max_short_chars: int = 1600,
+        query: str = "",
+        top_k: int = 5,
     ) -> dict[str, object]:
         index = self.read_memory_index(role_key)
         short_path = self.memory_path(role_key, "short-term")
@@ -223,7 +295,7 @@ class RoleMemoryStore:
         if len(short_content) > max_short_chars:
             short_content = short_content[:max_short_chars] + "\n\n[Short-term memory truncated]"
         horizons = dict(index.get("horizons", {}))
-        return {
+        packet: dict[str, object] = {
             "role_key": role_key,
             "paths": {horizon: str(self.memory_path(role_key, horizon)) for horizon in MEMORY_HORIZONS},
             "event_count": int(index.get("event_count", 0)),
@@ -233,6 +305,9 @@ class RoleMemoryStore:
                 "mid-term": dict(horizons.get("mid-term", {})).get("summary", ""),
             },
         }
+        if query.strip():
+            packet["relevant_events"] = self.retrieve_relevant_events(role_key, query, top_k=top_k)
+        return packet
 
     def rebuild_role_memory(
         self,
@@ -318,6 +393,10 @@ Role: `{role_key}`
             path.write_text(content.rstrip() + f"\n- {event['text']}{source}\n", encoding="utf-8")
         else:
             path.write_text(content.rstrip() + entry, encoding="utf-8")
+
+    def _event_id(self, event: dict[str, object]) -> str:
+        payload = json.dumps(event, sort_keys=True, ensure_ascii=False)
+        return "mem:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
     def _read_events(self, role_key: str) -> list[dict[str, str]]:
         path = self.event_path(role_key)
