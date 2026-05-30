@@ -233,6 +233,9 @@ class RoleMemoryStore:
             return self.refresh_memory_index(role_key)
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def event_texts(self, role_key: str) -> set[str]:
+        return {str(event.get("text", "")) for event in self._read_events(role_key)}
+
     def retrieve_relevant_events(
         self,
         role_key: str,

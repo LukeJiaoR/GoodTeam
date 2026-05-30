@@ -2,7 +2,8 @@ import json
 import subprocess
 from datetime import UTC, datetime
 
-from goodteam_os.workers import WorkerJobStore, worker_backend_doctor
+from goodteam_os.memory import RoleMemoryStore
+from goodteam_os.workers import WorkerJobStore, parse_result_sections, worker_backend_doctor
 
 
 class FakePopen:
@@ -80,6 +81,101 @@ def install_fake_popen(
         return process
 
     monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
+
+
+def memory_events(project_root, role):
+    event_path = RoleMemoryStore(project_root).event_path(role)
+    if not event_path.is_file():
+        return []
+    return [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_parse_result_sections_maps_standard_sections_to_horizons():
+    text = """
+Intro prose should not become memory.
+
+## Decisions
+- Memory write-back uses the append-only WAL.
+
+## Learned
+- Pickup packets are created before workers run.
+
+## Caveats
+- Worker result markdown is freeform.
+
+## Open Questions
+- Should same-run propagation be a future milestone?
+"""
+
+    assert parse_result_sections(text) == [
+        ("long-term", "Memory write-back uses the append-only WAL."),
+        ("mid-term", "Pickup packets are created before workers run."),
+        ("mid-term", "Worker result markdown is freeform."),
+        ("short-term", "Should same-run propagation be a future milestone?"),
+    ]
+
+
+def test_parse_result_sections_tolerates_header_case_colons_and_bullet_markers():
+    text = """
+### learned:
+* Normalize section names before matching.
+
+### CaVeAtS
+• Avoid treating prompt guidance as memory.
+
+### OPEN   QUESTIONS:
+- Who reviews memory promotion later?
+"""
+
+    assert parse_result_sections(text) == [
+        ("mid-term", "Normalize section names before matching."),
+        ("mid-term", "Avoid treating prompt guidance as memory."),
+        ("short-term", "Who reviews memory promotion later?"),
+    ]
+
+
+def test_parse_result_sections_uses_first_prose_paragraph_and_stops_at_heading():
+    text = """
+Opening summary should be ignored.
+
+## Learned
+The parser can capture a paragraph
+that wraps across lines.
+
+This second paragraph should be ignored.
+
+## Caveats
+This caveat paragraph is captured.
+
+# Unrelated Heading
+This prose must not be captured.
+"""
+
+    assert parse_result_sections(text) == [
+        ("mid-term", "The parser can capture a paragraph that wraps across lines."),
+        ("mid-term", "This caveat paragraph is captured."),
+    ]
+
+
+def test_parse_result_sections_skips_empty_sections_and_caps_each_section():
+    learned_bullets = "\n".join(f"- Learned fact {index}" for index in range(12))
+    text = f"""
+## Caveats
+
+## Learned
+{learned_bullets}
+
+## Decisions
+- Durable decision
+"""
+
+    parsed = parse_result_sections(text)
+
+    learned = [item for item in parsed if item[0] == "mid-term" and item[1].startswith("Learned fact")]
+    assert len(learned) == 10
+    assert learned[-1] == ("mid-term", "Learned fact 9")
+    assert ("long-term", "Durable decision") in parsed
+    assert all(text for _, text in parsed)
 
 
 def test_worker_job_store_creates_protocol_files(tmp_path):
@@ -172,6 +268,42 @@ def test_noop_adapter_completes_job_with_result(tmp_path):
     assert json.loads((job_root / "status.json").read_text(encoding="utf-8"))["status"] == "completed"
 
 
+def test_fake_adapter_completes_without_memory_sections_as_noop(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="fake",
+        task="Create task proposal",
+        context="Context packet",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["memory_writeback"]["status"] == "skipped"
+    assert result["memory_writeback"]["reason"] == "no_sections"
+    assert memory_events(tmp_path, "planner") == []
+
+
+def test_noop_adapter_completes_without_memory_sections_as_noop(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="noop",
+        task="Create task proposal",
+        context="Context packet",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["memory_writeback"]["status"] == "skipped"
+    assert result["memory_writeback"]["reason"] == "no_sections"
+    assert memory_events(tmp_path, "planner") == []
+
+
 def test_human_adapter_marks_job_waiting_for_manual_result(tmp_path):
     store = WorkerJobStore(tmp_path)
     job = store.create_job(
@@ -186,6 +318,151 @@ def test_human_adapter_marks_job_waiting_for_manual_result(tmp_path):
 
     assert result["status"] == "needs_review"
     assert "Fill result.md" in result["summary"]
+    assert "memory_writeback" not in result
+    assert memory_events(tmp_path, "product_requirement") == []
+
+
+def test_completed_cli_job_writes_memory_events_to_expected_horizons(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    result_text = """
+# Worker Result
+
+Implemented memory write-back.
+
+## Decisions
+- Write-back uses the role memory WAL.
+
+## Learned
+- Worker pickup packets are created at job creation.
+
+## Caveats
+- Result markdown may include freeform prose.
+
+## Open Questions
+- Should later milestones promote repeated mid-term facts?
+"""
+    install_fake_popen(monkeypatch, result_text=result_text)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="codex",
+        task="Implement memory write-back.",
+        context="Approved plan.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["memory_writeback"] == {
+        "status": "ok",
+        "source": f"{job['id']}/result.md",
+        "parsed": 4,
+        "appended": 4,
+        "skipped_duplicates": 0,
+    }
+    events = memory_events(tmp_path, "implementation")
+    assert [(event["horizon"], event["text"]) for event in events] == [
+        ("long-term", "Write-back uses the role memory WAL."),
+        ("mid-term", "Worker pickup packets are created at job creation."),
+        ("mid-term", "Result markdown may include freeform prose."),
+        ("short-term", "Should later milestones promote repeated mid-term facts?"),
+    ]
+    assert {event["source"] for event in events} == {f"{job['id']}/result.md"}
+    status = json.loads(
+        (tmp_path / ".goodteam" / "workers" / "jobs" / job["id"] / "status.json").read_text(encoding="utf-8")
+    )
+    assert status["memory_writeback"]["appended"] == 4
+    assert (tmp_path / ".goodteam" / "memory" / "roles" / "implementation" / "events.jsonl").is_file()
+
+
+def test_rerunning_same_job_does_not_append_duplicate_memory_events(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    result_text = """
+# Worker Result
+
+## Learned
+- Re-running the same job must not duplicate memory.
+"""
+    install_fake_popen(monkeypatch, result_text=result_text)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="codex",
+        task="Implement memory write-back.",
+        context="Approved plan.",
+    )
+
+    first = store.run_job(job["id"])
+    second = store.run_job(job["id"])
+
+    assert first["memory_writeback"]["appended"] == 1
+    assert second["memory_writeback"]["appended"] == 0
+    assert second["memory_writeback"]["skipped_duplicates"] == 1
+    assert len(memory_events(tmp_path, "implementation")) == 1
+
+
+def test_write_back_skips_duplicate_bullets_and_existing_texts(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    memory_store = RoleMemoryStore(tmp_path)
+    memory_store.append_memory_event(
+        "qa",
+        horizon="mid-term",
+        text="Existing caveat from a previous job.",
+        source="job-old/result.md",
+    )
+    result_text = """
+# Worker Result
+
+## Caveats
+- Existing caveat from a previous job.
+- Duplicate inside this result.
+- Duplicate inside this result.
+"""
+    install_fake_popen(monkeypatch, result_text=result_text)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="qa",
+        adapter="codex",
+        task="Verify memory write-back.",
+        context="Approved plan.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["memory_writeback"]["parsed"] == 3
+    assert result["memory_writeback"]["appended"] == 1
+    assert result["memory_writeback"]["skipped_duplicates"] == 2
+    assert [event["text"] for event in memory_events(tmp_path, "qa")] == [
+        "Existing caveat from a previous job.",
+        "Duplicate inside this result.",
+    ]
+
+
+def test_write_back_exception_is_recorded_without_failing_completed_job(tmp_path, monkeypatch):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="fake",
+        task="Create task proposal",
+        context="Context packet",
+    )
+
+    def raise_write_back(job_root, job_payload):
+        raise RuntimeError("write-back unavailable")
+
+    monkeypatch.setattr(store, "_write_back_memory", raise_write_back)
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["memory_writeback"] == {"status": "error", "error": "write-back unavailable"}
+    status = json.loads((tmp_path / ".goodteam" / "workers" / "jobs" / job["id"] / "status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "completed"
+    assert status["memory_writeback"] == {"status": "error", "error": "write-back unavailable"}
 
 
 def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypatch):
@@ -648,6 +925,30 @@ def test_codex_worker_prompt_requires_bounded_smoke_cleanup(tmp_path, monkeypatc
 
     assert "Use bounded smoke checks" in calls[0]["input"]
     assert "stop any dev servers, browser sessions, or watchers before exiting" in calls[0]["input"]
+
+
+def test_codex_worker_prompt_requests_memory_write_back_sections_without_copyable_bullets(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen(monkeypatch, calls=calls)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="codex",
+        task="Implement the CONTENTOPS init project scaffold.",
+        context="Approved artifacts are available.",
+    )
+
+    store.run_job(job["id"])
+
+    prompt = calls[0]["input"]
+    assert "## Memory Write-Back Sections" in prompt
+    assert "Do not copy the parenthetical guidance text itself" in prompt
+    assert "## Learned\n(one short bullet per reusable fact or lesson" in prompt
+    assert "## Caveats\n(one short bullet per risk, gotcha" in prompt
+    assert "## Decisions\n(one short bullet per durable decision" in prompt
+    assert "## Open Questions\n(one short bullet per unresolved question" in prompt
+    assert "- Reusable facts" not in prompt
 
 
 def test_codex_adapter_fails_fast_when_codex_cli_is_missing(tmp_path, monkeypatch):

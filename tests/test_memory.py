@@ -99,6 +99,33 @@ def test_role_memory_store_appends_events_and_updates_index(tmp_path):
     assert "Resume RFC" in index["horizons"]["short-term"]["summary"]
 
 
+def test_role_memory_store_event_texts_returns_exact_text_set(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+
+    assert store.event_texts("qa") == set()
+
+    store.append_memory_event(
+        "qa",
+        horizon="mid-term",
+        text="QA should verify memory write-back via events.jsonl.",
+        source="job-1/result.md",
+    )
+    store.append_memory_event(
+        "qa",
+        horizon="short-term",
+        text="Follow up on same-run propagation in a later milestone.",
+        source="job-2/result.md",
+    )
+
+    assert store.event_texts("qa") == {
+        "QA should verify memory write-back via events.jsonl.",
+        "Follow up on same-run propagation in a later milestone.",
+    }
+    assert all("/" not in text for text in store.event_texts("qa"))
+
+
 def test_pickup_packet_uses_index_summaries_without_loading_long_mid_full_text(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()

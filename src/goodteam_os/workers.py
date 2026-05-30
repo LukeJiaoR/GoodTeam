@@ -24,6 +24,74 @@ CLAUDE_AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 BUILTIN_WORKER_MODES = ("fake", "noop", "human")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
+MEMORY_WRITEBACK_SECTION_HORIZONS = {
+    "decisions": "long-term",
+    "learned": "mid-term",
+    "caveats": "mid-term",
+    "open questions": "short-term",
+}
+MEMORY_WRITEBACK_MAX_ITEMS_PER_SECTION = 10
+
+_MEMORY_WRITEBACK_SECTION_RE = re.compile(r"^\s{0,3}#{2,3}\s+(.+?)\s*$")
+_MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+")
+_MEMORY_WRITEBACK_BULLET_RE = re.compile(r"^\s*[-*•]\s+(.+?)\s*$")
+
+
+def parse_result_sections(text: str) -> list[tuple[str, str]]:
+    parsed: list[tuple[str, str]] = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        match = _MEMORY_WRITEBACK_SECTION_RE.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+        section_name = _normalize_memory_section_name(match.group(1))
+        horizon = MEMORY_WRITEBACK_SECTION_HORIZONS.get(section_name)
+        index += 1
+        if horizon is None:
+            continue
+        section_lines: list[str] = []
+        while index < len(lines) and _MARKDOWN_HEADING_RE.match(lines[index]) is None:
+            section_lines.append(lines[index])
+            index += 1
+        parsed.extend(
+            (horizon, item)
+            for item in _parse_memory_section_items(section_lines)[:MEMORY_WRITEBACK_MAX_ITEMS_PER_SECTION]
+        )
+    return parsed
+
+
+def _normalize_memory_section_name(value: str) -> str:
+    name = value.strip()
+    if name.endswith(":"):
+        name = name[:-1]
+    return " ".join(name.lower().split())
+
+
+def _parse_memory_section_items(lines: list[str]) -> list[str]:
+    bullets = []
+    for line in lines:
+        match = _MEMORY_WRITEBACK_BULLET_RE.match(line)
+        if match is None:
+            continue
+        item = match.group(1).strip()
+        if item:
+            bullets.append(item)
+    if bullets:
+        return bullets
+
+    paragraph = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if paragraph:
+                break
+            continue
+        if stripped in {"-", "*", "•"}:
+            continue
+        paragraph.append(stripped)
+    return [" ".join(paragraph)] if paragraph else []
 
 
 @dataclass(frozen=True)
@@ -245,15 +313,59 @@ class WorkerJobStore:
         job = self._read_json(job_root / "job.json")
         adapter = str(job["adapter"])
         if adapter == "noop":
-            return self._complete_noop(job_root, job)
-        if adapter == "fake":
-            return self._complete_fake(job_root, job)
-        if adapter == "human":
-            return self._wait_for_human(job_root, job)
-        spec = CLI_BACKENDS.get(adapter)
-        if spec is not None:
-            return self._run_cli_backend(job_root, job, spec)
-        raise ValueError(f"Unsupported worker adapter: {adapter}")
+            status_payload = self._complete_noop(job_root, job)
+        elif adapter == "fake":
+            status_payload = self._complete_fake(job_root, job)
+        elif adapter == "human":
+            status_payload = self._wait_for_human(job_root, job)
+        else:
+            spec = CLI_BACKENDS.get(adapter)
+            if spec is None:
+                raise ValueError(f"Unsupported worker adapter: {adapter}")
+            status_payload = self._run_cli_backend(job_root, job, spec)
+        if status_payload.get("status") == "completed":
+            try:
+                status_payload["memory_writeback"] = self._write_back_memory(job_root, job)
+            except Exception as exc:  # pragma: no cover - exercised via monkeypatch safety test
+                status_payload["memory_writeback"] = {"status": "error", "error": str(exc)}
+            self._write_json(job_root / "status.json", status_payload)
+        return status_payload
+
+    def _write_back_memory(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        result_path = job_root / "result.md"
+        result_text = result_path.read_text(encoding="utf-8")
+        parsed_items = parse_result_sections(result_text)
+        source = f"{job['id']}/result.md"
+        if not parsed_items:
+            return {
+                "status": "skipped",
+                "reason": "no_sections",
+                "source": source,
+                "parsed": 0,
+                "appended": 0,
+                "skipped_duplicates": 0,
+            }
+
+        role = str(job["role"])
+        store = RoleMemoryStore(self.project_root)
+        existing_texts = store.event_texts(role)
+        appended = 0
+        skipped_duplicates = 0
+        for horizon, text in parsed_items:
+            if text in existing_texts:
+                skipped_duplicates += 1
+                continue
+            store.append_memory_event(role, horizon=horizon, text=text, source=source)
+            existing_texts.add(text)
+            appended += 1
+
+        return {
+            "status": "ok" if appended else "skipped",
+            "source": source,
+            "parsed": len(parsed_items),
+            "appended": appended,
+            "skipped_duplicates": skipped_duplicates,
+        }
 
     def _complete_noop(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         summary = "Completed by noop adapter. No external CLI was invoked."
@@ -452,6 +564,23 @@ class WorkerJobStore:
                 (job_root / "constraints.md").read_text(encoding="utf-8"),
                 "## Expected Artifacts",
                 (job_root / "expected_artifacts.json").read_text(encoding="utf-8"),
+                """## Memory Write-Back Sections
+End your final response with these markdown sections when you have concise, non-secret takeaways to preserve. Omit a section only when it has no useful bullets.
+Do not copy the parenthetical guidance text itself into your final answer.
+
+## Learned
+(one short bullet per reusable fact or lesson — omit this section if none)
+
+## Caveats
+(one short bullet per risk, gotcha, flaky command, environment constraint, or future-worker warning — omit this section if none)
+
+## Decisions
+(one short bullet per durable decision or changed contract — omit this section if none)
+
+## Open Questions
+(one short bullet per unresolved question or follow-up decision needed next — omit this section if none)
+
+Keep each bullet short, factual, and free of secrets.""",
             ]
         )
 
