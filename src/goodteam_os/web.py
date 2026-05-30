@@ -3319,6 +3319,26 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         """
         for step in workflow_steps
     )
+    current_step = next(
+        (step for step in workflow_steps if step["status"] in {"active", "ready", "review-needed", "blocked"}),
+        None,
+    )
+    current_work_html = (
+        f"""
+        <section class="card" style="margin-top: 20px;">
+          <div class="card-title">Current Work</div>
+          <dl class="role-meta">
+            <dt>Step</dt><dd>{escape(current_step["title"])}</dd>
+            <dt>Status</dt><dd><span class="flow-status">{escape(current_step["status_label"])}</span></dd>
+            <dt>Roles</dt><dd>{escape(current_step["roles"])}</dd>
+            <dt>Artifact</dt><dd>{escape(current_step["artifact"] or "none")}</dd>
+            <dt>Feedback</dt><dd>{escape(current_step["feedback"])}</dd>
+          </dl>
+        </section>
+        """
+        if current_step is not None
+        else ""
+    )
     project_report = dict(start_context.get("project_report", {}))
     task_backend = normalize_task_backend(start_context.get("task_backend", {"mode": "local", "sync": []}))
     task_sync_values = [str(value) for value in task_backend.get("sync", [])]
@@ -3976,7 +3996,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         <div class="tab-panel active" id="tab-overview">
           {action_required_alert_html}
           {stepper_output_html}
-          
+          {current_work_html}
+
           <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; margin-top: 20px; align-items: start;">
             <!-- LEFT: Current Run -->
             <div class="card">
