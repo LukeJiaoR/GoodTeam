@@ -29,7 +29,8 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  FileCode
+  FileCode,
+  Brain
 } from 'lucide-react';
 
 // Semantic status badges mapping with 15% transparent backgrounds and solid text colors
@@ -220,6 +221,11 @@ export default function App() {
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
   const [editorContent, setEditorContent] = useState('');
 
+  // Memory visualization states
+  const [memoryData, setMemoryData] = useState(null);
+  const [loadingMemory, setLoadingMemory] = useState(false);
+  const [memoryError, setMemoryError] = useState(null);
+
 
 
   // Sync state when URL updates
@@ -362,6 +368,33 @@ export default function App() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchState(projectKey, true);
   }, [projectKey]);
+
+  const fetchMemory = async (key) => {
+    setLoadingMemory(true);
+    setMemoryError(null);
+    try {
+      const response = await fetch(`/api/memory?project=${encodeURIComponent(key)}`);
+      if (!response.ok) {
+        const errPayload = await response.json().catch(() => ({}));
+        throw new Error(errPayload.error || `Failed to fetch memory (HTTP ${response.status})`);
+      }
+      const payload = await response.json();
+      setMemoryData(payload);
+    } catch (err) {
+      console.error('Error fetching memory:', err);
+      setMemoryError(err.message);
+    } finally {
+      setLoadingMemory(false);
+    }
+  };
+
+  // Lazy fetch memory data when the Memory tab is opened
+  useEffect(() => {
+    if (activeTab === 'memory' && projectKey) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchMemory(projectKey);
+    }
+  }, [activeTab, projectKey]);
 
   // POST action handlers
   const handleTerminate = async (key) => {
@@ -1234,6 +1267,7 @@ export default function App() {
             { id: 'board', label: 'Agile Board', icon: Kanban },
             { id: 'smoke', label: 'Smoke Runs', icon: PlaySquare },
             { id: 'workers', label: 'Workers', icon: Cpu },
+            { id: 'memory', label: 'Memory', icon: Brain },
             { id: 'approvals', label: 'Approvals', icon: CheckCircle2 },
             { id: 'system', label: 'System', icon: Settings },
           ].map((tab) => {
@@ -2290,6 +2324,158 @@ export default function App() {
                       )}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Tab: Memory */}
+              {activeTab === 'memory' && (
+                <div className="space-y-6">
+                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Compounding Memory Layer</h2>
+                    <p className="text-xs text-[#AFAFAF]">Long-term agent memory horizons and the semantic facts retrieved for the latest worker dispatches.</p>
+                  </div>
+
+                  {!state ? (
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-8 text-center space-y-4 max-w-md mx-auto">
+                      <Brain className="h-12 w-12 text-[#1CB0F6] mx-auto animate-pulse" />
+                      <h3 className="font-extrabold text-base text-zinc-800 dark:text-zinc-200">No Active Runs</h3>
+                      <p className="text-xs text-zinc-550 dark:text-zinc-400 font-semibold">
+                        This project does not have an active run or initialized workspace. Please run a workflow first to seed and activate the memory layer.
+                      </p>
+                    </div>
+                  ) : loadingMemory ? (
+                    <div className="flex items-center justify-center p-12 text-zinc-500 font-bold">
+                      <RefreshCw className="h-5 w-5 animate-spin mr-2 text-[#58CC02]" />
+                      <span>Loading memory horizons...</span>
+                    </div>
+                  ) : memoryError ? (
+                    <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900 p-6 rounded-2xl text-center space-y-2 max-w-xl mx-auto">
+                      <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto" />
+                      <h3 className="font-extrabold text-sm text-amber-800 dark:text-amber-300">Memory Endpoint Not Available Yet</h3>
+                      <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold leading-relaxed">
+                        The backend memory query API might not be deployed or is temporarily offline. Details: {memoryError}
+                      </p>
+                    </div>
+                  ) : !memoryData || !memoryData.roles || memoryData.roles.length === 0 ? (
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs">
+                      No memory data recorded yet for this project.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-6">
+                      {memoryData.roles.map((role) => (
+                        <div key={role.role} className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col">
+                          {/* Card Header */}
+                          <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
+                            <div className="flex items-center space-x-3">
+                              <Cpu className="h-5 w-5 text-[#1CB0F6] shrink-0" />
+                              <div>
+                                <span className="text-[10px] font-bold text-[#AFAFAF] uppercase tracking-wider">Agent Role</span>
+                                <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 uppercase tracking-wide mt-0.5">{role.role}</h3>
+                              </div>
+                            </div>
+                            <span className="bg-[#E8F9D9] dark:bg-emerald-950/30 text-[#3D8B00] dark:text-emerald-400 border-2 border-[#58CC02]/20 dark:border-emerald-500/20 px-3 py-1 rounded-xl text-[10px] font-extrabold tracking-wider uppercase">
+                              {role.event_count || 0} events
+                            </span>
+                          </div>
+
+                          {/* Card Body */}
+                          <div className="p-6 space-y-6">
+                            {role.event_count === 0 ? (
+                              <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-xs font-semibold">
+                                no events yet
+                              </div>
+                            ) : (
+                              <>
+                                {/* Memory Horizons Grid */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                  {/* Long-term Summary */}
+                                  <div className="border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                    <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1">
+                                      <span>Long-Term Memory</span>
+                                    </h4>
+                                    <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed">
+                                      {role.summaries?.['long-term'] || 'No long-term summary recorded.'}
+                                    </p>
+                                  </div>
+
+                                  {/* Mid-term Summary */}
+                                  <div className="border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                    <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1">
+                                      <span>Mid-Term Memory</span>
+                                    </h4>
+                                    <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed">
+                                      {role.summaries?.['mid-term'] || 'No mid-term summary recorded.'}
+                                    </p>
+                                  </div>
+
+                                  {/* Short-term Memory */}
+                                  <div className="border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                    <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1">
+                                      <span>Short-Term Memory</span>
+                                    </h4>
+                                    <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed whitespace-pre-wrap">
+                                      {role.short_term || 'No short-term text recorded.'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {/* Retrieved Facts Section */}
+                                <div className="space-y-3 pt-2">
+                                  <div className="flex justify-between items-center border-b border-[#F1F1F1] dark:border-zinc-900 pb-2">
+                                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1.5">
+                                      <span>Retrieved Facts</span>
+                                    </h4>
+                                    {role.latest_retrieval?.job_id && (
+                                      <span className="text-[9px] font-mono text-[#AFAFAF]">
+                                        Last Job: <span className="font-bold text-zinc-650 dark:text-zinc-450 font-semibold">{role.latest_retrieval.job_id}</span>
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {role.latest_retrieval?.relevant_events && role.latest_retrieval.relevant_events.length > 0 ? (
+                                    <div className="space-y-3">
+                                      {role.latest_retrieval.relevant_events.map((event, idx) => (
+                                        <div key={event.id || idx} className="border border-zinc-250 dark:border-zinc-850 p-4 rounded-xl space-y-2.5 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm">
+                                          <p className="text-xs font-mono leading-relaxed text-zinc-800 dark:text-zinc-200 bg-zinc-50/50 dark:bg-zinc-900/40 p-2.5 rounded-lg border border-dashed border-zinc-200 dark:border-zinc-800 whitespace-pre-wrap select-all select-text font-medium">
+                                            {event.text}
+                                          </p>
+                                          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold text-zinc-500">
+                                            <div className="flex items-center space-x-2">
+                                              <span className="bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-350 px-2 py-0.5 rounded font-mono border border-zinc-200 dark:border-zinc-800">
+                                                {event.id}
+                                              </span>
+                                              <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-[9px] border border-blue-100 dark:border-blue-900/50">
+                                                {event.horizon}
+                                              </span>
+                                              {event.source && (
+                                                <span className="text-zinc-400 dark:text-zinc-500 flex items-center space-x-1">
+                                                  <span>Source:</span>
+                                                  <span className="font-mono text-zinc-600 dark:text-zinc-400 truncate max-w-[200px]">{event.source}</span>
+                                                </span>
+                                              )}
+                                            </div>
+                                            {event.score !== undefined && event.score !== null && (
+                                              <span className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded border border-amber-100 dark:border-amber-900/50">
+                                                Score: {typeof event.score === 'number' ? event.score.toFixed(2) : event.score}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="text-center py-6 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-[11px] font-semibold">
+                                      No relevant facts retrieved in the latest job.
+                                    </div>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
