@@ -83,6 +83,15 @@ scripts/dev-up.sh                                     # known-alive seeded dashb
 #   → http://localhost:8788/?project=DEMO   (isolated dev-workspace/, never real configs)
 ```
 
+**Browser/UI verification = Playwright via the `webapp-testing` skill, NOT the
+Chrome MCP tools** (Control_Chrome / Claude_Preview don't connect in this env).
+Headless chromium is already in `.venv`; let the skill's
+`scripts/with_server.py --server "<serve cmd>" --port 8788 -- <playwright script>`
+manage the server lifecycle (a bare `serve &` in a Bash call gets reaped). Keep a
+live smoke (Playwright or `curl`) in the loop for anything path/integration-shaped
+— unit tests + CI miss resolver/routing bugs because they build paths directly
+(this caught 3 `project_root` resolution bugs CI passed clean).
+
 For GoodTeam self-hosting, run orchestration from the pinned release instance
 outside this repo (`scripts/release-up.sh`) and point dispatch at a dev
 worktree. Move that release pin only through `scripts/graduate-release.sh`
