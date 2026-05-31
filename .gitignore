@@ -12,3 +12,6 @@ projects/*.local.yaml
 .DS_Store
 .antigravitycli/
 dev-workspace/
+
+# Worker/memory runtime artifacts (never commit; live under target workspaces)
+.goodteam/
