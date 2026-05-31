@@ -4905,7 +4905,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         project_config = _project_config_for_key(workspace, project_key)
                         start_context = build_start_console_context(workspace, project_config=project_config)
                         state = resolve_dashboard_state(workspace, project_key=project_key)
-                        project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
+                        project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
                         
                         res_data = {
                             "type": "project",
