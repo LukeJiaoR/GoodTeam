@@ -1,0 +1,15 @@
+{
+  "role_key": "ui",
+  "paths": {
+    "long-term": "/private/tmp/goodteam-dev/.goodteam/memory/roles/ui/long-term.md",
+    "mid-term": "/private/tmp/goodteam-dev/.goodteam/memory/roles/ui/mid-term.md",
+    "short-term": "/private/tmp/goodteam-dev/.goodteam/memory/roles/ui/short-term.md"
+  },
+  "event_count": 0,
+  "short_term": "# UI Design Short-Term Memory\n\nProject: Configured Project\nRole: `ui`\n\n## Purpose\n\n- Current interrupted work, pickup notes, next actions, blockers, and recent handoffs live here.\n\n## Pickup Notes\n\n- No role-specific notes recorded yet.\n\n## Update Rules\n\n- Keep secrets out.\n- Prefer dated bullets with source references.\n- Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.\n",
+  "summaries": {
+    "long-term": "Headings: UI Design Long-Term Memory; Purpose; Pickup Notes; Update Rules | Signals: Stable role-specific project facts, contracts, ownership rules, and durable conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.",
+    "mid-term": "Headings: UI Design Mid-Term Memory; Purpose; Pickup Notes; Update Rules | Signals: Active initiatives, in-progress decisions, current risks, and role conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary."
+  },
+  "relevant_events": []
+}

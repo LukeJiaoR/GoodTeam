@@ -225,6 +225,7 @@ export default function App() {
   const [memoryData, setMemoryData] = useState(null);
   const [loadingMemory, setLoadingMemory] = useState(false);
   const [memoryError, setMemoryError] = useState(null);
+  const [memoryEventDetail, setMemoryEventDetail] = useState(null);
 
 
 
@@ -385,6 +386,38 @@ export default function App() {
       setMemoryError(err.message);
     } finally {
       setLoadingMemory(false);
+    }
+  };
+
+  const handleOpenMemoryEvent = async (eventId) => {
+    if (!eventId || !projectKey) return;
+
+    setMemoryEventDetail({
+      id: eventId,
+      loading: true,
+      error: null,
+      data: null,
+    });
+
+    try {
+      const response = await fetch(`/api/memory/event?project=${encodeURIComponent(projectKey)}&id=${encodeURIComponent(eventId)}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || `Failed to fetch memory event (HTTP ${response.status})`);
+      }
+
+      setMemoryEventDetail((current) => (
+        current?.id === eventId
+          ? { id: eventId, loading: false, error: null, data: payload }
+          : current
+      ));
+    } catch (err) {
+      console.error('Error fetching memory event:', err);
+      setMemoryEventDetail((current) => (
+        current?.id === eventId
+          ? { id: eventId, loading: false, error: "couldn't load this event", data: null }
+          : current
+      ));
     }
   };
 
@@ -1364,6 +1397,75 @@ export default function App() {
           <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border-2 flex items-center space-x-2 animate-fade-in-down ${message.isError ? 'bg-[#FFE2E2] text-[#EA2B2B] border-[#FF4B4B]' : 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]'}`}>
             {message.isError ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
             <span>{message.text}</span>
+          </div>
+        )}
+
+        {memoryEventDetail && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="memory-event-detail-title"
+              className="w-full max-w-2xl bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_8px_0_#D1D1D1] dark:shadow-[0_8px_0_#1a1a1a] rounded-2xl overflow-hidden"
+            >
+              <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Memory Event</p>
+                  <h3 id="memory-event-detail-title" className="font-mono text-sm font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1 select-all">
+                    {memoryEventDetail.id}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMemoryEventDetail(null)}
+                  className="bg-white dark:bg-zinc-850 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics"
+                  aria-label="Close memory event detail"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="p-5 max-h-[70vh] overflow-y-auto">
+                {memoryEventDetail.loading ? (
+                  <div className="flex items-center justify-center p-10 text-zinc-500 font-bold">
+                    <RefreshCw className="h-5 w-5 animate-spin mr-2 text-[#58CC02]" />
+                    <span>Loading full memory event...</span>
+                  </div>
+                ) : memoryEventDetail.error ? (
+                  <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-2 border-[#FF9600]/30 p-4 rounded-2xl text-[#B36B00] dark:text-amber-300 text-xs font-bold flex items-center space-x-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <span>{memoryEventDetail.error}</span>
+                  </div>
+                ) : memoryEventDetail.data ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[10px] font-bold">
+                      <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+                        <span className="block uppercase tracking-wider text-[#AFAFAF] mb-1">Role</span>
+                        <span className="text-zinc-800 dark:text-zinc-200 uppercase">{memoryEventDetail.data.role || 'not recorded'}</span>
+                      </div>
+                      <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 rounded-xl p-3">
+                        <span className="block uppercase tracking-wider text-blue-400 mb-1">Horizon</span>
+                        <span className="text-blue-700 dark:text-blue-300 uppercase">{memoryEventDetail.data.horizon || 'not recorded'}</span>
+                      </div>
+                      <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+                        <span className="block uppercase tracking-wider text-[#AFAFAF] mb-1">Timestamp</span>
+                        <span className="font-mono text-zinc-700 dark:text-zinc-300">{memoryEventDetail.data.timestamp || 'not recorded'}</span>
+                      </div>
+                      <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 min-w-0">
+                        <span className="block uppercase tracking-wider text-[#AFAFAF] mb-1">Source</span>
+                        <span className="font-mono text-zinc-700 dark:text-zinc-300 break-all">{memoryEventDetail.data.source || 'not recorded'}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-2">Full Event Text</span>
+                      <p className="text-xs font-mono leading-relaxed text-zinc-800 dark:text-zinc-200 bg-zinc-50/70 dark:bg-zinc-900/50 p-4 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 whitespace-pre-wrap select-all">
+                        {memoryEventDetail.data.text || 'No event text recorded.'}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
         )}
 
@@ -2441,9 +2543,14 @@ export default function App() {
                                           </p>
                                           <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold text-zinc-500">
                                             <div className="flex items-center space-x-2">
-                                              <span className="bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-350 px-2 py-0.5 rounded font-mono border border-zinc-200 dark:border-zinc-800">
+                                              <button
+                                                type="button"
+                                                onClick={() => handleOpenMemoryEvent(event.id)}
+                                                className="bg-[#E8F9D9] hover:bg-[#D7F6BF] dark:bg-emerald-950/30 dark:hover:bg-emerald-900/40 text-[#3D8B00] dark:text-emerald-400 px-2 py-0.5 rounded font-mono border-2 border-[#58CC02]/30 shadow-[0_2px_0_#A7D98A] dark:shadow-[0_2px_0_#12381f] transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-[#58CC02]/40"
+                                                aria-label={`Open full memory event ${event.id}`}
+                                              >
                                                 {event.id}
-                                              </span>
+                                              </button>
                                               <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-[9px] border border-blue-100 dark:border-blue-900/50">
                                                 {event.horizon}
                                               </span>

@@ -1475,6 +1475,25 @@ def build_memory_overview(project_root: Path | None, project_key: str) -> dict[s
     return {"project_key": project_key, "roles": roles}
 
 
+def build_memory_event_detail(project_root: Path | None, event_id: str) -> dict[str, object] | None:
+    if project_root is None:
+        return None
+
+    role_store = RoleMemoryStore(project_root)
+    event = role_store.find_event(event_id)
+    if event is None:
+        return None
+    return {
+        "id": event_id,
+        "role": str(event.get("role_key", "")),
+        "horizon": str(event.get("horizon", "")),
+        "timestamp": str(event.get("timestamp", "")),
+        "source": str(event.get("source", "")),
+        "text": str(event.get("text", "")),
+        "action": str(event.get("action", "")),
+    }
+
+
 DASHBOARD_CSS = """:root {
   color-scheme: light;
   --bg: #F7F7F7;
@@ -4915,6 +4934,26 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     self._send_json(200, build_memory_overview(project_root, project_key))
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path == "/api/memory/event":
+                try:
+                    event_id = query.get("id", [""])[0].strip()
+                    if not project_key or not event_id:
+                        raise ValueError("project and id are required.")
+                    _project_config_for_key(workspace, project_key)
+                    state = resolve_dashboard_state(workspace, project_key=project_key)
+                    project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
+                    event_detail = build_memory_event_detail(project_root, event_id)
+                    if event_detail is None:
+                        self._send_json(404, {"error": f"event not found: {event_id}"})
+                    else:
+                        self._send_json(200, event_detail)
+                except Exception as exc:
+                    message = str(exc)
+                    if message.startswith("event not found: "):
+                        self._send_json(404, {"error": message})
+                    else:
+                        self._send_json(400, {"error": message})
                 return
 
             # Try serving from frontend/dist first

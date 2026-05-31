@@ -1,0 +1,28 @@
+{
+  "role_key": "ui",
+  "event_count": 4,
+  "events_path": "/private/tmp/goodteam-dev/.goodteam/memory/roles/ui/events.jsonl",
+  "horizons": {
+    "long-term": {
+      "path": "/private/tmp/goodteam-dev/.goodteam/memory/roles/ui/long-term.md",
+      "sha256": "7fd25ce38ba0207907533825146f4406a8c7a0ea00c2855a3f01d1381dde93a3",
+      "chars": 629,
+      "summary": "Headings: UI Design Long-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Stable role-specific project facts, contracts, ownership rules, and durable conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; Used a modal instead of an inline expander so the full event is easier to scan without disrupting the Memory card layout. Source: `job-842675cf-6822-497d-b7af-8ada951310bb/result.md`.",
+      "updated_at": "2026-05-31T08:42:38.413777+00:00"
+    },
+    "mid-term": {
+      "path": "/private/tmp/goodteam-dev/.goodteam/memory/roles/ui/mid-term.md",
+      "sha256": "b58b1bc3ae0823bf3105fef2a72877d9b57fee010262794b12d3f580143fb504",
+      "chars": 753,
+      "summary": "Headings: UI Design Mid-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Active initiatives, in-progress decisions, current risks, and role conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; The Memory panel already had the right lazy-fetch pattern, so the drill-down could stay local to `App.jsx`. Source: `job-842675cf-6822-497d-b7af-8ada951310bb/result.md`.; I did not run a browser smoke test; verification was limited to install/build/lint. Source: `job-842675cf-6822-497d-b7af-8ada951310bb/result.md`.",
+      "updated_at": "2026-05-31T08:42:38.413817+00:00"
+    },
+    "short-term": {
+      "path": "/private/tmp/goodteam-dev/.goodteam/memory/roles/ui/short-term.md",
+      "sha256": "82348a6b1a9177c17a4ca62bcf30220816679a2b57bb3115f62b32072d38123b",
+      "chars": 510,
+      "summary": "Headings: UI Design Short-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Current interrupted work, pickup notes, next actions, blockers, and recent handoffs live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; None. Source: `job-842675cf-6822-497d-b7af-8ada951310bb/result.md`.",
+      "updated_at": "2026-05-31T08:42:38.413856+00:00"
+    }
+  }
+}
