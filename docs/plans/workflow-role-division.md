@@ -84,25 +84,24 @@ truth, not "it probably works like X."
   didn't pin the interface seam in the spec, so the planner filled the gap with
   a plausible-but-wrong assumption. Fix the spec, not just the plan.
 
-## 0.3 When the reviewer can stand in for QA (fewer round-trips)
+## 0.3 QA is independent — it runs in CI, not Claude
 
-Not every feature needs a separate QA-agent pass. Right-size it:
+QA must NOT be done by Claude. The planner/reviewer verifying its own work has no
+independent eyes — a Claude blind spot would propagate plan → review → QA
+unchecked (this is §0.2 hallucination-stacking applied to verification).
 
-- **Backend / pure-logic features (no UI, no browser, no live-integration
-  surface):** the **reviewer (Claude) may stand in for QA** — self-verify
-  (`pytest -q` + `ruff`), run the QA plan's script(s) + an integration check,
-  then land. Flow collapses to **Codex implements (with its own tests) → Claude
-  review-with-QA → land** — no separate QA-agent round-trip. (This is how
-  auto-dispatch landed: 252 tests + a live fake-track dispatch run + isolation
-  check, all by the reviewer.)
-- **A separate, independent QA pass IS required when** the feature has a UI /
-  browser surface, a live-integration/deploy surface, or is high-stakes /
-  irreversible. There the independent eyes + browser/live verification earn the
-  extra round.
-
-Tradeoff to be honest about: folding QA into review trades independent
-verification for speed; only do it where the blast radius is small and unit
-coverage is strong. When in doubt, run the independent QA.
+- **The authoritative QA gate is CI (GitHub Actions):** deterministic, automated,
+  runs on every push/PR, no agent in the loop. Fold every scriptable QA into it —
+  `pytest -q`, `ruff`, frontend `npm run build` + `lint`, and the fake-only
+  integration scripts the QA plans already contain (e.g. the fake-track dispatch
+  check, the memory write-back check). New feature QA that is scriptable becomes
+  a CI step/test, not a per-feature agent round.
+- **Claude may run tests to sanity-check its own review**, but that is NOT the QA
+  gate and is never the sole verification — CI (and/or an independent QA agent)
+  is the gate.
+- **What CI can't own** stays gated/manual: real-LLM-worker runs (cost,
+  nondeterminism, auth) and anything needing genuine human judgment. Live browser
+  flows can still run in CI headless (Playwright + built frontend) where worth it.
 
 ## What this round actually used (4 effective roles)
 
