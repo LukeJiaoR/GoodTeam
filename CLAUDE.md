@@ -77,6 +77,11 @@ scripts/dev-up.sh                                     # known-alive seeded dashb
 #   → http://localhost:8788/?project=DEMO   (isolated dev-workspace/, never real configs)
 ```
 
+For GoodTeam self-hosting, run orchestration from the pinned release instance
+outside this repo (`scripts/release-up.sh`) and point dispatch at a dev
+worktree. Move that release pin only through `scripts/graduate-release.sh`
+after tests + lint pass and a human bless.
+
 ## Key docs (read as needed)
 
 - `docs/plans/workflow-role-division.md` — your operating mode + role chain + prompt rules.
