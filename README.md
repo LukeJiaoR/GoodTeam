@@ -180,6 +180,20 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli board \
 
 The dashboard exposes the same data in the `Agile Board` tab, alongside the existing `Smoke Runs` tab.
 
+## GoodTeam Self-Hosting (Release/Dev)
+
+For GoodTeam-on-GoodTeam development, run orchestration from a pinned release instance outside the repo, and target a dev worktree:
+
+```bash
+scripts/release-up.sh --ref v1.0.0
+```
+
+Then dispatch from the release instance toward a dev worktree (`--project-root /abs/path/to/dev-worktree`). To advance the pinned release ref, use the graduation gate:
+
+```bash
+scripts/graduate-release.sh --ref <tag-or-commit> --yes
+```
+
 ## Project Targets
 
 Create a local project config for your own repos from the dashboard, or add one directly under `projects/`:
