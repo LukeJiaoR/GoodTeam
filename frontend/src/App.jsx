@@ -553,9 +553,30 @@ export default function App() {
     }
   };
 
-  const handleEditArtifact = (review) => {
-    setEditingArtifact(review.artifact);
-    setEditorContent(review.content || '');
+  const handleEditArtifact = async (artifactOrReview) => {
+    const artifactName = typeof artifactOrReview === 'string'
+      ? artifactOrReview
+      : (artifactOrReview?.artifact || '');
+    if (!artifactName) return;
+
+    setActionLoading(true);
+    try {
+      const response = await fetch(`/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(artifactName)}`);
+      const res = await response.json();
+      if (!response.ok) {
+        throw new Error(res.error || '暂无该产物');
+      }
+      setEditingArtifact(artifactName);
+      setEditorContent(res.content || '');
+      setActiveTab('approvals');
+    } catch (err) {
+      const errMsg = err.message.includes('File not found') || err.message.includes('No such file') || err.message.includes('does not exist')
+        ? '暂无该产物'
+        : err.message;
+      showToast(errMsg, true);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleSaveArtifact = async () => {
@@ -1585,13 +1606,9 @@ export default function App() {
                           </div>
                         </div>
                         <button
-                          onClick={() => {
-                            setActiveTab('approvals');
-                            const review = approvalReviews.find(r => r.artifact === name);
-                            if (review) handleEditArtifact(review);
-                          }}
+                          onClick={() => handleEditArtifact(name)}
                           className="bg-zinc-50 hover:bg-[#D0F0FF] border-2 border-[#E5E5E5] hover:border-[#1CB0F6] p-1.5 rounded-xl transition-all duo-button-physics shrink-0 text-zinc-500 hover:text-[#0A7BAF]"
-                          title="Open artifact review"
+                          title="Open artifact"
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
                         </button>
