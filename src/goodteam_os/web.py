@@ -13,6 +13,7 @@ from uuid import uuid4
 from goodteam_os.graph import (
     advance_approved_workflow,
     render_downstream_artifact_markdown,
+    resolve_project_runtime_root,
     run_adoption_until_next_gate,
     run_until_next_gate,
 )
@@ -4928,9 +4929,9 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     if not project_key:
                         self._send_json(200, {"project_key": "", "roles": []})
                         return
-                    _project_config_for_key(workspace, project_key)
-                    state = resolve_dashboard_state(workspace, project_key=project_key)
-                    project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
+                    project_config = _project_config_for_key(workspace, project_key)
+                    repos = dict(load_project_target(project_config).get("repos", {}))
+                    project_root = resolve_project_runtime_root(repos)
                     self._send_json(200, build_memory_overview(project_root, project_key))
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})

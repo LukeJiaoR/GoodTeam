@@ -63,11 +63,15 @@ def capture_get_handler(tmp_path, monkeypatch):
     return simulate_get
 
 
-def write_project_config(workspace: Path, *, key: str = "REAL") -> Path:
+def write_project_config(workspace: Path, *, key: str = "REAL", repos: dict[str, Path] | None = None) -> Path:
     projects = workspace / "projects"
     projects.mkdir(exist_ok=True)
     config = projects / f"{key.lower()}.local.yaml"
-    config.write_text(f"name: Real Product\nkey: {key}\n", encoding="utf-8")
+    lines = ["name: Real Product", f"key: {key}"]
+    if repos:
+        lines.append("repos:")
+        lines.extend(f"  {name}: {path}" for name, path in repos.items())
+    config.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return config
 
 
@@ -472,9 +476,12 @@ def test_api_memory_returns_empty_roles_without_memory(tmp_path, monkeypatch):
 
 
 def test_api_memory_returns_role_summaries_event_count_and_latest_retrieval(tmp_path, monkeypatch):
-    write_project_config(tmp_path)
     project_root = tmp_path / "target"
-    project_root.mkdir()
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
     state = create_initial_state("run-1", "REAL", "Build the product.")
     state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
     StateStore(tmp_path).write_project_current(state)
@@ -551,6 +558,45 @@ def test_api_memory_returns_role_summaries_event_count_and_latest_retrieval(tmp_
             "timestamp": "2026-05-31T00:00:00+00:00",
         }
     ]
+
+
+def test_api_memory_reads_runtime_root_when_context_packet_path_empty(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+
+    projects = tmp_path / "projects"
+    projects.mkdir(exist_ok=True)
+    (projects / "real.local.yaml").write_text(
+        f"name: Real Product\nkey: REAL\nrepos:\n  backend: {backend_repo}\n  frontend: {frontend_repo}\n",
+        encoding="utf-8",
+    )
+
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = ""
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    memory_store.ensure_role_memory("architect", "Architect", "Real Product")
+    memory_store.append_memory_event(
+        "architect",
+        horizon="long-term",
+        text="Runtime-root memory should load even when context packet path is empty.",
+        source="job-runtime/result.md",
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory?project=REAL")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["project_key"] == "REAL"
+    assert len(payload["roles"]) == 1
+    role = payload["roles"][0]
+    assert role["role"] == "architect"
+    assert "Runtime-root memory should load" in role["summaries"]["long-term"]
+    assert role["event_count"] == 1
 
 
 def test_api_memory_event_returns_full_event(tmp_path, monkeypatch):
