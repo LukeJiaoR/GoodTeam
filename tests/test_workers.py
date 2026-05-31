@@ -3,7 +3,17 @@ import subprocess
 from datetime import UTC, datetime
 
 from goodteam_os.memory import RoleMemoryStore
-from goodteam_os.workers import WorkerJobStore, parse_result_sections, worker_backend_doctor
+from goodteam_os.workers import (
+    WorkerJobStore,
+    parse_result_sections,
+    worker_backend_doctor,
+)
+from goodteam_os.dispatch import (
+    dispatch_tracks,
+    ensure_dispatch_project_root_is_safe,
+    parse_dispatch_track_spec,
+    run_track_verify,
+)
 
 
 class FakePopen:
@@ -30,7 +40,7 @@ class FakePopen:
         self.snapshot = snapshot
         self.raise_timeout = raise_timeout
 
-    def communicate(self, input, timeout):
+    def communicate(self, input=None, timeout=None):
         if self.calls is not None:
             self.calls.append(
                 {
@@ -53,6 +63,13 @@ class FakePopen:
 
     def kill(self):
         self.returncode = -9
+
+
+class FakeCompleted:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 def install_fake_popen(
@@ -81,6 +98,37 @@ def install_fake_popen(
         return process
 
     monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
+
+
+def install_fake_run(
+    monkeypatch,
+    *,
+    stdout_text: str = "",
+    stderr_text: str = "",
+    returncode: int = 0,
+    calls: list[dict[str, object]] | None = None,
+):
+    def fake_run(command, *, cwd, capture_output, text, check):
+        if calls is not None:
+            calls.append(
+                {
+                    "command": command,
+                    "cwd": cwd,
+                    "capture_output": capture_output,
+                    "text": text,
+                    "check": check,
+                }
+            )
+
+        class Completed:
+            def __init__(self):
+                self.returncode = returncode
+                self.stdout = stdout_text
+                self.stderr = stderr_text
+
+        return Completed()
+
+    monkeypatch.setattr("goodteam_os.dispatch.subprocess.run", fake_run)
 
 
 def memory_events(project_root, role):
@@ -176,6 +224,160 @@ def test_parse_result_sections_skips_empty_sections_and_caps_each_section():
     assert learned[-1] == ("mid-term", "Learned fact 9")
     assert ("long-term", "Durable decision") in parsed
     assert all(text for _, text in parsed)
+
+
+def test_parse_dispatch_track_spec_loads_file_content(tmp_path):
+    task_file = tmp_path / "backend.md"
+    task_file.write_text("Implement backend dispatch.\n", encoding="utf-8")
+
+    track = parse_dispatch_track_spec(f"backend:codex:{task_file}", base_dir=tmp_path)
+
+    assert track == {
+        "role": "backend",
+        "adapter": "codex",
+        "task": "Implement backend dispatch.\n",
+        "task_source": str(task_file),
+    }
+
+
+def test_parse_dispatch_track_spec_accepts_inline_task_with_colons(tmp_path):
+    track = parse_dispatch_track_spec("frontend:gemini:Implement UI: preserve state", base_dir=tmp_path)
+
+    assert track["role"] == "frontend"
+    assert track["adapter"] == "gemini"
+    assert track["task"] == "Implement UI: preserve state"
+    assert track["task_source"] == "inline"
+
+
+def test_run_track_verify_records_failure_and_output_tail(tmp_path, monkeypatch):
+    calls = []
+    install_fake_run(
+        monkeypatch,
+        stdout_text="\n".join(f"stdout {index}" for index in range(30)),
+        stderr_text="verification failed",
+        returncode=2,
+        calls=calls,
+    )
+
+    result = run_track_verify("pytest -q", cwd=tmp_path)
+
+    assert result["command"] == "pytest -q"
+    assert result["cwd"] == str(tmp_path)
+    assert result["exit_code"] == 2
+    assert result["passed"] is False
+    assert "stdout 29" in result["output_tail"]
+    assert "stdout 0" not in result["output_tail"]
+    assert result["stderr"] == "verification failed"
+    assert calls[0]["cwd"] == tmp_path
+
+
+def test_isolation_guard_rejects_project_root_inside_configured_repo(tmp_path):
+    repo = tmp_path / "real-repo"
+    nested = repo / "work"
+    nested.mkdir(parents=True)
+
+    result = ensure_dispatch_project_root_is_safe(
+        nested,
+        configured_repo_paths=[repo],
+    )
+
+    assert result["safe"] is False
+    assert str(repo.resolve()) in result["reason"]
+
+
+def test_isolation_guard_accepts_temp_worktree(tmp_path):
+    target = tmp_path / "dev-workspace" / "target"
+    target.mkdir(parents=True)
+
+    result = ensure_dispatch_project_root_is_safe(
+        target,
+        configured_repo_paths=[tmp_path / "other-real-repo"],
+    )
+
+    assert result == {"safe": True, "reason": ""}
+
+
+def test_dispatch_tracks_groups_ok_and_verify_failure(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    payload = dispatch_tracks(
+        project_root=project_root,
+        tracks=[
+            {"role": "implementation", "adapter": "fake", "task": "Implement backend."},
+            {"role": "qa", "adapter": "fake", "task": "Verify frontend."},
+        ],
+        verify_commands={
+            "implementation": "echo ok",
+            "qa": "exit 1",
+        },
+    )
+
+    assert payload["all_ok"] is False
+    assert [job["role"] for job in payload["jobs"]] == ["implementation", "qa"]
+    assert [job["role"] for job in payload["ok"]] == ["implementation"]
+    assert [job["role"] for job in payload["needs_human"]] == ["qa"]
+    assert payload["jobs"][0]["outcome"] == "ok"
+    assert payload["jobs"][0]["memory_writeback"]["status"] == "skipped"
+    assert payload["jobs"][0]["verify"]["passed"] is True
+    assert payload["jobs"][1]["outcome"] == "needs_human"
+    assert payload["jobs"][1]["verify"]["passed"] is False
+    assert (project_root / ".goodteam" / "workers" / "jobs" / payload["jobs"][0]["job_id"] / "result.md").is_file()
+
+
+def test_dispatch_tracks_captures_one_track_exception_without_blocking_other(tmp_path, monkeypatch):
+    original_run_job = WorkerJobStore.run_job
+
+    def flaky_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        if job["role"] == "qa":
+            raise RuntimeError("qa exploded")
+        return original_run_job(self, job_id)
+
+    monkeypatch.setattr(WorkerJobStore, "run_job", flaky_run_job)
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    payload = dispatch_tracks(
+        project_root=project_root,
+        tracks=[
+            {"role": "implementation", "adapter": "fake", "task": "Implement backend."},
+            {"role": "qa", "adapter": "fake", "task": "Verify frontend."},
+        ],
+    )
+
+    assert payload["all_ok"] is False
+    assert [job["role"] for job in payload["ok"]] == ["implementation"]
+    assert [job["role"] for job in payload["needs_human"]] == ["qa"]
+    assert payload["jobs"][0]["status"] == "completed"
+    assert payload["jobs"][1]["status"] == "failed"
+    assert payload["jobs"][1]["outcome"] == "needs_human"
+    assert "qa exploded" in payload["jobs"][1]["summary"]
+
+
+def test_dispatch_tracks_reports_changed_files_from_git_diff(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(command, *, cwd=None, capture_output=True, text=True, check=False):
+        calls.append({"command": command, "cwd": cwd})
+        if command[:3] == ["git", "-C", str(tmp_path / "target")]:
+            return FakeCompleted(returncode=0, stdout="src/app.py\ntests/test_app.py\n", stderr="")
+        return FakeCompleted(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("goodteam_os.dispatch.subprocess.run", fake_run)
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    payload = dispatch_tracks(
+        project_root=project_root,
+        tracks=[
+            {"role": "implementation", "adapter": "fake", "task": "Implement backend."},
+        ],
+        verify_commands={"implementation": "echo ok"},
+    )
+
+    assert payload["jobs"][0]["changed_files"] == ["src/app.py", "tests/test_app.py"]
+    assert any(call["command"][:3] == ["git", "-C", str(project_root)] for call in calls)
 
 
 def test_worker_job_store_creates_protocol_files(tmp_path):
@@ -563,6 +765,29 @@ def test_worker_backend_doctor_codex_warns_about_env_shadowing_auth_file(tmp_pat
     assert "stale-token" not in json.dumps(report)
 
 
+def test_worker_backend_doctor_gemini_ready_with_cli_and_key(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
+
+    report = worker_backend_doctor("gemini")
+
+    assert report["kind"] == "cli"
+    assert report["command"] == "gemini"
+    assert report["available"] is True
+    assert report["auth_present"] is True
+    assert report["ready"] is True
+    assert "gemini-secret" not in json.dumps(report)
+
+
+def test_worker_backend_doctor_accepts_gemini_alias(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+
+    report = worker_backend_doctor("agy")
+
+    assert report["kind"] == "cli"
+    assert report["command"] == "gemini"
+
+
 def test_anthropic_adapter_invokes_claude_cli_and_captures_stdout_result(tmp_path, monkeypatch):
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
     calls = []
@@ -624,6 +849,41 @@ def test_anthropic_adapter_reports_missing_cli(tmp_path, monkeypatch):
     assert result["status"] == "failed"
     assert "not available" in result["summary"].lower()
     assert result["exit_code"] is None
+
+
+def test_gemini_adapter_passes_prompt_as_p_arg_value_and_captures_stdout(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    calls = []
+    install_fake_popen(
+        monkeypatch,
+        stdout_text="# Worker Result\n\nStatus: pass\n\nGemini implemented the feature.\n",
+        stderr_text="",
+        calls=calls,
+    )
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="gemini",
+        model="gemini:gemini-2.5-pro",
+        task="Implement the frontend dispatch track.",
+        context="Approved artifacts are available.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["adapter"] == "gemini"
+    command = calls[0]["command"]
+    prompt_index = command.index("-p")
+    assert command[prompt_index + 1].startswith("# GoodTeam Worker Job")
+    assert "Implement the frontend dispatch track." in command[prompt_index + 1]
+    assert command[prompt_index + 2 : prompt_index + 4] == ["--approval-mode", "yolo"]
+    assert "--model" in command
+    assert command[command.index("--model") + 1] == "gemini-2.5-pro"
+    assert calls[0]["input"] is None
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    assert "Gemini implemented the feature." in (job_root / "result.md").read_text(encoding="utf-8")
 
 
 def test_codex_adapter_marks_job_running_before_cli_exits(tmp_path, monkeypatch):

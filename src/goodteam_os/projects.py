@@ -9,7 +9,7 @@ from goodteam_os.workers import worker_backend_doctor
 
 ProjectTarget = dict[str, object]
 
-WORKER_MODES = ("fake", "codex", "anthropic", "noop", "human")
+WORKER_MODES = ("fake", "codex", "anthropic", "gemini", "noop", "human")
 DELIVERY_MODES = ("mvp", "init_project", "multi_service")
 
 

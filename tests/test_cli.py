@@ -295,3 +295,81 @@ def test_cli_start_existing_project_requires_project_config():
 
     assert completed.returncode == 1
     assert "Project config is required" in completed.stderr
+
+
+def test_cli_dispatch_calls_runner_and_returns_zero_for_all_ok(tmp_path, capsys, monkeypatch):
+    from goodteam_os import cli
+
+    task_file = tmp_path / "backend.md"
+    task_file.write_text("Implement backend.", encoding="utf-8")
+    constraints_file = tmp_path / "lane.md"
+    constraints_file.write_text("- Stay inside backend.\n", encoding="utf-8")
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    calls = []
+
+    def fake_dispatch_tracks(**kwargs):
+        calls.append(kwargs)
+        return {
+            "all_ok": True,
+            "jobs": [{"role": "backend", "outcome": "ok"}],
+            "ok": [{"role": "backend", "outcome": "ok"}],
+            "needs_human": [],
+        }
+
+    monkeypatch.setattr(cli, "dispatch_tracks", fake_dispatch_tracks)
+
+    result = cli.main(
+        [
+            "dispatch",
+            "--project-root",
+            str(project_root),
+            "--track",
+            f"backend:fake:{task_file}",
+            "--verify",
+            "backend:echo ok",
+            "--constraints-file",
+            str(constraints_file),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert payload["all_ok"] is True
+    assert calls[0]["project_root"] == project_root
+    assert calls[0]["tracks"][0]["task"] == "Implement backend."
+    assert calls[0]["tracks"][0]["task_source"] == str(task_file)
+    assert calls[0]["verify_commands"] == {"backend": "echo ok"}
+    assert calls[0]["constraints_file"] == constraints_file
+
+
+def test_cli_dispatch_returns_one_when_any_track_needs_human(tmp_path, capsys, monkeypatch):
+    from goodteam_os import cli
+
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    monkeypatch.setattr(
+        cli,
+        "dispatch_tracks",
+        lambda **kwargs: {
+            "all_ok": False,
+            "jobs": [{"role": "frontend", "outcome": "needs_human"}],
+            "ok": [],
+            "needs_human": [{"role": "frontend", "outcome": "needs_human"}],
+        },
+    )
+
+    result = cli.main(
+        [
+            "dispatch",
+            "--project-root",
+            str(project_root),
+            "--track",
+            "frontend:fake:Implement frontend.",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    assert payload["needs_human"][0]["role"] == "frontend"

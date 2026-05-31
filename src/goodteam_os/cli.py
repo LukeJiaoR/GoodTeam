@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 
+from goodteam_os.dispatch import dispatch_tracks, parse_dispatch_track_spec, parse_dispatch_verify_spec
 from goodteam_os.projects import (
     DELIVERY_MODES,
     WORKER_MODES,
@@ -64,6 +65,13 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--autonomy", choices=["full"], default="full")
     smoke.add_argument("--worker-mode", choices=["fake", "noop", "codex"], default="fake")
     smoke.add_argument("--dry-run", action="store_true")
+
+    dispatch = subparsers.add_parser("dispatch")
+    dispatch.add_argument("--project-root", type=Path, required=True)
+    dispatch.add_argument("--track", action="append", default=[])
+    dispatch.add_argument("--verify", action="append", default=[])
+    dispatch.add_argument("--constraints-file", type=Path)
+    dispatch.add_argument("--allow-unsafe", action="store_true")
 
     tg_poll = subparsers.add_parser("tg-poll")
     tg_poll.add_argument("--workspace", type=Path, default=Path("."))
@@ -138,6 +146,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(payload, indent=2))
         return 1 if payload.get("status") == "failed" else 0
+    if args.command == "dispatch":
+        tracks = [
+            parse_dispatch_track_spec(track, base_dir=Path.cwd())
+            for track in args.track
+        ]
+        verify_commands = dict(parse_dispatch_verify_spec(item) for item in args.verify)
+        payload = dispatch_tracks(
+            project_root=args.project_root,
+            tracks=tracks,
+            verify_commands=verify_commands,
+            constraints_file=args.constraints_file,
+            allow_unsafe=args.allow_unsafe,
+        )
+        print(json.dumps(payload, indent=2))
+        return 0 if payload.get("all_ok") else 1
     if args.command == "tg-poll":
         payload = poll_telegram_approvals(workspace=args.workspace, project_key=args.project_key, once=args.once)
         print(json.dumps(payload, indent=2))

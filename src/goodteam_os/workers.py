@@ -21,6 +21,14 @@ CODEX_AUTH_ENV_NAMES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
 DEFAULT_CLAUDE_PATH = os.getenv("GOODTEAM_CLAUDE_PATH", "claude")
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 CLAUDE_AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+DEFAULT_GEMINI_PATH = os.getenv("GOODTEAM_GEMINI_PATH", "gemini")
+DEFAULT_GEMINI_MODEL = "auto"
+GEMINI_AUTH_ENV_NAMES = (
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+)
 BUILTIN_WORKER_MODES = ("fake", "noop", "human")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
@@ -94,6 +102,37 @@ def _parse_memory_section_items(lines: list[str]) -> list[str]:
     return [" ".join(paragraph)] if paragraph else []
 
 
+def _role_prompt_for_job(role: str) -> tuple[dict[str, str], str]:
+    try:
+        role_config = role_definition(role)
+        return role_config, stable_role_prompt(role)
+    except ValueError:
+        role_config = {
+            "name": role,
+            "key": role,
+            "artifact": "result",
+            "description": "Ad-hoc dispatch role.",
+            "next_action": "Complete the assigned dispatch task.",
+        }
+        prompt = "\n".join(
+            [
+                f"# Role Prompt: {role}",
+                "",
+                f"You are the {role} dispatch role. Execute the assigned task inside the configured project root.",
+                "",
+                "## Role Boundary",
+                "",
+                f"- Key: `{role}`",
+                "- Default artifact: `result`",
+                "- Responsibility: Ad-hoc dispatch work.",
+                "- Next action rule: Complete the assigned dispatch task.",
+                "",
+                "Concrete task instructions belong in task.md. Project evidence belongs in context.md.",
+            ]
+        )
+        return role_config, f"{prompt}\n"
+
+
 @dataclass(frozen=True)
 class CliBackendSpec:
     """One agentic coding CLI worker backend. Register a spec in CLI_BACKENDS to
@@ -111,6 +150,7 @@ class CliBackendSpec:
     build_command: Callable[[str, str, Path, Path], list[str]]
     summarize: Callable[[int, str], str]
     not_available_message: str
+    prompt_via: str = "stdin"
 
 
 def _codex_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
@@ -131,6 +171,27 @@ def _codex_build_command(binary: str, model: str, project_root: Path, result_pat
 
 def _claude_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
     return [binary, "-p", "--model", model, "--dangerously-skip-permissions"]
+
+
+def _gemini_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
+    return [binary, "-p", "--approval-mode", "yolo", "--model", model]
+
+
+def _command_with_prompt(command: list[str], prompt: str, *, prompt_via: str) -> list[str]:
+    if prompt_via == "stdin":
+        return list(command)
+    if prompt_via != "arg":
+        raise ValueError(f"Unsupported prompt_via value: {prompt_via}")
+    updated = list(command)
+    try:
+        prompt_index = updated.index("-p")
+    except ValueError:
+        try:
+            prompt_index = updated.index("--prompt")
+        except ValueError as exc:
+            raise ValueError("prompt_via='arg' requires -p or --prompt in command.") from exc
+    updated.insert(prompt_index + 1, prompt)
+    return updated
 
 
 def _codex_summary(exit_code: int, stderr: str) -> str:
@@ -162,6 +223,19 @@ def _claude_summary(exit_code: int, stderr: str) -> str:
     if "rate limit" in normalized or " 429 " in f" {normalized} ":
         return f"Claude Code CLI exited with code {exit_code}: rate limited."
     return f"Claude Code CLI exited with code {exit_code}."
+
+
+def _gemini_summary(exit_code: int, stderr: str) -> str:
+    if exit_code == 0:
+        return "Gemini CLI exited with code 0."
+    normalized = stderr.lower()
+    if "invalid_api_key" in normalized or "invalid api key" in normalized or "authentication" in normalized:
+        return f"Gemini CLI exited with code {exit_code}: authentication failed."
+    if "401 unauthorized" in normalized:
+        return f"Gemini CLI exited with code {exit_code}: 401 Unauthorized."
+    if "rate limit" in normalized or " 429 " in f" {normalized} ":
+        return f"Gemini CLI exited with code {exit_code}: rate limited."
+    return f"Gemini CLI exited with code {exit_code}."
 
 
 def _cli_preflight(spec: CliBackendSpec, binary: str, model: str) -> dict[str, Any]:
@@ -207,12 +281,28 @@ CLAUDE_BACKEND = CliBackendSpec(
     ),
 )
 
+GEMINI_BACKEND = CliBackendSpec(
+    name="gemini",
+    which_name="gemini",
+    default_path=lambda: DEFAULT_GEMINI_PATH,
+    model_default=DEFAULT_GEMINI_MODEL,
+    auth_env=GEMINI_AUTH_ENV_NAMES,
+    capture="stdout",
+    label="Gemini CLI",
+    build_command=_gemini_build_command,
+    summarize=_gemini_summary,
+    not_available_message="Gemini CLI is not available. Install gemini or add it to PATH before running gemini workers.",
+    prompt_via="arg",
+)
+
 # Registry of agentic CLI worker backends. Add a CliBackendSpec here to support a
-# new CLI; `anthropic` and `claude` are aliases for the same Claude Code backend.
+# new CLI. Aliases point at the same backend spec.
 CLI_BACKENDS: dict[str, CliBackendSpec] = {
     "codex": CODEX_BACKEND,
     "anthropic": CLAUDE_BACKEND,
     "claude": CLAUDE_BACKEND,
+    "gemini": GEMINI_BACKEND,
+    "agy": GEMINI_BACKEND,
 }
 
 
@@ -249,8 +339,8 @@ class WorkerJobStore:
             "expected_artifacts": expected_artifacts or [],
         }
         self._write_json(job_root / "job.json", job)
-        (job_root / "role_prompt.md").write_text(stable_role_prompt(role), encoding="utf-8")
-        role_config = role_definition(role)
+        role_config, role_prompt = _role_prompt_for_job(role)
+        (job_root / "role_prompt.md").write_text(role_prompt, encoding="utf-8")
         role_memory_store = RoleMemoryStore(self.project_root)
         role_memory_paths = role_memory_store.ensure_role_memory(
             role_key=role,
@@ -421,6 +511,7 @@ class WorkerJobStore:
             label=spec.label,
             capture=spec.capture,
             summarize=spec.summarize,
+            prompt_via=spec.prompt_via,
         )
 
     def _run_cli_worker(
@@ -434,6 +525,7 @@ class WorkerJobStore:
         label: str,
         capture: str,
         summarize: Any,
+        prompt_via: str = "stdin",
         timeout_seconds: int = 1800,
     ) -> dict[str, Any]:
         """Run an agentic coding CLI (codex/claude) over the job protocol files.
@@ -445,10 +537,12 @@ class WorkerJobStore:
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"
         prompt = self._worker_prompt(job_root, job)
+        process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
+        process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
         running_summary = f"{label} is running."
         base_extra = {
-            "command": command,
+            "command": process_command,
             "model": model,
             "started_at": started_at,
             "stdout_path": str(stdout_path),
@@ -462,7 +556,7 @@ class WorkerJobStore:
         stop_heartbeat = threading.Event()
         try:
             process = subprocess.Popen(
-                command,
+                process_command,
                 cwd=self.project_root,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -484,7 +578,7 @@ class WorkerJobStore:
                 daemon=True,
             )
             heartbeat_thread.start()
-            stdout, stderr = process.communicate(input=prompt, timeout=timeout_seconds)
+            stdout, stderr = process.communicate(input=process_input, timeout=timeout_seconds)
         except subprocess.TimeoutExpired as exc:
             stop_heartbeat.set()
             stdout_path.write_text(_timeout_text(exc.output), encoding="utf-8")
