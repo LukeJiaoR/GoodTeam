@@ -600,9 +600,12 @@ def test_api_memory_reads_runtime_root_when_context_packet_path_empty(tmp_path, 
 
 
 def test_api_memory_event_returns_full_event(tmp_path, monkeypatch):
-    write_project_config(tmp_path)
     project_root = tmp_path / "target"
-    project_root.mkdir()
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
     state = create_initial_state("run-1", "REAL", "Build the product.")
     state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
     StateStore(tmp_path).write_project_current(state)
@@ -627,6 +630,42 @@ def test_api_memory_event_returns_full_event(tmp_path, monkeypatch):
         "timestamp": event["timestamp"],
         "source": "job-x/result.md",
         "text": "Memory event drill-down should expose the full source event.",
+        "action": "add",
+    }
+
+
+def test_api_memory_event_reads_runtime_root_when_context_packet_path_empty(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = ""
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    event = memory_store.append_memory_event(
+        "architect",
+        horizon="long-term",
+        text="Runtime-root drill-down should load even when context packet path is empty.",
+        source="job-runtime/result.md",
+    )
+    event_id = event_handle(event)
+
+    handler = capture_get_handler(tmp_path, monkeypatch)(f"/api/memory/event?project=REAL&id={event_id}")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload == {
+        "id": event_id,
+        "role": "architect",
+        "horizon": "long-term",
+        "timestamp": event["timestamp"],
+        "source": "job-runtime/result.md",
+        "text": "Runtime-root drill-down should load even when context packet path is empty.",
         "action": "add",
     }
 

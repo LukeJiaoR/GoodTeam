@@ -4941,9 +4941,9 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     event_id = query.get("id", [""])[0].strip()
                     if not project_key or not event_id:
                         raise ValueError("project and id are required.")
-                    _project_config_for_key(workspace, project_key)
-                    state = resolve_dashboard_state(workspace, project_key=project_key)
-                    project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
+                    project_config = _project_config_for_key(workspace, project_key)
+                    repos = dict(load_project_target(project_config).get("repos", {}))
+                    project_root = resolve_project_runtime_root(repos)
                     event_detail = build_memory_event_detail(project_root, event_id)
                     if event_detail is None:
                         self._send_json(404, {"error": f"event not found: {event_id}"})
