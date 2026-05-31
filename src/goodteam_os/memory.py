@@ -236,6 +236,17 @@ class RoleMemoryStore:
     def event_texts(self, role_key: str) -> set[str]:
         return {str(event.get("text", "")) for event in self._read_events(role_key)}
 
+    def find_event(self, event_id: str) -> dict | None:
+        memory_root = self.project_root / ".goodteam" / "memory" / "roles"
+        if not memory_root.is_dir():
+            return None
+        for role_dir in sorted(path for path in memory_root.iterdir() if path.is_dir()):
+            role_key = role_dir.name
+            for event in self._read_events(role_key):
+                if self._event_id(event) == event_id:
+                    return event
+        return None
+
     def retrieve_relevant_events(
         self,
         role_key: str,

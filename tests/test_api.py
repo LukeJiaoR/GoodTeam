@@ -1,3 +1,4 @@
+import hashlib
 import json
 from io import BytesIO
 from pathlib import Path
@@ -68,6 +69,11 @@ def write_project_config(workspace: Path, *, key: str = "REAL") -> Path:
     config = projects / f"{key.lower()}.local.yaml"
     config.write_text(f"name: Real Product\nkey: {key}\n", encoding="utf-8")
     return config
+
+
+def event_handle(event: dict[str, object]) -> str:
+    payload = json.dumps(event, sort_keys=True, ensure_ascii=False)
+    return "mem:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
@@ -545,6 +551,76 @@ def test_api_memory_returns_role_summaries_event_count_and_latest_retrieval(tmp_
             "timestamp": "2026-05-31T00:00:00+00:00",
         }
     ]
+
+
+def test_api_memory_event_returns_full_event(tmp_path, monkeypatch):
+    write_project_config(tmp_path)
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    event = memory_store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Memory event drill-down should expose the full source event.",
+        source="job-x/result.md",
+    )
+    event_id = event_handle(event)
+
+    handler = capture_get_handler(tmp_path, monkeypatch)(f"/api/memory/event?project=REAL&id={event_id}")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload == {
+        "id": event_id,
+        "role": "architect",
+        "horizon": "mid-term",
+        "timestamp": event["timestamp"],
+        "source": "job-x/result.md",
+        "text": "Memory event drill-down should expose the full source event.",
+        "action": "add",
+    }
+
+
+def test_api_memory_event_returns_404_for_unknown_id(tmp_path, monkeypatch):
+    write_project_config(tmp_path)
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    memory_store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Memory event drill-down should expose the full source event.",
+        source="job-x/result.md",
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory/event?project=REAL&id=mem:missing")
+
+    assert 404 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert "error" in payload
+
+
+def test_api_memory_event_returns_400_for_missing_id(tmp_path, monkeypatch):
+    write_project_config(tmp_path)
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory/event?project=REAL")
+
+    assert 400 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert "error" in payload
 
 
 def test_api_memory_returns_400_for_bad_project(tmp_path, monkeypatch):
