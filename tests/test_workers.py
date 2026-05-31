@@ -97,6 +97,7 @@ def install_fake_popen(
         process.cwd = cwd
         return process
 
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
     monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
 
 
@@ -693,7 +694,7 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
     assert result["model"] == "gpt-5.3-codex"
     assert result["exit_code"] == 0
     assert calls[0]["cwd"] == tmp_path
-    assert calls[0]["command"][:4] == ["/opt/homebrew/bin/codex", "exec", "--model", "gpt-5.3-codex"]
+    assert calls[0]["command"][:4] == ["/fake/bin/codex", "exec", "--model", "gpt-5.3-codex"]
     assert "--skip-git-repo-check" in calls[0]["command"]
     assert "--ignore-user-config" not in calls[0]["command"]
     assert "--ephemeral" not in calls[0]["command"]
@@ -1013,7 +1014,7 @@ def test_codex_adapter_uses_job_model_when_present(tmp_path, monkeypatch):
     result = store.run_job(job["id"])
 
     assert result["model"] == "gpt-5.3-codex"
-    assert calls[0]["command"][:4] == ["/opt/homebrew/bin/codex", "exec", "--model", "gpt-5.3-codex"]
+    assert calls[0]["command"][:4] == ["/fake/bin/codex", "exec", "--model", "gpt-5.3-codex"]
     assert "Use model gpt-5.3-codex" in calls[0]["input"]
 
 
