@@ -84,6 +84,26 @@ truth, not "it probably works like X."
   didn't pin the interface seam in the spec, so the planner filled the gap with
   a plausible-but-wrong assumption. Fix the spec, not just the plan.
 
+## 0.3 When the reviewer can stand in for QA (fewer round-trips)
+
+Not every feature needs a separate QA-agent pass. Right-size it:
+
+- **Backend / pure-logic features (no UI, no browser, no live-integration
+  surface):** the **reviewer (Claude) may stand in for QA** — self-verify
+  (`pytest -q` + `ruff`), run the QA plan's script(s) + an integration check,
+  then land. Flow collapses to **Codex implements (with its own tests) → Claude
+  review-with-QA → land** — no separate QA-agent round-trip. (This is how
+  auto-dispatch landed: 252 tests + a live fake-track dispatch run + isolation
+  check, all by the reviewer.)
+- **A separate, independent QA pass IS required when** the feature has a UI /
+  browser surface, a live-integration/deploy surface, or is high-stakes /
+  irreversible. There the independent eyes + browser/live verification earn the
+  extra round.
+
+Tradeoff to be honest about: folding QA into review trades independent
+verification for speed; only do it where the blast radius is small and unit
+coverage is strong. When in doubt, run the independent QA.
+
 ## What this round actually used (4 effective roles)
 
 | Effective role | Who | Output |
