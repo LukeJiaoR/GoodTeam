@@ -26,6 +26,37 @@ This is the standing default for this repo, regardless of who opens the session:
 Why: routing edits through role agents exercises and hardens the real multi-agent
 workflow, and surfaces process gaps faster than Claude doing everything inline.
 
+## 0.1 Worker autonomy & the safety model
+
+When a coding-agent worker (Codex / Claude Code / Gemini CLI) is dispatched, run
+it **autonomously** — it should NOT stop to ask the human for per-command shell
+permission (`Requesting permission for: nc -zv localhost 8788`, etc.). That
+interactive prompting does not scale and is the wrong place for human attention.
+
+- Codex CLI: `--dangerously-bypass-approvals-and-sandbox`
+- Claude Code: `--dangerously-skip-permissions`
+- Gemini CLI: YOLO / auto-approve mode (`--yolo` / `--approval-mode=yolo`, or its
+  settings)
+
+(GoodTeam's own dispatched workers already do this — see the bypass flags in
+`workers.py` `CLI_BACKENDS`.)
+
+**The safety model shifts — you approve outcomes, not keystrokes:**
+
+```
+per-command approval (off)  →  isolated workspace (contained blast radius)
+                               + lane boundary (which dirs the agent may touch)
+                               + post-hoc review/QA gates (catch mistakes after)
+```
+
+- **Only run autonomous when isolation is in place** (e.g. `dev-workspace/`, an
+  isolated target repo). Never YOLO an unprotected real repo — there, per-command
+  approval is the safety net.
+- The human's attention belongs at **gate-level approvals** (the review/QA/release
+  decisions on *outcomes*), not at individual tool calls.
+- This is the manual form of what Moat #1 automates: once GoodTeam dispatches
+  workers itself, they run autonomous by design and the human only sees gates.
+
 ## What this round actually used (4 effective roles)
 
 | Effective role | Who | Output |
