@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover - exercised only without the optional wh
 
 
 MEMORY_HORIZONS = ("long-term", "mid-term", "short-term")
+COSINE_FLOOR = 0.05  # keep weak/noisy matches out while retaining clear semantic hits
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -51,6 +52,25 @@ def _bm25_scores(corpus: list[list[str]], query_tokens: list[str]) -> list[float
         return list(BM25Okapi(corpus).get_scores(query_tokens))
     wanted = set(query_tokens)
     return [float(sum(1 for token in doc if token in wanted)) for doc in corpus]
+
+
+def default_embedder():
+    """Return a fastembed-backed callable, or None if the optional wheel is
+    absent (callers then fall back to BM25). Local/offline; never network-sends
+    memory text to a third party."""
+    try:  # Optional dependency; mirror BM25 import behavior.
+        from fastembed import TextEmbedding
+    except ImportError:  # pragma: no cover - exercised only when fastembed extra is absent
+        return None
+
+    model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+
+    def embed(texts):
+        return [list(map(float, vector)) for vector in model.embed(list(texts))]
+
+    embed.model_name = "bge-small-en-v1.5"
+    embed.dim = 384
+    return embed
 
 
 class ProjectMemoryStore:
@@ -104,8 +124,9 @@ class ProjectMemoryStore:
 
 
 class RoleMemoryStore:
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path, embedder=None):
         self.project_root = project_root
+        self.embedder = embedder
 
     def role_root(self, role_key: str) -> Path:
         return self.project_root / ".goodteam" / "memory" / "roles" / slug(role_key)
@@ -120,6 +141,9 @@ class RoleMemoryStore:
 
     def index_path(self, role_key: str) -> Path:
         return self.role_root(role_key) / "index.json"
+
+    def embeddings_path(self, role_key: str) -> Path:
+        return self.role_root(role_key) / "embeddings.jsonl"
 
     def ensure_role_memory(
         self,
@@ -267,30 +291,28 @@ class RoleMemoryStore:
             events = [event for event in events if event.get("horizon") in horizons]
         if not events:
             return []
-        corpus = [tokenize(str(event.get("text", ""))) for event in events]
-        scores = _bm25_scores(corpus, query_tokens)
-        wanted = set(query_tokens)
-        # Gate relevance on token overlap (BM25 gives terms that appear in every
-        # document a zero/negative IDF, which would drop legitimate matches in a
-        # tiny corpus); use the BM25 score only to rank the overlapping events.
-        candidates = [
-            (score, event)
-            for score, event, doc in zip(scores, events, corpus)
-            if wanted.intersection(doc)
-        ]
-        ranked = sorted(candidates, key=lambda pair: pair[0], reverse=True)
+        vectors = self._embed_events(role_key, events)
+        if vectors is not None:
+            query_vector = self.embedder([query])[0]
+            scored = [(self._cosine(query_vector, vector), event) for vector, event in zip(vectors, events)]
+            candidates = [(score, event) for score, event in scored if score >= COSINE_FLOOR]
+            ranked = sorted(candidates, key=lambda pair: pair[0], reverse=True)
+        else:
+            corpus = [tokenize(str(event.get("text", ""))) for event in events]
+            scores = _bm25_scores(corpus, query_tokens)
+            wanted = set(query_tokens)
+            # Gate relevance on token overlap (BM25 gives terms that appear in every
+            # document a zero/negative IDF, which would drop legitimate matches in a
+            # tiny corpus); use the BM25 score only to rank the overlapping events.
+            candidates = [
+                (score, event)
+                for score, event, doc in zip(scores, events, corpus)
+                if wanted.intersection(doc)
+            ]
+            ranked = sorted(candidates, key=lambda pair: pair[0], reverse=True)
         results: list[dict[str, object]] = []
         for score, event in ranked:
-            results.append(
-                {
-                    "id": self._event_id(event),
-                    "score": float(score),
-                    "horizon": event.get("horizon", ""),
-                    "text": event.get("text", ""),
-                    "source": event.get("source", ""),
-                    "timestamp": event.get("timestamp", ""),
-                }
-            )
+            results.append(self._retrieval_result(float(score), event))
             if len(results) >= top_k:
                 break
         return results
@@ -411,6 +433,75 @@ Role: `{role_key}`
     def _event_id(self, event: dict[str, object]) -> str:
         payload = json.dumps(event, sort_keys=True, ensure_ascii=False)
         return "mem:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+    def _retrieval_result(self, score: float, event: dict[str, object]) -> dict[str, object]:
+        return {
+            "id": self._event_id(event),
+            "score": float(score),
+            "horizon": event.get("horizon", ""),
+            "text": event.get("text", ""),
+            "source": event.get("source", ""),
+            "timestamp": event.get("timestamp", ""),
+        }
+
+    def _embed_events(self, role_key: str, events: list[dict[str, str]]) -> list[list[float]] | None:
+        if self.embedder is None:
+            return None
+
+        model_name = str(getattr(self.embedder, "model_name", "embedder"))
+        embed_dim = getattr(self.embedder, "dim", None)
+        cache_path = self.embeddings_path(role_key)
+        cached: dict[str, list[float]] = {}
+        if cache_path.is_file():
+            for line in cache_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row.get("model") != model_name:
+                    continue
+                event_id = str(row.get("id", ""))
+                vector = row.get("vector", [])
+                if not event_id or not isinstance(vector, list):
+                    continue
+                cached[event_id] = [float(value) for value in vector]
+
+        event_ids = [self._event_id(event) for event in events]
+        missing_ids: list[str] = []
+        missing_texts: list[str] = []
+        for event_id, event in zip(event_ids, events):
+            if event_id in cached:
+                continue
+            missing_ids.append(event_id)
+            missing_texts.append(str(event.get("text", "")))
+
+        if missing_texts:
+            vectors = self.embedder(missing_texts)
+            if len(vectors) != len(missing_ids):
+                raise ValueError("Embedder returned a vector count that does not match inputs.")
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with cache_path.open("a", encoding="utf-8") as handle:
+                for event_id, vector in zip(missing_ids, vectors):
+                    normalized = [float(value) for value in vector]
+                    cached[event_id] = normalized
+                    payload = {
+                        "id": event_id,
+                        "model": model_name,
+                        "dim": int(embed_dim) if embed_dim is not None else len(normalized),
+                        "vector": normalized,
+                    }
+                    handle.write(json.dumps(payload) + "\n")
+
+        return [cached[event_id] for event_id in event_ids]
+
+    def _cosine(self, left: list[float], right: list[float]) -> float:
+        if not left or not right:
+            return 0.0
+        dot = sum(float(a) * float(b) for a, b in zip(left, right))
+        left_norm = sum(float(a) * float(a) for a in left) ** 0.5
+        right_norm = sum(float(b) * float(b) for b in right) ** 0.5
+        if left_norm == 0.0 or right_norm == 0.0:
+            return 0.0
+        return dot / (left_norm * right_norm)
 
     def _read_events(self, role_key: str) -> list[dict[str, str]]:
         path = self.event_path(role_key)

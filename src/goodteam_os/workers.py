@@ -11,7 +11,7 @@ from shutil import which
 from typing import Any
 from uuid import uuid4
 
-from goodteam_os.memory import RoleMemoryStore
+from goodteam_os.memory import RoleMemoryStore, default_embedder
 from goodteam_os.roles import role_definition, stable_role_prompt
 
 
@@ -341,7 +341,7 @@ class WorkerJobStore:
         self._write_json(job_root / "job.json", job)
         role_config, role_prompt = _role_prompt_for_job(role)
         (job_root / "role_prompt.md").write_text(role_prompt, encoding="utf-8")
-        role_memory_store = RoleMemoryStore(self.project_root)
+        role_memory_store = RoleMemoryStore(self.project_root, embedder=default_embedder())
         role_memory_paths = role_memory_store.ensure_role_memory(
             role_key=role,
             role_name=str(role_config.get("name", role)),

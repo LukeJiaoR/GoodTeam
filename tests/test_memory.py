@@ -1,4 +1,60 @@
+import hashlib
+import json
+import re
+
 from goodteam_os.memory import ProjectMemoryStore, RoleMemoryStore
+
+
+_FAKE_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _fake_embedder(model_name: str):
+    concept_axes = {
+        # Storage/database concept
+        "database": 0,
+        "storage": 0,
+        "sqlite": 0,
+        "postgres": 0,
+        "persistence": 0,
+        # Runtime/environment concept
+        "runtime": 1,
+        "engine": 1,
+        "node": 1,
+        "python": 1,
+        # Binary compatibility concept
+        "binary": 2,
+        "abi": 2,
+        "compatibility": 2,
+        "addon": 2,
+        "extension": 2,
+        # Messaging concept
+        "telegram": 3,
+        "messaging": 3,
+        "notification": 3,
+        # Draft/content concept
+        "draft": 4,
+        "content": 4,
+        "platform": 4,
+    }
+    dim = 16
+
+    def embed(texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for text in texts:
+            vector = [0.0] * dim
+            for token in _FAKE_TOKEN_RE.findall(text.lower()):
+                axis = concept_axes.get(token)
+                if axis is not None:
+                    vector[axis] += 1.0
+                else:
+                    bucket = 6 + (hashlib.sha256(token.encode("utf-8")).digest()[0] % (dim - 6))
+                    vector[bucket] += 0.05
+            vectors.append(vector)
+        return vectors
+
+    embed.model_name = model_name
+    embed.dim = dim
+    return embed
 
 
 def test_project_memory_store_creates_default_packet(tmp_path):
@@ -194,6 +250,35 @@ def test_retrieve_relevant_events_ranks_matching_event_first(tmp_path):
     assert len(results) <= 2
 
 
+def test_semantic_retrieval_with_embedder_handles_lexical_disjoint_query(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    bm25_store = RoleMemoryStore(project_root)
+    embedded_store = RoleMemoryStore(project_root, embedder=_fake_embedder("fake-semantic"))
+    bm25_store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    bm25_store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="sqlite native addon ABI drift breaks tests when Node version changes.",
+        source="job-1/result.md",
+    )
+    bm25_store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Telegram approval channel masks sensitive data before sending messages.",
+        source="job-2/result.md",
+    )
+    query = "database extension compatibility regression after runtime upgrade"
+
+    bm25_results = bm25_store.retrieve_relevant_events("architect", query=query, top_k=2)
+    embedded_results = embedded_store.retrieve_relevant_events("architect", query=query, top_k=2)
+
+    assert bm25_results == []
+    assert embedded_results
+    assert "sqlite native addon ABI drift" in embedded_results[0]["text"]
+
+
 def test_retrieve_relevant_events_returns_empty_without_query_or_events(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -228,6 +313,118 @@ def test_retrieved_event_carries_stable_mem_handle(tmp_path):
 
     assert first[0]["id"].startswith("mem:")
     assert first[0]["id"] == second[0]["id"]
+
+
+def test_retrieved_event_carries_stable_mem_handle_on_embedding_path(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root, embedder=_fake_embedder("fake-handle"))
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="database compatibility note for extension runtime drift.",
+        source="job-8/result.md",
+    )
+
+    first = store.retrieve_relevant_events("architect", query="storage extension compatibility runtime")
+    second = store.retrieve_relevant_events("architect", query="storage extension compatibility runtime")
+
+    assert first[0]["id"].startswith("mem:")
+    assert first[0]["id"] == second[0]["id"]
+
+
+def test_embedding_cache_is_projection_and_regenerates_after_delete(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root, embedder=_fake_embedder("fake-cache"))
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="database engine extension compatibility migration note.",
+        source="job-9/result.md",
+    )
+    store.append_memory_event(
+        "architect",
+        horizon="short-term",
+        text="telegram messaging retry backoff reminder.",
+        source="job-10/result.md",
+    )
+
+    first = store.retrieve_relevant_events(
+        "architect",
+        query="runtime compatibility for database extension",
+        top_k=2,
+    )
+    cache_path = store.embeddings_path("architect")
+    assert cache_path.is_file()
+
+    cache_path.unlink()
+    second = store.retrieve_relevant_events(
+        "architect",
+        query="runtime compatibility for database extension",
+        top_k=2,
+    )
+
+    assert first == second
+    assert cache_path.is_file()
+
+
+def test_embedding_cache_ignores_rows_from_other_model(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store_a = RoleMemoryStore(project_root, embedder=_fake_embedder("fake-a"))
+    store_b = RoleMemoryStore(project_root, embedder=_fake_embedder("fake-b"))
+    store_a.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    store_a.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="database runtime compatibility issue with addon.",
+        source="job-11/result.md",
+    )
+
+    _ = store_a.retrieve_relevant_events("architect", query="database runtime compatibility")
+    first_cache_rows = [
+        json.loads(line)
+        for line in store_a.embeddings_path("architect").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(row["model"] == "fake-a" for row in first_cache_rows)
+
+    _ = store_b.retrieve_relevant_events("architect", query="database runtime compatibility")
+    second_cache_rows = [
+        json.loads(line)
+        for line in store_b.embeddings_path("architect").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(row["model"] == "fake-b" for row in second_cache_rows)
+
+
+def test_default_off_matches_bm25_retrieval_output(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    baseline = RoleMemoryStore(project_root)
+    explicit_none = RoleMemoryStore(project_root, embedder=None)
+    baseline.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    baseline.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="better-sqlite3 native addon ABI drift breaks tests when Node version changes.",
+        source="job-12/result.md",
+    )
+    baseline.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Telegram approval channel masks sensitive data before sending messages.",
+        source="job-13/result.md",
+    )
+    query = "sqlite native addon ABI rebuild after node upgrade"
+
+    expected = baseline.retrieve_relevant_events("architect", query=query, top_k=2)
+    actual = explicit_none.retrieve_relevant_events("architect", query=query, top_k=2)
+
+    assert actual == expected
 
 
 def test_pickup_packet_includes_relevant_events_only_when_query_given(tmp_path):
