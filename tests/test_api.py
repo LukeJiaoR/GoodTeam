@@ -310,6 +310,52 @@ def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatc
     assert context["worker_roles"] == ["ui", "implementation", "qa"]
 
 
+def test_api_state_reads_runtime_root_when_context_packet_path_empty(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = ""
+    StateStore(tmp_path).write_project_current(state)
+
+    job_root = project_root / ".goodteam" / "workers" / "jobs" / "job-runtime"
+    job_root.mkdir(parents=True)
+    (job_root / "job.json").write_text(
+        json.dumps(
+            {
+                "id": "job-runtime",
+                "role": "implementation",
+                "adapter": "codex",
+                "status": "completed",
+                "updated_at": "2026-05-31T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/state?project=REAL")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["type"] == "project"
+    assert payload["worker_jobs"] == [
+        {
+            "id": "job-runtime",
+            "role": "implementation",
+            "adapter": "codex",
+            "status": "completed",
+            "updated_at": "2026-05-31T00:00:00+00:00",
+            "heartbeat_at": "",
+            "pid": "",
+            "summary": "",
+        }
+    ]
+
+
 def test_api_project_config_updates_worker_backends(tmp_path, monkeypatch):
     captured_handler_class = None
 
