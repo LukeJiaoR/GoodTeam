@@ -24,7 +24,27 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-Scaffold a project and reach your first approval gate — **no model credentials required**, because the PRD gate is generated deterministically and the default worker backend is `fake`:
+### Configure one worker backend (codex)
+
+For a first real demo run, use `codex` as the single recommended backend path:
+
+1. Install the `codex` CLI.
+2. Authenticate the `codex` CLI per the official Codex docs.
+3. Verify readiness with doctor (or `init`, which runs doctor automatically) and confirm `codex` is reported as ready in worker backend preflight:
+
+```bash
+# doctor-only
+goodteam-os doctor --project-config projects/myapp.local.yaml
+
+# or create the config and run doctor in one step
+goodteam-os init --key MYAPP --name "My App" --repo /path/to/your/repo
+```
+
+Full 30-minute demo walkthrough is separate and is being documented around `scripts/demo-up.sh`.
+
+### No-credentials PRD gate path (fake worker)
+
+You can still scaffold a project and reach the first approval gate with **no model credentials**, because the PRD gate is deterministic and the default worker backend is `fake`:
 
 ```bash
 # 1. Create a project config (writes projects/myapp.local.yaml + runs doctor)
@@ -45,7 +65,9 @@ Expected result:
 - `run/state/projects/MYAPP/checkpoints/<run_id>/prd_review_gate.json`
 - `next_node` is `await_prd_approval`
 
-See [`projects/example.yaml`](projects/example.yaml) for the full project-config schema. For live implementation/QA jobs, switch `worker_backend.mode` from `fake` to `anthropic` (drives the `claude` CLI — set `ANTHROPIC_API_KEY` and use `--model-profile anthropic`) or `codex` (drives the `codex` CLI).
+See [`projects/example.yaml`](projects/example.yaml) for the full project-config schema.
+
+Other backends: `fake` is the fastest no-creds path to the PRD gate; `codex` is the recommended real implementation/QA backend for the full demo; `anthropic` (Claude CLI) remains supported when you prefer that stack.
 
 Open the dashboard at:
 
