@@ -13,8 +13,10 @@ This is the standing default for this repo, regardless of who opens the session:
   Claude investigates code (read-only), defines the contract, reviews diffs,
   finds bugs, and **produces role-targeted, copy-paste-ready prompts** for the
   implementing agents.
-- **The human dispatches** each prompt to the matching agent (Gemini = frontend,
-  Codex = backend, …) and lands the change manually.
+- **The human dispatches** each prompt to the matching agent and lands the change
+  manually. **Default implementer = Codex (`gpt-5.3-codex`) for both frontend and
+  backend; GPT-5.5 = planner; Gemini = constrained FE backup only** (see §0.4 for
+  why and the hardened prompt block).
 - **Claude does not edit implementation code by default.** Exception: only when
   the human explicitly says "you fix it" / "直接改" (e.g. a tiny, low-risk
   cleanup). Even then, prefer handing it off once the workflow is mature.
@@ -102,6 +104,44 @@ unchecked (this is §0.2 hallucination-stacking applied to verification).
 - **What CI can't own** stays gated/manual: real-LLM-worker runs (cost,
   nondeterminism, auth) and anything needing genuine human judgment. Live browser
   flows can still run in CI headless (Playwright + built frontend) where worth it.
+
+## 0.4 Implementer model assignment (who lands what)
+
+Settled after the memory-panel round, where two implementers sharing one working
+tree (Gemini FE + Codex BE) commingled their uncommitted diffs, and Gemini's
+built-in finishing skills edited files outside its lane.
+
+- **Default implementer = Codex (`gpt-5.3-codex`) for ALL landing — frontend
+  *and* backend.** It has no auto-"finishing/verification" skills that overstep
+  lane, it commits cleanly, and it runs the branch→PR→`gh run watch`→human-merge
+  loop without babysitting.
+- **GPT-5.5 = planner** (the detailed per-track plan, when used). Keeps the
+  planner a *different model* from the Claude reviewer — independence preserved.
+- **Gemini = optional FE backup only**, for visual/styling work where its UI
+  sense helps *and* a human will review line-by-line — and **only with the
+  hardened "封口" constraint block below**. Its code quality is fine (it got the
+  hyphenated-key bracket-access right); the failure mode is process: its
+  `finishing-a-development-branch` / `verification-before-completion` skills
+  auto-edit the progress log and write summary files, overstepping any blacklist.
+- **Consequence — per-track isolation is now mandatory, not optional.** With
+  every track funneling through Codex, parallel FE/BE tracks still contend for one
+  working tree. The fix is the release/dev bootstrap (`release-dev-bootstrap.md`):
+  dispatch each track into its own worktree/clone. We hit the commingling pain
+  *before* this landed; it is the solution, not a nicety.
+
+**Gemini hardened "封口" constraint block (paste into every Gemini FE prompt):**
+
+```text
+【Gemini 专用硬约束 —— 必须遵守】
+1. 唯一允许改动的文件:frontend/src/App.jsx。不得新建、不得修改任何其它文件——
+   明确包括 docs/current-progress.md、README.md、任何 walkthrough/summary/报告文件。
+2. 不要运行 finishing-a-development-branch、verification-before-completion 或任何
+   自动"收尾/归档"skill。不要更新任何进度日志、不要写总结文档。
+3. 不要 commit、不要建分支、不要 push。
+4. 你唯一的"收尾"动作 = 在对话里向我汇报:改了 App.jsx 的哪些部分、各空/错态怎么处理。
+   仓库里除 App.jsx 外不应出现任何你的痕迹。
+允许:npm run build / npm run lint / 只读跑 pytest 自检(不改任何文件)。
+```
 
 ## What this round actually used (4 effective roles)
 

@@ -12,8 +12,14 @@ multi-agent dev workflow. Concretely:
 
 - You **investigate code read-only**, define contracts, write PRDs, and produce
   **role-targeted, copy-paste-ready prompts** for the implementing agents.
-- The **human dispatches** those prompts: Gemini → frontend (`frontend/`),
-  Codex → backend (`src/goodteam_os/`), sometimes GPT-5.5 → planner.
+- The **human dispatches** those prompts. Default implementer = **Codex
+  (`gpt-5.3-codex`) for ALL landing — frontend *and* backend** (it has no
+  auto-"finishing" skills that overstep lane, and pairs cleanly with the
+  branch→PR→CI→human-merge loop). **GPT-5.5 = planner.** **Gemini = optional FE
+  backup only**, dispatched with the hardened "封口" constraint block (see the
+  playbook) — it writes good UI but its built-in finishing/verification skills
+  auto-edit files outside lane (it corrupted `current-progress.md` once), so it
+  needs a single-file whitelist + skill-disable and line-by-line review.
 - You **review** other agents' output against the spec/gotchas before it lands.
 - You **do not edit implementation code by default.** Exception: only when the
   human explicitly says "你先改 / you fix it" (small, low-risk cleanups).
@@ -62,7 +68,7 @@ Reusable templates live in `docs/plans/`:
   canonical UI). Core: `graph.py` (workflow), `workers.py` (worker backends +
   registry), `memory.py` (the memory WAL + retrieval), `projects.py`,
   `staging.py`, `state.py`.
-- **Frontend (Gemini):** `frontend/` — React + Vite + Tailwind v4; the whole UI
+- **Frontend (Codex; Gemini = constrained backup):** `frontend/` — React + Vite + Tailwind v4; the whole UI
   is `frontend/src/App.jsx`. It talks to `/api/*`; built to `frontend/dist/`,
   which `serve` hosts at `<workspace>/frontend/dist`.
 - **Memory** lives under each target's `.goodteam/memory/` (role-scoped, 3
