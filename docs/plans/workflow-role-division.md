@@ -57,6 +57,33 @@ per-command approval (off)  →  isolated workspace (contained blast radius)
 - This is the manual form of what Moat #1 automates: once GoodTeam dispatches
   workers itself, they run autonomous by design and the human only sees gates.
 
+## 0.2 Reduce hallucination stacking across agents
+
+In a pipeline (architect → planner → implementer → QA), an upstream agent's
+vague reference or unstated assumption gets treated as fact downstream, and each
+layer adds its own — hallucinations **compound**. The defense is to pin
+**verified, specific facts** at every handoff so the next agent works from ground
+truth, not "it probably works like X."
+
+- **Pin cross-component interface semantics — this is where agents hallucinate
+  most.** Exact flag arity/type, how a prompt is delivered (stdin vs arg),
+  what a function returns, a field that's always empty, the actual run-loop
+  mechanism. Don't write "use `gemini -p`"; write "`gemini -p` takes a `[string]`
+  value, and `_run_cli_worker` feeds the prompt via stdin — reconcile them."
+- **Tag each fact verified vs unverified.** State "verified: X does Y (checked
+  via `<command>`)" so downstream treats it as ground truth; mark "UNVERIFIED —
+  implementer must confirm via `<command>` before relying on it" for anything not
+  actually checked. Never let an assumption travel un-flagged.
+- **The reviewer's first job is to find where an upstream agent assumed instead
+  of verified** — that's the seam where a hallucination entered and would
+  otherwise propagate.
+- **Worked example (this is why the rule exists):** the auto-dispatch plan
+  faithfully copied the PRD's Gemini flags but never reconciled `gemini -p`
+  (a value-taking option) with the shared stdin prompt-feed → the adapter would
+  have been dead-on-arrival. Root cause: the *architect* knew both facts but
+  didn't pin the interface seam in the spec, so the planner filled the gap with
+  a plausible-but-wrong assumption. Fix the spec, not just the plan.
+
 ## What this round actually used (4 effective roles)
 
 | Effective role | Who | Output |
