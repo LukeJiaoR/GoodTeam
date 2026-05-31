@@ -21,6 +21,7 @@ from goodteam_os.models import list_model_profiles, resolve_project_model_profil
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
+from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.staging import (
     deployment_backend_config,
     delivery_contract_report,
@@ -1388,6 +1389,90 @@ def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
             }
         )
     return items
+
+
+def _memory_job_sort_key(job: dict[str, object]) -> tuple[str, str, str]:
+    return (
+        str(job.get("updated_at", "")),
+        str(job.get("created_at", "")),
+        str(job.get("id", "")),
+    )
+
+
+def _read_json_file(path: Path) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _normalize_relevant_event(event: dict[str, object]) -> dict[str, object]:
+    score = event.get("score", 0.0)
+    try:
+        normalized_score = float(score)
+    except (TypeError, ValueError):
+        normalized_score = 0.0
+    return {
+        "id": str(event.get("id", "")),
+        "score": normalized_score,
+        "horizon": str(event.get("horizon", "")),
+        "text": str(event.get("text", "")),
+        "source": str(event.get("source", "")),
+        "timestamp": str(event.get("timestamp", "")),
+    }
+
+
+def build_memory_overview(project_root: Path | None, project_key: str) -> dict[str, object]:
+    if project_root is None:
+        return {"project_key": project_key, "roles": []}
+
+    memory_root = project_root / ".goodteam" / "memory" / "roles"
+    if not memory_root.is_dir():
+        return {"project_key": project_key, "roles": []}
+
+    role_store = RoleMemoryStore(project_root)
+    job_store = WorkerJobStore(project_root)
+    latest_jobs: dict[str, dict[str, object]] = {}
+    for job in job_store.list_jobs():
+        role_key = str(job.get("role", "")).strip()
+        if not role_key:
+            continue
+        current = latest_jobs.get(role_key)
+        if current is None or _memory_job_sort_key(job) > _memory_job_sort_key(current):
+            latest_jobs[role_key] = job
+
+    roles: list[dict[str, object]] = []
+    for role_dir in sorted(path for path in memory_root.iterdir() if path.is_dir()):
+        role_key = role_dir.name
+        packet = role_store.build_pickup_packet(role_key)
+        role_payload: dict[str, object] = {
+            "role": role_key,
+            "summaries": {
+                "long-term": str(dict(packet.get("summaries", {})).get("long-term", "")),
+                "mid-term": str(dict(packet.get("summaries", {})).get("mid-term", "")),
+            },
+            "short_term": str(packet.get("short_term", "")),
+            "event_count": int(packet.get("event_count", 0)),
+        }
+        latest_job = latest_jobs.get(role_key)
+        if latest_job is not None:
+            job_id = str(latest_job.get("id", ""))
+            pickup_packet = _read_json_file(job_store.root / job_id / "role_pickup_packet.json")
+            if pickup_packet is not None:
+                role_payload["latest_retrieval"] = {
+                    "job_id": job_id,
+                    "relevant_events": [
+                        _normalize_relevant_event(event)
+                        for event in pickup_packet.get("relevant_events", [])
+                        if isinstance(event, dict)
+                    ],
+                }
+        roles.append(role_payload)
+
+    return {"project_key": project_key, "roles": roles}
 
 
 DASHBOARD_CSS = """:root {
@@ -4816,6 +4901,18 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                             "worker_jobs": build_worker_job_items(project_root),
                         }
                     self._send_json(200, res_data)
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path == "/api/memory":
+                try:
+                    if not project_key:
+                        self._send_json(200, {"project_key": "", "roles": []})
+                        return
+                    _project_config_for_key(workspace, project_key)
+                    state = resolve_dashboard_state(workspace, project_key=project_key)
+                    project_root = Path(state.context_packet_path).parents[2] if state is not None and state.context_packet_path else None
+                    self._send_json(200, build_memory_overview(project_root, project_key))
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return
