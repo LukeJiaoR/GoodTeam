@@ -722,6 +722,7 @@ def test_codex_adapter_uses_isolated_per_job_codex_home_with_allowlisted_files(t
     source_codex_home = tmp_path / "real-codex-home"
     source_codex_home.mkdir()
     (source_codex_home / "auth.json").write_text('{"ok":true}', encoding="utf-8")
+    (source_codex_home / "AGENTS.md").write_text("# Global protocol", encoding="utf-8")
     (source_codex_home / "sessions").mkdir()
     (source_codex_home / "ambient-suggestions").mkdir()
     monkeypatch.setenv("CODEX_HOME", str(source_codex_home))
@@ -745,6 +746,7 @@ def test_codex_adapter_uses_isolated_per_job_codex_home_with_allowlisted_files(t
     assert launched_home == str(job_root / ".codex-home")
     isolated_home = Path(launched_home)
     assert (isolated_home / "auth.json").exists()
+    assert (isolated_home / "AGENTS.md").exists() is False
     assert (isolated_home / "sessions").exists() is False
     assert (isolated_home / "ambient-suggestions").exists() is False
 

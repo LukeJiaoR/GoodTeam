@@ -32,7 +32,6 @@ GEMINI_AUTH_ENV_NAMES = (
 CODEX_ISOLATED_HOME_ALLOWED_ENTRIES = (
     "auth.json",
     "config.toml",
-    "AGENTS.md",
     "version.json",
 )
 BUILTIN_WORKER_MODES = ("fake", "noop", "human")

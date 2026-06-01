@@ -2,8 +2,8 @@
 #
 # demo-up.sh — bring up a real-worker GoodTeam demo instance for the first-user flow.
 #
-# Everything lives under ./demo-workspace (gitignored). It NEVER touches real
-# project configs (CONTENTOPS/AGENTSMESH) and never runs smoke.
+# Demo workspace defaults to a sibling directory outside this repo so codex
+# workers do not walk parent dirs into GoodTeam project memory.
 #
 # Usage:
 #   scripts/demo-up.sh            # seed once (if needed) + serve on :8788
@@ -15,7 +15,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-WS="$ROOT/demo-workspace"
+DEMO_DIR="${GOODTEAM_DEMO_DIR:-$ROOT/../goodteam-demo}"
+WS="$DEMO_DIR/workspace"
 PROJECTS_DIR="$WS/projects"
 CONFIG_PATH="$PROJECTS_DIR/demo.local.yaml"
 PORT="${PORT:-8788}"
