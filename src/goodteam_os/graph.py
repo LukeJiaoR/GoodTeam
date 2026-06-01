@@ -452,25 +452,6 @@ def format_context_sources(context: list[dict[str, str]]) -> str:
     return context_sources
 
 
-def _is_contentops_request(
-    state: AgileDevState,
-    project_name: str,
-    project_key: str,
-    context: list[dict[str, str]],
-) -> bool:
-    haystack = "\n".join(
-        [
-            state.idea,
-            state.project_key,
-            project_name,
-            project_key,
-            *[item.get("summary", "") for item in context],
-            *[item.get("path", "") for item in context],
-        ]
-    ).lower()
-    return "contentops" in haystack or "content studio" in haystack or "content studio" in haystack
-
-
 def render_downstream_artifact_markdown(
     artifact_key: str,
     state: AgileDevState,
