@@ -130,3 +130,20 @@ reuses rebuild_role_memory). B, C, D follow; each independent.
   explicit-only in phase 1 (no heuristic contradiction detection yet).
 - **D:** record citations on the job status (like failure_class) or in the artifact
   markdown? Recommend job status + result, minimal.
+
+---
+
+## Gate decision (2026-06-02): APPROVED
+
+Founder approved all 4 decisions + all 3 open-question recommendations as written:
+- D1 drift-proof projections (WAL-checksum + auto-rebuild via rebuild_role_memory) — **approved**
+- D2 retrieval routing (worker pickup → embedding/BM25; summarize = display only) — **approved**
+- D3 supersede-not-delete + core append dedup — **approved**
+- D4 grounded citations (mem: ids on job status/result) — **approved**
+- Q1 integrity marker = event-count + sha256(events.jsonl) in index.json, compared on read — **yes**
+- Q2 switch ONLY the worker pickup path to retrieval; keep web-overview no-query summary for display — **yes**
+- Q3 `supersedes` emitted explicitly only in phase 1 (no heuristic contradiction detection) — **yes**
+
+Track order: A (drift-proof, lowest risk, reuses rebuild_role_memory) → B → C → D,
+each independently landable + deterministically testable. External memory frameworks
+remain out of scope (pluggable behind the WAL, later).
