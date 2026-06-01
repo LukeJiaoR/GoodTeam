@@ -3,6 +3,35 @@
 Durable list of feature ideas / follow-ups that aren't on the active plan yet.
 Promote an item to a PRD under `docs/plans/` when it's picked up. Newest first.
 
+## Dispatch artifacts (task contract / research / review) as first-class audit + memory  (raised 2026-06-02, charter item)
+
+**Insight (founder):** the task.md contract Claude writes for each dispatch — plus
+the research report it's based on and the review decision that lets it land — are
+real engineering documents, not scratch. Today they're half-lost: the job dir keeps
+task.md/constraints.md/context.md/result.md, but the /tmp contract originals are
+deleted, the research report dies with its worktree, and the REVIEW decision/reasoning
+lives only in the Claude↔human chat (nowhere on disk). The causal chain "PR ⇐ which
+contract ⇐ which research ⇐ why the reviewer passed it" is not retained.
+
+**Why it matters — both moats converge here:**
+- Moat #1 (audit trail): a PR should be explainable — what contract dispatched it,
+  on what research basis, on whose review judgement. That provenance is currently gone.
+- Moat #2 (compounding memory): these task/research/review docs are HIGHER-signal
+  memory than the worker's self-reported `## Learned` bullets. Writing them back means
+  the next similar task can retrieve "last time we dispatched it like THIS, reviewed it
+  like THAT." This is arguably the best thing to feed the upgraded memory engine.
+
+**What exists vs gap:** job dir already persists task/constraints/context/result
+(workers.py job protocol). Missing as first-class, run-linked artifacts: (a) the
+research report, (b) the review decision + reasoning, (c) a link tying PR ⇄ job ⇄
+contract ⇄ research ⇄ review into one provenance record.
+
+**Posture:** record now; implement AFTER the memory-engine upgrade (B/C/D) — then
+"write dispatch artifacts back to memory" becomes a natural APPLICATION of the new
+engine (grounded citations + retrieval), not a separate silo. Ties to the
+"sediment the role chain" charter (the orchestrator/release scripts already capture
+the mechanical half; this captures the document/provenance half).
+
 ## Real graph engine: replace the hand-rolled "graph" with a true collaboration DAG  (raised 2026-06-02, charter item — co-equal mainline with the memory engine)
 
 **The uncomfortable fact:** `langgraph>=0.2.0` is in pyproject.toml but
