@@ -536,6 +536,14 @@ class WorkerJobStore:
                 status_payload["memory_writeback"] = self._write_back_memory(job_root, job)
             except Exception as exc:  # pragma: no cover - exercised via monkeypatch safety test
                 status_payload["memory_writeback"] = {"status": "error", "error": str(exc)}
+            try:
+                provenance_job = dict(job)
+                provenance_job["status"] = status_payload.get("status")
+                if "failure_class" in status_payload:
+                    provenance_job["failure_class"] = status_payload["failure_class"]
+                status_payload["memory_provenance"] = self._write_back_provenance(job_root, provenance_job)
+            except Exception as exc:  # pragma: no cover - exercised via monkeypatch safety test
+                status_payload["memory_provenance"] = {"status": "error", "error": str(exc)}
         self._write_json(job_root / "status.json", status_payload)
         return status_payload
 
@@ -593,6 +601,45 @@ class WorkerJobStore:
             "parsed": len(parsed_items),
             "appended": appended,
             "skipped_duplicates": skipped_duplicates,
+        }
+
+    def _write_back_provenance(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        source = f"{job['id']}/provenance"
+        task_excerpt = ""
+        task_path = job_root / "task.md"
+        if task_path.is_file():
+            task_text = task_path.read_text(encoding="utf-8")
+            task_excerpt = " ".join(task_text.split())
+            if len(task_excerpt) > 200:
+                task_excerpt = f"{task_excerpt[:200].rstrip()}..."
+        if not task_excerpt:
+            task_excerpt = "(task unavailable)"
+
+        status = str(job.get("status", "completed"))
+        failure_class = str(job.get("failure_class", "")).strip()
+        failure_segment = f", failure_class={failure_class}" if failure_class else ""
+        text = (
+            f"Dispatched job {job['id']} (run {job['run_id']}, adapter={job['adapter']}, model={job['model']}) "
+            f"for task: {task_excerpt}. Outcome: {status}{failure_segment}."
+        )
+
+        role = str(job["role"])
+        store = RoleMemoryStore(self.project_root)
+        existing_texts = store.event_texts(role)
+        if text in existing_texts:
+            return {
+                "status": "skipped",
+                "source": source,
+                "appended": 0,
+                "skipped_duplicates": 1,
+            }
+
+        store.append_memory_event(role, horizon="short-term", text=text, source=source)
+        return {
+            "status": "ok",
+            "source": source,
+            "appended": 1,
+            "skipped_duplicates": 0,
         }
 
     def _complete_noop(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
