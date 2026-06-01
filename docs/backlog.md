@@ -165,5 +165,4 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   tracks (see `docs/prior-art-multi-agent-coordination.md`).
 - **Cross-project memory + grounded citations** — the remainder of Moat #2
   (product-vision §7).
-- **Cleanup:** untracked `docs/plans/memory-embeddings-m2-*.md` (M2 plan docs never
-  committed) and `~/.codex-postreset-20260601-222619` (codex reset snapshot, deletable).
+- **Cleanup (resolved 2026-06-02):** the M2 plan docs are committed (verified git-tracked); the `~/.codex-postreset-*` snapshot was already deleted. Nothing pending here.
