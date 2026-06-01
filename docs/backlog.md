@@ -65,6 +65,38 @@ Moat #1 core, not a bugfix.
   current in-flight work (PRD-real-LLM) wraps. Order memory vs graph-engine when we
   get there.
 
+## code_review role: offload the mechanical pre-review, keep the merge-gate judgement  (raised 2026-06-02, charter item)
+
+**Founder:** review feels mechanical, another model could do it. **Half true** —
+split it, because the evidence this session says the judgement half is the only
+thing that caught the disasters:
+- CONTENTOPS hardcode: CI green, worker exit 0, every automated check passed — only
+  reading task.md's intent caught that the RIGHT code built the WRONG product.
+- 3 project_root bugs: unit tests green (they built paths directly); review + live caught them.
+- `_event_id`-breaks-on-new-field: caught by REASONING over the research report, not by any check.
+
+**The split (mirror how we offloaded `research`):**
+| review layer | nature | offload? |
+|---|---|---|
+| lane respected? touched files outside whitelist? | mechanical (diff filename check) | YES |
+| tests cover it? ruff/CI green? | mechanical | already CI |
+| contract fields aligned (e.g. mem:id field names)? | semi-mechanical | YES (a codex pass) |
+| is this doing the RIGHT thing? idea-bleed / side-effects / architecture violation? | JUDGEMENT | NO — this is the only disaster-catch |
+
+**Mechanism = "pre-review":** after a PR opens, dispatch a codex `code_review` job
+that returns a mechanical report (lane check, contract-field alignment, obvious bugs,
+test sufficiency, file:line cited). Claude reads that report + makes the
+"is it doing the right thing" judgement + the land decision. Same shape as research:
+mechanical part offloaded, judgement kept.
+
+**Hard constraint (independence, §0.3):** do NOT let the implementing model review
+its own work as the GATE — codex executed the CONTENTOPS error flawlessly and
+self-reported success; another codex instance lacks the out-of-band user intent
+("they asked for a task tracker") that the reviewer holds. Pre-review can be codex;
+the merge-gate judgement stays Claude (or a model that did NOT write the code AND
+holds the intent). This is the "judgement layer automates LAST, only once
+verification is trustworthy" rule from the role-chain charter.
+
 ## Self-host the role chain: sediment Claude's manual orchestration into GoodTeam  (raised 2026-06-02, charter item)
 
 **Insight:** the steps the planner/reviewer (Claude) performs by hand to ship each
