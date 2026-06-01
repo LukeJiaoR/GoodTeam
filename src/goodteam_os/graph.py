@@ -351,82 +351,34 @@ def render_rfc_markdown(
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
     context = collect_project_context(project_config)
-    is_contentops = _is_contentops_request(state, project_name, project_key, context)
-
-    if is_contentops:
-        architecture = (
-            "Evolve the existing Fastify/Zod/SQLite backend and React/Vite/Vitest frontend into "
-            "ContentOps Studio v1. Add the smallest durable domain model needed for brand briefs, "
-            "source capture, topic organization, multi-platform drafts, review status, and evidence. "
-            "Prefer mature open-source UI/data utilities or existing project helpers before adding custom infrastructure."
-        )
-        data_model = [
-            "`brand_briefs`: singleton or versioned rows for audience, voice, positioning, banned claims, CTA guidance, platform notes, and timestamps.",
-            "`source_materials`: captured URL/text/note records with provenance, author/source label, summary, tags, and created/updated timestamps.",
-            "`topics`: work items that group sources with title, status, priority, tags, brief reference, and drafting context.",
-            "`topic_sources`: join table between topics and source_materials when many-to-many grouping is needed.",
-            "`drafts`: platform-specific draft variants with platform, body, status, topic id, brief version/id, reviewer notes, and timestamps.",
-            "`draft_evidence`: structured evidence rows for source ids, brief snapshot/version, generation input summary, reviewer decision, and verification command/result references.",
-        ]
-        api_contract = [
-            "`GET /api/brand-brief` returns the active reusable brand brief.",
-            "`POST /api/brand-brief` validates and upserts the reusable brand brief.",
-            "`POST /api/source-materials` captures source material with provenance and optional topic assignment.",
-            "`GET /api/topics` returns topics with source and draft counts for organization views.",
-            "`POST /api/topics` creates a topic with status, priority, tags, and selected source ids.",
-            "`POST /api/topics/:topicId/drafts` generates or regenerates TikTok, Reddit, X, and LinkedIn drafts using the topic, selected sources, and active brand brief.",
-            "`GET /api/drafts` supports review board filters by platform, status, topic, and priority.",
-            "`PATCH /api/drafts/:draftId/status` records review/publish board transitions and reviewer notes.",
-            "`GET /api/drafts/:draftId/evidence` returns source, brief, topic, decision, and verification evidence for a draft.",
-        ]
-        frontend = [
-            "Add a Brand Brief editor view or panel with saved state and validation feedback.",
-            "Extend source capture so a user can save provenance, attach sources to topics, and see capture errors.",
-            "Add topic organization controls for status, tags, priority, and source associations.",
-            "Add a draft generation workflow that shows TikTok, Reddit, X, and LinkedIn variants as editable outputs.",
-            "Add a review/publish board using the existing React app; use mature open-source board/form/table utilities only when they reduce custom code and pass project fit.",
-            "Show verification evidence next to approved drafts so reviewers can inspect source and brief lineage.",
-        ]
-        verification = [
-            "Backend Vitest tests cover Zod validation, brand brief upsert, source capture, topic grouping, draft generation, status transitions, and evidence retrieval.",
-            "Frontend Vitest tests cover brief editing, source capture, topic organization, draft cards, board transitions, and evidence display.",
-            "`npm run test` and `npm run build` pass from the target project root with SQLite using a deterministic local database path.",
-            "A smoke path creates a brand brief, captures a source, creates a topic, generates drafts, moves one draft through review, and confirms evidence is visible.",
-        ]
-        risks = [
-            "If a kanban/editor/table library is added, verify license, package health, bundle impact, and whether it fits Vite/React without heavy integration work.",
-            "Keep generated draft logic deterministic for local tests; external AI service calls should remain out of v1 unless configured without secrets in repo.",
-            "Schema migration must preserve existing seeded starter data or document a reset path for local development.",
-        ]
-    else:
-        architecture = (
-            f"Build the approved {project_name} v1 slice inside the configured `{delivery_mode}` delivery mode, "
-            "keeping ownership boundaries and project context as the source of truth."
-        )
-        data_model = [
-            "Use existing persistence models when they already support the approved PRD behavior.",
-            "Add only the fields and migrations needed for the approved v1 scope.",
-            "Record assumptions or missing context before introducing new infrastructure.",
-        ]
-        api_contract = [
-            "Expose or update the minimum API routes needed by the approved user flow.",
-            "Validate request/response payloads with the project's existing validation pattern.",
-            "Document error states and rollback behavior for any state-changing endpoint.",
-        ]
-        frontend = [
-            "Implement the approved user flow in the existing frontend structure.",
-            "Reuse existing components, routing, state management, and test utilities before adding dependencies.",
-            "Cover loading, empty, error, and success states that map to acceptance criteria.",
-        ]
-        verification = [
-            "Add deterministic tests for each state-changing path and primary UI flow.",
-            "Run the configured project test/build commands.",
-            "Record smoke evidence that maps directly to the PRD acceptance criteria.",
-        ]
-        risks = [
-            "Loaded context may be stale; carry unclear product or API decisions into implementation tasks as explicit assumptions.",
-            "Avoid unrelated refactors while touching shared contracts.",
-        ]
+    architecture = (
+        f"Build the approved {project_name} v1 slice inside the configured `{delivery_mode}` delivery mode, "
+        "keeping ownership boundaries and project context as the source of truth."
+    )
+    data_model = [
+        "Use existing persistence models when they already support the approved PRD behavior.",
+        "Add only the fields and migrations needed for the approved v1 scope.",
+        "Record assumptions or missing context before introducing new infrastructure.",
+    ]
+    api_contract = [
+        "Expose or update the minimum API routes needed by the approved user flow.",
+        "Validate request/response payloads with the project's existing validation pattern.",
+        "Document error states and rollback behavior for any state-changing endpoint.",
+    ]
+    frontend = [
+        "Implement the approved user flow in the existing frontend structure.",
+        "Reuse existing components, routing, state management, and test utilities before adding dependencies.",
+        "Cover loading, empty, error, and success states that map to acceptance criteria.",
+    ]
+    verification = [
+        "Add deterministic tests for each state-changing path and primary UI flow.",
+        "Run the configured project test/build commands.",
+        "Record smoke evidence that maps directly to the PRD acceptance criteria.",
+    ]
+    risks = [
+        "Loaded context may be stale; carry unclear product or API decisions into implementation tasks as explicit assumptions.",
+        "Avoid unrelated refactors while touching shared contracts.",
+    ]
 
     lines = [
         f"# {contract['title']}",
@@ -1335,6 +1287,69 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
     state.artifacts["prd"] = str(prd_path)
     state.current_node = "prd_review_gate"
     state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
+    return asdict(state)
+
+
+def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    state_store = StateStore(workspace)
+    state = state_store.read_project_current(key)
+    if state is None:
+        raise ValueError(f"No active run for project: {key}")
+
+    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+    if project_config is None or not project_config.is_file():
+        project_config = _project_config_for_key(workspace, key)
+    if project_config is None or not project_config.is_file():
+        raise ValueError(f"Project config not found for project: {key}")
+
+    target = load_project_target(project_config)
+    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    if runtime_root is None:
+        raise ValueError(f"Project runtime root not found for project: {key}")
+
+    store = WorkerJobStore(runtime_root)
+    job = store.create_job(
+        run_id=state.run_id,
+        role="architect",
+        adapter=resolve_role_adapter(target, "architect"),
+        model=worker_model_for_role(state, "architect"),
+        task=(
+            "Write a complete RFC / technical design for: "
+            f"{state.idea}, grounded in the approved PRD and project context (see artifacts). "
+            "Cover architecture, data model, API contract, migration/rollback, testing strategy, risks. "
+            "Output markdown only."
+        ),
+        context=worker_context(state),
+        constraints=[
+            "Output markdown only.",
+            "Ground architecture in the approved PRD and provided project context.",
+            "Do not include preamble text outside the RFC content.",
+        ],
+        expected_artifacts=["rfc.md"],
+    )
+    status = store.run_job(str(job["id"]))
+    if str(status.get("status", "")) != "completed":
+        summary = str(status.get("summary", "") or "architect worker failed")
+        failure_class = str(status.get("failure_class", "")).strip()
+        if failure_class:
+            raise RuntimeError(f"architect worker failed [{failure_class}]: {summary}")
+        raise RuntimeError(f"architect worker failed: {summary}")
+
+    result_path = Path(str(status.get("result_path", ""))).expanduser()
+    if not result_path.is_file():
+        result_path = store.root / str(job["id"]) / "result.md"
+    if not result_path.is_file():
+        raise RuntimeError("architect worker completed without a result.md output")
+    content = result_path.read_text(encoding="utf-8")
+
+    artifact_store = ArtifactStore(root=workspace)
+    rfc_path = artifact_store.write_markdown(state.run_id, "rfc", "rfc.md", content)
+    state.artifacts["rfc"] = str(rfc_path)
+    state.current_node = "rfc_review_gate"
+    state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
     return asdict(state)
