@@ -97,9 +97,15 @@ mainline); cross-project memory (Moat #2 remainder); a hosted/SaaS version.
 - **B. auth happy-path + doctor polish (Codex):** one documented "configure ONE
   backend" flow; `doctor`/`init` surface a single green readiness line for the
   chosen backend; trim stale multi-backend confusion in onboarding docs.
-- **C. gate-approval UX smoke (live, Playwright):** drive PRD→RFC→release purely
-  via the dashboard on the demo workspace; fix anything that requires a CLI/tacit
-  step. (QA-style, verification — uses the webapp-testing skill.)
+- **C. gate-approval UX smoke (live, Playwright — assigned to Gemini):** drive
+  PRD→RFC→release purely via the dashboard on the demo workspace; confirm the
+  audit-trail tabs (Artifacts/Approvals/Memory) read coherently; flag anything that
+  requires a CLI/tacit step. Verification-only (it does not edit product code), so
+  Gemini is a good fit + plays to its UI-interaction strength — dispatch it with the
+  §0.4 hardened "封口" block (single-file/no-write whitelist, skill-disable,
+  report-only) since this is a read/observe task. Uses the webapp-testing
+  (Playwright) skill. **Blocked until the demo produces the correct product** (the
+  idea-fidelity bleed must be fixed first — see current-progress 2026-06-01).
 - **D. README "30-minute demo" walkthrough (Claude/docs):** the stranger-followable
   script: install → auth → init → start → approve gates → watch impl/QA → release
   → where to read the audit trail.
