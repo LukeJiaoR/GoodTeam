@@ -1,6 +1,7 @@
 import json
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.workers import (
@@ -46,6 +47,7 @@ class FakePopen:
                 {
                     "command": self.command,
                     "cwd": self.cwd,
+                    "env": self.env,
                     "input": input,
                     "text": True,
                     "timeout": timeout,
@@ -83,7 +85,7 @@ def install_fake_popen(
     snapshot=None,
     raise_timeout: bool = False,
 ):
-    def fake_popen(command, *, cwd, stdin, stdout, stderr, text):
+    def fake_popen(command, *, cwd, env, stdin, stdout, stderr, text):
         process = FakePopen(
             command,
             stdout_text=stdout_text,
@@ -95,6 +97,7 @@ def install_fake_popen(
             raise_timeout=raise_timeout,
         )
         process.cwd = cwd
+        process.env = env
         return process
 
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
@@ -712,6 +715,38 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
     assert status["stdout_path"].endswith("/stdout.txt")
     assert status["stderr_path"].endswith("/stderr.txt")
     assert (job_root / "result.md").read_text(encoding="utf-8").startswith("# Worker Result")
+
+
+def test_codex_adapter_uses_isolated_per_job_codex_home_with_allowlisted_files(tmp_path, monkeypatch):
+    calls = []
+    source_codex_home = tmp_path / "real-codex-home"
+    source_codex_home.mkdir()
+    (source_codex_home / "auth.json").write_text('{"ok":true}', encoding="utf-8")
+    (source_codex_home / "sessions").mkdir()
+    (source_codex_home / "ambient-suggestions").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(source_codex_home))
+    install_fake_popen(monkeypatch, calls=calls)
+
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="codex",
+        task="Implement isolation.",
+        context="Approved artifacts are available.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    launched_home = calls[0]["env"]["CODEX_HOME"]
+    assert launched_home != str(source_codex_home)
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    assert launched_home == str(job_root / ".codex-home")
+    isolated_home = Path(launched_home)
+    assert (isolated_home / "auth.json").exists()
+    assert (isolated_home / "sessions").exists() is False
+    assert (isolated_home / "ambient-suggestions").exists() is False
 
 
 def test_worker_backend_doctor_builtin_modes_are_always_ready():
