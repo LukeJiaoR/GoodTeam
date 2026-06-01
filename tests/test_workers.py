@@ -15,6 +15,7 @@ from goodteam_os.workers import (
     worker_backend_doctor,
 )
 from goodteam_os.dispatch import (
+    _job_report,
     dispatch_tracks,
     ensure_dispatch_project_root_is_safe,
     parse_dispatch_track_spec,
@@ -319,6 +320,25 @@ def test_isolation_guard_rejects_project_root_inside_configured_repo(tmp_path):
 
     assert result["safe"] is False
     assert str(repo.resolve()) in result["reason"]
+
+
+def test_job_report_surfaces_failure_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.dispatch.changed_files", lambda _: [])
+    job = {"id": "job-1", "role": "implementation", "adapter": "codex"}
+    status = {
+        "status": "failed",
+        "summary": "worker failed",
+        "failure_class": "timeout",
+        "attempts": 2,
+        "disposition": "escalated",
+    }
+    verify = {"passed": False, "skipped": True, "reason": "worker_failed"}
+
+    report = _job_report(project_root=tmp_path, job=job, status=status, verify=verify)
+
+    assert report["failure_class"] == "timeout"
+    assert report["attempts"] == 2
+    assert report["disposition"] == "escalated"
 
 
 def test_isolation_guard_accepts_temp_worktree(tmp_path):
