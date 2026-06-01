@@ -202,6 +202,41 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli board \
 
 The dashboard exposes the same data in the `Agile Board` tab, alongside the existing `Smoke Runs` tab.
 
+## 30-Minute Demo: idea → PRD → working app → release
+
+The end-to-end path a new user can run on a clean machine: start from an idea,
+approve each gate in the dashboard, and watch real workers build and release a
+working app — with a full audit trail. (Requires the `codex` backend configured
+above. ~15–25 min, mostly the real implementation/QA workers.)
+
+```bash
+# Brings up an isolated, real-worker demo OUTSIDE this repo (../goodteam-demo),
+# checks codex is ready, starts the pinned idea "Build a task tracker", and serves
+# the dashboard at http://localhost:8788 stopped at the first approval gate.
+scripts/demo-up.sh --reset
+#   flags: --port=NNNN  --build (rebuild frontend/dist)  --reset (wipe + reseed)
+```
+
+Then drive it from the dashboard at `http://localhost:8788/?project=DEMO`
+— everything is approved in the UI, no extra CLI steps:
+
+1. **Approvals tab → approve PRD.** The PRD is generated up front (no model
+   credentials needed for this step).
+2. **Approve RFC / plan.** This triggers the real `codex` workers (UI →
+   implementation → QA, dispatched in sequence). This is the long step.
+3. **Approve release.** The run reaches `complete`.
+4. **Read the audit trail:** the **Artifacts** tab (PRD, RFC, QA report,
+   release notes), the **Approvals** tab (every gate decision), and the
+   **Memory** tab (what each role retrieved, with `mem:` handles).
+
+Result: a working app scaffold under `../goodteam-demo/workspace/target`
+(frontend + backend + tests + README), built to match your idea, with every gate
+and worker result recorded. Swap the pinned idea by editing the `start` line in
+`scripts/demo-up.sh`, or run your own project via `init` + `start` (Quick Start).
+
+The demo workspace lives outside this repo so worker context stays clean; it
+never touches your real project configs.
+
 ## GoodTeam Self-Hosting (Release/Dev)
 
 For GoodTeam-on-GoodTeam development, run orchestration from a pinned release instance outside the repo, and target a dev worktree:
