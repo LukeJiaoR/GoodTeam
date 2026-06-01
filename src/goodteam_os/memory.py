@@ -231,6 +231,7 @@ class RoleMemoryStore:
     def refresh_memory_index(self, role_key: str) -> dict[str, object]:
         self.ensure_role_memory(role_key)
         events = self._read_events(role_key)
+        event_count, events_sha256 = self._wal_integrity(role_key, events=events)
         horizons = {}
         for horizon in MEMORY_HORIZONS:
             path = self.memory_path(role_key, horizon)
@@ -246,6 +247,10 @@ class RoleMemoryStore:
             "role_key": role_key,
             "event_count": len(events),
             "events_path": str(self.event_path(role_key)),
+            "integrity": {
+                "event_count": event_count,
+                "events_sha256": events_sha256,
+            },
             "horizons": horizons,
         }
         self._write_json(self.index_path(role_key), index)
@@ -254,8 +259,11 @@ class RoleMemoryStore:
     def read_memory_index(self, role_key: str) -> dict[str, object]:
         path = self.index_path(role_key)
         if not path.is_file():
-            return self.refresh_memory_index(role_key)
-        return json.loads(path.read_text(encoding="utf-8"))
+            return self.rebuild_role_memory(role_key)
+        index = json.loads(path.read_text(encoding="utf-8"))
+        if not self._projection_matches_wal(role_key, index):
+            return self.rebuild_role_memory(role_key)
+        return index
 
     def event_texts(self, role_key: str) -> set[str]:
         return {str(event.get("text", "")) for event in self._read_events(role_key)}
@@ -513,6 +521,36 @@ Role: `{role_key}`
                 continue
             events.append(json.loads(line))
         return events
+
+    def _wal_integrity(
+        self,
+        role_key: str,
+        *,
+        events: list[dict[str, str]] | None = None,
+    ) -> tuple[int, str]:
+        if events is None:
+            events = self._read_events(role_key)
+        path = self.event_path(role_key)
+        if not path.is_file():
+            return len(events), hashlib.sha256(b"").hexdigest()
+        return len(events), hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _projection_matches_wal(self, role_key: str, index: dict[str, object]) -> bool:
+        integrity = index.get("integrity")
+        if not isinstance(integrity, dict):
+            return False
+        stored_count = integrity.get("event_count")
+        if not isinstance(stored_count, int):
+            return False
+        events = self._read_events(role_key)
+        live_count = len(events)
+        if stored_count != live_count:
+            return False
+        stored_sha = integrity.get("events_sha256")
+        if not isinstance(stored_sha, str):
+            return False
+        _, live_sha = self._wal_integrity(role_key, events=events)
+        return stored_sha == live_sha
 
     def _write_json(self, path: Path, payload: dict[str, object]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
