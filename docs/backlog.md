@@ -69,6 +69,25 @@ demo PRD/README/land-pr.sh were hand-written "because small"; that erodes the
 implementation-role boundary that makes the chain work. land-pr.sh kept as a
 one-time exception; from here, scripts go to Codex.)
 
+**Process rule added (2026-06-02): INVESTIGATION is also offloadable — Claude was
+over-claiming it.** Producing each PRD/decision this session, Claude did the
+fact-gathering (grep who-imports-langgraph, how-memory-is-stored, where-render_prd-
+is-called) in its own expensive context. That's the `research` role (one of
+GoodTeam's 13, never used), not the planner's. Split it:
+- **research / fact-gathering → offload** to Explore (read-only fan-out subagent)
+  or a codex/gemini "survey current state of X, return facts with file:line"
+  dispatch. Facts must be CITED (file:line) so the judgement layer can spot-check —
+  the safeguard is verifiable facts, NOT "Claude must read it himself" (Claude
+  misreads too: the stale-App.jsx misdiagnosis proved it).
+- **judgement / decisions / PRD / contracts → Claude keeps.** Reasoning over the
+  facts (e.g. "langgraph unused ⇒ scheduling pain", "WAL sound but projections
+  fragile", contract trade-offs) stays with the reviewer/architect.
+- **review / merge-gate → Claude keeps.**
+- Apply next time on the memory-engine / graph-engine mainlines: run a research
+  pass (Explore/subagent) → Claude reads the cited report + decides + writes the
+  PRD → Codex implements → Claude reviews. This also starts exercising GoodTeam's
+  `research` role for real (same as we're sedimenting orchestrator/release).
+
 ## Agent discovery + per-role agent configuration UI  (raised 2026-06-01)
 
 **Want:** users should not be stuck with hardcoded agent choices. Two pieces:
