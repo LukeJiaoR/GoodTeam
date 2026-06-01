@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from goodteam_os.graph import (
     advance_approved_workflow,
+    generate_prd,
     render_downstream_artifact_markdown,
     resolve_project_runtime_root,
     run_adoption_until_next_gate,
@@ -5009,7 +5010,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/open-path"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/open-path"}:
                 self.send_error(404)
                 return
             try:
@@ -5055,6 +5056,11 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     )
                 elif normalized_path == "/retry":
                     result = retry_blocked_workflow(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                    )
+                elif normalized_path == "/generate-prd":
+                    result = generate_prd(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                     )

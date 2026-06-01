@@ -1,4 +1,5 @@
 import re
+from dataclasses import asdict
 from pathlib import Path
 
 from goodteam_os.artifacts import ArtifactStore
@@ -7,7 +8,7 @@ from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import load_project_target
 from goodteam_os.roles import artifact_contract, context_file_specs, list_role_definitions, role_definition
 from goodteam_os.staging import run_staging_backend, staging_backend_enabled
-from goodteam_os.state import AgileDevState
+from goodteam_os.state import AgileDevState, StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
 
@@ -154,77 +155,36 @@ def render_prd_markdown(
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
     context = collect_project_context(project_config)
     context_sources = format_context_sources(context)
-    is_contentops = _is_contentops_request(state, project_name, project_key, context)
-    if is_contentops:
-        decision = (
-            "Build ContentOps Studio v1 as a usable local product workflow for turning reusable brand "
-            "briefs and captured source material into organized topics, platform-specific drafts, "
-            "reviewable publishing work, and verification evidence."
-        )
-        users = [
-            "Content creators and operators who need one place to keep brand voice, source references, topics, and draft variants aligned.",
-            "Reviewers or founders who need evidence that a draft came from approved inputs before it reaches TikTok, Reddit, X, or LinkedIn.",
-            "Implementers who need a bounded v1 that fits the existing Fastify/Zod/SQLite + React/Vite/Vitest stack.",
-        ]
-        scope = [
-            "Reusable brand brief: create and update a persistent brief with audience, voice, positioning, banned claims, preferred calls to action, and platform notes.",
-            "Source capture: save URLs, pasted notes, quotes, and provenance metadata so every idea has traceable input material.",
-            "Topic organization: group sources into topics with status, priority, tags, and enough context for drafting.",
-            "Multi-platform draft generation: produce editable draft variants for TikTok, Reddit, X, and LinkedIn from a topic and brand brief.",
-            "Review/publish board: show drafts moving through review, changes requested, approved, scheduled, and published-ready columns.",
-            "Verification evidence: attach source links, brief version, generation inputs, reviewer decision, and test/smoke evidence to each ready draft.",
-            "Reuse-first technical constraint: prefer mature open-source components and the existing Fastify/Zod/SQLite + React/Vite/Vitest stack over custom infrastructure unless the RFC proves a gap.",
-        ]
-        non_goals = [
-            "No direct autopublishing to social platforms in v1; export/copy-ready outputs are enough.",
-            "No custom workflow engine, queue system, auth provider, or database infrastructure unless the approved RFC shows the current stack cannot support the v1 workflow.",
-            "No broad analytics suite, paid media management, or multi-tenant agency controls in v1.",
-        ]
-        acceptance = [
-            "A user can create a reusable brand brief, edit it, and see draft generation use the latest saved brief values.",
-            "A user can capture source material with provenance and assign it to a topic without losing the original source reference.",
-            "A user can organize topics by status/tag/priority and select one topic to generate platform-specific drafts.",
-            "The product creates editable drafts for TikTok, Reddit, X, and LinkedIn that preserve source evidence and brand-brief references.",
-            "The review/publish board exposes every draft state and supports moving an item through review decisions without data loss.",
-            "Each approved draft displays verification evidence: source capture, brand brief snapshot or version, topic, platform, reviewer decision, and relevant test/smoke result.",
-            "Implementation evidence includes deterministic backend/frontend tests and a build or smoke command using Fastify/Zod/SQLite + React/Vite/Vitest unless an approved RFC records a mature replacement.",
-        ]
-        risks = [
-            "Draft generation quality may be weak without clear prompt and source-selection rules; RFC should define deterministic local behavior first.",
-            "Verification evidence can become noisy if every draft stores too much raw source text; keep summaries and provenance structured.",
-            "Open-source component reuse needs license and maintenance checks before adoption.",
-        ]
-    else:
-        decision = (
-            f"Define the next v1 product slice for {project_name} from the loaded project evidence, "
-            "then hand that slice to architecture with explicit scope, non-goals, and testable outcomes."
-        )
-        users = [
-            "Primary product users affected by the next roadmap slice identified in project memory and repository docs.",
-            "Project maintainers who need clear boundaries before architecture and implementation work begins.",
-            "Reviewers who need observable acceptance criteria rather than workflow-only instructions.",
-        ]
-        scope = [
-            "Use the loaded project memory, README, roadmap, and API/frontend context as the source of truth for the next product slice.",
-            "Prioritize product behavior that can be implemented and verified inside the configured delivery mode.",
-            "Keep workflow orchestration, GoodTeam approvals, and local state management outside the target product scope unless explicitly requested.",
-        ]
-        non_goals = [
-            "Do not rewrite unrelated subsystems discovered in context unless they block the approved v1 slice.",
-            "Do not treat project takeover, approval routing, or GoodTeam internal mechanics as user-facing product requirements.",
-            "Do not invent unstated external integrations, credentials, or deployment targets.",
-        ]
-        acceptance = [
-            "The approved PRD names the user, value, scope, non-goals, and risks for the next product slice.",
-            "Each v1 scope item has observable acceptance criteria that QA can verify with local tests, smoke checks, or documented review evidence.",
-            "Architecture can produce an RFC from this PRD without asking what product behavior should be built.",
-            "Delivery uses the configured project stack and delivery-mode standards unless the RFC records a justified exception.",
-        ]
-        risks = [
-            "Project context may be stale or incomplete; unresolved contradictions must be carried into RFC open questions.",
-            "Roadmap wording may be broader than a safe v1 slice; keep implementation bounded to the acceptance criteria.",
-            "External services, secrets, and tracker-only decisions require human confirmation before implementation.",
-        ]
+    decision = (
+        f"Define the next v1 product slice for {project_name} from the loaded project evidence, "
+        "then hand that slice to architecture with explicit scope, non-goals, and testable outcomes."
+    )
+    users = [
+        "Primary product users affected by the next roadmap slice identified in project memory and repository docs.",
+        "Project maintainers who need clear boundaries before architecture and implementation work begins.",
+        "Reviewers who need observable acceptance criteria rather than workflow-only instructions.",
+    ]
+    scope = [
+        "Use the loaded project memory, README, roadmap, and API/frontend context as the source of truth for the next product slice.",
+        "Prioritize product behavior that can be implemented and verified inside the configured delivery mode.",
+        "Keep workflow orchestration, GoodTeam approvals, and local state management outside the target product scope unless explicitly requested.",
+    ]
+    non_goals = [
+        "Do not rewrite unrelated subsystems discovered in context unless they block the approved v1 slice.",
+        "Do not treat project takeover, approval routing, or GoodTeam internal mechanics as user-facing product requirements.",
+        "Do not invent unstated external integrations, credentials, or deployment targets.",
+    ]
+    acceptance = [
+        "The approved PRD names the user, value, scope, non-goals, and risks for the next product slice.",
+        "Each v1 scope item has observable acceptance criteria that QA can verify with local tests, smoke checks, or documented review evidence.",
+        "Architecture can produce an RFC from this PRD without asking what product behavior should be built.",
+        "Delivery uses the configured project stack and delivery-mode standards unless the RFC records a justified exception.",
+    ]
+    risks = [
+        "Project context may be stale or incomplete; unresolved contradictions must be carried into RFC open questions.",
+        "Roadmap wording may be broader than a safe v1 slice; keep implementation bounded to the acceptance criteria.",
+        "External services, secrets, and tracker-only decisions require human confirmation before implementation.",
+    ]
 
     lines = [
         f"# {contract['title']}",
@@ -1299,3 +1259,82 @@ def run_until_next_gate(
     state.current_node = "prd_review_gate"
     state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
     return state
+
+
+def _project_config_for_key(workspace: Path, project_key: str) -> Path | None:
+    projects_dir = workspace / "projects"
+    if not projects_dir.is_dir():
+        return None
+    wanted = normalize_project_key(project_key)
+    for path in sorted(projects_dir.glob("*.local.yaml")):
+        try:
+            target = load_project_target(path)
+        except Exception:
+            continue
+        key = normalize_project_key(str(target.get("key", path.stem)))
+        if key == wanted:
+            return path
+    return None
+
+
+def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    state_store = StateStore(workspace)
+    state = state_store.read_project_current(key)
+    if state is None:
+        raise ValueError(f"No active run for project: {key}")
+
+    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+    if project_config is None or not project_config.is_file():
+        project_config = _project_config_for_key(workspace, key)
+    if project_config is None or not project_config.is_file():
+        raise ValueError(f"Project config not found for project: {key}")
+
+    target = load_project_target(project_config)
+    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    if runtime_root is None:
+        raise ValueError(f"Project runtime root not found for project: {key}")
+
+    store = WorkerJobStore(runtime_root)
+    job = store.create_job(
+        run_id=state.run_id,
+        role="product_requirement",
+        adapter=resolve_role_adapter(target, "product_requirement"),
+        model=worker_model_for_role(state, "product_requirement"),
+        task=(
+            "Write a complete PRD for the following product idea: "
+            f"{state.idea}. Cover: intent/why, users & value, V1 scope, non-goals, acceptance criteria, "
+            "risks & open questions. Ground it in the project context provided. "
+            "Output the PRD as markdown only - no preamble."
+        ),
+        context=worker_context(state),
+        constraints=[
+            "Output markdown only.",
+            "Ground requirements in the provided project context.",
+            "Do not include preamble text outside the PRD content.",
+        ],
+        expected_artifacts=["prd.md"],
+    )
+    status = store.run_job(str(job["id"]))
+    if str(status.get("status", "")) != "completed":
+        summary = str(status.get("summary", "") or "product_requirement worker failed")
+        failure_class = str(status.get("failure_class", "")).strip()
+        if failure_class:
+            raise RuntimeError(f"product_requirement worker failed [{failure_class}]: {summary}")
+        raise RuntimeError(f"product_requirement worker failed: {summary}")
+
+    result_path = Path(str(status.get("result_path", ""))).expanduser()
+    if not result_path.is_file():
+        result_path = store.root / str(job["id"]) / "result.md"
+    if not result_path.is_file():
+        raise RuntimeError("product_requirement worker completed without a result.md output")
+    content = result_path.read_text(encoding="utf-8")
+
+    artifact_store = ArtifactStore(root=workspace)
+    prd_path = artifact_store.write_markdown(state.run_id, "prd", "prd.md", content)
+    state.artifacts["prd"] = str(prd_path)
+    state.current_node = "prd_review_gate"
+    state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
+    return asdict(state)
