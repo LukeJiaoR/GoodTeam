@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -40,6 +41,8 @@ CODEX_ISOLATED_HOME_ALLOWED_ENTRIES = (
 BUILTIN_WORKER_MODES = ("fake", "noop", "human")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
+WORKER_MAX_ATTEMPTS = 3
+WORKER_RETRY_BACKOFF_SECONDS = (2, 8, 30)
 MEMORY_WRITEBACK_SECTION_HORIZONS = {
     "decisions": "long-term",
     "learned": "mid-term",
@@ -51,6 +54,54 @@ MEMORY_WRITEBACK_MAX_ITEMS_PER_SECTION = 10
 _MEMORY_WRITEBACK_SECTION_RE = re.compile(r"^\s{0,3}#{2,3}\s+(.+?)\s*$")
 _MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+")
 _MEMORY_WRITEBACK_BULLET_RE = re.compile(r"^\s*[-*•]\s+(.+?)\s*$")
+_sleep = time.sleep
+
+
+def classify_worker_failure(summary: str, exit_code: int | None, stderr: str = "") -> str:
+    del exit_code  # phase-1 classifier is text-pattern based.
+    text = f"{summary}\n{stderr}".lower()
+    if any(
+        token in text
+        for token in (
+            "invalid api key",
+            "401",
+            "403",
+            "unauthorized",
+            "forbidden",
+            "refresh token",
+            "token_expired",
+            "authentication",
+        )
+    ):
+        return "auth"
+    if any(token in text for token in ("rate limit", "429", "too many requests")):
+        return "rate_limit"
+    if any(
+        token in text
+        for token in (
+            "5xx",
+            "502",
+            "503",
+            "504",
+            "econn",
+            "network",
+            "registry",
+            "npmmirror",
+            "timed out connecting",
+        )
+    ):
+        return "network"
+    if any(token in text for token in ("timed out", "timeout")):
+        return "timeout"
+    if "stream disconnected" in text:
+        return "stream_disconnect"
+    if any(token in text for token in ("better-sqlite3", "abi", "module not found", "cannot find module")):
+        return "scaffold"
+    return "unknown"
+
+
+def is_transient(failure_class: str) -> bool:
+    return failure_class in {"auth", "rate_limit", "network", "timeout", "stream_disconnect"}
 
 
 def parse_result_sections(text: str) -> list[tuple[str, str]]:
@@ -446,7 +497,38 @@ class WorkerJobStore:
             spec = CLI_BACKENDS.get(adapter)
             if spec is None:
                 raise ValueError(f"Unsupported worker adapter: {adapter}")
-            status_payload = self._run_cli_backend(job_root, job, spec)
+            attempts = 0
+            retried = False
+            last_failure_class = "unknown"
+            while True:
+                attempts += 1
+                status_payload = self._run_cli_backend(job_root, job, spec)
+                if status_payload.get("status") == "completed":
+                    status_payload["attempts"] = attempts
+                    if retried:
+                        status_payload["failure_class"] = last_failure_class
+                        status_payload["disposition"] = "recovered"
+                    break
+                stderr = ""
+                stderr_path = status_payload.get("stderr_path")
+                if isinstance(stderr_path, str) and stderr_path:
+                    try:
+                        stderr = Path(stderr_path).read_text(encoding="utf-8")
+                    except OSError:
+                        stderr = ""
+                last_failure_class = classify_worker_failure(
+                    str(status_payload.get("summary", "")),
+                    status_payload.get("exit_code"),
+                    stderr=stderr,
+                )
+                status_payload["failure_class"] = last_failure_class
+                status_payload["attempts"] = attempts
+                if not is_transient(last_failure_class) or attempts >= WORKER_MAX_ATTEMPTS:
+                    status_payload["disposition"] = "escalated"
+                    break
+                retried = True
+                backoff = WORKER_RETRY_BACKOFF_SECONDS[min(attempts - 1, len(WORKER_RETRY_BACKOFF_SECONDS) - 1)]
+                _sleep(backoff)
         if status_payload.get("status") == "completed":
             try:
                 status_payload["memory_writeback"] = self._write_back_memory(job_root, job)
