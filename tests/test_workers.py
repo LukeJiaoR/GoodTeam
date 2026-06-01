@@ -507,6 +507,49 @@ def test_worker_pickup_packet_does_not_embed_full_long_memory(tmp_path):
     assert "DO_NOT_EMBED_FULL_LONG_MEMORY" not in pickup_packet
 
 
+def test_run_job_records_memory_citations_from_pickup_packet_relevant_events(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="noop",
+        task="Create plan",
+        context="Approved RFC.",
+    )
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    pickup_path = job_root / "role_pickup_packet.json"
+    pickup_packet = json.loads(pickup_path.read_text(encoding="utf-8"))
+    pickup_packet["relevant_events"] = [
+        {"id": "mem:abc123", "text": "Fact A"},
+        {"id": "mem:def456", "text": "Fact B"},
+    ]
+    pickup_path.write_text(json.dumps(pickup_packet, indent=2), encoding="utf-8")
+
+    result = store.run_job(job["id"])
+
+    assert result["memory_citations"] == ["mem:abc123", "mem:def456"]
+    status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
+    assert status["memory_citations"] == ["mem:abc123", "mem:def456"]
+
+
+def test_run_job_records_empty_memory_citations_when_pickup_packet_has_no_relevant_events(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="noop",
+        task="",
+        context="Approved RFC.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["memory_citations"] == []
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
+    assert status["memory_citations"] == []
+
+
 def test_noop_adapter_completes_job_with_result(tmp_path):
     store = WorkerJobStore(tmp_path)
     job = store.create_job(
