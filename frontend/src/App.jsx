@@ -163,6 +163,8 @@ export default function App() {
   const [panelGlobalMode, setPanelGlobalMode] = useState('codex');
   const [panelRoleOverrides, setPanelRoleOverrides] = useState({});
   const [savingBackends, setSavingBackends] = useState(false);
+  const [discoveredAgents, setDiscoveredAgents] = useState(null);
+  const [loadingDiscoveredAgents, setLoadingDiscoveredAgents] = useState(false);
 
   
   // Theme state
@@ -729,6 +731,29 @@ export default function App() {
     }
   };
 
+  const fetchDiscoveredAgents = async () => {
+    setLoadingDiscoveredAgents(true);
+    try {
+      const response = await fetch('/api/agents');
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Failed to fetch agents');
+      setDiscoveredAgents(Array.isArray(payload?.agents) ? payload.agents : []);
+    } catch {
+      setDiscoveredAgents([]);
+    } finally {
+      setLoadingDiscoveredAgents(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'workers' && discoveredAgents === null && !loadingDiscoveredAgents) {
+      const timer = window.setTimeout(() => {
+        fetchDiscoveredAgents();
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [activeTab, discoveredAgents, loadingDiscoveredAgents]);
+
   // Returns first two sentences of the idea prompt for default display
   const getMissionSummary = (text) => {
     if (!text) return '';
@@ -1268,7 +1293,31 @@ export default function App() {
   const state = data?.state;
   const startContext = data?.start_context || {};
   const backendOptions = startContext.worker_backend_options || DEFAULT_BACKEND_OPTIONS;
+  const discoveredBackendOptions = Array.from(new Set(
+    (discoveredAgents || [])
+      .map((agent) => agent?.backend)
+      .filter(Boolean)
+  ));
+  const roleBackendOptions = Array.from(new Set([
+    ...backendOptions,
+    ...discoveredBackendOptions,
+  ]));
   const workerRoles = startContext.worker_roles || DEFAULT_WORKER_ROLES;
+  const discoveredAgentByBackend = Object.fromEntries(
+    (discoveredAgents || [])
+      .filter((agent) => agent?.backend)
+      .map((agent) => [agent.backend, agent])
+  );
+  const getBackendOptionLabel = (backend) => {
+    const baseLabel = backend === 'codex'
+      ? 'Codex CLI'
+      : backend === 'anthropic' || backend === 'claude'
+        ? 'Claude CLI'
+        : backend;
+    const discovered = discoveredAgentByBackend[backend];
+    if (!discovered) return baseLabel;
+    return `${baseLabel} ${discovered.ready ? '✓ ready' : '⚠ not-ready'}`;
+  };
   const usedBackends = Array.from(new Set([
     panelGlobalMode,
     ...workerRoles.map(role => panelRoleOverrides[role]).filter(b => b && b !== 'default' && b !== '')
@@ -2033,28 +2082,61 @@ export default function App() {
                         {/* Role configurations */}
                         <div className="space-y-3">
                           <span className="block text-[10px] text-zinc-550 uppercase font-bold tracking-wider">Per-Role Routing Overrides</span>
+                          {activeTab === 'workers' && loadingDiscoveredAgents && (
+                            <p className="text-[10px] text-[#AFAFAF] italic">Loading discovered agents...</p>
+                          )}
+                          {discoveredAgents !== null && discoveredAgents.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {discoveredAgents.map((agent) => (
+                                <span
+                                  key={agent.backend}
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[9px] font-extrabold uppercase tracking-wider ${
+                                    agent.ready
+                                      ? 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30'
+                                      : 'bg-[#FFF0D4] text-[#B36B00] border-[#FF9600]/30'
+                                  }`}
+                                  title={agent.hint || ''}
+                                >
+                                  {agent.backend} {agent.ready ? '✓ ready' : '⚠ not-ready'}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           {workerRoles.map((role) => (
                             <div key={role} className="flex items-center justify-between space-x-4 border-b border-[#F1F1F1] dark:border-zinc-900 pb-2.5">
                               <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 capitalize">{role} Role</span>
-                              <select
-                                value={panelRoleOverrides[role] || ''}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setPanelRoleOverrides(prev => ({
-                                    ...prev,
-                                    [role]: val
-                                  }));
-                                }}
-                                disabled={savingBackends || actionLoading}
-                                className="w-48 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
-                              >
-                                <option value="">Use default</option>
-                                {backendOptions.map((opt) => (
-                                  <option key={opt} value={opt}>
-                                    {opt === 'codex' ? 'Codex CLI' : opt === 'anthropic' || opt === 'claude' ? 'Claude CLI' : opt}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="w-48">
+                                <select
+                                  value={panelRoleOverrides[role] || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setPanelRoleOverrides(prev => ({
+                                      ...prev,
+                                      [role]: val
+                                    }));
+                                  }}
+                                  disabled={savingBackends || actionLoading}
+                                  className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                >
+                                  <option value="">Use default</option>
+                                  {roleBackendOptions.map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {getBackendOptionLabel(opt)}
+                                    </option>
+                                  ))}
+                                </select>
+                                {(() => {
+                                  const selectedBackend = panelRoleOverrides[role];
+                                  const selectedAgent = selectedBackend ? discoveredAgentByBackend[selectedBackend] : null;
+                                  if (!selectedAgent) return null;
+                                  return (
+                                    <p className="mt-1 text-[10px] text-zinc-550 dark:text-zinc-400 font-medium leading-relaxed">
+                                      {selectedAgent.ready ? '✓ Ready' : '⚠ Not ready'}
+                                      {selectedAgent.hint ? ` - ${selectedAgent.hint}` : ''}
+                                    </p>
+                                  );
+                                })()}
+                              </div>
                             </div>
                           ))}
                         </div>
