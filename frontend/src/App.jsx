@@ -1293,8 +1293,15 @@ export default function App() {
   const state = data?.state;
   const startContext = data?.start_context || {};
   const backendOptions = startContext.worker_backend_options || DEFAULT_BACKEND_OPTIONS;
+  const safeDiscoveredAgents = (discoveredAgents || []).reduce((acc, agent) => {
+    const backend = String(agent?.backend || '').trim();
+    if (!backend || acc.seen.has(backend)) return acc;
+    acc.seen.add(backend);
+    acc.items.push({ ...agent, backend });
+    return acc;
+  }, { seen: new Set(), items: [] }).items;
   const discoveredBackendOptions = Array.from(new Set(
-    (discoveredAgents || [])
+    safeDiscoveredAgents
       .map((agent) => agent?.backend)
       .filter(Boolean)
   ));
@@ -1304,8 +1311,7 @@ export default function App() {
   ]));
   const workerRoles = startContext.worker_roles || DEFAULT_WORKER_ROLES;
   const discoveredAgentByBackend = Object.fromEntries(
-    (discoveredAgents || [])
-      .filter((agent) => agent?.backend)
+    safeDiscoveredAgents
       .map((agent) => [agent.backend, agent])
   );
   const getBackendOptionLabel = (backend) => {
@@ -2085,9 +2091,9 @@ export default function App() {
                           {activeTab === 'workers' && loadingDiscoveredAgents && (
                             <p className="text-[10px] text-[#AFAFAF] italic">Loading discovered agents...</p>
                           )}
-                          {discoveredAgents !== null && discoveredAgents.length > 0 && (
+                          {discoveredAgents !== null && safeDiscoveredAgents.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
-                              {discoveredAgents.map((agent) => (
+                              {safeDiscoveredAgents.map((agent) => (
                                 <span
                                   key={agent.backend}
                                   className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[9px] font-extrabold uppercase tracking-wider ${
