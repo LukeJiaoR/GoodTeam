@@ -685,7 +685,8 @@ def test_fake_adapter_completes_without_memory_sections_as_noop(tmp_path):
     assert result["status"] == "completed"
     assert result["memory_writeback"]["status"] == "skipped"
     assert result["memory_writeback"]["reason"] == "no_sections"
-    assert memory_events(tmp_path, "planner") == []
+    assert result["memory_provenance"]["status"] == "ok"
+    assert len(memory_events(tmp_path, "planner")) == 1
 
 
 def test_noop_adapter_completes_without_memory_sections_as_noop(tmp_path):
@@ -703,7 +704,55 @@ def test_noop_adapter_completes_without_memory_sections_as_noop(tmp_path):
     assert result["status"] == "completed"
     assert result["memory_writeback"]["status"] == "skipped"
     assert result["memory_writeback"]["reason"] == "no_sections"
-    assert memory_events(tmp_path, "planner") == []
+    assert result["memory_provenance"]["status"] == "ok"
+    assert len(memory_events(tmp_path, "planner")) == 1
+
+
+def test_completed_job_writes_short_term_provenance_event(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="noop",
+        task="Create task proposal with context from approved plan.",
+        context="Context packet",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["memory_provenance"]["status"] == "ok"
+    events = memory_events(tmp_path, "planner")
+    provenance_events = [event for event in events if event["source"] == f"{job['id']}/provenance"]
+    assert len(provenance_events) == 1
+    assert provenance_events[0]["horizon"] == "short-term"
+    assert job["id"] in provenance_events[0]["text"]
+    assert "for task: Create task proposal with context from approved plan." in provenance_events[0]["text"]
+
+
+def test_rerunning_completed_job_dedups_short_term_provenance_event(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="noop",
+        task="Create task proposal with context from approved plan.",
+        context="Context packet",
+    )
+
+    first = store.run_job(job["id"])
+    second = store.run_job(job["id"])
+
+    assert first["status"] == "completed"
+    assert second["status"] == "completed"
+    assert first["memory_provenance"]["status"] == "ok"
+    assert second["memory_provenance"]["status"] == "skipped"
+    assert second["memory_provenance"]["skipped_duplicates"] == 1
+    assert second["memory_provenance"]["appended"] == 0
+
+    events = memory_events(tmp_path, "planner")
+    provenance_events = [event for event in events if event["source"].endswith("/provenance")]
+    assert [event["source"] for event in provenance_events] == [f"{job['id']}/provenance"]
 
 
 def test_human_adapter_marks_job_waiting_for_manual_result(tmp_path):
@@ -764,13 +813,14 @@ Implemented memory write-back.
         "skipped_duplicates": 0,
     }
     events = memory_events(tmp_path, "implementation")
-    assert [(event["horizon"], event["text"]) for event in events] == [
+    result_events = [event for event in events if event["source"] == f"{job['id']}/result.md"]
+    assert [(event["horizon"], event["text"]) for event in result_events] == [
         ("long-term", "Write-back uses the role memory WAL."),
         ("mid-term", "Worker pickup packets are created at job creation."),
         ("mid-term", "Result markdown may include freeform prose."),
         ("short-term", "Should later milestones promote repeated mid-term facts?"),
     ]
-    assert {event["source"] for event in events} == {f"{job['id']}/result.md"}
+    assert {event["source"] for event in result_events} == {f"{job['id']}/result.md"}
     status = json.loads(
         (tmp_path / ".goodteam" / "workers" / "jobs" / job["id"] / "status.json").read_text(encoding="utf-8")
     )
@@ -802,7 +852,10 @@ def test_rerunning_same_job_does_not_append_duplicate_memory_events(tmp_path, mo
     assert first["memory_writeback"]["appended"] == 1
     assert second["memory_writeback"]["appended"] == 0
     assert second["memory_writeback"]["skipped_duplicates"] == 1
-    assert len(memory_events(tmp_path, "implementation")) == 1
+    assert first["memory_provenance"]["appended"] == 1
+    assert second["memory_provenance"]["appended"] == 0
+    assert second["memory_provenance"]["skipped_duplicates"] == 1
+    assert len(memory_events(tmp_path, "implementation")) == 2
 
 
 def test_write_back_skips_duplicate_bullets_and_existing_texts(tmp_path, monkeypatch):
@@ -837,7 +890,8 @@ def test_write_back_skips_duplicate_bullets_and_existing_texts(tmp_path, monkeyp
     assert result["memory_writeback"]["parsed"] == 3
     assert result["memory_writeback"]["appended"] == 1
     assert result["memory_writeback"]["skipped_duplicates"] == 2
-    assert [event["text"] for event in memory_events(tmp_path, "qa")] == [
+    result_events = [event for event in memory_events(tmp_path, "qa") if event["source"].endswith("/result.md")]
+    assert [event["text"] for event in result_events] == [
         "Existing caveat from a previous job.",
         "Duplicate inside this result.",
     ]
@@ -865,6 +919,30 @@ def test_write_back_exception_is_recorded_without_failing_completed_job(tmp_path
     status = json.loads((tmp_path / ".goodteam" / "workers" / "jobs" / job["id"] / "status.json").read_text(encoding="utf-8"))
     assert status["status"] == "completed"
     assert status["memory_writeback"] == {"status": "error", "error": "write-back unavailable"}
+
+
+def test_provenance_write_back_exception_is_recorded_without_failing_completed_job(tmp_path, monkeypatch):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="fake",
+        task="Create task proposal",
+        context="Context packet",
+    )
+
+    def raise_provenance(job_root, job_payload):
+        raise RuntimeError("provenance unavailable")
+
+    monkeypatch.setattr(store, "_write_back_provenance", raise_provenance)
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["memory_provenance"] == {"status": "error", "error": "provenance unavailable"}
+    status = json.loads((tmp_path / ".goodteam" / "workers" / "jobs" / job["id"] / "status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "completed"
+    assert status["memory_provenance"] == {"status": "error", "error": "provenance unavailable"}
 
 
 def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypatch):
