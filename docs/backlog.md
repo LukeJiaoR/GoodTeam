@@ -3,6 +3,39 @@
 Durable list of feature ideas / follow-ups that aren't on the active plan yet.
 Promote an item to a PRD under `docs/plans/` when it's picked up. Newest first.
 
+## Self-host the role chain: sediment Claude's manual orchestration into GoodTeam  (raised 2026-06-02, charter item)
+
+**Insight:** the steps the planner/reviewer (Claude) performs by hand to ship each
+change ARE GoodTeam's own role chain, still run manually. Every manual round is a
+live, pressure-tested spec for a role GoodTeam hasn't automated yet. Sedimenting
+them turns "Claude hand-drives GoodTeam's development" into "GoodTeam develops
+itself" — the Moat #1 endgame (product-vision §6.2).
+
+**Manual step → GoodTeam role → status:**
+- write PRD / contract → product_requirement + architect → semi (PRD is a template, no LLM — see below)
+- start worktree + write task/constraints + dispatch → planner + orchestrator → MANUAL (Bash by hand) → first sediment = `scripts/dispatch-track.sh`
+- review diff, decide mergeable → code_review → MANUAL (this is the core judgement)
+- merge + cleanup + sync → release → `scripts/land-pr.sh` landed (mechanical half only)
+- write footprint → retro_memory → manual
+
+**Sediment ORDER (hard rule):** mechanical layers first (release's "green + human
+ok → merge/cleanup"; orchestrator's "spin worktree + dispatch a track"); the
+review/judgement layer LAST, and only once verification is trustworthy. We proved
+repeatedly that CI-green ≠ correct (the CONTENTOPS hardcode passed CI clean), so
+`release` must NOT auto-merge on green alone — judgement stays human until an
+independent verifier (triage classes + CI + maybe an LLM reviewer) is proven. The
+hard-won rules these roles must encode (from the manual rounds): review BEFORE
+merge; remove worktree before --delete-branch; pin the task contract to avoid
+idea-bleed; read the produced artifact before declaring success; `git add` only
+whitelisted files never -A; CI-green is necessary not sufficient.
+
+**Process rule reaffirmed (2026-06-02):** Claude must NOT write implementation code
+OR scripts itself — those go to Codex via dispatch. Claude = specs/PRD/contracts/
+review/footprint; Codex = all code + scripts. (Slipped a few times this session —
+demo PRD/README/land-pr.sh were hand-written "because small"; that erodes the
+implementation-role boundary that makes the chain work. land-pr.sh kept as a
+one-time exception; from here, scripts go to Codex.)
+
 ## Agent discovery + per-role agent configuration UI  (raised 2026-06-01)
 
 **Want:** users should not be stuck with hardcoded agent choices. Two pieces:
