@@ -1,5 +1,6 @@
 import os
 import subprocess
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -144,8 +145,21 @@ def dispatch_tracks(
     jobs = [results_by_role.get(str(job["role"]), _exception_report(role=str(job["role"]), error=RuntimeError("missing result"))) for job in jobs_by_role]
     ok = [job for job in jobs if job.get("outcome") == "ok"]
     needs_human = [job for job in jobs if job.get("outcome") == "needs_human"]
+    file_to_roles: dict[str, set[str]] = defaultdict(set)
+    for job in jobs:
+        role = str(job.get("role", ""))
+        for path in job.get("changed_files", []):
+            if role and isinstance(path, str):
+                file_to_roles[path].add(role)
+    file_collisions = [
+        {"path": path, "roles": sorted(roles)}
+        for path, roles in sorted(file_to_roles.items())
+        if len(roles) > 1
+    ]
     return {
         "all_ok": not needs_human,
+        "has_collisions": bool(file_collisions),
+        "file_collisions": file_collisions,
         "jobs": jobs,
         "ok": ok,
         "needs_human": needs_human,

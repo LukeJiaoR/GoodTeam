@@ -436,6 +436,74 @@ def test_dispatch_tracks_reports_changed_files_from_git_diff(tmp_path, monkeypat
     assert any(call["command"][:3] == ["git", "-C", str(project_root)] for call in calls)
 
 
+def test_dispatch_tracks_reports_file_collisions_when_tracks_touch_same_file(tmp_path, monkeypatch):
+    def fake_run_dispatched_job(project_root, job, verify_commands):
+        if job["role"] == "ui":
+            changed = ["src/App.jsx", "src/theme.css"]
+        else:
+            changed = ["src/App.jsx", "src/api.py"]
+        return {
+            "job_id": job["id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": "completed",
+            "outcome": "ok",
+            "summary": "done",
+            "memory_writeback": {"status": "skipped"},
+            "verify": {"passed": True, "skipped": True, "reason": "none"},
+            "changed_files": changed,
+        }
+
+    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    payload = dispatch_tracks(
+        project_root=project_root,
+        tracks=[
+            {"role": "ui", "adapter": "fake", "task": "UI edits."},
+            {"role": "implementation", "adapter": "fake", "task": "Backend edits."},
+        ],
+    )
+
+    assert payload["has_collisions"] is True
+    assert payload["file_collisions"] == [{"path": "src/App.jsx", "roles": ["implementation", "ui"]}]
+
+
+def test_dispatch_tracks_reports_no_file_collisions_for_disjoint_changes(tmp_path, monkeypatch):
+    def fake_run_dispatched_job(project_root, job, verify_commands):
+        if job["role"] == "ui":
+            changed = ["src/App.jsx"]
+        else:
+            changed = ["src/api.py"]
+        return {
+            "job_id": job["id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": "completed",
+            "outcome": "ok",
+            "summary": "done",
+            "memory_writeback": {"status": "skipped"},
+            "verify": {"passed": True, "skipped": True, "reason": "none"},
+            "changed_files": changed,
+        }
+
+    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    payload = dispatch_tracks(
+        project_root=project_root,
+        tracks=[
+            {"role": "ui", "adapter": "fake", "task": "UI edits."},
+            {"role": "implementation", "adapter": "fake", "task": "Backend edits."},
+        ],
+    )
+
+    assert payload["has_collisions"] is False
+    assert payload["file_collisions"] == []
+
+
 def test_worker_job_store_creates_protocol_files(tmp_path):
     store = WorkerJobStore(tmp_path)
 
