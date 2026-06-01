@@ -817,13 +817,29 @@ def test_worker_backend_doctor_gemini_ready_with_cli_and_key(monkeypatch):
     assert "gemini-secret" not in json.dumps(report)
 
 
-def test_worker_backend_doctor_accepts_gemini_alias(monkeypatch):
+def test_worker_backend_doctor_accepts_agy_backend(monkeypatch):
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
 
     report = worker_backend_doctor("agy")
 
     assert report["kind"] == "cli"
-    assert report["command"] == "gemini"
+    assert report["command"] == "agy"
+
+
+def test_agy_build_command_has_no_gemini_only_flags():
+    from goodteam_os.workers import CLI_BACKENDS, _command_with_prompt
+
+    spec = CLI_BACKENDS["agy"]
+    cmd = _command_with_prompt(
+        spec.build_command("/fake/bin/agy", spec.model_default, Path("."), Path("r.md")),
+        "do the thing",
+        prompt_via=spec.prompt_via,
+    )
+    assert cmd[:3] == ["/fake/bin/agy", "-p", "do the thing"]
+    assert "--dangerously-skip-permissions" in cmd
+    # agy has no --model / --approval-mode (verified via `agy --help`)
+    assert "--model" not in cmd
+    assert "--approval-mode" not in cmd
 
 
 def test_anthropic_adapter_invokes_claude_cli_and_captures_stdout_result(tmp_path, monkeypatch):
