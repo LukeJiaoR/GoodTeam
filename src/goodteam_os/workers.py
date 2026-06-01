@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from shutil import which
+from shutil import copy2, which
 from typing import Any
 from uuid import uuid4
 
@@ -28,6 +28,12 @@ GEMINI_AUTH_ENV_NAMES = (
     "GOOGLE_API_KEY",
     "GOOGLE_APPLICATION_CREDENTIALS",
     "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+)
+CODEX_ISOLATED_HOME_ALLOWED_ENTRIES = (
+    "auth.json",
+    "config.toml",
+    "AGENTS.md",
+    "version.json",
 )
 BUILTIN_WORKER_MODES = ("fake", "noop", "human")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
@@ -151,6 +157,7 @@ class CliBackendSpec:
     summarize: Callable[[int, str], str]
     not_available_message: str
     prompt_via: str = "stdin"
+    isolated_home: bool = False
 
 
 def _codex_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
@@ -264,6 +271,7 @@ CODEX_BACKEND = CliBackendSpec(
     build_command=_codex_build_command,
     summarize=_codex_summary,
     not_available_message="Codex CLI is not available. Install codex or add it to PATH before running codex workers.",
+    isolated_home=True,
 )
 
 CLAUDE_BACKEND = CliBackendSpec(
@@ -512,7 +520,31 @@ class WorkerJobStore:
             capture=spec.capture,
             summarize=spec.summarize,
             prompt_via=spec.prompt_via,
+            worker_env=self._worker_env(job_root, spec),
         )
+
+    def _worker_env(self, job_root: Path, spec: "CliBackendSpec") -> dict[str, str] | None:
+        if not spec.isolated_home:
+            return None
+        isolated_home = self._prepare_isolated_codex_home(job_root)
+        return {**os.environ, "CODEX_HOME": str(isolated_home)}
+
+    def _prepare_isolated_codex_home(self, job_root: Path) -> Path:
+        source_home = Path(os.environ.get("CODEX_HOME") or "~/.codex").expanduser()
+        isolated_home = job_root / ".codex-home"
+        isolated_home.mkdir(parents=True, exist_ok=True)
+        for entry_name in CODEX_ISOLATED_HOME_ALLOWED_ENTRIES:
+            source_path = source_home / entry_name
+            if not source_path.exists():
+                continue
+            target_path = isolated_home / entry_name
+            if target_path.exists() or target_path.is_symlink():
+                continue
+            try:
+                target_path.symlink_to(source_path)
+            except OSError:
+                copy2(source_path, target_path)
+        return isolated_home
 
     def _run_cli_worker(
         self,
@@ -526,6 +558,7 @@ class WorkerJobStore:
         capture: str,
         summarize: Any,
         prompt_via: str = "stdin",
+        worker_env: dict[str, str] | None = None,
         timeout_seconds: int = 1800,
     ) -> dict[str, Any]:
         """Run an agentic coding CLI (codex/claude) over the job protocol files.
@@ -558,6 +591,7 @@ class WorkerJobStore:
             process = subprocess.Popen(
                 process_command,
                 cwd=self.project_root,
+                env=worker_env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
