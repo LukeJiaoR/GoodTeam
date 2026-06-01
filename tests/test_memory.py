@@ -334,6 +334,100 @@ def test_retrieved_event_carries_stable_mem_handle_on_embedding_path(tmp_path):
     assert first[0]["id"] == second[0]["id"]
 
 
+def test_event_id_ignores_supersedes_metadata(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    base_event = {
+        "timestamp": "2026-06-02T00:00:00+00:00",
+        "role_key": "architect",
+        "horizon": "short-term",
+        "action": "add",
+        "source": "job-1/result.md",
+        "text": "Keep memory ids stable while adding metadata.",
+    }
+    superseding_event = dict(base_event)
+    superseding_event["supersedes"] = "mem:oldid123456"
+
+    assert store._event_id(base_event) == store._event_id(superseding_event)
+
+
+def test_append_memory_event_core_dedup_skips_duplicate_wal_line(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+
+    first = store.append_memory_event(
+        "architect",
+        horizon="short-term",
+        text="Duplicate-safe memory append behavior.",
+        source="job-dedup/result.md",
+    )
+    second = store.append_memory_event(
+        "architect",
+        horizon="short-term",
+        text="Duplicate-safe memory append behavior.",
+        source="job-dedup/result.md",
+    )
+
+    lines = [
+        line
+        for line in store.event_path("architect").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(lines) == 1
+    assert first == second
+
+
+def test_retrieve_relevant_events_excludes_superseded_event(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    old_event = store.append_memory_event(
+        "architect",
+        horizon="short-term",
+        text="Use v1 rollout checklist for release gating.",
+        source="job-old/result.md",
+    )
+    old_id = store._event_id(old_event)
+    store.append_memory_event(
+        "architect",
+        horizon="short-term",
+        text="Use v2 rollout checklist for release gating.",
+        source="job-new/result.md",
+        supersedes=old_id,
+    )
+
+    results = store.retrieve_relevant_events("architect", query="rollout checklist release gating", top_k=5)
+    texts = [str(item["text"]) for item in results]
+    assert "Use v1 rollout checklist for release gating." not in texts
+    assert "Use v2 rollout checklist for release gating." in texts
+
+
+def test_rebuild_role_memory_excludes_superseded_events_in_projection(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    first = store.append_memory_event(
+        "planner",
+        horizon="mid-term",
+        text="Auth contract depends on status=v1 shape.",
+        source="job-auth-1/result.md",
+    )
+    store.append_memory_event(
+        "planner",
+        horizon="mid-term",
+        text="Auth contract depends on status=v2 shape.",
+        source="job-auth-2/result.md",
+        supersedes=store._event_id(first),
+    )
+
+    store.rebuild_role_memory("planner", "Planner", "AI Content Studio")
+    content = store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
+    assert "status=v1 shape" not in content
+    assert "status=v2 shape" in content
+
+
 def test_embedding_cache_is_projection_and_regenerates_after_delete(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()

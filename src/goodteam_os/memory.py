@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover - exercised only without the optional wh
 
 
 MEMORY_HORIZONS = ("long-term", "mid-term", "short-term")
+IDENTITY_FIELDS = ("timestamp", "role_key", "horizon", "action", "source", "text")
 COSINE_FLOOR = 0.05  # keep weak/noisy matches out while retaining clear semantic hits
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -203,6 +204,7 @@ class RoleMemoryStore:
         text: str,
         source: str = "",
         action: str = "add",
+        supersedes: str = "",
     ) -> dict[str, str]:
         if horizon not in MEMORY_HORIZONS:
             raise ValueError(f"Unknown memory horizon: {horizon}")
@@ -210,8 +212,22 @@ class RoleMemoryStore:
             raise ValueError(f"Unsupported memory event action: {action}")
         if not text.strip():
             raise ValueError("Memory event text is required.")
+        if not isinstance(supersedes, str):
+            raise ValueError("Memory event supersedes must be a string.")
 
         self.ensure_role_memory(role_key)
+        all_events = self._read_events(role_key)
+        supersedes_value = supersedes.strip()
+        for existing in all_events:
+            if (
+                str(existing.get("role_key", "")) == role_key
+                and str(existing.get("horizon", "")) == horizon
+                and str(existing.get("action", "")) == action
+                and str(existing.get("source", "")) == source
+                and str(existing.get("text", "")) == text.strip()
+                and str(existing.get("supersedes", "")) == supersedes_value
+            ):
+                return existing
         event = {
             "timestamp": datetime.now(UTC).isoformat(),
             "role_key": role_key,
@@ -220,6 +236,8 @@ class RoleMemoryStore:
             "source": source,
             "text": text.strip(),
         }
+        if supersedes_value:
+            event["supersedes"] = supersedes_value
         event_path = self.event_path(role_key)
         event_path.parent.mkdir(parents=True, exist_ok=True)
         with event_path.open("a", encoding="utf-8") as handle:
@@ -295,6 +313,7 @@ class RoleMemoryStore:
         if not query_tokens:
             return []
         events = self._read_events(role_key)
+        events = self._active_events(events)
         if horizons:
             events = [event for event in events if event.get("horizon") in horizons]
         if not events:
@@ -360,6 +379,7 @@ class RoleMemoryStore:
         project_name: str = "",
     ) -> dict[str, object]:
         events = self._read_events(role_key)
+        events = self._active_events(events)
         root = self.role_root(role_key)
         root.mkdir(parents=True, exist_ok=True)
         for horizon in MEMORY_HORIZONS:
@@ -439,8 +459,17 @@ Role: `{role_key}`
             path.write_text(content.rstrip() + entry, encoding="utf-8")
 
     def _event_id(self, event: dict[str, object]) -> str:
-        payload = json.dumps(event, sort_keys=True, ensure_ascii=False)
+        identity_payload = {key: event.get(key) for key in IDENTITY_FIELDS}
+        payload = json.dumps(identity_payload, sort_keys=True, ensure_ascii=False)
         return "mem:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+    def _active_events(self, events: list[dict[str, str]]) -> list[dict[str, str]]:
+        superseded_ids = {
+            str(event.get("supersedes", "")).strip()
+            for event in events
+            if isinstance(event.get("supersedes"), str) and str(event.get("supersedes", "")).strip()
+        }
+        return [event for event in events if self._event_id(event) not in superseded_ids]
 
     def _retrieval_result(self, score: float, event: dict[str, object]) -> dict[str, object]:
         return {

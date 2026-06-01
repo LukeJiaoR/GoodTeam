@@ -76,7 +76,8 @@ def write_project_config(workspace: Path, *, key: str = "REAL", repos: dict[str,
 
 
 def event_handle(event: dict[str, object]) -> str:
-    payload = json.dumps(event, sort_keys=True, ensure_ascii=False)
+    identity_fields = ("timestamp", "role_key", "horizon", "action", "source", "text")
+    payload = json.dumps({key: event.get(key) for key in identity_fields}, sort_keys=True, ensure_ascii=False)
     return "mem:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
