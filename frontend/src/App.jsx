@@ -216,6 +216,7 @@ export default function App() {
 
   // Form submit button loading states
   const [actionLoading, setActionLoading] = useState(false);
+  const [generatingPrd, setGeneratingPrd] = useState(false);
 
   // Approval review artifact editor state
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
@@ -616,6 +617,29 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleGeneratePrd = async () => {
+    if (!projectKey) return;
+    setGeneratingPrd(true);
+    showToast('Generating PRD...');
+    try {
+      const response = await fetch('/api/generate-prd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: projectKey,
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) throw new Error(res.error || 'Failed to generate PRD');
+      showToast('PRD generated successfully');
+      fetchState(projectKey);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setGeneratingPrd(false);
     }
   };
 
@@ -2263,6 +2287,20 @@ export default function App() {
                             )}
 
                             <div className="flex justify-end space-x-2 pt-1">
+                              {review.approval === 'prd' && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleGeneratePrd();
+                                  }}
+                                  disabled={generatingPrd}
+                                  className="bg-white hover:bg-zinc-50 border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
+                                >
+                                  <RefreshCw className={`h-3 w-3 ${generatingPrd ? 'animate-spin' : ''}`} />
+                                  <span>{generatingPrd ? 'Generating...' : 'Generate PRD'}</span>
+                                </button>
+                              )}
                               {review.artifact_path && (review.artifact_path.endsWith('.md') || review.artifact_path.endsWith('.markdown')) && (
                                 <button
                                   type="button"
