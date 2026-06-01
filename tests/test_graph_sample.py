@@ -11,9 +11,29 @@ from goodteam_os.graph import (
     render_prd_markdown,
     run_implementation_workers,
     run_until_next_gate,
+    worker_blocker_message,
 )
 from goodteam_os.graph import run_adoption_until_next_gate
 from goodteam_os.state import create_initial_state
+
+
+def test_worker_blocker_message_includes_failure_class_and_attempts():
+    message = worker_blocker_message(
+        {
+            "role": "implementation",
+            "summary": "Process exited 1",
+            "failure_class": "timeout",
+            "attempts": 3,
+        }
+    )
+
+    assert message == "implementation worker failed [timeout, 3 attempts]: Process exited 1"
+
+
+def test_worker_blocker_message_omits_failure_bracket_when_missing():
+    message = worker_blocker_message({"role": "implementation", "summary": "Process exited 1"})
+
+    assert message == "implementation worker failed: Process exited 1"
 
 
 def test_resolve_role_adapter_prefers_per_role_then_global_then_default():

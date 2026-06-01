@@ -1087,7 +1087,17 @@ def worker_blocker_message(result: dict[str, object]) -> str:
     role = str(result.get("role", "worker"))
     if role == "qa" and qa_result_reports_failure(result):
         return "qa worker reported release-blocking failure: see QA result.md"
-    return f"{role} worker failed: {result.get('summary', 'unknown failure')}"
+    summary = result.get("summary", "unknown failure")
+    failure_class = str(result.get("failure_class", "")).strip()
+    attempts = int(result.get("attempts", 0) or 0)
+    detail = ""
+    if failure_class:
+        detail = failure_class
+        if attempts > 1:
+            detail = f"{detail}, {attempts} attempts"
+    if detail:
+        return f"{role} worker failed [{detail}]: {summary}"
+    return f"{role} worker failed: {summary}"
 
 
 def normalize_delivery_mode(value: str) -> str:
