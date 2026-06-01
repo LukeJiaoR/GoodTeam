@@ -1070,6 +1070,44 @@ def worker_backend_doctor(mode: str) -> dict[str, Any]:
     return report
 
 
+def discover_installed_agents() -> list[dict[str, Any]]:
+    """Discover distinct CLI backends registered in CLI_BACKENDS.
+
+    Alias keys are collapsed into one canonical backend entry and reported with
+    their alias list.
+    """
+    aliases_by_spec: dict[int, list[str]] = {}
+    spec_by_id: dict[int, CliBackendSpec] = {}
+    for backend_key, spec in CLI_BACKENDS.items():
+        spec_id = id(spec)
+        spec_by_id.setdefault(spec_id, spec)
+        aliases_by_spec.setdefault(spec_id, []).append(backend_key)
+
+    discovered: list[dict[str, Any]] = []
+    canonical_by_spec: dict[int, str] = {}
+    for spec_id, keys in aliases_by_spec.items():
+        spec = spec_by_id[spec_id]
+        canonical_by_spec[spec_id] = spec.which_name if spec.which_name in keys else spec.name
+
+    for spec_id in sorted(aliases_by_spec, key=lambda value: canonical_by_spec[value]):
+        spec = spec_by_id[spec_id]
+        aliases = sorted(aliases_by_spec[spec_id])
+        canonical = canonical_by_spec[spec_id]
+        report = worker_backend_doctor(canonical)
+        discovered.append(
+            {
+                "backend": canonical,
+                "aliases": aliases,
+                "available": bool(report.get("available", False)),
+                "ready": bool(report.get("ready", False)),
+                "command": str(report.get("command", "")),
+                "command_path": str(report.get("command_path", "")),
+                "hint": str(report.get("hint", "")),
+            }
+        )
+    return discovered
+
+
 def _generic_cli_hint(spec: CliBackendSpec, available: bool, auth_present: bool) -> str:
     if not available:
         return f"{spec.label} not found. Install `{spec.which_name}` or add it to PATH."

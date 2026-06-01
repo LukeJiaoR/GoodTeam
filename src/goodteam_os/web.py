@@ -33,7 +33,7 @@ from goodteam_os.staging import (
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import send_approval_notification
-from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore
+from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 
 PRD_REVIEW_ROLES = [
@@ -4957,6 +4957,12 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         self._send_json(404, {"error": message})
                     else:
                         self._send_json(400, {"error": message})
+                return
+            if parsed.path == "/api/agents":
+                try:
+                    self._send_json(200, {"agents": discover_installed_agents()})
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
                 return
 
             # Try serving from frontend/dist first

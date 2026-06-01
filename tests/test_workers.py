@@ -10,6 +10,7 @@ from goodteam_os.workers import (
     _claude_summary,
     _codex_summary,
     classify_worker_failure,
+    discover_installed_agents,
     is_transient,
     parse_result_sections,
     worker_backend_doctor,
@@ -1098,6 +1099,49 @@ def test_worker_backend_doctor_accepts_agy_backend(monkeypatch):
 
     assert report["kind"] == "cli"
     assert report["command"] == "agy"
+
+
+def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(monkeypatch):
+    available_commands = {"codex", "claude", "gemini"}
+
+    def fake_which(name):
+        if name in available_commands:
+            return f"/fake/bin/{name}"
+        return None
+
+    monkeypatch.setattr("goodteam_os.workers.which", fake_which)
+    monkeypatch.setattr("goodteam_os.workers.DEFAULT_CODEX_PATH", "/missing/codex")
+    monkeypatch.setattr("goodteam_os.workers.DEFAULT_CLAUDE_PATH", "/missing/claude")
+    monkeypatch.setattr("goodteam_os.workers.DEFAULT_GEMINI_PATH", "/missing/gemini")
+    monkeypatch.setattr("goodteam_os.workers.DEFAULT_AGY_PATH", "/missing/agy")
+    monkeypatch.setenv("CODEX_API_KEY", "codex-secret")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", raising=False)
+    monkeypatch.delenv("AGY_API_KEY", raising=False)
+
+    discovered = discover_installed_agents()
+
+    assert [item["backend"] for item in discovered] == ["agy", "claude", "codex", "gemini"]
+    assert [item["aliases"] for item in discovered] == [
+        ["agy", "antigravity"],
+        ["anthropic", "claude"],
+        ["codex"],
+        ["gemini"],
+    ]
+    by_backend = {item["backend"]: item for item in discovered}
+    assert by_backend["codex"]["available"] is True
+    assert by_backend["codex"]["ready"] is True
+    assert by_backend["codex"]["command"] == "codex"
+    assert by_backend["claude"]["available"] is True
+    assert by_backend["claude"]["ready"] is True
+    assert by_backend["gemini"]["available"] is True
+    assert by_backend["gemini"]["ready"] is True
+    assert by_backend["agy"]["available"] is False
+    assert by_backend["agy"]["ready"] is False
 
 
 def test_agy_build_command_has_no_gemini_only_flags():

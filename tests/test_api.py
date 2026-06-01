@@ -564,6 +564,42 @@ def test_api_memory_returns_empty_roles_without_memory(tmp_path, monkeypatch):
     assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
 
 
+def test_api_agents_returns_discovered_agents(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "goodteam_os.web.discover_installed_agents",
+        lambda: [
+            {
+                "backend": "claude",
+                "aliases": ["anthropic", "claude"],
+                "available": True,
+                "ready": True,
+                "command": "claude",
+                "command_path": "/fake/bin/claude",
+                "hint": "ready",
+            }
+        ],
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/agents")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload == {
+        "agents": [
+            {
+                "backend": "claude",
+                "aliases": ["anthropic", "claude"],
+                "available": True,
+                "ready": True,
+                "command": "claude",
+                "command_path": "/fake/bin/claude",
+                "hint": "ready",
+            }
+        ]
+    }
+    assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
+
+
 def test_api_memory_returns_role_summaries_event_count_and_latest_retrieval(tmp_path, monkeypatch):
     project_root = tmp_path / "target"
     backend_repo = project_root / "backend"
