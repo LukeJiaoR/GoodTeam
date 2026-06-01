@@ -486,6 +486,7 @@ class WorkerJobStore:
     def run_job(self, job_id: str) -> dict[str, Any]:
         job_root = self.root / job_id
         job = self._read_json(job_root / "job.json")
+        memory_citations = self._memory_citations_from_pickup_packet(job_root)
         adapter = str(job["adapter"])
         if adapter == "noop":
             status_payload = self._complete_noop(job_root, job)
@@ -529,13 +530,34 @@ class WorkerJobStore:
                 retried = True
                 backoff = WORKER_RETRY_BACKOFF_SECONDS[min(attempts - 1, len(WORKER_RETRY_BACKOFF_SECONDS) - 1)]
                 _sleep(backoff)
+        status_payload["memory_citations"] = memory_citations
         if status_payload.get("status") == "completed":
             try:
                 status_payload["memory_writeback"] = self._write_back_memory(job_root, job)
             except Exception as exc:  # pragma: no cover - exercised via monkeypatch safety test
                 status_payload["memory_writeback"] = {"status": "error", "error": str(exc)}
-            self._write_json(job_root / "status.json", status_payload)
+        self._write_json(job_root / "status.json", status_payload)
         return status_payload
+
+    def _memory_citations_from_pickup_packet(self, job_root: Path) -> list[str]:
+        packet_path = job_root / "role_pickup_packet.json"
+        if not packet_path.is_file():
+            return []
+        try:
+            packet = self._read_json(packet_path)
+        except (OSError, json.JSONDecodeError):
+            return []
+        relevant_events = packet.get("relevant_events")
+        if not isinstance(relevant_events, list):
+            return []
+        citations: list[str] = []
+        for event in relevant_events:
+            if not isinstance(event, dict):
+                continue
+            event_id = event.get("id")
+            if isinstance(event_id, str) and event_id:
+                citations.append(event_id)
+        return citations
 
     def _write_back_memory(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         result_path = job_root / "result.md"
