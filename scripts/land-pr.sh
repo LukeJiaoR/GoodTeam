@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# land-pr.sh — squash-merge a reviewed PR, then clean up and resync.
+#
+# The MECHANICAL half of landing a change. The JUDGEMENT half (reviewing the diff,
+# deciding it's safe to merge) stays with the human/reviewer — only run this AFTER
+# the PR has been reviewed and CI is green.
+#
+# Usage:
+#   scripts/land-pr.sh <PR-number> [--worktree <path>] [--no-test]
+#
+# What it does (idempotent-ish, stops on first failure):
+#   1. Verifies the PR's CI checks are green (refuses if not, unless --force).
+#   2. gh pr merge <N> --squash --delete-branch
+#   3. Removes the given --worktree (if any) and prunes stale worktrees.
+#   4. Switches to main, pulls --ff-only.
+#   5. Runs the test suite as a post-merge sanity check (skip with --no-test).
+#
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
+PY="$ROOT/.venv/bin/python"
+
+PR=""
+WORKTREE=""
+RUN_TEST=1
+FORCE=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --worktree) WORKTREE="$2"; shift 2 ;;
+    --worktree=*) WORKTREE="${1#*=}"; shift ;;
+    --no-test) RUN_TEST=0; shift ;;
+    --force) FORCE=1; shift ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    *) [ -z "$PR" ] && { PR="$1"; shift; } || { echo "unexpected arg: $1" >&2; exit 2; } ;;
+  esac
+done
+[ -n "$PR" ] || { echo "usage: scripts/land-pr.sh <PR-number> [--worktree <path>] [--no-test]" >&2; exit 2; }
+
+echo "[land] PR #$PR — checking CI status..."
+if [ "$FORCE" != 1 ]; then
+  # gh pr checks exits non-zero if any check is not passing; surface that.
+  if ! gh pr checks "$PR" >/tmp/land-checks-$PR.txt 2>&1; then
+    echo "[land] CI is not green for PR #$PR — refusing to merge. (--force to override)" >&2
+    tail -5 /tmp/land-checks-$PR.txt >&2
+    exit 1
+  fi
+  echo "[land] CI green."
+fi
+
+# Remove the worktree FIRST: while it's checked out on the PR branch,
+# `gh pr merge --delete-branch` cannot delete that local branch.
+if [ -n "$WORKTREE" ] && [ -d "$WORKTREE" ]; then
+  echo "[land] removing worktree $WORKTREE ..."
+  git worktree remove "$WORKTREE" --force || echo "[land] (worktree remove skipped)"
+fi
+git worktree prune
+
+echo "[land] squash-merging PR #$PR ..."
+gh pr merge "$PR" --squash --delete-branch
+
+echo "[land] syncing main ..."
+git checkout main
+git pull --ff-only
+
+if [ "$RUN_TEST" = 1 ]; then
+  echo "[land] post-merge sanity: pytest ..."
+  PYTHONPATH="$ROOT/src" "$PY" -m pytest tests -q
+fi
+
+echo "[land] done. main is at:"
+git log --oneline -1
