@@ -5,7 +5,12 @@ from pathlib import Path
 
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.workers import (
+    WORKER_MAX_ATTEMPTS,
     WorkerJobStore,
+    _claude_summary,
+    _codex_summary,
+    classify_worker_failure,
+    is_transient,
     parse_result_sections,
     worker_backend_doctor,
 )
@@ -95,6 +100,33 @@ def install_fake_popen(
             calls=calls,
             snapshot=snapshot,
             raise_timeout=raise_timeout,
+        )
+        process.cwd = cwd
+        process.env = env
+        return process
+
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
+
+
+def install_fake_popen_sequence(monkeypatch, responses, *, calls=None):
+    state = {"index": 0}
+
+    def fake_popen(command, *, cwd, env, stdin, stdout, stderr, text):
+        if state["index"] >= len(responses):
+            response = responses[-1]
+        else:
+            response = responses[state["index"]]
+        state["index"] += 1
+        process = FakePopen(
+            command,
+            stdout_text=response.get("stdout_text", ""),
+            stderr_text=response.get("stderr_text", ""),
+            returncode=response.get("returncode", 0),
+            result_text=response.get("result_text", "# Worker Result\n\nCompleted.\n"),
+            calls=calls,
+            snapshot=response.get("snapshot"),
+            raise_timeout=response.get("raise_timeout", False),
         )
         process.cwd = cwd
         process.env = env
@@ -1221,6 +1253,125 @@ def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
     status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
     assert status["status"] == "failed"
     assert status["timeout_seconds"] == 1800
+
+
+def test_classify_worker_failure_maps_known_summary_patterns():
+    codex_auth = _codex_summary(1, 'ERROR: unexpected status 401 Unauthorized: {"code":"INVALID_API_KEY"}')
+    codex_stream = _codex_summary(1, "stream disconnected before response.completed")
+    claude_auth = _claude_summary(1, "Authentication failed")
+    claude_rate = _claude_summary(1, "429 rate limit reached")
+
+    assert classify_worker_failure(codex_auth, 1) == "auth"
+    assert classify_worker_failure(codex_stream, 1) == "stream_disconnect"
+    assert classify_worker_failure(claude_auth, 1) == "auth"
+    assert classify_worker_failure(claude_rate, 1) == "rate_limit"
+    assert classify_worker_failure("Codex CLI timed out after 1800 seconds.", None) == "timeout"
+    assert classify_worker_failure("Codex CLI exited with code 1: 503 Service Unavailable.", 1) == "network"
+    assert classify_worker_failure("Codex CLI exited with code 1.", 1, "Cannot find module 'x'") == "scaffold"
+    assert classify_worker_failure("Codex CLI exited with code 1.", 1, "random failure") == "unknown"
+
+
+def test_is_transient_only_true_for_retryable_classes():
+    assert is_transient("auth") is True
+    assert is_transient("rate_limit") is True
+    assert is_transient("network") is True
+    assert is_transient("timeout") is True
+    assert is_transient("stream_disconnect") is True
+    assert is_transient("scaffold") is False
+    assert is_transient("unknown") is False
+    assert is_transient("code_bug") is False
+    assert is_transient("ambiguous_spec") is False
+
+
+def test_cli_retry_recovers_after_transient_failure(tmp_path, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("goodteam_os.workers._sleep", lambda seconds: sleeps.append(seconds))
+    install_fake_popen_sequence(
+        monkeypatch,
+        responses=[
+            {
+                "returncode": 1,
+                "stderr_text": "ERROR: unexpected status 503 Service Unavailable",
+                "result_text": "",
+            },
+            {
+                "returncode": 0,
+                "stderr_text": "",
+                "result_text": "# Worker Result\n\nRecovered on retry.\n",
+            },
+        ],
+    )
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="codex",
+        task="Implement retry logic.",
+        context="Approved artifacts are available.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "completed"
+    assert result["attempts"] == 2
+    assert result["disposition"] == "recovered"
+    assert result["failure_class"] == "network"
+    assert sleeps == [2]
+
+
+def test_cli_retry_escalates_after_max_transient_failures(tmp_path, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("goodteam_os.workers._sleep", lambda seconds: sleeps.append(seconds))
+    install_fake_popen_sequence(
+        monkeypatch,
+        responses=[
+            {"returncode": 1, "stderr_text": "ERROR: stream disconnected before response.completed", "result_text": ""},
+        ],
+    )
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="codex",
+        task="Implement retry logic.",
+        context="Approved artifacts are available.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "failed"
+    assert result["attempts"] == WORKER_MAX_ATTEMPTS
+    assert result["failure_class"] == "stream_disconnect"
+    assert result["disposition"] == "escalated"
+    assert len(sleeps) == WORKER_MAX_ATTEMPTS - 1
+
+
+def test_cli_non_transient_failure_is_not_retried(tmp_path, monkeypatch):
+    sleeps = []
+    calls = []
+    monkeypatch.setattr("goodteam_os.workers._sleep", lambda seconds: sleeps.append(seconds))
+    install_fake_popen_sequence(
+        monkeypatch,
+        responses=[{"returncode": 1, "stderr_text": "Cannot find module 'better-sqlite3'", "result_text": ""}],
+        calls=calls,
+    )
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="codex",
+        task="Implement retry logic.",
+        context="Approved artifacts are available.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["status"] == "failed"
+    assert result["attempts"] == 1
+    assert result["failure_class"] == "scaffold"
+    assert result["disposition"] == "escalated"
+    assert len(calls) == 1
+    assert sleeps == []
 
 
 def test_codex_worker_prompt_requires_bounded_smoke_cleanup(tmp_path, monkeypatch):
