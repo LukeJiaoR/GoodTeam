@@ -23,6 +23,9 @@ DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 CLAUDE_AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 DEFAULT_GEMINI_PATH = os.getenv("GOODTEAM_GEMINI_PATH", "gemini")
 DEFAULT_GEMINI_MODEL = "auto"
+DEFAULT_AGY_PATH = os.getenv("GOODTEAM_AGY_PATH", "agy")
+DEFAULT_AGY_MODEL = "auto"
+AGY_AUTH_ENV_NAMES = ()
 GEMINI_AUTH_ENV_NAMES = (
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
@@ -183,6 +186,15 @@ def _gemini_build_command(binary: str, model: str, project_root: Path, result_pa
     return [binary, "-p", "--approval-mode", "yolo", "--model", model]
 
 
+def _agy_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
+    # agy (Antigravity) CLI: `-p`/`--print` runs one prompt non-interactively,
+    # `--dangerously-skip-permissions` auto-approves tool use (its YOLO), and
+    # `--print-timeout` bounds the run. It has NO --model / --approval-mode flags
+    # (verified via `agy --help`), so do not pass them. prompt_via="arg" inserts
+    # the prompt right after `-p`.
+    return [binary, "-p", "--dangerously-skip-permissions", "--print-timeout", "30m"]
+
+
 def _command_with_prompt(command: list[str], prompt: str, *, prompt_via: str) -> list[str]:
     if prompt_via == "stdin":
         return list(command)
@@ -302,6 +314,20 @@ GEMINI_BACKEND = CliBackendSpec(
     prompt_via="arg",
 )
 
+AGY_BACKEND = CliBackendSpec(
+    name="agy",
+    which_name="agy",
+    default_path=lambda: DEFAULT_AGY_PATH,
+    model_default=DEFAULT_AGY_MODEL,
+    auth_env=AGY_AUTH_ENV_NAMES,
+    capture="stdout",
+    label="Antigravity (agy) CLI",
+    build_command=_agy_build_command,
+    summarize=_gemini_summary,
+    not_available_message="Antigravity CLI (agy) is not available. Install agy or add it to PATH before running agy workers.",
+    prompt_via="arg",
+)
+
 # Registry of agentic CLI worker backends. Add a CliBackendSpec here to support a
 # new CLI. Aliases point at the same backend spec.
 CLI_BACKENDS: dict[str, CliBackendSpec] = {
@@ -309,7 +335,8 @@ CLI_BACKENDS: dict[str, CliBackendSpec] = {
     "anthropic": CLAUDE_BACKEND,
     "claude": CLAUDE_BACKEND,
     "gemini": GEMINI_BACKEND,
-    "agy": GEMINI_BACKEND,
+    "agy": AGY_BACKEND,
+    "antigravity": AGY_BACKEND,
 }
 
 
