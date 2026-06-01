@@ -164,6 +164,24 @@ echo "[pre-review] dispatching read-only review track: $TRACK"
 echo "[pre-review] command: ${CMD[*]}"
 "${CMD[@]}"
 
-echo "[pre-review] review report location:"
-echo "[pre-review]   $WORKTREE/.goodteam/workers/jobs/*/result.md"
+REPORT_SRC=""
+REPORT_GLOB="$WORKTREE/.goodteam/workers/jobs"/*/result.md
+shopt -s nullglob
+for candidate in $REPORT_GLOB; do
+  if [ -z "$REPORT_SRC" ] || [ "$candidate" -nt "$REPORT_SRC" ]; then
+    REPORT_SRC="$candidate"
+  fi
+done
+shopt -u nullglob
+
+REPORT_COPY="/tmp/pre-review-$PR-report.md"
+if [ -n "$REPORT_SRC" ] && [ -f "$REPORT_SRC" ]; then
+  cp "$REPORT_SRC" "$REPORT_COPY"
+  echo "[pre-review] review report location:"
+  echo "[pre-review]   $REPORT_COPY"
+else
+  echo "[pre-review] warning: no review report found at $WORKTREE/.goodteam/workers/jobs/*/result.md"
+  echo "[pre-review] review report location: unavailable"
+fi
+
 echo "[pre-review] review is read-only: no merge, no code changes, no commits."
