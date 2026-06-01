@@ -469,3 +469,115 @@ def test_role_memory_store_rebuilds_memory_from_events(tmp_path):
     assert rebuilt["event_count"] == 1
     assert "Frontend auth tasks depend" in store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
     assert "Corrupted" not in store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
+
+
+def test_memory_index_includes_integrity_marker_and_happy_path_skips_rebuild(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    store.append_memory_event(
+        "architect",
+        horizon="short-term",
+        text="Keep the auth contract drift note in short-term memory.",
+        source="job-100/result.md",
+    )
+
+    index = store.read_memory_index("architect")
+    assert index["event_count"] == 1
+    assert index["integrity"]["event_count"] == 1
+    expected_sha = hashlib.sha256(store.event_path("architect").read_bytes()).hexdigest()
+    assert index["integrity"]["events_sha256"] == expected_sha
+
+    called = {"value": False}
+
+    def fail_rebuild(*args, **kwargs):
+        called["value"] = True
+        raise AssertionError("read_memory_index should not rebuild when integrity matches WAL")
+
+    store.rebuild_role_memory = fail_rebuild
+    second = store.read_memory_index("architect")
+    assert second["integrity"]["events_sha256"] == expected_sha
+    assert called["value"] is False
+
+
+def test_read_and_pickup_rebuild_when_index_is_tampered(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("planner", "Planner", "AI Content Studio")
+    store.append_memory_event(
+        "planner",
+        horizon="mid-term",
+        text="Frontend auth tasks depend on backend auth.status contract.",
+        source="job-200/result.md",
+    )
+    store.memory_path("planner", "mid-term").write_text("# Corrupted\n", encoding="utf-8")
+    stale_index = store.read_memory_index("planner")
+    stale_index["integrity"]["events_sha256"] = "deadbeef"
+    store.index_path("planner").write_text(json.dumps(stale_index, indent=2), encoding="utf-8")
+
+    packet = store.build_pickup_packet("planner")
+    mid_content = store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
+    assert "Frontend auth tasks depend" in mid_content
+    assert "Corrupted" not in mid_content
+    assert packet["event_count"] == 1
+
+    rebuilt_index = store.read_memory_index("planner")
+    expected_sha = hashlib.sha256(store.event_path("planner").read_bytes()).hexdigest()
+    assert rebuilt_index["integrity"]["events_sha256"] == expected_sha
+
+
+def test_read_memory_index_rebuilds_when_index_missing(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("qa", "QA", "AI Content Studio")
+    store.append_memory_event(
+        "qa",
+        horizon="short-term",
+        text="Resume flaky test triage for memory projection checks.",
+        source="job-300/result.md",
+    )
+    store.index_path("qa").unlink()
+
+    rebuilt = store.read_memory_index("qa")
+    assert rebuilt["event_count"] == 1
+    assert rebuilt["integrity"]["event_count"] == 1
+    assert store.index_path("qa").is_file()
+
+
+def test_read_memory_index_detects_wal_tamper_and_rebuilds_projection(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    store.append_memory_event(
+        "architect",
+        horizon="short-term",
+        text="Initial WAL-backed memory event.",
+        source="job-400/result.md",
+    )
+    before = store.read_memory_index("architect")
+    old_sha = before["integrity"]["events_sha256"]
+
+    tampered_event = {
+        "timestamp": "2026-06-02T00:00:00+00:00",
+        "role_key": "architect",
+        "horizon": "short-term",
+        "action": "add",
+        "source": "manual-edit",
+        "text": "Out-of-band WAL append should force rebuild.",
+    }
+    with store.event_path("architect").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(tampered_event) + "\n")
+
+    rebuilt = store.read_memory_index("architect")
+    new_sha = rebuilt["integrity"]["events_sha256"]
+    assert rebuilt["event_count"] == 2
+    assert rebuilt["integrity"]["event_count"] == 2
+    assert new_sha != old_sha
+    assert new_sha == hashlib.sha256(store.event_path("architect").read_bytes()).hexdigest()
+    assert "Out-of-band WAL append should force rebuild." in store.memory_path(
+        "architect", "short-term"
+    ).read_text(encoding="utf-8")
