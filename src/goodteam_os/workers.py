@@ -803,6 +803,7 @@ class WorkerJobStore:
 
     def _worker_prompt(self, job_root: Path, job: dict[str, Any]) -> str:
         model = _codex_model_name(str(job.get("model", "")))
+        pickup_context = self._render_worker_pickup_context(job_root)
         return "\n\n".join(
             [
                 f"# GoodTeam Worker Job {job['id']}",
@@ -822,6 +823,8 @@ class WorkerJobStore:
                 (job_root / "constraints.md").read_text(encoding="utf-8"),
                 "## Expected Artifacts",
                 (job_root / "expected_artifacts.json").read_text(encoding="utf-8"),
+                "## Worker Pickup Signal",
+                pickup_context,
                 """## Memory Write-Back Sections
 End your final response with these markdown sections when you have concise, non-secret takeaways to preserve. Omit a section only when it has no useful bullets.
 Do not copy the parenthetical guidance text itself into your final answer.
@@ -841,6 +844,56 @@ Do not copy the parenthetical guidance text itself into your final answer.
 Keep each bullet short, factual, and free of secrets.""",
             ]
         )
+
+    def _render_worker_pickup_context(self, job_root: Path) -> str:
+        packet_path = job_root / "role_pickup_packet.json"
+        if not packet_path.is_file():
+            return "No pickup packet found."
+        try:
+            packet = self._read_json(packet_path)
+        except (OSError, json.JSONDecodeError):
+            return "Pickup packet unreadable."
+
+        relevant_events = packet.get("relevant_events")
+        summaries = packet.get("summaries")
+        lines = [
+            "Use retrieved relevant events below as the PRIMARY decision context.",
+            "Treat horizon summaries as display-only context.",
+        ]
+        if isinstance(relevant_events, list) and relevant_events:
+            lines.append("")
+            lines.append("### Retrieved Relevant Events (Primary Signal)")
+            for event in relevant_events:
+                if not isinstance(event, dict):
+                    continue
+                event_id = str(event.get("id", "")).strip()
+                horizon = str(event.get("horizon", "")).strip()
+                text = str(event.get("text", "")).strip()
+                score = event.get("score")
+                if not text:
+                    continue
+                prefix = f"- [{event_id}]"
+                if horizon:
+                    prefix += f" ({horizon})"
+                if isinstance(score, int | float):
+                    prefix += f" score={float(score):.4f}"
+                lines.append(f"{prefix}: {text}")
+        else:
+            lines.append("")
+            lines.append("### Retrieved Relevant Events (Primary Signal)")
+            lines.append("- None retrieved for this query.")
+
+        if isinstance(summaries, dict):
+            long_summary = str(summaries.get("long-term", "")).strip()
+            mid_summary = str(summaries.get("mid-term", "")).strip()
+            if long_summary or mid_summary:
+                lines.append("")
+                lines.append("### Horizon Summary (Display-Only)")
+                if long_summary:
+                    lines.append(f"- long-term: {long_summary}")
+                if mid_summary:
+                    lines.append(f"- mid-term: {mid_summary}")
+        return "\n".join(lines)
 
     def _write_status(
         self,

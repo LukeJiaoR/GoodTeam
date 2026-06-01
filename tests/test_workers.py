@@ -507,6 +507,39 @@ def test_worker_pickup_packet_does_not_embed_full_long_memory(tmp_path):
     assert "DO_NOT_EMBED_FULL_LONG_MEMORY" not in pickup_packet
 
 
+def test_worker_prompt_leads_with_retrieved_relevant_events(tmp_path):
+    memory_store = RoleMemoryStore(tmp_path)
+    memory_store.ensure_role_memory("planner", "Planner", "AI Content Studio")
+    memory_store.append_memory_event(
+        "planner",
+        horizon="mid-term",
+        text="Use BM25/embedding retrieval as the worker pickup decision signal.",
+        source="job-1/result.md",
+    )
+    memory_store.append_memory_event(
+        "planner",
+        horizon="mid-term",
+        text="Display summaries are informational and should not drive task decisions.",
+        source="job-2/result.md",
+    )
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="human",
+        task="decide worker approach from retrieval signal",
+        context="Approved RFC.",
+    )
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    prompt = store._worker_prompt(job_root, job)
+
+    assert "## Worker Pickup Signal" in prompt
+    assert "PRIMARY decision context" in prompt
+    assert "Retrieved Relevant Events (Primary Signal)" in prompt
+    assert "Use BM25/embedding retrieval as the worker pickup decision signal." in prompt
+    assert "Horizon Summary (Display-Only)" in prompt
+
+
 def test_run_job_records_memory_citations_from_pickup_packet_relevant_events(tmp_path):
     store = WorkerJobStore(tmp_path)
     job = store.create_job(

@@ -545,6 +545,34 @@ def test_pickup_packet_includes_relevant_events_only_when_query_given(tmp_path):
     assert with_query["relevant_events"][0]["id"].startswith("mem:")
 
 
+def test_pickup_packet_retrieval_excludes_superseded_events(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("architect", "Architect", "AI Content Studio")
+    replaced = store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Use legacy rollout checklist v1.",
+        source="job-1/result.md",
+    )
+    replaced_id = store.retrieve_relevant_events("architect", query="legacy rollout checklist", top_k=1)[0]["id"]
+    store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Use rollout checklist v2 with release gating.",
+        source="job-2/result.md",
+        supersedes=replaced_id,
+    )
+
+    packet = store.build_pickup_packet("architect", query="rollout checklist release gating")
+
+    texts = [event["text"] for event in packet["relevant_events"]]
+    assert "Use rollout checklist v2 with release gating." in texts
+    assert "Use legacy rollout checklist v1." not in texts
+    assert replaced["text"] == "Use legacy rollout checklist v1."
+
+
 def test_role_memory_store_rebuilds_memory_from_events(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
