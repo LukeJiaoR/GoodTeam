@@ -1005,11 +1005,11 @@ def run_implementation_workers(
             role="ui",
             adapter=resolve_role_adapter(target, "ui"),
             model=ui_delivery_worker_model(state),
-            task=contentops_ui_delivery_task(getattr(state, "delivery_mode", "init_project")),
+            task=ui_delivery_task(state, getattr(state, "delivery_mode", "init_project")),
             context=worker_context(state),
             constraints=[
                 "Directly implement UI changes in the configured frontend project; do not stop at ui-spec.md.",
-                "Keep generated files inside the configured CONTENTOPS runtime root.",
+                "Keep generated files inside the configured project runtime root.",
                 "Do not touch real product repositories outside this isolated workspace.",
                 "Do not store secrets.",
                 "Capture browser screenshot evidence when a local frontend can run.",
@@ -1021,10 +1021,10 @@ def run_implementation_workers(
             role="implementation",
             adapter=resolve_role_adapter(target, "implementation"),
             model=worker_model_for_role(state, "implementation"),
-            task=contentops_implementation_task(getattr(state, "delivery_mode", "init_project")),
+            task=implementation_task(state, getattr(state, "delivery_mode", "init_project")),
             context=worker_context(state),
             constraints=[
-                "Keep generated files inside the configured CONTENTOPS runtime root.",
+                "Keep generated files inside the configured project runtime root.",
                 "Do not touch real product repositories outside this isolated workspace.",
                 "Do not store secrets.",
             ],
@@ -1035,7 +1035,7 @@ def run_implementation_workers(
             role="qa",
             adapter=resolve_role_adapter(target, "qa"),
             model=worker_model_for_role(state, "qa"),
-            task="Verify the CONTENTOPS MVP with reproducible commands and record any gaps.",
+            task=f"Verify the implemented {state.idea} with reproducible commands and record any gaps.",
             context=worker_context(state),
             constraints=[
                 "Prefer local deterministic tests.",
@@ -1140,41 +1140,46 @@ def ui_delivery_expected_artifacts(delivery_mode: str) -> list[str]:
     return ["frontend files", "design system or CSS updates", "browser screenshot evidence", "visual acceptance notes"]
 
 
-def contentops_ui_delivery_task(delivery_mode: str = "init_project") -> str:
+def ui_delivery_task(state: AgileDevState, delivery_mode: str = "init_project") -> str:
     mode = normalize_delivery_mode(delivery_mode)
-    scope = "the MVP interface" if mode == "mvp" else "the production-starter interface"
+    scope_by_mode = {
+        "mvp": "a minimal runnable UI scope",
+        "multi_service": "a production-grade multi-service UI scope",
+        "init_project": "a production-starter UI scope",
+    }
+    scope = scope_by_mode.get(mode, scope_by_mode["init_project"])
     return (
-        f"directly implement a polished ContentOps Studio UI for {scope}; do not stop at documentation. "
-        "Improve the homepage/Brand Brief experience, source/topic creation flow, review board, draft cards, "
-        "and evidence dossier so the product is immediately usable without reading documentation. "
-        "Use the existing React/Vite frontend and mature installed components or project-local helpers before "
-        "adding dependencies. Include responsive layout, clear empty/loading/error states, accessible controls, "
-        "professional typography/spacing/color, and screenshot-backed visual acceptance. "
-        "Record changed frontend files, browser URL/ports used, screenshots, and unresolved UI risks."
+        f"Directly implement a polished UI for {state.idea} as {scope} per the approved PRD and RFC "
+        "(see the artifacts in the context); do not stop at documentation. "
+        "Deliver complete user flows that make the product immediately usable without reading docs. "
+        "Use the existing frontend stack and mature installed components or project-local helpers before adding dependencies. "
+        "Include responsive layout, clear empty/loading/error states, accessible controls, professional typography/spacing/color, "
+        "and screenshot-backed visual acceptance. Record changed frontend files, browser URL/ports used, screenshots, and unresolved UI risks."
     )
 
 
-def contentops_implementation_task(delivery_mode: str = "init_project") -> str:
+def implementation_task(state: AgileDevState, delivery_mode: str = "init_project") -> str:
     mode = normalize_delivery_mode(delivery_mode)
+    idea = state.idea
     if mode == "mvp":
         return (
-            "Create a minimal runnable AI Content Studio MVP for CONTENTOPS. "
-            "It must ingest source material, organize it by topic, and draft platform-specific posts "
-            "for TikTok, Reddit, X, and LinkedIn. Include a README with verification commands and "
-            "a deterministic local test."
+            f"Implement {idea} as a minimal runnable MVP per the approved PRD and RFC "
+            "(see the artifacts in the context). Include frontend/backend as the design requires, "
+            "data layer, API/contract documentation, environment examples without secrets, DevOps/local startup notes, "
+            "tests, README verification commands, and at least one deterministic local test."
         )
     if mode == "multi_service":
         return (
-            "Create a production-grade multi-service AI Content Studio scaffold for CONTENTOPS. "
-            "Include separate API and web services, data-layer schema or migrations, service routing, "
-            "local orchestration, DevOps notes, tests, and README commands. The product must ingest "
-            "source material, organize it by topic, and draft posts for TikTok, Reddit, X, and LinkedIn."
+            f"Implement {idea} as a production-grade multi-service scaffold per the approved PRD and RFC "
+            "(see the artifacts in the context). Include separate API and web services, data-layer schema or migrations, "
+            "service routing, API/contract documentation, environment examples without secrets, local orchestration, "
+            "DevOps notes, tests, and README verification commands."
         )
     return (
-        "Create a production-starter AI Content Studio scaffold for CONTENTOPS. Include a frontend app, "
-        "backend API, data layer schema or migrations, router/API contract documentation, environment "
-        "examples without secrets, DevOps/local startup notes, tests, and README commands. The product "
-        "must ingest source material, organize it by topic, and draft posts for TikTok, Reddit, X, and LinkedIn."
+        f"Implement {idea} as a production-starter scaffold per the approved PRD and RFC "
+        "(see the artifacts in the context). Include frontend/backend as the design requires, "
+        "data layer schema or migrations, router/API contract documentation, environment examples without secrets, "
+        "DevOps/local startup notes, tests, and README verification commands."
     )
 
 

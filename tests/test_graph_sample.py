@@ -4,7 +4,7 @@ from pathlib import Path
 from goodteam_os.graph import (
     advance_approved_workflow,
     collect_project_context,
-    contentops_implementation_task,
+    implementation_task,
     resolve_project_runtime_root,
     resolve_role_adapter,
     render_downstream_artifact_markdown,
@@ -595,7 +595,7 @@ def test_implementation_workers_use_run_role_models(tmp_path, monkeypatch):
 
 def test_ui_worker_task_requires_direct_frontend_delivery(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
-    state = create_initial_state("run-1", "CONTENTOPS", "Make ContentOps Studio directly usable with a polished UI.")
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a task tracker")
     tasks_by_role = {}
 
     def fake_create_job(self, **kwargs):
@@ -624,12 +624,21 @@ def test_ui_worker_task_requires_direct_frontend_delivery(tmp_path, monkeypatch)
     run_implementation_workers(state, project_config)
 
     ui_task = tasks_by_role["ui"]["task"]
-    assert "directly implement" in ui_task
-    assert "frontend" in ui_task
-    assert "homepage" in ui_task
+    qa_task = tasks_by_role["qa"]["task"]
+    impl_task = tasks_by_role["implementation"]["task"]
+    assert "Build a task tracker" in ui_task
+    assert "Build a task tracker" in impl_task
+    assert "Build a task tracker" in qa_task
+    assert "approved PRD and RFC" in ui_task
+    assert "approved PRD and RFC" in impl_task
     assert "screenshots" in ui_task
     assert "visual acceptance" in ui_task
-    assert "ui-spec.md" not in ui_task
+    assert "CONTENTOPS" not in ui_task
+    assert "CONTENTOPS" not in impl_task
+    assert "CONTENTOPS" not in qa_task
+    assert "content studio" not in ui_task.lower()
+    assert "content studio" not in impl_task.lower()
+    assert "Verify the implemented Build a task tracker" in qa_task
     assert "frontend files" in tasks_by_role["ui"]["expected_artifacts"]
     assert "browser screenshot evidence" in tasks_by_role["ui"]["expected_artifacts"]
 
@@ -672,13 +681,17 @@ def test_delivery_workflow_stops_when_ui_worker_fails(tmp_path, monkeypatch):
 
 
 def test_init_project_implementation_task_requests_product_scaffold():
-    task = contentops_implementation_task("init_project")
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a task tracker")
+    task = implementation_task(state, "init_project")
 
     assert "MVP" not in task
     assert "frontend" in task
     assert "backend" in task
     assert "data layer" in task
     assert "DevOps" in task
+    assert "Build a task tracker" in task
+    assert "approved PRD and RFC" in task
+    assert "CONTENTOPS" not in task
 
 
 def write_contentops_project_fixture(tmp_path: Path) -> Path:
