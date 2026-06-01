@@ -253,6 +253,27 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert "error" in payload
 
+    # 3. Test POST /generate-prd routes through generate_prd and returns payload
+    monkeypatch.setattr(
+        "goodteam_os.web.generate_prd",
+        lambda workspace, project_key: {"project_key": project_key, "current_node": "prd_review_gate"},
+    )
+    handler = simulate_post("/generate-prd", {"project_key": "CONTENTOPS"})
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["project_key"] == "CONTENTOPS"
+    assert payload["current_node"] == "prd_review_gate"
+
+    # 4. Test POST /generate-prd returns 400 when underlying call errors
+    monkeypatch.setattr(
+        "goodteam_os.web.generate_prd",
+        lambda workspace, project_key: (_ for _ in ()).throw(ValueError("No active run for project: BAD")),
+    )
+    handler = simulate_post("/generate-prd", {"project_key": "BAD"})
+    assert 400 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert "error" in payload
+
 
 def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatch):
     captured_handler_class = None
