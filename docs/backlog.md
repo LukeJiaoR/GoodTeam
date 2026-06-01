@@ -3,6 +3,39 @@
 Durable list of feature ideas / follow-ups that aren't on the active plan yet.
 Promote an item to a PRD under `docs/plans/` when it's picked up. Newest first.
 
+## Real graph engine: replace the hand-rolled "graph" with a true collaboration DAG  (raised 2026-06-02, charter item — co-equal mainline with the memory engine)
+
+**The uncomfortable fact:** `langgraph>=0.2.0` is in pyproject.toml but
+`src/goodteam_os/` imports it ZERO times. `graph.py` (named "graph") is NOT a
+LangGraph graph — it's a hand-written linear state machine (`run_until_next_gate`,
+`advance_approved_workflow`: a fixed takeover→PRD→RFC→impl→qa→release chain of
+if/branches with gate checks, hand-rolled StateStore checkpoints). The langgraph
+dependency is currently a lie — it claims an engine we don't use.
+
+**Why this is the source of so many "scheduling" pains** (the ones we hit this
+session): failures can only `next_node="blocked"` and dead-end → we hand-built
+triage retry that a real engine's conditional edges/retries would give for free;
+parallel tracks share one working tree (commingling) because a hand chain has no
+fan-out/fan-in primitive; checkpointing/visualization/composability are all
+bespoke; adding a role means editing a pile of ifs. This is exactly what
+product-vision §6.2 calls out: the V1 fixed serial pipeline must become a true
+**collaboration DAG** (nodes=tasks, edges=dependencies + comm channels) — the
+Moat #1 core, not a bugfix.
+
+**Decision posture (don't flip the table prematurely):**
+- Immediate hygiene: EITHER start using langgraph OR remove the unused dependency —
+  right now it misleads anyone reading the code. (Cheap; do soon.)
+- Mainline (large, high-risk — touches the whole workflow core): drive the workflow
+  with a real graph engine (LangGraph or equivalent) implementing the collaboration
+  DAG. Needs its own PRD.
+- "Own the ledger, pluggable engines" applies here too: the engine (LangGraph) must
+  NOT own our state ledger — same principle as memory (the WAL is ours, the engine
+  is swappable). Keep StateStore/events as the owned truth; the graph engine is a
+  projection/executor over it.
+- Sequencing: co-equal mainline with the memory-engine upgrade; both come AFTER the
+  current in-flight work (PRD-real-LLM) wraps. Order memory vs graph-engine when we
+  get there.
+
 ## Self-host the role chain: sediment Claude's manual orchestration into GoodTeam  (raised 2026-06-02, charter item)
 
 **Insight:** the steps the planner/reviewer (Claude) performs by hand to ship each
