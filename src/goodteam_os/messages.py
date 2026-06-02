@@ -7,7 +7,7 @@ from goodteam_os.state import StateStore
 
 
 MESSAGE_KINDS = ("ask", "assert", "reject", "propose")
-IDENTITY_FIELDS = ("run_id", "ts", "from_role", "kind", "body", "in_reply_to")
+IDENTITY_FIELDS = ("run_id", "ts", "from_role", "kind", "gate", "body", "in_reply_to")
 
 
 def append_message(
@@ -38,6 +38,7 @@ def append_message(
             str(existing.get("run_id", "")) == run_id_value
             and str(existing.get("from_role", "")) == from_role_value
             and str(existing.get("kind", "")) == kind_value
+            and str(existing.get("gate", "")) == gate_value
             and str(existing.get("body", "")) == body_value
             and str(existing.get("in_reply_to", "")) == in_reply_to_value
         ):

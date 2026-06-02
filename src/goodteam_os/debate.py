@@ -8,6 +8,8 @@ from goodteam_os.workers import WorkerJobStore
 
 
 DispatchFn = Callable[..., list[str]]
+MAX_DEBATE_ROUNDS = 5
+VOTE_VALUES = ("approve", "reject", "abstain")
 
 
 def run_gate_debate(
@@ -20,7 +22,9 @@ def run_gate_debate(
     owner_role: str,
     dispatch_fn: DispatchFn,
     artifact_ref: str = "",
+    rounds: int = 1,
 ) -> list[dict]:
+    round_count = _clamped_rounds(rounds)
     challenges = dispatch_fn(
         role=challenger_role,
         kind="challenge",
@@ -45,6 +49,7 @@ def run_gate_debate(
             )
         )
 
+    owner_messages = []
     rebuttals = dispatch_fn(
         role=owner_role,
         kind="rebut",
@@ -53,17 +58,72 @@ def run_gate_debate(
     )
     for challenge, rebuttal in zip(challenger_messages, _text_items(rebuttals), strict=False):
         message_kind, body = _prefixed_kind(rebuttal, allowed=("assert", "propose"), default="assert")
-        append_message(
-            workspace,
-            project_key,
-            run_id,
-            from_role=owner_role,
-            to=[challenger_role],
-            kind=message_kind,
-            gate=gate,
-            body=body,
-            in_reply_to=str(challenge["id"]),
+        owner_messages.append(
+            append_message(
+                workspace,
+                project_key,
+                run_id,
+                from_role=owner_role,
+                to=[challenger_role],
+                kind=message_kind,
+                gate=gate,
+                body=body,
+                in_reply_to=str(challenge["id"]),
+            )
         )
+
+    for _round_index in range(2, round_count + 1):
+        if not owner_messages:
+            break
+        challenges = dispatch_fn(
+            role=challenger_role,
+            kind="challenge",
+            gate=gate,
+            artifact_ref=artifact_ref,
+            challenges=owner_messages,
+        )
+        challenger_messages = []
+        for owner_message, challenge in zip(owner_messages, _text_items(challenges)[:3], strict=False):
+            message_kind, body = _prefixed_kind(challenge, allowed=("ask", "reject"), default="ask")
+            challenger_messages.append(
+                append_message(
+                    workspace,
+                    project_key,
+                    run_id,
+                    from_role=challenger_role,
+                    to=[owner_role],
+                    kind=message_kind,
+                    gate=gate,
+                    body=body,
+                    refs=refs,
+                    in_reply_to=str(owner_message["id"]),
+                )
+            )
+        if not challenger_messages:
+            break
+
+        owner_messages = []
+        rebuttals = dispatch_fn(
+            role=owner_role,
+            kind="rebut",
+            gate=gate,
+            challenges=challenger_messages,
+        )
+        for challenge, rebuttal in zip(challenger_messages, _text_items(rebuttals), strict=False):
+            message_kind, body = _prefixed_kind(rebuttal, allowed=("assert", "propose"), default="assert")
+            owner_messages.append(
+                append_message(
+                    workspace,
+                    project_key,
+                    run_id,
+                    from_role=owner_role,
+                    to=[challenger_role],
+                    kind=message_kind,
+                    gate=gate,
+                    body=body,
+                    in_reply_to=str(challenge["id"]),
+                )
+            )
 
     return read_messages(workspace, project_key, run_id, gate=gate)
 
@@ -155,10 +215,89 @@ def record_gate_decision(
     return decision_message
 
 
+def record_gate_vote(
+    workspace: Path,
+    project_key: str,
+    run_id: str,
+    gate: str,
+    *,
+    role: str,
+    vote: str,
+) -> dict:
+    vote_value = str(vote).strip().lower()
+    if vote_value not in VOTE_VALUES:
+        raise ValueError(f"Unknown gate vote: {vote}")
+    return append_message(
+        workspace,
+        project_key,
+        run_id,
+        from_role=role,
+        to=["broadcast"],
+        kind="assert",
+        gate=gate,
+        body=f"VOTE:{vote_value}",
+    )
+
+
+def gate_quorum_status(
+    workspace: Path,
+    project_key: str,
+    run_id: str,
+    gate: str,
+    *,
+    quorum_roles: list[str],
+    threshold: int,
+) -> dict:
+    roles = _unique_texts(quorum_roles)
+    latest_votes: dict[str, str] = {}
+    for message in read_messages(workspace, project_key, run_id, gate=gate):
+        role = str(message.get("from_role", "")).strip()
+        if role not in roles:
+            continue
+        vote = _message_vote(message)
+        if vote:
+            latest_votes[role] = vote
+
+    tally = {vote: 0 for vote in VOTE_VALUES}
+    for vote in latest_votes.values():
+        tally[vote] += 1
+    return {
+        "tally": tally,
+        "met": tally["approve"] >= int(threshold),
+        "outstanding": [role for role in roles if role not in latest_votes],
+    }
+
+
+def _clamped_rounds(rounds: int) -> int:
+    return max(1, min(int(rounds), MAX_DEBATE_ROUNDS))
+
+
 def _text_items(items: list[str]) -> list[str]:
     if not isinstance(items, list):
         raise ValueError("Debate dispatch must return a list of texts.")
     return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _unique_texts(items: list[str]) -> list[str]:
+    unique = []
+    seen = set()
+    for item in items:
+        text = str(item).strip()
+        if text and text not in seen:
+            unique.append(text)
+            seen.add(text)
+    return unique
+
+
+def _message_vote(message: dict) -> str:
+    if str(message.get("kind", "")) != "assert":
+        return ""
+    body = str(message.get("body", "")).strip()
+    prefix = "VOTE:"
+    if not body.upper().startswith(prefix):
+        return ""
+    vote = body[len(prefix) :].strip().lower()
+    return vote if vote in VOTE_VALUES else ""
 
 
 def _prefixed_kind(text: str, *, allowed: tuple[str, ...], default: str) -> tuple[str, str]:
