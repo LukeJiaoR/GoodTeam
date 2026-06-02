@@ -38,6 +38,7 @@ def test_append_message_dedups_identical_message(tmp_path):
         to=["implementation"],
         kind="assert",
         body="Use the existing state store.",
+        gate="rfc",
     )
     second = append_message(
         tmp_path,

@@ -215,3 +215,54 @@ def test_gate_quorum_status_tallies_latest_votes_and_outstanding_roles(tmp_path)
     )
 
     assert unmet["met"] is False
+
+
+def test_gate_votes_with_same_role_and_value_persist_per_gate(tmp_path):
+    rfc_vote = record_gate_vote(
+        tmp_path,
+        "CONTENTOPS",
+        "run-1",
+        "rfc",
+        role="security",
+        vote="approve",
+    )
+    prd_vote = record_gate_vote(
+        tmp_path,
+        "CONTENTOPS",
+        "run-1",
+        "prd",
+        role="security",
+        vote="approve",
+    )
+
+    assert rfc_vote["id"] != prd_vote["id"]
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1", gate="rfc") == [rfc_vote]
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1", gate="prd") == [prd_vote]
+
+    rfc_status = gate_quorum_status(
+        tmp_path,
+        "CONTENTOPS",
+        "run-1",
+        "rfc",
+        quorum_roles=["security"],
+        threshold=1,
+    )
+    prd_status = gate_quorum_status(
+        tmp_path,
+        "CONTENTOPS",
+        "run-1",
+        "prd",
+        quorum_roles=["security"],
+        threshold=1,
+    )
+
+    assert rfc_status == {
+        "tally": {"approve": 1, "reject": 0, "abstain": 0},
+        "met": True,
+        "outstanding": [],
+    }
+    assert prd_status == {
+        "tally": {"approve": 1, "reject": 0, "abstain": 0},
+        "met": True,
+        "outstanding": [],
+    }
