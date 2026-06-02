@@ -25,6 +25,7 @@ from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.memory import RoleMemoryStore
+from goodteam_os.messages import read_messages
 from goodteam_os.staging import (
     deployment_backend_config,
     delivery_contract_report,
@@ -4961,6 +4962,26 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if parsed.path == "/api/agents":
                 try:
                     self._send_json(200, {"agents": discover_installed_agents()})
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path == "/api/messages":
+                try:
+                    run_id = query.get("run", [""])[0].strip()
+                    gate = query.get("gate", [None])[0]
+                    if not project_key or not run_id:
+                        raise ValueError("project and run are required.")
+                    self._send_json(
+                        200,
+                        {
+                            "messages": read_messages(
+                                workspace,
+                                project_key,
+                                run_id,
+                                gate=gate,
+                            )
+                        },
+                    )
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return
