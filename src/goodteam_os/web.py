@@ -1399,6 +1399,33 @@ def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
     return items
 
 
+def build_memory_event_citations(project_root: Path, event_id: str) -> list[dict[str, str]]:
+    job_root = WorkerJobStore(project_root).root
+    if not job_root.is_dir():
+        return []
+    citations: list[dict[str, str]] = []
+    for path in sorted(job_root.iterdir(), key=lambda item: item.name):
+        job = _read_json_file(path / "job.json")
+        status = _read_json_file(path / "status.json")
+        if job is None or status is None:
+            continue
+        memory_citations = status.get("memory_citations", [])
+        if not isinstance(memory_citations, list) or event_id not in {str(item) for item in memory_citations}:
+            continue
+        merged = {**job, **status}
+        citations.append(
+            {
+                "id": str(merged.get("id", path.name)),
+                "role": str(merged.get("role", "")),
+                "adapter": str(merged.get("adapter", "")),
+                "status": str(merged.get("status", "")),
+                "updated_at": str(merged.get("updated_at", "")),
+                "summary": str(merged.get("summary", "")),
+            }
+        )
+    return citations
+
+
 def _memory_job_sort_key(job: dict[str, object]) -> tuple[str, str, str]:
     return (
         str(job.get("updated_at", "")),
@@ -1491,6 +1518,11 @@ def build_memory_event_detail(project_root: Path | None, event_id: str) -> dict[
     event = role_store.find_event(event_id)
     if event is None:
         return None
+    supersede_info = role_store.event_supersede_info(event_id) or {
+        "supersedes": "",
+        "superseded_by": [],
+        "is_superseded": False,
+    }
     return {
         "id": event_id,
         "role": str(event.get("role_key", "")),
@@ -1499,6 +1531,10 @@ def build_memory_event_detail(project_root: Path | None, event_id: str) -> dict[
         "source": str(event.get("source", "")),
         "text": str(event.get("text", "")),
         "action": str(event.get("action", "")),
+        "supersedes": str(supersede_info.get("supersedes", "")),
+        "superseded_by": list(supersede_info.get("superseded_by", [])),
+        "is_superseded": bool(supersede_info.get("is_superseded", False)),
+        "cited_by_jobs": build_memory_event_citations(project_root, event_id),
     }
 
 
