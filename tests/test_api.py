@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 from goodteam_os.memory import RoleMemoryStore
+from goodteam_os.messages import append_message
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import serve
 
@@ -597,6 +598,36 @@ def test_api_agents_returns_discovered_agents(tmp_path, monkeypatch):
             }
         ]
     }
+    assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
+
+
+def test_api_messages_returns_messages_for_run(tmp_path, monkeypatch):
+    message = append_message(
+        tmp_path,
+        "REAL",
+        "run-1",
+        from_role="implementation",
+        to=["qa"],
+        kind="ask",
+        body="Please review the message ledger.",
+        gate="rfc",
+    )
+    append_message(
+        tmp_path,
+        "REAL",
+        "run-2",
+        from_role="implementation",
+        to=["qa"],
+        kind="ask",
+        body="A different run should not be returned.",
+        gate="rfc",
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/messages?project=REAL&run=run-1")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload == {"messages": [message]}
     assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
 
 
