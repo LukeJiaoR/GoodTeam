@@ -226,6 +226,7 @@ export default function App() {
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
   const [editorContent, setEditorContent] = useState('');
   const [gateDebate, setGateDebate] = useState(EMPTY_GATE_DEBATE);
+  const [debateRun, setDebateRun] = useState({ key: '', loading: false, error: '' });
 
   // Memory visualization states
   const [memoryData, setMemoryData] = useState(null);
@@ -382,6 +383,42 @@ export default function App() {
     }
   };
 
+  const handleRunDebate = async (approvalKey) => {
+    const key = projectKey || data?.state?.project_key || '';
+    const runId = data?.state?.run_id || '';
+    const debateKey = `${key}:${runId}:${approvalKey}`;
+
+    if (!key || !runId || !approvalKey) {
+      setDebateRun({ key: debateKey, loading: false, error: 'Missing project, run, or gate for debate.' });
+      return;
+    }
+
+    setDebateRun({ key: debateKey, loading: true, error: '' });
+    try {
+      const response = await fetch('/api/debate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: key,
+          run: runId,
+          gate: approvalKey,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to run debate');
+      }
+      await fetchGateDebate({ key, runId, gate: approvalKey });
+      setDebateRun((current) => (
+        current.key === debateKey ? { key: debateKey, loading: false, error: '' } : current
+      ));
+    } catch (err) {
+      setDebateRun((current) => (
+        current.key === debateKey ? { key: debateKey, loading: false, error: err.message } : current
+      ));
+    }
+  };
+
   // Auto-refresh timer when there is an active run
   useEffect(() => {
     let interval = null;
@@ -397,7 +434,6 @@ export default function App() {
 
   // Fetch state on mount and projectKey changes
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchState(projectKey, true);
   }, [projectKey]);
 
@@ -455,7 +491,6 @@ export default function App() {
   // Lazy fetch memory data when the Memory tab is opened
   useEffect(() => {
     if (activeTab === 'memory' && projectKey) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchMemory(projectKey);
     }
   }, [activeTab, projectKey]);
@@ -2548,6 +2583,9 @@ export default function App() {
                             </div>
                           );
                           const debateRef = getResolvingDebateRef(selectedReview.approval);
+                          const currentDebateRunKey = `${gateDebateProjectKey}:${gateDebateRunId}:${selectedReview.approval}`;
+                          const isRunningDebate = debateRun.key === currentDebateRunKey && debateRun.loading;
+                          const runDebateError = debateRun.key === currentDebateRunKey ? debateRun.error : '';
                           return (
                             <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
                               <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
@@ -2573,12 +2611,26 @@ export default function App() {
 
                                 {selectedReview.is_actionable && (
                                   <div className="border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-[#FFFBF4] dark:bg-zinc-900/10 space-y-3">
-                                    <div className="flex items-center justify-between">
+                                    <div className="flex items-center justify-between gap-3">
                                       <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Gate Debate & Consensus</h4>
-                                      {challengerMessages.length > 0 && (
-                                        <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#B36B00]">{challengerMessages.length} Objections</span>
-                                      )}
+                                      <div className="flex items-center gap-2">
+                                        {challengerMessages.length > 0 && (
+                                          <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#B36B00]">{challengerMessages.length} Objections</span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRunDebate(selectedReview.approval)}
+                                          disabled={isRunningDebate}
+                                          className="bg-white hover:bg-[#F7F7F7] disabled:opacity-60 disabled:cursor-not-allowed border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold text-[9px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
+                                        >
+                                          <RefreshCw className={`h-3 w-3 ${isRunningDebate ? 'animate-spin' : ''}`} />
+                                          <span>{isRunningDebate ? 'Running debate...' : 'Run debate'}</span>
+                                        </button>
+                                      </div>
                                     </div>
+                                    {runDebateError && (
+                                      <div className="text-[10px] font-bold text-[#FF4B4B]">Debate run failed: {runDebateError}</div>
+                                    )}
                                     {visibleGateDebate.loading && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
                                       <div className="text-[10px] font-bold text-[#AFAFAF]">Loading debate...</div>
                                     ) : visibleGateDebate.error && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
