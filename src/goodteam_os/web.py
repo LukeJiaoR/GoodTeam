@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
+from goodteam_os.debate import default_debate_dispatch, run_gate_debate
 from goodteam_os.graph import (
     advance_approved_workflow,
     generate_rfc,
@@ -5041,7 +5042,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/open-path"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/open-path", "/debate"}:
                 self.send_error(404)
                 return
             try:
@@ -5069,6 +5070,27 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         decision=str(request.get("decision", "")),
                         debate_ref=str(request.get("debate_ref", "")),
                     )
+                elif normalized_path == "/debate":
+                    project_key = str(request.get("project_key", ""))
+                    run_id = str(request.get("run", ""))
+                    gate = str(request.get("gate", ""))
+                    challenger_role = str(request.get("challenger_role", "qa"))
+                    owner_role = str(request.get("owner_role", "architect"))
+                    state = resolve_dashboard_state(workspace, project_key=project_key)
+                    artifact_key = approval_artifact_map().get(gate, gate)
+                    artifact_ref = state.artifacts.get(artifact_key, "") if state is not None else ""
+                    result = {
+                        "messages": run_gate_debate(
+                            workspace,
+                            project_key,
+                            run_id,
+                            gate,
+                            challenger_role=challenger_role,
+                            owner_role=owner_role,
+                            dispatch_fn=default_debate_dispatch(workspace, project_key, run_id),
+                            artifact_ref=artifact_ref,
+                        )
+                    }
                 elif normalized_path == "/artifact":
                     result = save_artifact(
                         workspace=workspace,

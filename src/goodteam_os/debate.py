@@ -68,29 +68,52 @@ def run_gate_debate(
     return read_messages(workspace, project_key, run_id, gate=gate)
 
 
-def default_debate_dispatch(workspace: Path, project_key: str, run_id: str) -> DispatchFn:
+def default_debate_dispatch(
+    workspace: Path,
+    project_key: str,
+    run_id: str,
+    *,
+    adapter: str = "codex",
+) -> DispatchFn:
     def dispatch(**kwargs: Any) -> list[str]:
-        role = str(kwargs["role"])
-        kind = str(kwargs["kind"])
-        gate = str(kwargs["gate"])
-        artifact_ref = str(kwargs.get("artifact_ref", "")).strip()
-        challenges = kwargs.get("challenges", [])
+        try:
+            role = str(kwargs["role"])
+            kind = str(kwargs["kind"])
+            gate = str(kwargs["gate"])
+            artifact_ref = str(kwargs.get("artifact_ref", "")).strip()
+            challenges = kwargs.get("challenges", [])
+            allowed = ("ask", "reject") if kind == "challenge" else ("assert", "propose")
 
-        task = _default_dispatch_task(kind=kind, gate=gate, artifact_ref=artifact_ref, challenges=challenges)
-        context = f"Project: {project_key}\nRun: {run_id}\nGate: {gate}\n"
-        WorkerJobStore(workspace).create_job(
-            run_id=run_id,
-            role=role,
-            adapter="human",
-            task=task,
-            context=context,
-            constraints=[
-                "Return concise debate points only.",
-                "Do not change project files for debate dispatch.",
-            ],
-            expected_artifacts=["result"],
-        )
-        return []
+            task = _default_dispatch_task(kind=kind, gate=gate, artifact_ref=artifact_ref, challenges=challenges)
+            context = _default_dispatch_context(
+                project_key=project_key,
+                run_id=run_id,
+                gate=gate,
+                artifact_ref=artifact_ref,
+                challenges=challenges,
+            )
+            store = WorkerJobStore(workspace)
+            job = store.create_job(
+                run_id=run_id,
+                role=role,
+                adapter=adapter,
+                task=task,
+                context=context,
+                constraints=[
+                    "Do not edit/create/delete any file",
+                    "Output debate lines only",
+                ],
+                expected_artifacts=["result.md"],
+            )
+            status = store.run_job(str(job["id"]))
+            if status.get("status") != "completed":
+                return []
+            result_path = workspace / ".goodteam" / "workers" / "jobs" / str(job["id"]) / "result.md"
+            if not result_path.is_file():
+                return []
+            return _parse_debate_objections(result_path.read_text(encoding="utf-8"), allowed=allowed)
+        except Exception:
+            return []
 
     return dispatch
 
@@ -149,8 +172,12 @@ def _prefixed_kind(text: str, *, allowed: tuple[str, ...], default: str) -> tupl
 
 def _default_dispatch_task(*, kind: str, gate: str, artifact_ref: str, challenges: Any) -> str:
     if kind == "challenge":
-        target = f" for artifact {artifact_ref}" if artifact_ref else ""
-        return f"Challenge the {gate} approval gate{target}. Return up to three concise objections."
+        return (
+            f"Read the {gate} artifact ({artifact_ref}) and produce UP TO THREE concise, "
+            "specific objections. One per line, each prefixed `reject:` (blocking) or "
+            "`ask:` (clarifying). Output ONLY those lines. Do NOT modify, create, or "
+            "delete any file."
+        )
     challenge_lines = [
         f"- {item.get('body', '')}"
         for item in challenges
@@ -158,9 +185,62 @@ def _default_dispatch_task(*, kind: str, gate: str, artifact_ref: str, challenge
     ]
     return "\n".join(
         [
-            f"Rebut the {gate} approval-gate challenges.",
+            f"Respond to each challenge for the {gate} gate. One per line, prefixed "
+            "`propose:` (a concrete change) or `assert:` (a defense). Output ONLY "
+            "those lines. Do NOT modify any file.",
             "",
             "Challenges:",
             *(challenge_lines or ["- (none provided)"]),
         ]
     )
+
+
+def _default_dispatch_context(
+    *,
+    project_key: str,
+    run_id: str,
+    gate: str,
+    artifact_ref: str,
+    challenges: Any,
+) -> str:
+    challenge_lines = [
+        f"- {item.get('body', '')}"
+        for item in challenges
+        if isinstance(item, dict) and str(item.get("body", "")).strip()
+    ]
+    return "\n".join(
+        [
+            f"Project: {project_key}",
+            f"Run: {run_id}",
+            f"Gate: {gate}",
+            f"Artifact: {artifact_ref or '(none)'}",
+            "Challenge bodies:",
+            *(challenge_lines or ["- (none)"]),
+        ]
+    )
+
+
+def _parse_debate_objections(text: str, *, allowed: tuple[str, ...]) -> list[str]:
+    parsed: list[str] = []
+    in_fence = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not line or line.startswith("#"):
+            continue
+        for marker in ("- ", "* "):
+            if line.startswith(marker):
+                line = line[len(marker) :].strip()
+                break
+        if not line:
+            continue
+        lowered = line.lower()
+        if any(lowered.startswith(f"{kind}:") for kind in allowed):
+            parsed.append(line)
+        elif not any(lowered.startswith(f"{kind}:") for kind in ("ask", "reject", "assert", "propose")):
+            parsed.append(line)
+        if len(parsed) >= 3:
+            break
+    return parsed
