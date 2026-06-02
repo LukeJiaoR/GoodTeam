@@ -38,6 +38,7 @@ from goodteam_os.telegram import send_approval_notification
 from goodteam_os.workflow_table import approved_next_for_gate
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
+from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
 
 PRD_REVIEW_ROLES = [
     "Product / Requirement",
@@ -4998,6 +4999,32 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         self._send_json(404, {"error": message})
                     else:
                         self._send_json(400, {"error": message})
+                return
+            if parsed.path == "/api/memory/cross":
+                try:
+                    role = query.get("role", [""])[0].strip()
+                    memory_query = query.get("q", [""])[0].strip()
+                    scope = [
+                        key.strip()
+                        for key in query.get("scope", [""])[0].split(",")
+                        if key.strip()
+                    ]
+                    if not role or not memory_query or not scope:
+                        raise ValueError("role, q, and non-empty scope are required.")
+                    try:
+                        limit = int(query.get("k", ["5"])[0])
+                    except ValueError:
+                        limit = 5
+                    results = retrieve_cross_project_memory(
+                        workspace,
+                        role,
+                        memory_query,
+                        scope=scope,
+                        k=limit,
+                    )
+                    self._send_json(200, {"results": results})
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
                 return
             if parsed.path == "/api/agents":
                 try:
