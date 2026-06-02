@@ -34,6 +34,7 @@ from goodteam_os.staging import (
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import send_approval_notification
+from goodteam_os.workflow_table import approved_next_for_gate
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 
@@ -554,16 +555,7 @@ def start_workflow(
 
 
 def decide_approval(*, workspace: Path, approval: str, decision: str, project_key: str = "") -> dict[str, object]:
-    approved_next = {
-        "takeover": "product_requirement",
-        "prd": "architect",
-        "rfc": "planner",
-        "staging": "release",
-        "security": "planner",
-        "release": "retro_memory",
-    }
-    if approval not in approved_next:
-        raise ValueError(f"Unknown approval gate: {approval}")
+    approved_next = approved_next_for_gate(approval)
 
     try:
         approval_decision = ApprovalDecision(decision)
@@ -583,7 +575,7 @@ def decide_approval(*, workspace: Path, approval: str, decision: str, project_ke
     before_node = state.next_node
     state.approvals[approval] = approval_decision
     state.current_node = f"{approval}_review_gate"
-    state.next_node = gate_next_node(state, gate=approval, approved_next=approved_next[approval])
+    state.next_node = gate_next_node(state, gate=approval, approved_next=approved_next)
     append_action(
         workspace,
         run_id=state.run_id,
