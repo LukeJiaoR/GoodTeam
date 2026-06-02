@@ -66,6 +66,7 @@ def append_action(
     after_node: str = "",
     artifact: str = "",
     artifact_path: str = "",
+    debate_ref: str = "",
 ) -> None:
     action_log = _action_log_path(workspace, project_key)
     action_log.parent.mkdir(parents=True, exist_ok=True)
@@ -81,6 +82,8 @@ def append_action(
         "artifact": artifact,
         "artifact_path": artifact_path,
     }
+    if debate_ref:
+        event["debate_ref"] = debate_ref
     with action_log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event) + "\n")
 
@@ -554,7 +557,14 @@ def start_workflow(
     return payload
 
 
-def decide_approval(*, workspace: Path, approval: str, decision: str, project_key: str = "") -> dict[str, object]:
+def decide_approval(
+    *,
+    workspace: Path,
+    approval: str,
+    decision: str,
+    project_key: str = "",
+    debate_ref: str = "",
+) -> dict[str, object]:
     approved_next = approved_next_for_gate(approval)
 
     try:
@@ -588,6 +598,7 @@ def decide_approval(*, workspace: Path, approval: str, decision: str, project_ke
         after_node=state.next_node,
         artifact=approval_artifact_map().get(approval, approval),
         artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
+        debate_ref=debate_ref,
     )
     if approval == "takeover" and approval_decision == ApprovalDecision.APPROVED:
         regenerate_before_node = state.next_node
