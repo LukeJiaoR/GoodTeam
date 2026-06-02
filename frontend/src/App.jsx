@@ -1458,6 +1458,24 @@ export default function App() {
   const approvedCount = approvalReviews.filter(r => r.decision === 'approved').length;
   const totalApprovalsCount = approvalReviews.length || 6;
   const approvalProgressPercent = Math.min(100, Math.round((approvedCount / totalApprovalsCount) * 100));
+  const currentMemoryEvent = memoryEventDetail?.data || {};
+  const memorySupersedes = currentMemoryEvent.supersedes || '';
+  const memorySupersededBy = Array.isArray(currentMemoryEvent.superseded_by)
+    ? currentMemoryEvent.superseded_by.filter(Boolean)
+    : [];
+  const hasMemorySupersedeInfo = Boolean(
+    currentMemoryEvent.is_superseded || memorySupersedes || memorySupersededBy.length
+  );
+  const renderMemoryEventLink = (eventId) => (
+    <button
+      type="button"
+      onClick={() => handleOpenMemoryEvent(eventId)}
+      className="bg-[#E8F9D9] hover:bg-[#D7F6BF] dark:bg-emerald-950/30 dark:hover:bg-emerald-900/40 text-[#3D8B00] dark:text-emerald-400 px-2 py-0.5 rounded font-mono border-2 border-[#58CC02]/30 shadow-[0_2px_0_#A7D98A] dark:shadow-[0_2px_0_#12381f] transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-[#58CC02]/40"
+      aria-label={`Open full memory event ${eventId}`}
+    >
+      {eventId}
+    </button>
+  );
 
   return (
     <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-150 transition-colors flex flex-col lg:flex-row font-sans antialiased">
@@ -1650,6 +1668,31 @@ export default function App() {
                         <span className="font-mono text-zinc-700 dark:text-zinc-300 break-all">{memoryEventDetail.data.source || 'not recorded'}</span>
                       </div>
                     </div>
+                    {hasMemorySupersedeInfo && (
+                      <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 text-[10px] font-bold space-y-2">
+                        {memoryEventDetail.data.is_superseded && (
+                          <span className="inline-flex items-center bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded uppercase text-[9px] border border-amber-100 dark:border-amber-900/50">
+                            Superseded
+                          </span>
+                        )}
+                        {memorySupersedes && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="uppercase tracking-wider text-[#AFAFAF]">Supersedes:</span>
+                            {renderMemoryEventLink(memorySupersedes)}
+                          </div>
+                        )}
+                        {memorySupersededBy.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="uppercase tracking-wider text-[#AFAFAF]">Superseded by:</span>
+                            {memorySupersededBy.map((eventId) => (
+                              <span key={eventId} className="flex items-center gap-1">
+                                {renderMemoryEventLink(eventId)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div>
                       <span className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-2">Full Event Text</span>
                       <p className="text-xs font-mono leading-relaxed text-zinc-800 dark:text-zinc-200 bg-zinc-50/70 dark:bg-zinc-900/50 p-4 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 whitespace-pre-wrap select-all">
