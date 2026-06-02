@@ -787,7 +787,116 @@ def test_api_memory_event_returns_full_event(tmp_path, monkeypatch):
         "source": "job-x/result.md",
         "text": "Memory event drill-down should expose the full source event.",
         "action": "add",
+        "supersedes": "",
+        "superseded_by": [],
+        "is_superseded": False,
+        "cited_by_jobs": [],
     }
+
+
+def test_api_memory_event_returns_supersede_details(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    old_event = memory_store.append_memory_event(
+        "implementation",
+        horizon="mid-term",
+        text="API contract uses the v1 memory detail payload.",
+        source="job-old/result.md",
+    )
+    old_id = event_handle(old_event)
+    new_event = memory_store.append_memory_event(
+        "implementation",
+        horizon="mid-term",
+        text="API contract uses the v2 memory detail payload.",
+        source="job-new/result.md",
+        supersedes=old_id,
+    )
+    new_id = event_handle(new_event)
+
+    old_handler = capture_get_handler(tmp_path, monkeypatch)(f"/api/memory/event?project=REAL&id={old_id}")
+    new_handler = capture_get_handler(tmp_path, monkeypatch)(f"/api/memory/event?project=REAL&id={new_id}")
+
+    assert 200 in old_handler.responses
+    old_payload = json.loads(old_handler.wfile.getvalue().decode("utf-8"))
+    assert old_payload["supersedes"] == ""
+    assert old_payload["is_superseded"] is True
+    assert new_id in old_payload["superseded_by"]
+
+    assert 200 in new_handler.responses
+    new_payload = json.loads(new_handler.wfile.getvalue().decode("utf-8"))
+    assert new_payload["supersedes"] == old_id
+    assert new_payload["superseded_by"] == []
+    assert new_payload["is_superseded"] is False
+
+
+def test_api_memory_event_returns_citing_jobs(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    event = memory_store.append_memory_event(
+        "implementation",
+        horizon="short-term",
+        text="Cited detail payload includes jobs that used this memory.",
+        source="job-memory/result.md",
+    )
+    event_id = event_handle(event)
+    job_root = project_root / ".goodteam" / "workers" / "jobs" / "job-citing"
+    job_root.mkdir(parents=True)
+    (job_root / "job.json").write_text(
+        json.dumps(
+            {
+                "id": "job-citing",
+                "role": "implementation",
+                "adapter": "fake",
+                "status": "queued",
+                "updated_at": "2026-06-01T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (job_root / "status.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "summary": "Used cited memory.",
+                "updated_at": "2026-06-02T00:00:00+00:00",
+                "memory_citations": [event_id],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)(f"/api/memory/event?project=REAL&id={event_id}")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["cited_by_jobs"] == [
+        {
+            "id": "job-citing",
+            "role": "implementation",
+            "adapter": "fake",
+            "status": "completed",
+            "updated_at": "2026-06-02T00:00:00+00:00",
+            "summary": "Used cited memory.",
+        }
+    ]
 
 
 def test_api_memory_event_reads_runtime_root_when_context_packet_path_empty(tmp_path, monkeypatch):
@@ -823,6 +932,10 @@ def test_api_memory_event_reads_runtime_root_when_context_packet_path_empty(tmp_
         "source": "job-runtime/result.md",
         "text": "Runtime-root drill-down should load even when context packet path is empty.",
         "action": "add",
+        "supersedes": "",
+        "superseded_by": [],
+        "is_superseded": False,
+        "cited_by_jobs": [],
     }
 
 

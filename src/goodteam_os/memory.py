@@ -297,6 +297,32 @@ class RoleMemoryStore:
                     return event
         return None
 
+    def event_supersede_info(self, event_id: str) -> dict[str, object] | None:
+        memory_root = self.project_root / ".goodteam" / "memory" / "roles"
+        if not memory_root.is_dir():
+            return None
+        for role_dir in sorted(path for path in memory_root.iterdir() if path.is_dir()):
+            events = self._read_events(role_dir.name)
+            event_ids = [self._event_id(event) for event in events]
+            if event_id not in event_ids:
+                continue
+            event_index = event_ids.index(event_id)
+            active_events = self._active_events(events)
+            active_ids = {self._event_id(event) for event in active_events}
+            superseded_by = [
+                superseding_id
+                for index, (superseding_id, event) in enumerate(zip(event_ids, events))
+                if index > event_index
+                and superseding_id in active_ids
+                and str(event.get("supersedes", "")).strip() == event_id
+            ]
+            return {
+                "supersedes": str(events[event_index].get("supersedes", "")).strip(),
+                "superseded_by": superseded_by,
+                "is_superseded": event_id not in active_ids,
+            }
+        return None
+
     def retrieve_relevant_events(
         self,
         role_key: str,
