@@ -33,6 +33,8 @@ import {
   Brain
 } from 'lucide-react';
 
+const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
+
 // Semantic status badges mapping with 15% transparent backgrounds and solid text colors
 function getBadgeStyle(status) {
   const norm = String(status || '').toLowerCase().trim();
@@ -223,12 +225,22 @@ export default function App() {
   // Approval review artifact editor state
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
   const [editorContent, setEditorContent] = useState('');
+  const [gateDebate, setGateDebate] = useState(EMPTY_GATE_DEBATE);
 
   // Memory visualization states
   const [memoryData, setMemoryData] = useState(null);
   const [loadingMemory, setLoadingMemory] = useState(false);
   const [memoryError, setMemoryError] = useState(null);
   const [memoryEventDetail, setMemoryEventDetail] = useState(null);
+
+  const gateDebateReviews = data?.approval_reviews || [];
+  const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
+  const gateDebateRunId = data?.state?.run_id || '';
+  const gateDebateProjectKey = projectKey || data?.state?.project_key || '';
+  const targetGateDebateKey = activeTab === 'approvals' && actionableGateReview?.is_actionable && gateDebateProjectKey && gateDebateRunId
+    ? `${gateDebateProjectKey}:${gateDebateRunId}:${actionableGateReview.approval}`
+    : '';
+  const visibleGateDebate = gateDebate.key === targetGateDebateKey ? gateDebate : EMPTY_GATE_DEBATE;
 
 
 
@@ -354,6 +366,22 @@ export default function App() {
     }
   };
 
+  const fetchGateDebate = async ({ key, runId, gate }) => {
+    const debateKey = `${key}:${runId}:${gate}`;
+    setGateDebate({ key: debateKey, messages: [], loading: true, error: '' });
+    try {
+      const params = new URLSearchParams({ project: key, run: runId, gate });
+      const response = await fetch(`/api/messages?${params.toString()}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to fetch gate debate');
+      }
+      setGateDebate({ key: debateKey, messages: payload.messages || [], loading: false, error: '' });
+    } catch (err) {
+      setGateDebate({ key: debateKey, messages: [], loading: false, error: err.message });
+    }
+  };
+
   // Auto-refresh timer when there is an active run
   useEffect(() => {
     let interval = null;
@@ -431,6 +459,21 @@ export default function App() {
       fetchMemory(projectKey);
     }
   }, [activeTab, projectKey]);
+
+  useEffect(() => {
+    if (!targetGateDebateKey || gateDebate.key === targetGateDebateKey) return;
+    Promise.resolve().then(() => {
+      fetchGateDebate({ key: gateDebateProjectKey, runId: gateDebateRunId, gate: actionableGateReview.approval });
+    });
+  }, [targetGateDebateKey, gateDebate.key, gateDebateProjectKey, gateDebateRunId, actionableGateReview?.approval]);
+
+  const getResolvingDebateRef = (approvalKey) => {
+    const runId = data?.state?.run_id || '';
+    if (!runId || !visibleGateDebate.messages.length || !visibleGateDebate.key.endsWith(`:${approvalKey}`)) return '';
+    const resolving = [...visibleGateDebate.messages].reverse().find((item) => ['assert', 'propose'].includes(item.kind))
+      || visibleGateDebate.messages[visibleGateDebate.messages.length - 1];
+    return resolving?.id ? `messages/${runId}.jsonl#${resolving.id}` : '';
+  };
 
   // POST action handlers
   const handleTerminate = async (key) => {
@@ -599,17 +642,21 @@ export default function App() {
     }
   };
 
-  const handleApproveDecision = async (approvalKey, decision) => {
+  const handleApproveDecision = async (approvalKey, decision, debateRef = '') => {
     setActionLoading(true);
     try {
+      const body = {
+        project_key: projectKey,
+        approval: approvalKey,
+        decision,
+      };
+      if (debateRef) {
+        body.debate_ref = debateRef;
+      }
       const response = await fetch('/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_key: projectKey,
-          approval: approvalKey,
-          decision,
-        }),
+        body: JSON.stringify(body),
       });
       const res = await response.json();
       if (!response.ok) throw new Error(res.error || 'Failed to submit decision');
@@ -2407,7 +2454,7 @@ export default function App() {
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleApproveDecision(review.approval, 'approved');
+                                    handleApproveDecision(review.approval, 'approved', getResolvingDebateRef(review.approval));
                                   }}
                                   disabled={actionLoading}
                                   className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
@@ -2473,6 +2520,34 @@ export default function App() {
                         (() => {
                           const selectedReview = approvalReviews.find(r => r.is_actionable) || approvalReviews[0];
                           const badge = getBadgeStyle(selectedReview.decision);
+                          const debateMessages = visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? visibleGateDebate.messages : [];
+                          const challengerMessages = debateMessages.filter((item) => ['ask', 'reject'].includes(item.kind));
+                          const ownerRepliesByParent = debateMessages.reduce((acc, item) => {
+                            if (['assert', 'propose'].includes(item.kind) && item.in_reply_to) {
+                              acc[item.in_reply_to] = [...(acc[item.in_reply_to] || []), item];
+                            }
+                            return acc;
+                          }, {});
+                          const orphanOwnerReplies = debateMessages.filter((item) => (
+                            ['assert', 'propose'].includes(item.kind) && !item.in_reply_to
+                          ));
+                          const debateAccent = (kind) => {
+                            if (kind === 'ask') return 'border-l-[#FF9600]';
+                            if (kind === 'reject') return 'border-l-[#FF4B4B]';
+                            if (kind === 'assert') return 'border-l-[#1CB0F6]';
+                            if (kind === 'propose') return 'border-l-[#58CC02]';
+                            return 'border-l-[#AFAFAF]';
+                          };
+                          const renderDebateMessage = (item, extraClass = '') => (
+                            <div key={item.id} className={`bg-white dark:bg-zinc-950 border border-[#E5E5E5] dark:border-zinc-800 border-l-4 ${debateAccent(item.kind)} rounded-xl p-3 ${extraClass}`}>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[9px] font-extrabold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">{item.from_role || 'unknown'}</span>
+                                <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">{item.kind}</span>
+                              </div>
+                              <p className="text-[11px] leading-relaxed text-zinc-650 dark:text-zinc-350 whitespace-pre-wrap">{item.body}</p>
+                            </div>
+                          );
+                          const debateRef = getResolvingDebateRef(selectedReview.approval);
                           return (
                             <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
                               <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
@@ -2493,6 +2568,34 @@ export default function App() {
                                         <span key={role} className="bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-[10px] px-2.5 py-1 rounded-lg border border-[#E5E5E5] dark:border-zinc-800">{role}</span>
                                       ))}
                                     </div>
+                                  </div>
+                                )}
+
+                                {selectedReview.is_actionable && (
+                                  <div className="border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-[#FFFBF4] dark:bg-zinc-900/10 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                      <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Gate Debate & Consensus</h4>
+                                      {challengerMessages.length > 0 && (
+                                        <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#B36B00]">{challengerMessages.length} Objections</span>
+                                      )}
+                                    </div>
+                                    {visibleGateDebate.loading && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
+                                      <div className="text-[10px] font-bold text-[#AFAFAF]">Loading debate...</div>
+                                    ) : visibleGateDebate.error && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
+                                      <div className="text-[10px] font-bold text-[#FF4B4B]">Debate unavailable.</div>
+                                    ) : debateMessages.length === 0 ? (
+                                      <div className="text-[10px] font-bold text-[#AFAFAF]">No debate recorded for this gate.</div>
+                                    ) : (
+                                      <div className="space-y-2">
+                                        {challengerMessages.map((message) => (
+                                          <div key={message.id} className="space-y-2">
+                                            {renderDebateMessage(message)}
+                                            {(ownerRepliesByParent[message.id] || []).map((reply) => renderDebateMessage(reply, 'ml-8'))}
+                                          </div>
+                                        ))}
+                                        {orphanOwnerReplies.map((message) => renderDebateMessage(message, 'ml-8'))}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
 
@@ -2517,7 +2620,7 @@ export default function App() {
                                 <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-end space-x-2">
                                   <button
                                     type="button"
-                                    onClick={() => handleApproveDecision(selectedReview.approval, 'rejected')}
+                                    onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
                                     disabled={actionLoading}
                                     className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
                                   >
@@ -2525,7 +2628,7 @@ export default function App() {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => handleApproveDecision(selectedReview.approval, 'changes_requested')}
+                                    onClick={() => handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef)}
                                     disabled={actionLoading}
                                     className="bg-white hover:bg-[#FFF0D4] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
                                   >
@@ -2533,7 +2636,7 @@ export default function App() {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => handleApproveDecision(selectedReview.approval, 'approved')}
+                                    onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
                                     disabled={actionLoading}
                                     className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
                                   >
