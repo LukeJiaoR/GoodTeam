@@ -30,10 +30,13 @@ import {
   XCircle,
   Clock,
   FileCode,
-  Brain
+  Brain,
+  MessageSquare
 } from 'lucide-react';
+import MessageFeed from './components/MessageFeed';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
+const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
 
 // Semantic status badges mapping with 15% transparent backgrounds and solid text colors
 function getBadgeStyle(status) {
@@ -227,6 +230,7 @@ export default function App() {
   const [editorContent, setEditorContent] = useState('');
   const [gateDebate, setGateDebate] = useState(EMPTY_GATE_DEBATE);
   const [debateRun, setDebateRun] = useState({ key: '', loading: false, error: '' });
+  const [messageFeed, setMessageFeed] = useState(EMPTY_MESSAGE_FEED);
 
   // Memory visualization states
   const [memoryData, setMemoryData] = useState(null);
@@ -238,6 +242,11 @@ export default function App() {
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
   const gateDebateRunId = data?.state?.run_id || '';
   const gateDebateProjectKey = projectKey || data?.state?.project_key || '';
+  const messageFeedProjectKey = projectKey || data?.state?.project_key || '';
+  const messageFeedRunId = data?.state?.run_id || '';
+  const targetMessageFeedKey = activeTab === 'messages' && messageFeedProjectKey && messageFeedRunId
+    ? `${messageFeedProjectKey}:${messageFeedRunId}`
+    : '';
   const targetGateDebateKey = activeTab === 'approvals' && actionableGateReview?.is_actionable && gateDebateProjectKey && gateDebateRunId
     ? `${gateDebateProjectKey}:${gateDebateRunId}:${actionableGateReview.approval}`
     : '';
@@ -383,6 +392,22 @@ export default function App() {
     }
   };
 
+  const fetchMessageFeed = async ({ key, runId }) => {
+    const feedKey = `${key}:${runId}`;
+    setMessageFeed({ key: feedKey, messages: [], loading: true, error: '' });
+    try {
+      const params = new URLSearchParams({ project: key, run: runId });
+      const response = await fetch(`/api/messages?${params.toString()}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to fetch message feed');
+      }
+      setMessageFeed({ key: feedKey, messages: payload.messages || [], loading: false, error: '' });
+    } catch (err) {
+      setMessageFeed({ key: feedKey, messages: [], loading: false, error: err.message });
+    }
+  };
+
   const handleRunDebate = async (approvalKey) => {
     const key = projectKey || data?.state?.project_key || '';
     const runId = data?.state?.run_id || '';
@@ -494,6 +519,13 @@ export default function App() {
       fetchMemory(projectKey);
     }
   }, [activeTab, projectKey]);
+
+  useEffect(() => {
+    if (!targetMessageFeedKey || messageFeed.key === targetMessageFeedKey) return;
+    Promise.resolve().then(() => {
+      fetchMessageFeed({ key: messageFeedProjectKey, runId: messageFeedRunId });
+    });
+  }, [targetMessageFeedKey, messageFeed.key, messageFeedProjectKey, messageFeedRunId]);
 
   useEffect(() => {
     if (!targetGateDebateKey || gateDebate.key === targetGateDebateKey) return;
@@ -1462,6 +1494,7 @@ export default function App() {
             { id: 'smoke', label: 'Smoke Runs', icon: PlaySquare },
             { id: 'workers', label: 'Workers', icon: Cpu },
             { id: 'memory', label: 'Memory', icon: Brain },
+            { id: 'messages', label: 'Messages', icon: MessageSquare },
             { id: 'approvals', label: 'Approvals', icon: CheckCircle2 },
             { id: 'system', label: 'System', icon: Settings },
           ].map((tab) => {
@@ -2708,6 +2741,17 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* Tab: Messages */}
+              {activeTab === 'messages' && (
+                <MessageFeed
+                  projectKey={messageFeedProjectKey}
+                  runId={messageFeedRunId}
+                  messages={messageFeed.key === targetMessageFeedKey ? messageFeed.messages : []}
+                  loading={messageFeed.key === targetMessageFeedKey && messageFeed.loading}
+                  error={messageFeed.key === targetMessageFeedKey ? messageFeed.error : ''}
+                />
               )}
 
               {/* Tab: Memory */}
