@@ -5067,6 +5067,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         project_key=str(request.get("project_key", "")),
                         approval=str(request.get("approval", "")),
                         decision=str(request.get("decision", "")),
+                        debate_ref=str(request.get("debate_ref", "")),
                     )
                 elif normalized_path == "/artifact":
                     result = save_artifact(
