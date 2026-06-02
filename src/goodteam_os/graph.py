@@ -10,6 +10,7 @@ from goodteam_os.roles import artifact_contract, context_file_specs, list_role_d
 from goodteam_os.staging import run_staging_backend, staging_backend_enabled
 from goodteam_os.state import AgileDevState, StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
+from goodteam_os.workflow_table import workflow_node
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -699,21 +700,30 @@ def advance_approved_workflow(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    runners = {
+        "run_architecture_until_gate": run_architecture_until_gate,
+        "run_delivery_until_release_gate": run_delivery_until_release_gate,
+        "run_release_until_gate": run_release_until_gate,
+        "run_retro_until_complete": run_retro_until_complete,
+        "noop_security_gate": noop_security_gate,
+    }
     while True:
         before = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
-        if state.next_node == "architect" and str(state.approvals.get("prd", "")) == "approved":
-            state = run_architecture_until_gate(state, workspace, project_config)
-        elif state.next_node == "planner" and str(state.approvals.get("rfc", "")) == "approved":
-            state = run_delivery_until_release_gate(state, workspace, project_config)
-        elif state.next_node == "release" and str(state.approvals.get("staging", "")) == "approved":
-            state = run_release_until_gate(state, workspace, project_config)
-        elif state.next_node == "retro_memory" and str(state.approvals.get("release", "")) == "approved":
-            state = run_retro_until_complete(state, workspace, project_config)
-        else:
+        node = workflow_node(state.next_node)
+        if node is None or str(state.approvals.get(node.run_guard_gate, "")) != "approved":
             return state
+        state = runners[node.runner_fn](state, workspace, project_config)
         after = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
         if after == before:
             return state
+    return state
+
+
+def noop_security_gate(
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None = None,
+) -> AgileDevState:
     return state
 
 
