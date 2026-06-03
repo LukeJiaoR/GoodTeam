@@ -41,7 +41,9 @@ const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
 
 // Build graph layout and compute ranks for DAG columns
-function computeGraphLayout(nodes = [], edges = []) {
+function computeGraphLayout(rawNodes, rawEdges) {
+  const nodes = Array.isArray(rawNodes) ? rawNodes : [];
+  const edges = Array.isArray(rawEdges) ? rawEdges : [];
   const allNodeNames = new Set(nodes.map(n => n.name));
   for (const edge of edges) {
     allNodeNames.add(edge.from);
@@ -752,7 +754,7 @@ export default function App() {
     try {
       const response = await fetch(`/api/workflow/graph?project=${encodeURIComponent(key)}`);
       const payload = await response.json().catch(() => ({}));
-      
+
       if (graphRequestSeq.current !== seq) return;
 
       if (!response.ok) {
@@ -2002,7 +2004,7 @@ export default function App() {
                       <AlertTriangle className="h-6 w-6 shrink-0" />
                       <span className="font-bold text-sm">{graphError}</span>
                     </div>
-                  ) : !graphData || !graphData.nodes || graphData.nodes.length === 0 ? (
+                  ) : !graphData || !Array.isArray(graphData.nodes) || graphData.nodes.length === 0 ? (
                     <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs">
                       No workflow graph nodes or edges recorded for this project yet.
                     </div>
@@ -2036,9 +2038,11 @@ export default function App() {
 
                       {/* DAG Canvas Layout */}
                       {(() => {
-                        const { nodeMap, columns } = computeGraphLayout(graphData.nodes, graphData.edges);
+                        const safeNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
+                        const safeEdges = Array.isArray(graphData?.edges) ? graphData.edges : [];
+                        const { nodeMap, columns } = computeGraphLayout(safeNodes, safeEdges);
                         const colIndices = Object.keys(columns).map(Number).sort((a, b) => a - b);
-                        
+
                         const nodeWidth = 200;
                         const nodeHeight = 90;
                         const columnWidth = 270;
@@ -2048,7 +2052,7 @@ export default function App() {
 
                         const numCols = colIndices.length || 1;
                         const maxNodesInAnyCol = Math.max(...Object.values(columns).map(cols => cols.length), 1);
-                        
+
                         const canvasWidth = numCols * columnWidth + paddingX * 2;
                         const canvasHeight = maxNodesInAnyCol * rowHeight + paddingY * 2;
 
@@ -2069,13 +2073,13 @@ export default function App() {
                         };
 
                         return (
-                          <div 
-                            className="relative select-none" 
+                          <div
+                            className="relative select-none"
                             style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}
                           >
                             {/* SVG Connection Lines */}
-                            <svg 
-                              className="absolute inset-0 pointer-events-none z-0" 
+                            <svg
+                              className="absolute inset-0 pointer-events-none z-0"
                               style={{ width: '100%', height: '100%' }}
                             >
                               <defs>
@@ -2099,7 +2103,7 @@ export default function App() {
                                 </marker>
                               </defs>
 
-                              {graphData.edges.map((edge, idx) => {
+                              {safeEdges.map((edge, idx) => {
                                 const fromNode = nodeMap[edge.from];
                                 const toNode = nodeMap[edge.to];
                                 if (!fromNode || !toNode) return null;
@@ -2123,7 +2127,7 @@ export default function App() {
                             </svg>
 
                             {/* Floating Edge Labels */}
-                            {graphData.edges.map((edge, idx) => {
+                            {safeEdges.map((edge, idx) => {
                               const fromNode = nodeMap[edge.from];
                               const toNode = nodeMap[edge.to];
                               if (!fromNode || !toNode) return null;
@@ -2153,7 +2157,7 @@ export default function App() {
                               const isCurrent = graphData.run && graphData.run.current_node === node.name;
                               const isNext = graphData.run && graphData.run.next_node === node.name;
                               const isApproved = graphData.run && graphData.run.approvals && graphData.run.approvals[node.gate] === 'approved';
-                              
+
                               const left = paddingX + node.rank * columnWidth;
                               const top = paddingY + node.index * rowHeight;
 
@@ -2179,13 +2183,13 @@ export default function App() {
                                   }}
                                 >
                                   <div className="flex justify-between items-start gap-1">
-                                    <span 
+                                    <span
                                       className="font-mono text-xs font-extrabold text-zinc-850 dark:text-zinc-200 truncate select-all"
                                       title={node.name}
                                     >
                                       {node.name}
                                     </span>
-                                    
+
                                     <div className="flex items-center space-x-1 shrink-0">
                                       {isApproved && (
                                         <span className="bg-[#E8F9D9] text-[#3D8B00] border border-[#58CC02]/20 rounded-full p-0.5" title="Approved">
