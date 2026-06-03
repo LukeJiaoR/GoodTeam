@@ -1,5 +1,6 @@
 import json
 
+from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 import goodteam_os.telegram as telegram
 from goodteam_os.telegram import (
     TelegramApproval,
@@ -9,6 +10,21 @@ from goodteam_os.telegram import (
     process_telegram_update,
     telegram_config_from_env,
 )
+
+
+def write_project_state(
+    tmp_path,
+    *,
+    run_id: str = "run-1",
+    next_node: str = "await_prd_approval",
+    approvals: dict[str, ApprovalDecision] | None = None,
+):
+    state = create_initial_state(run_id, "CONTENTOPS", "Build AI Content Studio")
+    state.next_node = next_node
+    if approvals:
+        state.approvals.update(approvals)
+    StateStore(tmp_path).write_project_current(state)
+    return state
 
 
 def test_telegram_config_reads_only_env_metadata(monkeypatch):
@@ -135,6 +151,7 @@ def test_send_approval_notification_skips_when_env_is_incomplete(monkeypatch):
 
 def test_process_telegram_update_enforces_allowlist_and_idempotency(tmp_path, monkeypatch):
     calls = []
+    write_project_state(tmp_path)
 
     def fake_decide_approval(**kwargs):
         calls.append(kwargs)
@@ -164,3 +181,177 @@ def test_process_telegram_update_enforces_allowlist_and_idempotency(tmp_path, mo
     assert denied["status"] == "ignored"
     assert len(calls) == 1
     assert calls[0]["project_key"] == "CONTENTOPS"
+
+
+def test_legacy_callback_rejects_stale_run(tmp_path, monkeypatch):
+    decisions = []
+    telegram_requests = []
+    write_project_state(tmp_path, run_id="run-current")
+
+    def fake_decide_approval(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    def fake_telegram_request(token, method, params):
+        telegram_requests.append({"token": token, "method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide_approval)
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        {
+            "callback_query": {
+                "id": "callback-stale",
+                "from": {"id": 111},
+                "data": "gt:CONTENTOPS:run-old:prd:approved",
+            }
+        },
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "ignored", "reason": "run mismatch"}
+    assert decisions == []
+    assert telegram_requests == [
+        {
+            "token": "secret-token",
+            "method": "answerCallbackQuery",
+            "params": {
+                "callback_query_id": "callback-stale",
+                "text": "GoodTeam approval ignored; this button is stale or no longer actionable.",
+            },
+        }
+    ]
+
+
+def test_legacy_callback_rejects_non_actionable_gate(tmp_path, monkeypatch):
+    decisions = []
+    telegram_requests = []
+    write_project_state(tmp_path, next_node="planner")
+
+    def fake_decide_approval(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    def fake_telegram_request(token, method, params):
+        telegram_requests.append({"token": token, "method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide_approval)
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        {
+            "callback_query": {
+                "id": "callback-non-actionable",
+                "from": {"id": 111},
+                "data": "gt:CONTENTOPS:run-1:prd:approved",
+            }
+        },
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "ignored", "reason": "gate not actionable"}
+    assert decisions == []
+    assert telegram_requests == [
+        {
+            "token": "secret-token",
+            "method": "answerCallbackQuery",
+            "params": {
+                "callback_query_id": "callback-non-actionable",
+                "text": "GoodTeam approval ignored; this button is stale or no longer actionable.",
+            },
+        }
+    ]
+
+
+def test_legacy_callback_rejects_already_decided_gate(tmp_path, monkeypatch):
+    decisions = []
+    telegram_requests = []
+    write_project_state(tmp_path, approvals={"prd": ApprovalDecision.APPROVED})
+
+    def fake_decide_approval(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    def fake_telegram_request(token, method, params):
+        telegram_requests.append({"token": token, "method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide_approval)
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        {
+            "callback_query": {
+                "id": "callback-decided",
+                "from": {"id": 111},
+                "data": "gt:CONTENTOPS:run-1:prd:rejected",
+            }
+        },
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "ignored", "reason": "gate not actionable"}
+    assert decisions == []
+    assert telegram_requests == [
+        {
+            "token": "secret-token",
+            "method": "answerCallbackQuery",
+            "params": {
+                "callback_query_id": "callback-decided",
+                "text": "GoodTeam approval ignored; this button is stale or no longer actionable.",
+            },
+        }
+    ]
+
+
+def test_legacy_callback_current_actionable_gate_applies_decision(tmp_path, monkeypatch):
+    decisions = []
+    telegram_requests = []
+    write_project_state(tmp_path)
+
+    def fake_decide_approval(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    def fake_telegram_request(token, method, params):
+        telegram_requests.append({"token": token, "method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide_approval)
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        {
+            "callback_query": {
+                "id": "callback-current",
+                "from": {"id": 111},
+                "data": "gt:CONTENTOPS:run-1:prd:approved",
+            }
+        },
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "processed", "callback_id": "callback-current"}
+    assert decisions == [
+        {
+            "workspace": tmp_path,
+            "project_key": "CONTENTOPS",
+            "approval": "prd",
+            "decision": "approved",
+        }
+    ]
+    assert telegram_requests == []
