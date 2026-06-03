@@ -794,6 +794,124 @@ def test_api_memory_event_returns_full_event(tmp_path, monkeypatch):
     }
 
 
+def test_api_memory_events_returns_browsable_role_events(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    old_event = memory_store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Memory browse API exposes the older card behavior.",
+        source="job-old/result.md",
+    )
+    old_id = event_handle(old_event)
+    new_event = memory_store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Memory browse API exposes the current card behavior.",
+        source="job-new/result.md",
+        supersedes=old_id,
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory/events?project=REAL&role=architect&limit=10")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["project_key"] == "REAL"
+    assert payload["role"] == "architect"
+    assert [event["id"] for event in payload["events"]] == [event_handle(new_event), old_id]
+    assert payload["events"][0]["body"] == "Memory browse API exposes the current card behavior."
+    assert payload["events"][0]["is_superseded"] is False
+    assert payload["events"][1]["is_superseded"] is True
+
+
+def test_api_memory_events_uses_query_and_limit(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    memory_store.append_memory_event(
+        "implementation",
+        horizon="short-term",
+        text="Memory browse search mentions database only.",
+        source="job-db/result.md",
+    )
+    best = memory_store.append_memory_event(
+        "implementation",
+        horizon="short-term",
+        text="Memory browse search mentions database and sqlite.",
+        source="job-sqlite/result.md",
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)(
+        "/api/memory/events?project=REAL&role=implementation&q=database%20sqlite&limit=1"
+    )
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert [event["id"] for event in payload["events"]] == [event_handle(best)]
+
+
+def test_api_memory_events_returns_empty_for_unknown_role(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory/events?project=REAL&role=missing")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload == {"project_key": "REAL", "role": "missing", "events": []}
+
+
+def test_api_memory_events_caps_limit(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
+    StateStore(tmp_path).write_project_current(state)
+
+    memory_store = RoleMemoryStore(project_root)
+    for index in range(205):
+        memory_store.append_memory_event(
+            "qa",
+            horizon="short-term",
+            text=f"Memory browse API cap event {index}.",
+            source=f"job-{index}/result.md",
+        )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory/events?project=REAL&role=qa&limit=500")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert len(payload["events"]) == 200
+
+
 def test_api_memory_event_returns_supersede_details(tmp_path, monkeypatch):
     project_root = tmp_path / "target"
     backend_repo = project_root / "backend"

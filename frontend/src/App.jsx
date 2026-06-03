@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard,
   Users,
@@ -31,7 +31,8 @@ import {
   Clock,
   FileCode,
   Brain,
-  MessageSquare
+  MessageSquare,
+  Search
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
 
@@ -237,6 +238,8 @@ export default function App() {
   const [loadingMemory, setLoadingMemory] = useState(false);
   const [memoryError, setMemoryError] = useState(null);
   const [memoryEventDetail, setMemoryEventDetail] = useState(null);
+  const [memoryEventBrowsers, setMemoryEventBrowsers] = useState({});
+  const memoryBrowseTimers = useRef({});
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -513,12 +516,110 @@ export default function App() {
     }
   };
 
+  const fetchMemoryEvents = async (roleKey, searchQuery = '') => {
+    if (!roleKey || !projectKey) return;
+
+    setMemoryEventBrowsers((current) => ({
+      ...current,
+      [roleKey]: {
+        ...(current[roleKey] || {}),
+        open: true,
+        loading: true,
+        error: null,
+      },
+    }));
+
+    try {
+      const params = new URLSearchParams({
+        project: projectKey,
+        role: roleKey,
+        limit: '50',
+      });
+      if (searchQuery.trim()) {
+        params.set('q', searchQuery.trim());
+      }
+      const response = await fetch(`/api/memory/events?${params.toString()}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || `Failed to fetch memory events (HTTP ${response.status})`);
+      }
+      setMemoryEventBrowsers((current) => ({
+        ...current,
+        [roleKey]: {
+          ...(current[roleKey] || {}),
+          open: true,
+          loading: false,
+          error: null,
+          events: Array.isArray(payload.events) ? payload.events : [],
+        },
+      }));
+    } catch (err) {
+      console.error('Error fetching memory events:', err);
+      setMemoryEventBrowsers((current) => ({
+        ...current,
+        [roleKey]: {
+          ...(current[roleKey] || {}),
+          open: true,
+          loading: false,
+          error: err.message,
+          events: [],
+        },
+      }));
+    }
+  };
+
+  const handleToggleMemoryEvents = (roleKey) => {
+    const current = memoryEventBrowsers[roleKey] || {};
+    if (current.open) {
+      setMemoryEventBrowsers((browsers) => ({
+        ...browsers,
+        [roleKey]: {
+          ...current,
+          open: false,
+        },
+      }));
+      return;
+    }
+    const searchQuery = current.query || '';
+    setMemoryEventBrowsers((browsers) => ({
+      ...browsers,
+      [roleKey]: {
+        ...current,
+        open: true,
+        query: searchQuery,
+        events: current.events || [],
+      },
+    }));
+    fetchMemoryEvents(roleKey, searchQuery);
+  };
+
+  const handleMemoryEventSearchChange = (roleKey, value) => {
+    setMemoryEventBrowsers((current) => ({
+      ...current,
+      [roleKey]: {
+        ...(current[roleKey] || {}),
+        open: true,
+        query: value,
+      },
+    }));
+    if (memoryBrowseTimers.current[roleKey]) {
+      clearTimeout(memoryBrowseTimers.current[roleKey]);
+    }
+    memoryBrowseTimers.current[roleKey] = setTimeout(() => {
+      fetchMemoryEvents(roleKey, value);
+    }, 300);
+  };
+
   // Lazy fetch memory data when the Memory tab is opened
   useEffect(() => {
     if (activeTab === 'memory' && projectKey) {
       fetchMemory(projectKey);
     }
   }, [activeTab, projectKey]);
+
+  useEffect(() => () => {
+    Object.values(memoryBrowseTimers.current).forEach((timer) => clearTimeout(timer));
+  }, []);
 
   useEffect(() => {
     if (!targetMessageFeedKey || messageFeed.key === targetMessageFeedKey) return;
@@ -2832,7 +2933,10 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-6">
-                      {memoryData.roles.map((role) => (
+                      {memoryData.roles.map((role) => {
+                        const eventBrowser = memoryEventBrowsers[role.role] || {};
+                        const browseEvents = Array.isArray(eventBrowser.events) ? eventBrowser.events : [];
+                        return (
                         <div key={role.role} className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col">
                           {/* Card Header */}
                           <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
@@ -2843,9 +2947,20 @@ export default function App() {
                                 <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 uppercase tracking-wide mt-0.5">{role.role}</h3>
                               </div>
                             </div>
-                            <span className="bg-[#E8F9D9] dark:bg-emerald-950/30 text-[#3D8B00] dark:text-emerald-400 border-2 border-[#58CC02]/20 dark:border-emerald-500/20 px-3 py-1 rounded-xl text-[10px] font-extrabold tracking-wider uppercase">
-                              {role.event_count || 0} events
-                            </span>
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleMemoryEvents(role.role)}
+                                className="bg-white hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900 text-zinc-650 dark:text-zinc-300 border-2 border-[#E5E5E5] dark:border-zinc-800 px-3 py-1 rounded-xl text-[10px] font-extrabold tracking-wider uppercase transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30 flex items-center gap-1.5"
+                                aria-expanded={Boolean(eventBrowser.open)}
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                <span>Browse events</span>
+                              </button>
+                              <span className="bg-[#E8F9D9] dark:bg-emerald-950/30 text-[#3D8B00] dark:text-emerald-400 border-2 border-[#58CC02]/20 dark:border-emerald-500/20 px-3 py-1 rounded-xl text-[10px] font-extrabold tracking-wider uppercase">
+                                {role.event_count || 0} events
+                              </span>
+                            </div>
                           </div>
 
                           {/* Card Body */}
@@ -2888,6 +3003,76 @@ export default function App() {
                                     </p>
                                   </div>
                                 </div>
+
+                                {eventBrowser.open && (
+                                  <div className="space-y-3 pt-2">
+                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-[#F1F1F1] dark:border-zinc-900 pb-2">
+                                      <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1.5">
+                                        <span>Browse Events</span>
+                                      </h4>
+                                      <label className="relative block w-full md:w-72">
+                                        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                                        <input
+                                          type="search"
+                                          value={eventBrowser.query || ''}
+                                          onChange={(event) => handleMemoryEventSearchChange(role.role, event.target.value)}
+                                          placeholder="Search events"
+                                          className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 py-2 pl-9 pr-3 text-xs font-semibold text-zinc-750 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                                        />
+                                      </label>
+                                    </div>
+
+                                    {eventBrowser.loading ? (
+                                      <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl">
+                                        <RefreshCw className="h-4 w-4 animate-spin mr-2 text-[#58CC02]" />
+                                        <span>Loading events...</span>
+                                      </div>
+                                    ) : eventBrowser.error ? (
+                                      <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900 p-4 rounded-xl text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-start gap-2">
+                                        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                                        <span>{eventBrowser.error}</span>
+                                      </div>
+                                    ) : browseEvents.length === 0 ? (
+                                      <div className="text-center py-6 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-[11px] font-semibold">
+                                        No memory events match this search.
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-2">
+                                        {browseEvents.map((event) => (
+                                          <button
+                                            type="button"
+                                            key={event.id}
+                                            onClick={() => handleOpenMemoryEvent(event.id)}
+                                            className="w-full text-left border border-zinc-250 dark:border-zinc-850 p-4 rounded-xl space-y-2 bg-[#FDFDFD] hover:bg-zinc-50 dark:bg-zinc-900/20 dark:hover:bg-zinc-900/40 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[#58CC02]/30"
+                                          >
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <span className="font-mono text-[10px] font-bold text-[#3D8B00] dark:text-emerald-400">{event.id}</span>
+                                              <span className="flex flex-wrap items-center gap-2">
+                                                {event.is_superseded && (
+                                                  <span className="bg-zinc-100 dark:bg-zinc-850 text-zinc-550 dark:text-zinc-400 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-zinc-200 dark:border-zinc-800">
+                                                    Superseded
+                                                  </span>
+                                                )}
+                                                <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-blue-100 dark:border-blue-900/50">
+                                                  {event.kind || event.horizon || 'event'}
+                                                </span>
+                                              </span>
+                                            </div>
+                                            <p className="text-xs font-semibold leading-relaxed text-zinc-750 dark:text-zinc-250 whitespace-pre-wrap">
+                                              {event.body || 'No event body recorded.'}
+                                            </p>
+                                            <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-zinc-500">
+                                              <span className="font-mono text-zinc-500">{event.timestamp || event.ts}</span>
+                                              {event.source && (
+                                                <span className="font-mono text-zinc-400 truncate max-w-full">{event.source}</span>
+                                              )}
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
 
                                 {/* Retrieved Facts Section */}
                                 <div className="space-y-3 pt-2">
@@ -2948,7 +3133,8 @@ export default function App() {
                             )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
