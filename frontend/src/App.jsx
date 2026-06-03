@@ -32,12 +32,130 @@ import {
   FileCode,
   Brain,
   MessageSquare,
-  Search
+  Search,
+  GitBranch
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
+
+// Build graph layout and compute ranks for DAG columns
+function computeGraphLayout(nodes = [], edges = []) {
+  const allNodeNames = new Set(nodes.map(n => n.name));
+  for (const edge of edges) {
+    allNodeNames.add(edge.from);
+    allNodeNames.add(edge.to);
+  }
+
+  const nodeMap = {};
+  for (const name of allNodeNames) {
+    const originalNode = nodes.find(n => n.name === name);
+    nodeMap[name] = {
+      name,
+      gate: originalNode?.gate || '',
+      runner: originalNode?.runner || '',
+      kind: originalNode?.kind || 'stage',
+      incoming: [],
+      outgoing: [],
+      rank: 0,
+      index: 0
+    };
+  }
+
+  for (const edge of edges) {
+    if (nodeMap[edge.from] && nodeMap[edge.to]) {
+      nodeMap[edge.from].outgoing.push(edge);
+      nodeMap[edge.to].incoming.push(edge);
+    }
+  }
+
+  // To be safe against cycles, compute ranks using Longest Path from source nodes (DAG-based),
+  // with an iteration limit to break cycle back-edges.
+  const maxIterations = 1000;
+  let iterations = 0;
+  let changed = true;
+
+  while (changed && iterations < maxIterations) {
+    changed = false;
+    iterations++;
+    for (const edge of edges) {
+      const fromNode = nodeMap[edge.from];
+      const toNode = nodeMap[edge.to];
+      if (fromNode && toNode) {
+        if (fromNode.rank + 1 > toNode.rank && toNode.rank < Object.keys(nodeMap).length) {
+          toNode.rank = fromNode.rank + 1;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // Group nodes by rank
+  const columns = {};
+  for (const node of Object.values(nodeMap)) {
+    if (!columns[node.rank]) {
+      columns[node.rank] = [];
+    }
+    node.index = columns[node.rank].length;
+    columns[node.rank].push(node);
+  }
+
+  return { nodeMap, columns };
+}
+
+const drawEdgePath = (u, v) => {
+  const nodeWidth = 200;
+  const nodeHeight = 90;
+  const columnWidth = 270;
+  const rowHeight = 150;
+  const paddingX = 40;
+  const paddingY = 40;
+
+  const uLeft = paddingX + u.rank * columnWidth;
+  const uTop = paddingY + u.index * rowHeight;
+  const vLeft = paddingX + v.rank * columnWidth;
+  const vTop = paddingY + v.index * rowHeight;
+
+  if (v.rank > u.rank) {
+    // Forward edge
+    const x1 = uLeft + nodeWidth;
+    const y1 = uTop + nodeHeight / 2;
+    const x2 = vLeft - 8;
+    const y2 = vTop + nodeHeight / 2;
+    const controlX = (x1 + x2) / 2;
+    return {
+      path: `M ${x1} ${y1} C ${controlX} ${y1}, ${controlX} ${y2}, ${x2} ${y2}`,
+      midX: controlX,
+      midY: (y1 + y2) / 2
+    };
+  } else if (v.rank === u.rank) {
+    // Same column edge
+    const x1 = uLeft + nodeWidth;
+    const y1 = uTop + nodeHeight / 2;
+    const x2 = vLeft - 8;
+    const y2 = vTop + nodeHeight / 2;
+    const controlX = x1 + 40;
+    return {
+      path: `M ${x1} ${y1} C ${controlX} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`,
+      midX: controlX - 20,
+      midY: (y1 + y2) / 2
+    };
+  } else {
+    // Back edge
+    const x1 = uLeft;
+    const y1 = uTop + nodeHeight / 2;
+    const x2 = vLeft - 8;
+    const y2 = vTop + nodeHeight / 2;
+    const controlX1 = x1 - 50;
+    const controlX2 = x2 - 50;
+    return {
+      path: `M ${x1} ${y1} C ${controlX1} ${y1}, ${controlX2} ${y2}, ${x2} ${y2}`,
+      midX: (controlX1 + controlX2) / 2,
+      midY: (y1 + y2) / 2
+    };
+  }
+};
 
 // Semantic status badges mapping with 15% transparent backgrounds and solid text colors
 function getBadgeStyle(status) {
@@ -241,6 +359,12 @@ export default function App() {
   const [memoryEventBrowsers, setMemoryEventBrowsers] = useState({});
   const memoryBrowseTimers = useRef({});
   const memoryBrowseRequestSeq = useRef({});
+
+  // Workflow Graph states
+  const [graphData, setGraphData] = useState(null);
+  const [loadingGraph, setLoadingGraph] = useState(false);
+  const [graphError, setGraphError] = useState(null);
+  const graphRequestSeq = useRef(0);
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -618,6 +742,41 @@ export default function App() {
       fetchMemoryEvents(roleKey, value);
     }, 300);
   };
+
+  const fetchWorkflowGraph = async (key) => {
+    const seq = graphRequestSeq.current + 1;
+    graphRequestSeq.current = seq;
+
+    setLoadingGraph(true);
+    setGraphError(null);
+    try {
+      const response = await fetch(`/api/workflow/graph?project=${encodeURIComponent(key)}`);
+      const payload = await response.json().catch(() => ({}));
+      
+      if (graphRequestSeq.current !== seq) return;
+
+      if (!response.ok) {
+        throw new Error(payload.error || `Failed to fetch workflow graph (HTTP ${response.status})`);
+      }
+      setGraphData(payload);
+    } catch (err) {
+      if (graphRequestSeq.current === seq) {
+        console.error('Error fetching workflow graph:', err);
+        setGraphError(err.message);
+      }
+    } finally {
+      if (graphRequestSeq.current === seq) {
+        setLoadingGraph(false);
+      }
+    }
+  };
+
+  // Lazy fetch workflow graph data when the Workflow Graph tab is opened
+  useEffect(() => {
+    if (activeTab === 'workflow' && projectKey) {
+      fetchWorkflowGraph(projectKey);
+    }
+  }, [activeTab, projectKey]);
 
   // Lazy fetch memory data when the Memory tab is opened
   useEffect(() => {
@@ -1615,6 +1774,7 @@ export default function App() {
         <nav className="flex-grow py-4 space-y-1 overflow-y-auto">
           {[
             { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+            { id: 'workflow', label: 'Workflow Graph', icon: GitBranch },
             { id: 'roles', label: 'Roles', icon: Users },
             { id: 'artifacts', label: 'Artifacts', icon: FileCode },
             { id: 'actions', label: 'Actions', icon: Activity },
@@ -1827,6 +1987,246 @@ export default function App() {
             </div>
           ) : (
             <>
+              {/* Tab: Workflow Graph */}
+              {activeTab === 'workflow' && (
+                <div className="space-y-6">
+                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Workflow Graph</h2>
+                    <p className="text-xs text-[#AFAFAF]">Visual topology of pipeline nodes, decision gates, transition edges, and active execution run path.</p>
+                  </div>
+
+                  {loadingGraph ? (
+                    <Spinner />
+                  ) : graphError ? (
+                    <div className="bg-[#FFE2E2] border-2 border-[#FF4B4B] p-6 rounded-2xl text-[#EA2B2B] flex items-center space-x-3 shadow-xs">
+                      <AlertTriangle className="h-6 w-6 shrink-0" />
+                      <span className="font-bold text-sm">{graphError}</span>
+                    </div>
+                  ) : !graphData || !graphData.nodes || graphData.nodes.length === 0 ? (
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs">
+                      No workflow graph nodes or edges recorded for this project yet.
+                    </div>
+                  ) : (
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 overflow-x-auto relative">
+                      {/* Active Run Status Header */}
+                      {graphData.run && (
+                        <div className="mb-6 bg-zinc-50 dark:bg-zinc-900/50 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-4 text-xs font-bold">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-[#AFAFAF] uppercase tracking-wider">Active Run:</span>
+                            <span className="font-mono text-zinc-850 dark:text-zinc-200">{graphData.run.run_id}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-4">
+                            {graphData.run.current_node && (
+                              <div className="flex items-center space-x-1.5">
+                                <span className="h-2 w-2 rounded-full bg-[#58CC02] animate-pulse" />
+                                <span className="text-[#AFAFAF]">Current Node:</span>
+                                <span className="text-[#3D8B00] font-mono">{graphData.run.current_node}</span>
+                              </div>
+                            )}
+                            {graphData.run.next_node && (
+                              <div className="flex items-center space-x-1.5">
+                                <span className="h-2 w-2 rounded-full bg-[#1CB0F6] animate-pulse" />
+                                <span className="text-[#AFAFAF]">Next Node:</span>
+                                <span className="text-[#0A7BAF] font-mono">{graphData.run.next_node}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* DAG Canvas Layout */}
+                      {(() => {
+                        const { nodeMap, columns } = computeGraphLayout(graphData.nodes, graphData.edges);
+                        const colIndices = Object.keys(columns).map(Number).sort((a, b) => a - b);
+                        
+                        const nodeWidth = 200;
+                        const nodeHeight = 90;
+                        const columnWidth = 270;
+                        const rowHeight = 150;
+                        const paddingX = 40;
+                        const paddingY = 40;
+
+                        const numCols = colIndices.length || 1;
+                        const maxNodesInAnyCol = Math.max(...Object.values(columns).map(cols => cols.length), 1);
+                        
+                        const canvasWidth = numCols * columnWidth + paddingX * 2;
+                        const canvasHeight = maxNodesInAnyCol * rowHeight + paddingY * 2;
+
+                        const getEdgeColor = (type) => {
+                          const norm = String(type || '').toLowerCase().trim();
+                          if (norm === 'approved') return '#58CC02';
+                          if (norm === 'changes_requested' || norm === 'blocked') return '#FF9600';
+                          if (norm === 'rejected' || norm === 'error') return '#FF4B4B';
+                          return '#AFAFAF';
+                        };
+
+                        const getEdgeMarker = (type) => {
+                          const norm = String(type || '').toLowerCase().trim();
+                          if (['approved', 'changes_requested', 'rejected', 'error', 'blocked'].includes(norm)) {
+                            return `url(#arrow-${norm})`;
+                          }
+                          return 'url(#arrow-default)';
+                        };
+
+                        return (
+                          <div 
+                            className="relative select-none" 
+                            style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}
+                          >
+                            {/* SVG Connection Lines */}
+                            <svg 
+                              className="absolute inset-0 pointer-events-none z-0" 
+                              style={{ width: '100%', height: '100%' }}
+                            >
+                              <defs>
+                                <marker id="arrow-approved" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                                  <path d="M0,0 L0,6 L9,3 z" fill="#58CC02" />
+                                </marker>
+                                <marker id="arrow-changes_requested" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                                  <path d="M0,0 L0,6 L9,3 z" fill="#FF9600" />
+                                </marker>
+                                <marker id="arrow-rejected" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                                  <path d="M0,0 L0,6 L9,3 z" fill="#FF4B4B" />
+                                </marker>
+                                <marker id="arrow-error" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                                  <path d="M0,0 L0,6 L9,3 z" fill="#FF4B4B" />
+                                </marker>
+                                <marker id="arrow-blocked" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                                  <path d="M0,0 L0,6 L9,3 z" fill="#FF9600" />
+                                </marker>
+                                <marker id="arrow-default" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                                  <path d="M0,0 L0,6 L9,3 z" fill="#AFAFAF" />
+                                </marker>
+                              </defs>
+
+                              {graphData.edges.map((edge, idx) => {
+                                const fromNode = nodeMap[edge.from];
+                                const toNode = nodeMap[edge.to];
+                                if (!fromNode || !toNode) return null;
+
+                                const { path } = drawEdgePath(fromNode, toNode);
+                                const strokeColor = getEdgeColor(edge.type);
+                                const marker = getEdgeMarker(edge.type);
+
+                                return (
+                                  <path
+                                    key={idx}
+                                    d={path}
+                                    fill="none"
+                                    stroke={strokeColor}
+                                    strokeWidth="2.5"
+                                    markerEnd={marker}
+                                    className="transition-all duration-300 opacity-80"
+                                  />
+                                );
+                              })}
+                            </svg>
+
+                            {/* Floating Edge Labels */}
+                            {graphData.edges.map((edge, idx) => {
+                              const fromNode = nodeMap[edge.from];
+                              const toNode = nodeMap[edge.to];
+                              if (!fromNode || !toNode) return null;
+
+                              const { midX, midY } = drawEdgePath(fromNode, toNode);
+                              const color = getEdgeColor(edge.type);
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className="absolute bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-full px-2 py-0.5 text-[9px] font-bold shadow-xs select-none pointer-events-none z-10"
+                                  style={{
+                                    left: `${midX}px`,
+                                    top: `${midY}px`,
+                                    transform: 'translate(-50%, -50%)',
+                                    color: color,
+                                    borderColor: `${color}40`,
+                                  }}
+                                >
+                                  {edge.type}
+                                </div>
+                              );
+                            })}
+
+                            {/* Node Cards */}
+                            {Object.values(nodeMap).map((node) => {
+                              const isCurrent = graphData.run && graphData.run.current_node === node.name;
+                              const isNext = graphData.run && graphData.run.next_node === node.name;
+                              const isApproved = graphData.run && graphData.run.approvals && graphData.run.approvals[node.gate] === 'approved';
+                              
+                              const left = paddingX + node.rank * columnWidth;
+                              const top = paddingY + node.index * rowHeight;
+
+                              let cardBorder = 'border-[#E5E5E5] dark:border-zinc-800';
+                              let shadowStyle = 'shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a]';
+                              if (isCurrent) {
+                                cardBorder = 'border-[#58CC02] dark:border-[#58CC02]';
+                                shadowStyle = 'shadow-[0_4px_0_#58CC02]';
+                              } else if (isNext) {
+                                cardBorder = 'border-[#1CB0F6] dark:border-[#1CB0F6]';
+                                shadowStyle = 'shadow-[0_4px_0_#1CB0F6]';
+                              }
+
+                              return (
+                                <div
+                                  key={node.name}
+                                  className={`absolute bg-white dark:bg-zinc-950 border-2 rounded-2xl p-4 flex flex-col justify-between z-20 ${cardBorder} ${shadowStyle}`}
+                                  style={{
+                                    left: `${left}px`,
+                                    top: `${top}px`,
+                                    width: `${nodeWidth}px`,
+                                    height: `${nodeHeight}px`,
+                                  }}
+                                >
+                                  <div className="flex justify-between items-start gap-1">
+                                    <span 
+                                      className="font-mono text-xs font-extrabold text-zinc-850 dark:text-zinc-200 truncate select-all"
+                                      title={node.name}
+                                    >
+                                      {node.name}
+                                    </span>
+                                    
+                                    <div className="flex items-center space-x-1 shrink-0">
+                                      {isApproved && (
+                                        <span className="bg-[#E8F9D9] text-[#3D8B00] border border-[#58CC02]/20 rounded-full p-0.5" title="Approved">
+                                          <Check className="h-2.5 w-2.5" />
+                                        </span>
+                                      )}
+                                      {isCurrent ? (
+                                        <span className="h-2 w-2 rounded-full bg-[#58CC02] animate-pulse" title="Current Node" />
+                                      ) : isNext ? (
+                                        <span className="h-2 w-2 rounded-full bg-[#1CB0F6] animate-pulse" title="Next Node" />
+                                      ) : null}
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    {node.gate && (
+                                      <div className="flex items-center text-[10px] text-zinc-550 font-bold">
+                                        <Lock className="h-3 w-3 mr-1 text-[#AFAFAF]" />
+                                        <span className="uppercase">{node.gate} Gate</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between items-center text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">
+                                      <span>{node.kind}</span>
+                                      {node.runner && (
+                                        <span className="font-mono text-[8px] max-w-[100px] truncate" title={node.runner}>
+                                          {node.runner}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Tab: Overview */}
               {activeTab === 'overview' && (
                 <div className="space-y-6">
