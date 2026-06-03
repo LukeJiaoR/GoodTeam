@@ -3,7 +3,14 @@ from pathlib import Path
 from goodteam_os import graph
 from goodteam_os import web
 from goodteam_os.state import StateStore, create_initial_state
-from goodteam_os.workflow_table import GATE_TRANSITIONS, WorkflowNode, approved_next_for_gate, gate_transition, workflow_node
+from goodteam_os.workflow_table import (
+    GATE_TRANSITIONS,
+    WorkflowNode,
+    advisors_for_gate,
+    approved_next_for_gate,
+    gate_transition,
+    workflow_node,
+)
 
 
 GROUND_TRUTH_APPROVED_NEXT = {
@@ -34,6 +41,14 @@ def test_security_gate_is_declared_as_human_only_transition():
     assert transition.on_changes_requested == "revise_security"
     assert transition.on_rejected == "rejected"
     assert workflow_node("security").runner_fn == "noop_security_gate"
+
+
+def test_advisors_for_gate_declares_rfc_committee_only():
+    assert advisors_for_gate("rfc") == ("qa",)
+
+    for gate in GROUND_TRUTH_APPROVED_NEXT:
+        if gate != "rfc":
+            assert advisors_for_gate(gate) == ()
 
 
 def test_workflow_node_failure_policy_defaults_preserve_blocked_routing():
