@@ -17,6 +17,7 @@ from goodteam_os.graph import (
     worker_blocker_message,
 )
 from goodteam_os.graph import run_adoption_until_next_gate
+from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.state import create_initial_state
 from goodteam_os.workflow_table import WorkflowNode
 
@@ -891,7 +892,71 @@ def test_retry_exhausted_routes_to_on_error_and_records_blocker(tmp_path, monkey
 
     assert calls_by_role["implementation"] == 2
     assert result.next_node == "failure_triage"
-    assert any("timeout, 2 attempts" in blocker for blocker in result.blockers)
+    assert any(
+        blocker.startswith("NEEDS HUMAN [timeout]:") and "timeout, 2 attempts" in blocker
+        for blocker in result.blockers
+    )
+    action_log = tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl"
+    actions = [json.loads(line) for line in action_log.read_text(encoding="utf-8").splitlines()]
+    triage = [action for action in actions if action["action"] == "triage_decided"]
+    assert triage[-1]["failure_class"] == "timeout"
+    assert triage[-1]["decision"] == "escalate_human"
+    assert triage[-1]["after_node"] == "failure_triage"
+
+
+def test_escalated_worker_failure_writes_scoped_failure_memory_event(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        role = job["role"]
+        if role == "implementation":
+            return {
+                "job_id": job_id,
+                "run_id": job["run_id"],
+                "role": role,
+                "adapter": job["adapter"],
+                "status": "failed",
+                "summary": "network socket closed during checkout",
+                "failure_class": "network",
+                "attempts": 2,
+            }
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": role,
+            "adapter": job["adapter"],
+            "status": "completed",
+            "summary": f"{role} completed",
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.next_node == "blocked"
+    assert any(blocker.startswith("NEEDS HUMAN [network]:") for blocker in result.blockers)
+    memory_root = tmp_path / "contentops"
+    memory_store = RoleMemoryStore(memory_root)
+    events = memory_store.list_events("implementation")
+    failure_events = [
+        event
+        for event in events
+        if event["body"].startswith("FAILURE [network]") and event["source"].startswith("worker_failure:")
+    ]
+    assert failure_events
+    assert "node=implementation" in failure_events[0]["body"]
+    assert "attempts=2" in failure_events[0]["body"]
+    assert "disposition=escalate_human" in failure_events[0]["body"]
+    packet = memory_store.build_pickup_packet("implementation", query="network socket closed")
+    assert "FAILURE [network]" not in str(packet["short_term"])
+    assert packet["relevant_events"] == []
 
 
 def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):
