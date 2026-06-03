@@ -3148,6 +3148,9 @@ export default function App() {
                         (() => {
                           const selectedReview = approvalReviews.find(r => r.is_actionable) || approvalReviews[0];
                           const badge = getBadgeStyle(selectedReview.decision);
+                          const committee = selectedReview.committee && typeof selectedReview.committee === 'object' ? selectedReview.committee : null;
+                          const committeeAdvisors = Array.isArray(committee?.advisors) ? committee.advisors : [];
+                          const committeeMessages = Array.isArray(committee?.messages) ? committee.messages : [];
                           const debateMessages = visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? visibleGateDebate.messages : [];
                           const challengerMessages = debateMessages.filter((item) => ['ask', 'reject'].includes(item.kind));
                           const ownerRepliesByParent = debateMessages.reduce((acc, item) => {
@@ -3162,19 +3165,35 @@ export default function App() {
                           const debateAccent = (kind) => {
                             if (kind === 'ask') return 'border-l-[#FF9600]';
                             if (kind === 'reject') return 'border-l-[#FF4B4B]';
+                            if (kind === 'challenge') return 'border-l-[#FF9600]';
+                            if (kind === 'rebuttal') return 'border-l-[#1CB0F6]';
                             if (kind === 'assert') return 'border-l-[#1CB0F6]';
                             if (kind === 'propose') return 'border-l-[#58CC02]';
                             return 'border-l-[#AFAFAF]';
                           };
                           const renderDebateMessage = (item, extraClass = '') => (
-                            <div key={item.id} className={`bg-white dark:bg-zinc-950 border border-[#E5E5E5] dark:border-zinc-800 border-l-4 ${debateAccent(item.kind)} rounded-xl p-3 ${extraClass}`}>
+                            <div key={item.id || `${item.from_role || 'unknown'}:${item.kind || 'message'}:${item.body || ''}`} className={`bg-white dark:bg-zinc-950 border border-[#E5E5E5] dark:border-zinc-800 border-l-4 ${debateAccent(item.kind)} rounded-xl p-3 ${extraClass}`}>
                               <div className="flex items-center gap-2 mb-1">
                                 <span className="text-[9px] font-extrabold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">{item.from_role || 'unknown'}</span>
+                                {item.to && (
+                                  <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">to {item.to}</span>
+                                )}
                                 <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">{item.kind}</span>
                               </div>
                               <p className="text-[11px] leading-relaxed text-zinc-650 dark:text-zinc-350 whitespace-pre-wrap">{item.body}</p>
                             </div>
                           );
+                          const committeeRepliesByParent = committeeMessages.reduce((acc, item, index) => {
+                            if (item?.in_reply_to) {
+                              acc[item.in_reply_to] = [...(acc[item.in_reply_to] || []), { item, index }];
+                            }
+                            return acc;
+                          }, {});
+                          const committeeRootMessages = committeeMessages
+                            .map((item, index) => ({ item, index }))
+                            .filter(({ item }) => !item?.in_reply_to);
+                          const hasCommitteeMessages = committeeMessages.length > 0;
+                          const needsCommitteeDebate = !committee?.convened || !hasCommitteeMessages;
                           const debateRef = getResolvingDebateRef(selectedReview.approval);
                           const currentDebateRunKey = `${gateDebateProjectKey}:${gateDebateRunId}:${selectedReview.approval}`;
                           const isRunningDebate = debateRun.key === currentDebateRunKey && debateRun.loading;
@@ -3202,7 +3221,62 @@ export default function App() {
                                   </div>
                                 )}
 
-                                {selectedReview.is_actionable && (
+                                {selectedReview.is_actionable && committee && (
+                                  <div className="border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-[#FFFBF4] dark:bg-zinc-900/10 space-y-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div>
+                                        <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Committee</h4>
+                                        {needsCommitteeDebate && (
+                                          <p className="text-[10px] font-bold text-[#AFAFAF] mt-1">Committee declared. Run debate to convene it.</p>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {committee.convened && (
+                                          <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#3D8B00]">Convened</span>
+                                        )}
+                                        {needsCommitteeDebate && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRunDebate(selectedReview.approval)}
+                                            disabled={isRunningDebate}
+                                            className="bg-white hover:bg-[#F7F7F7] disabled:opacity-60 disabled:cursor-not-allowed border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold text-[9px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
+                                          >
+                                            <RefreshCw className={`h-3 w-3 ${isRunningDebate ? 'animate-spin' : ''}`} />
+                                            <span>{isRunningDebate ? 'Running debate...' : 'Run debate'}</span>
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {runDebateError && (
+                                      <div className="text-[10px] font-bold text-[#FF4B4B]">Debate run failed: {runDebateError}</div>
+                                    )}
+                                    {committeeAdvisors.length > 0 && (
+                                      <div className="flex flex-wrap gap-2">
+                                        {committeeAdvisors.map((role) => (
+                                          <span key={role} className="bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-[10px] px-2.5 py-1 rounded-lg border border-[#E5E5E5] dark:border-zinc-800">{role}</span>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {hasCommitteeMessages && (
+                                      <div className="space-y-2">
+                                        {committeeRootMessages.map(({ item, index }) => {
+                                          const parentKey = item.id || String(index);
+                                          return (
+                                            <div key={parentKey} className="space-y-2">
+                                              {renderDebateMessage(item)}
+                                              {(committeeRepliesByParent[item.id] || []).map(({ item: reply }) => renderDebateMessage(reply, 'ml-8'))}
+                                            </div>
+                                          );
+                                        })}
+                                        {committeeMessages.length > committeeRootMessages.length && committeeRootMessages.length === 0 && (
+                                          committeeMessages.map((message, index) => renderDebateMessage(message, index > 0 ? 'ml-8' : ''))
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {selectedReview.is_actionable && !committee && (
                                   <div className="border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-[#FFFBF4] dark:bg-zinc-900/10 space-y-3">
                                     <div className="flex items-center justify-between gap-3">
                                       <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Gate Debate & Consensus</h4>
