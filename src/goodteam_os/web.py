@@ -489,8 +489,8 @@ def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, ob
         for field, edge_type in (("on_error", "error"), ("on_blocked", "blocked")):
             target = getattr(node, field, "")
             if target:
-                edges.append({"from": node.run_guard_gate, "to": target, "type": edge_type})
-                identifiers.add(node.run_guard_gate)
+                edges.append({"from": node.name, "to": target, "type": edge_type})
+                identifiers.add(node.name)
                 identifiers.add(target)
 
     nodes = []

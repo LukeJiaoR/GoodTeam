@@ -118,8 +118,8 @@ def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_p
 
     graph = build_workflow_graph(tmp_path)
 
-    assert {"from": "qa", "to": "qa_error", "type": "error"} in graph["edges"]
-    assert {"from": "qa", "to": "qa_blocked", "type": "blocked"} in graph["edges"]
+    assert {"from": "qa_runner", "to": "qa_error", "type": "error"} in graph["edges"]
+    assert {"from": "qa_runner", "to": "qa_blocked", "type": "blocked"} in graph["edges"]
     node_names = {node["name"] for node in graph["nodes"]}
     edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
     assert edge_endpoints <= node_names
