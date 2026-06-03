@@ -470,30 +470,49 @@ def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, ob
         except ValueError:
             key = ""
 
-    nodes = [
-        {
-            "name": node.name,
-            "gate": node.run_guard_gate,
-            "runner": node.runner_fn,
-            # The table marks gate-only workflow placeholders with noop runners; all other entries are executable stages.
-            "kind": "gate" if node.runner_fn.startswith("noop_") else "stage",
-        }
-        for node in WORKFLOW_NODES.values()
-    ]
-
-    edge_fields = [
+    edge_fields = (
         ("on_approved_next", "approved"),
         ("on_changes_requested", "changes_requested"),
         ("on_rejected", "rejected"),
-        ("on_error", "error"),
-        ("on_blocked", "blocked"),
-    ]
-    edges = []
-    for transition in GATE_TRANSITIONS.values():
+    )
+    edges: list[dict[str, str]] = []
+    identifiers = set(WORKFLOW_NODES) | set(GATE_TRANSITIONS)
+    for gate, transition in GATE_TRANSITIONS.items():
+        identifiers.add(gate)
+        identifiers.add(transition.gate)
         for field, edge_type in edge_fields:
             target = getattr(transition, field, None)
             if target:
                 edges.append({"from": transition.gate, "to": target, "type": edge_type})
+                identifiers.add(target)
+    for node in WORKFLOW_NODES.values():
+        for field, edge_type in (("on_error", "error"), ("on_blocked", "blocked")):
+            target = getattr(node, field, "")
+            if target:
+                edges.append({"from": node.run_guard_gate, "to": target, "type": edge_type})
+                identifiers.add(node.run_guard_gate)
+                identifiers.add(target)
+
+    nodes = []
+    for identifier in sorted(identifiers):
+        workflow_node = WORKFLOW_NODES.get(identifier)
+        if workflow_node is not None:
+            nodes.append(
+                {
+                    "name": workflow_node.name,
+                    "gate": workflow_node.run_guard_gate,
+                    "runner": workflow_node.runner_fn,
+                    "kind": "stage",
+                }
+            )
+        elif identifier in GATE_TRANSITIONS:
+            nodes.append({"name": identifier, "kind": "gate"})
+        elif identifier in {"rejected", "blocked"}:
+            nodes.append({"name": identifier, "kind": "terminal"})
+        elif identifier.startswith("revise_"):
+            nodes.append({"name": identifier, "kind": "revise"})
+        else:
+            nodes.append({"name": identifier, "kind": "role"})
 
     run = None
     if key:

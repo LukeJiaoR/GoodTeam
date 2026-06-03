@@ -50,11 +50,19 @@ def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
         "name": "security",
         "gate": "security",
         "runner": "noop_security_gate",
-        "kind": "gate",
+        "kind": "stage",
     } in graph["nodes"]
+    assert {"name": "prd", "kind": "gate"} in graph["nodes"]
+    assert {"name": "rejected", "kind": "terminal"} in graph["nodes"]
+    assert {"name": "revise_prd", "kind": "revise"} in graph["nodes"]
+    assert {"name": "product_requirement", "kind": "role"} in graph["nodes"]
     assert {"from": "prd", "to": "architect", "type": "approved"} in graph["edges"]
     assert {"from": "prd", "to": "revise_prd", "type": "changes_requested"} in graph["edges"]
     assert {"from": "prd", "to": "rejected", "type": "rejected"} in graph["edges"]
+    node_names = {node["name"] for node in graph["nodes"]}
+    edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
+    assert edge_endpoints <= node_names
+    assert {node["kind"] for node in graph["nodes"]} <= {"stage", "gate", "terminal", "revise", "role"}
 
 
 def test_build_workflow_graph_includes_active_project_run(tmp_path):
@@ -91,6 +99,17 @@ def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_p
                 on_approved_next="release",
                 on_changes_requested="revise_qa",
                 on_rejected="rejected",
+            )
+        },
+    )
+    monkeypatch.setattr(
+        web,
+        "WORKFLOW_NODES",
+        {
+            "qa_runner": SimpleNamespace(
+                name="qa_runner",
+                run_guard_gate="qa",
+                runner_fn="run_qa_until_gate",
                 on_error="qa_error",
                 on_blocked="qa_blocked",
             )
@@ -101,6 +120,9 @@ def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_p
 
     assert {"from": "qa", "to": "qa_error", "type": "error"} in graph["edges"]
     assert {"from": "qa", "to": "qa_blocked", "type": "blocked"} in graph["edges"]
+    node_names = {node["name"] for node in graph["nodes"]}
+    edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
+    assert edge_endpoints <= node_names
 
 
 def test_render_dashboard_shows_current_gate():
