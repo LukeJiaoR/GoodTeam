@@ -8,6 +8,7 @@ from goodteam_os.workflow_table import (
     WorkflowNode,
     advisors_for_gate,
     approved_next_for_gate,
+    disposition_for_failure_class,
     gate_transition,
     workflow_node,
 )
@@ -58,6 +59,14 @@ def test_workflow_node_failure_policy_defaults_preserve_blocked_routing():
     assert node.on_blocked == "blocked"
     assert node.retry_max == 0
     assert node.retry_on_classes == ()
+
+
+def test_disposition_for_failure_class_maps_declared_classes():
+    for failure_class in ["auth", "rate_limit", "network", "timeout", "stream_disconnect", "infra"]:
+        assert disposition_for_failure_class(failure_class) == "escalate_human"
+
+    for failure_class in ["scaffold", "code_bug", "unknown", "", "unlisted"]:
+        assert disposition_for_failure_class(failure_class) == "block"
 
 
 def test_no_gate_transition_is_self_referential():

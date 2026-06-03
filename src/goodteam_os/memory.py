@@ -340,6 +340,7 @@ class RoleMemoryStore:
             return []
         events = self._read_events(role_key)
         events = self._active_events(events)
+        events = self._normal_retrieval_events(events)
         if horizons:
             events = [event for event in events if event.get("horizon") in horizons]
         if not events:
@@ -383,6 +384,7 @@ class RoleMemoryStore:
         index = self.read_memory_index(role_key)
         short_path = self.memory_path(role_key, "short-term")
         short_content = short_path.read_text(encoding="utf-8") if short_path.is_file() else ""
+        short_content = self._normal_pickup_content(short_content)
         if len(short_content) > max_short_chars:
             short_content = short_content[:max_short_chars] + "\n\n[Short-term memory truncated]"
         horizons = dict(index.get("horizons", {}))
@@ -498,6 +500,17 @@ Role: `{role_key}`
             if isinstance(event.get("supersedes"), str) and str(event.get("supersedes", "")).strip()
         }
         return [event for event in events if self._event_id(event) not in superseded_ids]
+
+    def _normal_retrieval_events(self, events: list[dict[str, str]]) -> list[dict[str, str]]:
+        return [event for event in events if str(event.get("source", "")).split(":", 1)[0] != "worker_failure"]
+
+    def _normal_pickup_content(self, content: str) -> str:
+        lines = [
+            line
+            for line in content.splitlines()
+            if not line.strip().startswith("- FAILURE [") and " Source: `worker_failure:" not in line
+        ]
+        return "\n".join(lines).rstrip()
 
     def _retrieval_result(self, score: float, event: dict[str, object]) -> dict[str, object]:
         return {

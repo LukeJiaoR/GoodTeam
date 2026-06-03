@@ -12,7 +12,13 @@ from goodteam_os.roles import artifact_contract, context_file_specs, list_role_d
 from goodteam_os.staging import run_staging_backend, staging_backend_enabled
 from goodteam_os.state import AgileDevState, StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
-from goodteam_os.workflow_table import blocked_next_for_node, error_next_for_node, retry_policy_for_node, workflow_node
+from goodteam_os.workflow_table import (
+    blocked_next_for_node,
+    disposition_for_failure_class,
+    error_next_for_node,
+    retry_policy_for_node,
+    workflow_node,
+)
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -773,10 +779,15 @@ def run_delivery_until_release_gate(
     if failed_workers:
         state.current_node = "implementation"
         state.next_node = error_next_for_node("planner")
-        state.blockers.extend(
-            worker_blocker_message(result)
-            for result in failed_workers
-        )
+        for result in failed_workers:
+            disposition = triage_worker_failure(
+                state=state,
+                result=result,
+                next_node=state.next_node,
+                workspace=workspace,
+                project_config=project_config,
+            )
+            state.blockers.append(triaged_worker_blocker_message(result, disposition=disposition))
         handoff_path = store.write_markdown(
             state.run_id,
             "implementation_handoff",
@@ -1037,6 +1048,92 @@ def append_worker_attempt_action(
         handle.write(json.dumps(event) + "\n")
 
 
+def append_worker_triage_action(
+    *,
+    workspace: Path | None,
+    state: AgileDevState,
+    result: dict[str, object],
+    disposition: str,
+    next_node: str,
+) -> None:
+    if workspace is None:
+        return
+    action_log = StateStore(workspace).project_state_dir(state.project_key) / "action-log.jsonl"
+    action_log.parent.mkdir(parents=True, exist_ok=True)
+    event = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "run_id": state.run_id,
+        "actor": str(result.get("role", "worker")),
+        "action": "triage_decided",
+        "gate": "",
+        "decision": disposition,
+        "before_node": "implementation",
+        "after_node": next_node,
+        "artifact": str(result.get("job_id", "")),
+        "artifact_path": str(result.get("result_path", "")),
+        "attempt": str(result.get("attempts", "")),
+        "failure_class": normalized_failure_class(result),
+        "status": str(result.get("status", "")),
+    }
+    with action_log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event) + "\n")
+
+
+def triage_worker_failure(
+    *,
+    state: AgileDevState,
+    result: dict[str, object],
+    next_node: str,
+    workspace: Path | None,
+    project_config: Path | None,
+) -> str:
+    failure_class = normalized_failure_class(result)
+    disposition = disposition_for_failure_class(failure_class)
+    append_worker_triage_action(
+        workspace=workspace,
+        state=state,
+        result=result,
+        disposition=disposition,
+        next_node=next_node,
+    )
+    append_worker_failure_memory_event(
+        state=state,
+        result=result,
+        disposition=disposition,
+        project_config=project_config,
+    )
+    return disposition
+
+
+def append_worker_failure_memory_event(
+    *,
+    state: AgileDevState,
+    result: dict[str, object],
+    disposition: str,
+    project_config: Path | None,
+) -> None:
+    memory_root = failure_memory_root(project_config)
+    if memory_root is None:
+        return
+    role = str(result.get("role", "worker")).strip() or "worker"
+    failure_class = normalized_failure_class(result)
+    summary = short_failure_summary(result)
+    attempts = int(result.get("attempts", 0) or 0)
+    text = (
+        f"FAILURE [{failure_class}] node=implementation; role={role}; "
+        f"summary={summary}; attempts={attempts}; disposition={disposition}"
+    )
+    source = f"worker_failure:{state.run_id}:implementation:{role}"
+    RoleMemoryStore(memory_root).append_memory_event(role, horizon="short-term", text=text, source=source)
+
+
+def failure_memory_root(project_config: Path | None) -> Path | None:
+    if project_config is None or not project_config.is_file():
+        return None
+    target = load_project_target(project_config)
+    return resolve_project_runtime_root(dict(target.get("repos", {})))
+
+
 def ui_delivery_worker_model(state: AgileDevState) -> str:
     return (
         worker_model_for_role(state, "frontend")
@@ -1074,6 +1171,27 @@ def qa_result_reports_failure(result: dict[str, object]) -> bool:
 
 def worker_result_reports_failure(result: dict[str, object]) -> bool:
     return str(result.get("status", "")) != "completed" or qa_result_reports_failure(result)
+
+
+def normalized_failure_class(result: dict[str, object]) -> str:
+    return str(result.get("failure_class", "")).strip() or "unknown"
+
+
+def short_failure_summary(result: dict[str, object], *, max_chars: int = 180) -> str:
+    summary = " ".join(str(result.get("summary", "unknown failure")).split())
+    if len(summary) > max_chars:
+        return f"{summary[:max_chars].rstrip()}..."
+    return summary
+
+
+def triaged_worker_blocker_message(result: dict[str, object], *, disposition: str) -> str:
+    message = worker_blocker_message(result)
+    failure_class = normalized_failure_class(result)
+    if disposition == "escalate_human":
+        return f"NEEDS HUMAN [{failure_class}]: {message}"
+    if str(result.get("failure_class", "")).strip():
+        return message
+    return f"{message} [{failure_class}]"
 
 
 def worker_blocker_message(result: dict[str, object]) -> str:

@@ -95,6 +95,20 @@ _WORKFLOW_NODES = {
 
 WORKFLOW_NODES: Mapping[str, WorkflowNode] = MappingProxyType(_WORKFLOW_NODES)
 
+_FAILURE_DISPOSITIONS = {
+    "auth": "escalate_human",
+    "rate_limit": "escalate_human",
+    "network": "escalate_human",
+    "timeout": "escalate_human",
+    "stream_disconnect": "escalate_human",
+    "infra": "escalate_human",
+    "scaffold": "block",
+    "code_bug": "block",
+    "unknown": "block",
+}
+
+FAILURE_DISPOSITIONS: Mapping[str, str] = MappingProxyType(_FAILURE_DISPOSITIONS)
+
 
 def gate_transition(gate: str) -> GateTransition:
     try:
@@ -134,3 +148,7 @@ def retry_policy_for_node(node: str) -> tuple[int, tuple[str, ...]]:
     if workflow is None:
         return 0, ()
     return workflow.retry_max, workflow.retry_on_classes
+
+
+def disposition_for_failure_class(failure_class: str) -> str:
+    return FAILURE_DISPOSITIONS.get((failure_class or "").strip(), "block")
