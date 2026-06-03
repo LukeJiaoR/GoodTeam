@@ -85,6 +85,12 @@ else
   echo "[dispatch-track] reusing existing worktree: $WORKTREE"
 fi
 
+if [ ! -e "$WORKTREE/.venv" ] && [ ! -L "$WORKTREE/.venv" ]; then
+  echo "[dispatch-track] linking worktree venv bin to main repo venv"
+  mkdir "$WORKTREE/.venv"
+  ln -s "$ROOT/.venv/bin" "$WORKTREE/.venv/bin"
+fi
+
 TRACK="$ROLE:$ADAPTER:$TASK"
 VERIFY_ARG="$ROLE:$VERIFY_CMD"
 
