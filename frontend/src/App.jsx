@@ -240,6 +240,7 @@ export default function App() {
   const [memoryEventDetail, setMemoryEventDetail] = useState(null);
   const [memoryEventBrowsers, setMemoryEventBrowsers] = useState({});
   const memoryBrowseTimers = useRef({});
+  const memoryBrowseRequestSeq = useRef({});
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -518,6 +519,8 @@ export default function App() {
 
   const fetchMemoryEvents = async (roleKey, searchQuery = '') => {
     if (!roleKey || !projectKey) return;
+    const requestSeq = (memoryBrowseRequestSeq.current[roleKey] || 0) + 1;
+    memoryBrowseRequestSeq.current[roleKey] = requestSeq;
 
     setMemoryEventBrowsers((current) => ({
       ...current,
@@ -543,28 +546,34 @@ export default function App() {
       if (!response.ok) {
         throw new Error(payload.error || `Failed to fetch memory events (HTTP ${response.status})`);
       }
-      setMemoryEventBrowsers((current) => ({
-        ...current,
-        [roleKey]: {
-          ...(current[roleKey] || {}),
-          open: true,
-          loading: false,
-          error: null,
-          events: Array.isArray(payload.events) ? payload.events : [],
-        },
-      }));
+      setMemoryEventBrowsers((current) => {
+        if (memoryBrowseRequestSeq.current[roleKey] !== requestSeq) return current;
+        return {
+          ...current,
+          [roleKey]: {
+            ...(current[roleKey] || {}),
+            open: true,
+            loading: false,
+            error: null,
+            events: Array.isArray(payload.events) ? payload.events : [],
+          },
+        };
+      });
     } catch (err) {
       console.error('Error fetching memory events:', err);
-      setMemoryEventBrowsers((current) => ({
-        ...current,
-        [roleKey]: {
-          ...(current[roleKey] || {}),
-          open: true,
-          loading: false,
-          error: err.message,
-          events: [],
-        },
-      }));
+      setMemoryEventBrowsers((current) => {
+        if (memoryBrowseRequestSeq.current[roleKey] !== requestSeq) return current;
+        return {
+          ...current,
+          [roleKey]: {
+            ...(current[roleKey] || {}),
+            open: true,
+            loading: false,
+            error: err.message,
+            events: [],
+          },
+        };
+      });
     }
   };
 
