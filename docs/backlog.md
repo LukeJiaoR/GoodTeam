@@ -198,5 +198,11 @@ readiness/auth hints inline so a user knows before a run whether their pick will
 - **Cross-project memory + grounded citations** — the remainder of Moat #2
   (product-vision §7).
 - **Cleanup (resolved 2026-06-02):** the M2 plan docs are committed (verified git-tracked); the `~/.codex-postreset-*` snapshot was already deleted. Nothing pending here.
-- **Memory event detail is unreachable via UI navigation** (found 2026-06-03, agy UI-test of #14-FE). The supersede chain + event detail render correctly, but there is no way to OPEN an arbitrary memory event's detail from the Memory tab — the `mem:` drill-down only fires on ids that already appear in rendered text (e.g. retrieved-fact bodies); top-level events aren't surfaced as clickable. Add a memory-event list/search panel (or surface a "details/supersede" affordance on the memory cards) so the supersede info is actually reachable. (agy had to force the detail open via React-Fiber injection to verify the render.)
-- **Dispatch `--verify` 127s in fresh worktrees** (found 2026-06-03). `scripts/dispatch-track.sh --verify "...\.venv/bin/python..."` runs from the new worktree, which has no `.venv` → exit 127 → false `needs_human` even when the change is fine (confirmed by running the suite with the main repo's venv). Make verify resilient: point it at the main repo's `.venv`, or create/symlink a venv in the worktree, or detect-and-skip with a clear note. (Currently I re-confirm green manually with the main venv.)
+- ~~**Memory event detail is unreachable via UI navigation**~~ **RESOLVED 2026-06-03 (PR #47).**
+  Added `RoleMemoryStore.list_events` + `GET /api/memory/events` + a per-role "Browse events"
+  search panel in the Memory tab that reuses the existing detail modal (superseded events
+  flagged, kept not dropped). agy finding closed.
+- ~~**Dispatch `--verify` 127s in fresh worktrees**~~ **RESOLVED 2026-06-03 (PR #46).**
+  `scripts/dispatch-track.sh` now idempotently links `$WORKTREE/.venv/bin -> $ROOT/.venv/bin`
+  after worktree setup, so a relative `.venv/bin/python` resolves to the main venv (deps
+  included); `.venv` is gitignored so it cannot leak into a commit. Verified empirically.

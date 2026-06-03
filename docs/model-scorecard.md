@@ -30,15 +30,18 @@
 | 8 | dispatch `--verify .venv/bin/python` 127s in fresh worktrees (no venv) → false `needs_human` | Low | **tooling** — dispatch-track.sh verify path | n/a | Claude | backlog; I re-confirm green with the main venv |
 | 9 | Memory-event detail unreachable via UI nav (no event index; drill-down only on mem: ids in text) | Med | **pre-existing** design gap (not introduced this work) | n/a | agy UI-test | backlog |
 | 10 | `default_debate_dispatch` placeholder returned `[]` (M1b #37) | n/a (scoped) | **not a bug** — intentional placeholder, flagged; real-wiring landed in #39 | codex gpt-5.5 | Claude (live smoke) | — |
+| 11 | Memory-events search: stale debounced response can overwrite newer results (no per-request guard) (#47) | Med | **impl(codex gpt-5.5)** — race-safe handling of debounced async search is standard FE competence; spec said "debounced" but a faithful debounce still needs response-ordering guards | codex gpt-5.5 | pre-review (codex code_review) | FIRST impl-attributed defect this program. Fixed via per-role request guard. Caught by independent pre-review, not Claude-review. |
 
 ## Read-out for model routing (the point of this doc)
 - **codex (gpt-5.5), implementer** — across this program it largely produced what the spec
-  asked; **zero defects attributable to `impl(model)`** (every code defect traced to a
-  spec/process root cause). When re-specced precisely (G1 v2, M1c lint fix, dedup fix) it
+  asked; **1 `impl(model)` defect in ~25 tracks** (row 11: a stale-response race in
+  debounced async search — Med, caught by pre-review), every other code defect traced to a
+  spec/process root cause. When re-specced precisely (G1 v2, M1c lint fix, dedup fix) it
   produced correct code first try. **Signal: reliable for well-specified implementation;
-  output quality tracks spec precision, not model ceiling** → supports the idea that a
-  *cheaper* implementer (e.g. the parked opencode/ds4pro bake-off) could plausibly do the
-  same low/medium-risk tracks, IF specs stay tight and pre-review/CI gate. Verify empirically.
+  output quality tracks spec precision, not model ceiling — but it is NOT defect-free on
+  subtle async/concurrency correctness, so the independent pre-review gate stays load-bearing**
+  → a *cheaper* implementer (e.g. the parked opencode/ds4pro bake-off) could plausibly do the
+  same low/medium-risk tracks IF specs stay tight and pre-review/CI gate. Verify empirically.
 - **agy, UI research + UI testing** — zero defects introduced; accurate file:line research;
   Playwright tests caught/confirmed render behavior + flagged a real nav gap; respected
   read-only every time. **Signal: trust agy for the UI research/test lane.**
