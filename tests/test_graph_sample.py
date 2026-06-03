@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import MappingProxyType
 
 from goodteam_os.graph import (
     advance_approved_workflow,
@@ -17,6 +18,7 @@ from goodteam_os.graph import (
 )
 from goodteam_os.graph import run_adoption_until_next_gate
 from goodteam_os.state import create_initial_state
+from goodteam_os.workflow_table import WorkflowNode
 
 
 def test_worker_blocker_message_includes_failure_class_and_attempts():
@@ -733,6 +735,210 @@ def test_delivery_workflow_blocks_when_qa_result_reports_failure(tmp_path, monke
     assert result.next_node == "blocked"
     assert any("qa worker reported release-blocking failure" in blocker for blocker in result.blockers)
     assert "release_notes" not in result.artifacts
+
+
+def test_delivery_failure_uses_declared_on_error_target(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": "failed",
+            "summary": "failed",
+            "failure_class": "scaffold",
+        }
+
+    monkeypatch.setattr(
+        "goodteam_os.workflow_table.WORKFLOW_NODES",
+        MappingProxyType(
+            {
+                "planner": WorkflowNode(
+                    name="planner",
+                    run_guard_gate="rfc",
+                    runner_fn="run_delivery_until_release_gate",
+                    on_error="failure_triage",
+                ),
+            }
+        ),
+    )
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.current_node == "implementation"
+    assert result.next_node == "failure_triage"
+    assert result.blockers
+
+
+def test_retryable_worker_failure_reruns_then_succeeds_without_blocking(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+    calls_by_role: dict[str, int] = {}
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        role = job["role"]
+        calls_by_role[role] = calls_by_role.get(role, 0) + 1
+        if role == "implementation" and calls_by_role[role] == 1:
+            return {
+                "job_id": job_id,
+                "run_id": job["run_id"],
+                "role": role,
+                "adapter": job["adapter"],
+                "status": "failed",
+                "summary": "transient timeout",
+                "failure_class": "timeout",
+            }
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": role,
+            "adapter": job["adapter"],
+            "status": "completed",
+            "summary": f"{role} completed",
+        }
+
+    monkeypatch.setattr(
+        "goodteam_os.workflow_table.WORKFLOW_NODES",
+        MappingProxyType(
+            {
+                "planner": WorkflowNode(
+                    name="planner",
+                    run_guard_gate="rfc",
+                    runner_fn="run_delivery_until_release_gate",
+                    retry_max=1,
+                    retry_on_classes=("timeout",),
+                ),
+            }
+        ),
+    )
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert calls_by_role["implementation"] == 2
+    assert result.next_node != "blocked"
+    assert not result.blockers
+    assert "release_notes" in result.artifacts
+
+
+def test_retry_exhausted_routes_to_on_error_and_records_blocker(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+    calls_by_role: dict[str, int] = {}
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        role = job["role"]
+        calls_by_role[role] = calls_by_role.get(role, 0) + 1
+        if role == "implementation":
+            return {
+                "job_id": job_id,
+                "run_id": job["run_id"],
+                "role": role,
+                "adapter": job["adapter"],
+                "status": "failed",
+                "summary": "transient timeout",
+                "failure_class": "timeout",
+            }
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": role,
+            "adapter": job["adapter"],
+            "status": "completed",
+            "summary": f"{role} completed",
+        }
+
+    monkeypatch.setattr(
+        "goodteam_os.workflow_table.WORKFLOW_NODES",
+        MappingProxyType(
+            {
+                "planner": WorkflowNode(
+                    name="planner",
+                    run_guard_gate="rfc",
+                    runner_fn="run_delivery_until_release_gate",
+                    on_error="failure_triage",
+                    retry_max=1,
+                    retry_on_classes=("timeout",),
+                ),
+            }
+        ),
+    )
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert calls_by_role["implementation"] == 2
+    assert result.next_node == "failure_triage"
+    assert any("timeout, 2 attempts" in blocker for blocker in result.blockers)
+
+
+def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+    calls_by_role: dict[str, int] = {}
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        role = job["role"]
+        calls_by_role[role] = calls_by_role.get(role, 0) + 1
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": role,
+            "adapter": job["adapter"],
+            "status": "failed" if role == "implementation" else "completed",
+            "summary": f"{role} result",
+            "failure_class": "scaffold" if role == "implementation" else "",
+        }
+
+    monkeypatch.setattr(
+        "goodteam_os.workflow_table.WORKFLOW_NODES",
+        MappingProxyType(
+            {
+                "planner": WorkflowNode(
+                    name="planner",
+                    run_guard_gate="rfc",
+                    runner_fn="run_delivery_until_release_gate",
+                    retry_max=1,
+                    retry_on_classes=("timeout",),
+                ),
+            }
+        ),
+    )
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert calls_by_role["implementation"] == 1
+    assert result.next_node == "blocked"
+    assert any("scaffold" in blocker for blocker in result.blockers)
 
 
 def test_multi_service_delivery_mode_expands_worker_expected_artifacts(tmp_path, monkeypatch):

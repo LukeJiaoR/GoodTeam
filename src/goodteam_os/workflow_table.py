@@ -16,6 +16,10 @@ class WorkflowNode:
     name: str
     run_guard_gate: str
     runner_fn: str
+    on_error: str = "blocked"
+    on_blocked: str = "blocked"
+    retry_max: int = 0
+    retry_on_classes: tuple[str, ...] = ()
 
 
 _GATE_TRANSITIONS = {
@@ -103,3 +107,24 @@ def approved_next_for_gate(gate: str) -> str:
 
 def workflow_node(node: str) -> WorkflowNode | None:
     return WORKFLOW_NODES.get(node)
+
+
+def error_next_for_node(node: str) -> str:
+    workflow = workflow_node(node)
+    if workflow is None:
+        return "blocked"
+    return workflow.on_error
+
+
+def blocked_next_for_node(node: str) -> str:
+    workflow = workflow_node(node)
+    if workflow is None:
+        return "blocked"
+    return workflow.on_blocked
+
+
+def retry_policy_for_node(node: str) -> tuple[int, tuple[str, ...]]:
+    workflow = workflow_node(node)
+    if workflow is None:
+        return 0, ()
+    return workflow.retry_max, workflow.retry_on_classes

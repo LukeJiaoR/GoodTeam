@@ -1,5 +1,7 @@
+import json
 import re
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from goodteam_os.artifacts import ArtifactStore
@@ -10,7 +12,7 @@ from goodteam_os.roles import artifact_contract, context_file_specs, list_role_d
 from goodteam_os.staging import run_staging_backend, staging_backend_enabled
 from goodteam_os.state import AgileDevState, StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
-from goodteam_os.workflow_table import workflow_node
+from goodteam_os.workflow_table import blocked_next_for_node, error_next_for_node, retry_policy_for_node, workflow_node
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -761,7 +763,7 @@ def run_delivery_until_release_gate(
         )
         state.artifacts[artifact_key] = str(path)
 
-    worker_results = run_implementation_workers(state, project_config)
+    worker_results = run_implementation_workers(state, project_config, workspace=workspace)
     failed_workers = [result for result in worker_results if str(result.get("status", "")) != "completed"]
     failed_workers.extend(
         result
@@ -770,7 +772,7 @@ def run_delivery_until_release_gate(
     )
     if failed_workers:
         state.current_node = "implementation"
-        state.next_node = "blocked"
+        state.next_node = error_next_for_node("planner")
         state.blockers.extend(
             worker_blocker_message(result)
             for result in failed_workers
@@ -828,7 +830,7 @@ def run_staging_until_gate(
     if str(staging_result.get("status", "")) != "passed":
         failed_step = str(staging_result.get("failed_step", "") or "deploy")
         state.current_node = "implementation"
-        state.next_node = "blocked"
+        state.next_node = blocked_next_for_node("planner")
         evidence_gap = str(staging_result.get("evidence_gap", "") or "")
         if failed_step == "acceptance" and evidence_gap:
             state.blockers.append(f"staging acceptance failed: {evidence_gap}")
@@ -894,6 +896,9 @@ def resolve_role_adapter(target: dict[str, object], role: str) -> str:
 def run_implementation_workers(
     state: AgileDevState,
     project_config: Path | None = None,
+    *,
+    workspace: Path | None = None,
+    workflow_node_name: str = "planner",
 ) -> list[dict[str, object]]:
     if project_config is None or not project_config.is_file():
         return []
@@ -902,53 +907,134 @@ def run_implementation_workers(
     if runtime_root is None:
         return []
     store = WorkerJobStore(runtime_root)
-    jobs = [
-        store.create_job(
-            run_id=state.run_id,
-            role="ui",
-            adapter=resolve_role_adapter(target, "ui"),
-            model=ui_delivery_worker_model(state),
-            task=ui_delivery_task(state, getattr(state, "delivery_mode", "init_project")),
-            context=worker_context(state),
-            constraints=[
+    retry_max, retry_on_classes = retry_policy_for_node(workflow_node_name)
+    return [
+        run_worker_job_with_retry(
+            store=store,
+            job_spec=job_spec,
+            retry_max=retry_max,
+            retry_on_classes=retry_on_classes,
+            state=state,
+            workspace=workspace,
+        )
+        for job_spec in implementation_worker_job_specs(state, target)
+    ]
+
+
+def implementation_worker_job_specs(state: AgileDevState, target: dict[object, object]) -> list[dict[str, object]]:
+    delivery_mode = getattr(state, "delivery_mode", "init_project")
+    return [
+        {
+            "run_id": state.run_id,
+            "role": "ui",
+            "adapter": resolve_role_adapter(target, "ui"),
+            "model": ui_delivery_worker_model(state),
+            "task": ui_delivery_task(state, delivery_mode),
+            "context": worker_context(state),
+            "constraints": [
                 "Directly implement UI changes in the configured frontend project; do not stop at ui-spec.md.",
                 "Keep generated files inside the configured project runtime root.",
                 "Do not touch real product repositories outside this isolated workspace.",
                 "Do not store secrets.",
                 "Capture browser screenshot evidence when a local frontend can run.",
             ],
-            expected_artifacts=ui_delivery_expected_artifacts(getattr(state, "delivery_mode", "init_project")),
-        ),
-        store.create_job(
-            run_id=state.run_id,
-            role="implementation",
-            adapter=resolve_role_adapter(target, "implementation"),
-            model=worker_model_for_role(state, "implementation"),
-            task=implementation_task(state, getattr(state, "delivery_mode", "init_project")),
-            context=worker_context(state),
-            constraints=[
+            "expected_artifacts": ui_delivery_expected_artifacts(delivery_mode),
+        },
+        {
+            "run_id": state.run_id,
+            "role": "implementation",
+            "adapter": resolve_role_adapter(target, "implementation"),
+            "model": worker_model_for_role(state, "implementation"),
+            "task": implementation_task(state, delivery_mode),
+            "context": worker_context(state),
+            "constraints": [
                 "Keep generated files inside the configured project runtime root.",
                 "Do not touch real product repositories outside this isolated workspace.",
                 "Do not store secrets.",
             ],
-            expected_artifacts=implementation_expected_artifacts(getattr(state, "delivery_mode", "init_project")),
-        ),
-        store.create_job(
-            run_id=state.run_id,
-            role="qa",
-            adapter=resolve_role_adapter(target, "qa"),
-            model=worker_model_for_role(state, "qa"),
-            task=f"Verify the implemented {state.idea} with reproducible commands and record any gaps.",
-            context=worker_context(state),
-            constraints=[
+            "expected_artifacts": implementation_expected_artifacts(delivery_mode),
+        },
+        {
+            "run_id": state.run_id,
+            "role": "qa",
+            "adapter": resolve_role_adapter(target, "qa"),
+            "model": worker_model_for_role(state, "qa"),
+            "task": f"Verify the implemented {state.idea} with reproducible commands and record any gaps.",
+            "context": worker_context(state),
+            "constraints": [
                 "Prefer local deterministic tests.",
                 "Do not require external network services.",
                 "Do not leave long-running dev servers in the foreground; use bounded smoke checks and clean up background processes.",
             ],
-            expected_artifacts=qa_expected_artifacts(getattr(state, "delivery_mode", "init_project")),
-        ),
+            "expected_artifacts": qa_expected_artifacts(delivery_mode),
+        },
     ]
-    return [store.run_job(job["id"]) for job in jobs]
+
+
+def run_worker_job_with_retry(
+    *,
+    store: WorkerJobStore,
+    job_spec: dict[str, object],
+    retry_max: int,
+    retry_on_classes: tuple[str, ...],
+    state: AgileDevState,
+    workspace: Path | None,
+) -> dict[str, object]:
+    attempts = 0
+    attempt_job_ids: list[str] = []
+    retryable_classes = set(retry_on_classes)
+    while True:
+        attempts += 1
+        job = store.create_job(**job_spec)
+        job_id = str(job["id"])
+        attempt_job_ids.append(job_id)
+        result = store.run_job(job_id)
+        result["attempts"] = max(int(result.get("attempts", 0) or 0), attempts)
+        result["attempt_job_ids"] = attempt_job_ids.copy()
+        append_worker_attempt_action(
+            workspace=workspace,
+            state=state,
+            result=result,
+            attempt=attempts,
+        )
+        failure_class = str(result.get("failure_class", "")).strip()
+        if (
+            worker_result_reports_failure(result)
+            and failure_class in retryable_classes
+            and attempts <= retry_max
+        ):
+            continue
+        return result
+
+
+def append_worker_attempt_action(
+    *,
+    workspace: Path | None,
+    state: AgileDevState,
+    result: dict[str, object],
+    attempt: int,
+) -> None:
+    if workspace is None:
+        return
+    action_log = StateStore(workspace).project_state_dir(state.project_key) / "action-log.jsonl"
+    action_log.parent.mkdir(parents=True, exist_ok=True)
+    event = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "run_id": state.run_id,
+        "actor": str(result.get("role", "worker")),
+        "action": "worker_attempt_completed",
+        "gate": "",
+        "decision": "",
+        "before_node": "implementation",
+        "after_node": "implementation" if worker_result_reports_failure(result) else "worker_completed",
+        "artifact": str(result.get("job_id", "")),
+        "artifact_path": str(result.get("result_path", "")),
+        "attempt": str(attempt),
+        "failure_class": str(result.get("failure_class", "")),
+        "status": str(result.get("status", "")),
+    }
+    with action_log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event) + "\n")
 
 
 def ui_delivery_worker_model(state: AgileDevState) -> str:
@@ -984,6 +1070,10 @@ def qa_result_reports_failure(result: dict[str, object]) -> bool:
     if status_line and any(marker in status_line for marker in ["fail", "blocked", "not ready"]):
         return True
     return "release-blocking" in content and any(marker in content for marker in ["fail", "blocked"])
+
+
+def worker_result_reports_failure(result: dict[str, object]) -> bool:
+    return str(result.get("status", "")) != "completed" or qa_result_reports_failure(result)
 
 
 def worker_blocker_message(result: dict[str, object]) -> str:
