@@ -215,3 +215,20 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   `scripts/dispatch-track.sh` now idempotently links `$WORKTREE/.venv/bin -> $ROOT/.venv/bin`
   after worktree setup, so a relative `.venv/bin/python` resolves to the main venv (deps
   included); `.venv` is gitignored so it cannot leak into a commit. Verified empirically.
+- **Dispatch can leave a ZOMBIE job (status=`running`, empty `result.md`, NO completion
+  notification) when the wrapper/worker dies mid-run** (found 2026-06-03; a codex UI-coverage audit
+  job died — `status.json` frozen at `running`, no heartbeat past its last `updated_at`, process
+  gone, `result.md` 0 bytes, and the orchestrator never reported completion/failure). Needs
+  heartbeat-timeout detection + status reconciliation so a dead worker is marked `failed`
+  (not stuck `running`) and surfaced. Until then: re-check `status.json` mtime/process liveness and
+  re-dispatch manually.
+- **`GET /api/memory/cross` has no web UI** (found 2026-06-03, UI-coverage audit). The cross-project
+  retrieval endpoint exists (`web.py` ~5145-5170, `retrieve_cross_project_memory`) but the Memory
+  tab has no search input to call it. Cheapest gap toward a complete web control surface.
+  *(IN PROGRESS — being added to the Memory tab.)*
+- **Web UI is NOT yet a complete control surface for the self-hosting/orchestration loop**
+  (UI-coverage audit, 2026-06-03). The end-user product loop (idea→PRD→RFC→impl→staging→release→
+  retro) is ~90% web-driven; but GoodTeam's own dev/orchestration toolchain
+  (`dispatch-track.sh`, `land-pr.sh`, `graduate-release.sh`, `smoke`) is CLI-only — the §6.2
+  "GoodTeam develops itself from its own UI" endgame. Candidate UI actions: Run-Smoke button
+  (`/api/smoke`), custom-dispatch button, Land-PR action, graduate/tag panel.
