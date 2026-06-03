@@ -222,10 +222,10 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   heartbeat-timeout detection + status reconciliation so a dead worker is marked `failed`
   (not stuck `running`) and surfaced. Until then: re-check `status.json` mtime/process liveness and
   re-dispatch manually.
-- **`GET /api/memory/cross` has no web UI** (found 2026-06-03, UI-coverage audit). The cross-project
-  retrieval endpoint exists (`web.py` ~5145-5170, `retrieve_cross_project_memory`) but the Memory
-  tab has no search input to call it. Cheapest gap toward a complete web control surface.
-  *(IN PROGRESS — being added to the Memory tab.)*
+- ~~**`GET /api/memory/cross` has no web UI**~~ **RESOLVED 2026-06-03 (PR #55).** Added a
+  cross-project search card to the Memory tab (role + query + scope[+k]); scope defaults to "all"
+  → resolves to the actual project-key list to satisfy the endpoint's required non-empty scope;
+  ranked project-qualified hits, race-guarded.
 - **Web UI is NOT yet a complete control surface for the self-hosting/orchestration loop**
   (UI-coverage audit, 2026-06-03). The end-user product loop (idea→PRD→RFC→impl→staging→release→
   retro) is ~90% web-driven; but GoodTeam's own dev/orchestration toolchain
