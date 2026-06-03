@@ -1,6 +1,6 @@
 import json
 
-from goodteam_os.state import StateStore, create_initial_state
+from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 import goodteam_os.telegram as telegram
 from goodteam_os.telegram import (
     TelegramApproval,
@@ -12,9 +12,17 @@ from goodteam_os.telegram import (
 )
 
 
-def write_project_state(tmp_path, *, run_id: str = "run-1", next_node: str = "await_prd_approval"):
+def write_project_state(
+    tmp_path,
+    *,
+    run_id: str = "run-1",
+    next_node: str = "await_prd_approval",
+    approvals: dict[str, ApprovalDecision] | None = None,
+):
     state = create_initial_state(run_id, "CONTENTOPS", "Build AI Content Studio")
     state.next_node = next_node
+    if approvals:
+        state.approvals.update(approvals)
     StateStore(tmp_path).write_project_current(state)
     return state
 
@@ -257,6 +265,50 @@ def test_legacy_callback_rejects_non_actionable_gate(tmp_path, monkeypatch):
             "method": "answerCallbackQuery",
             "params": {
                 "callback_query_id": "callback-non-actionable",
+                "text": "GoodTeam approval ignored; this button is stale or no longer actionable.",
+            },
+        }
+    ]
+
+
+def test_legacy_callback_rejects_already_decided_gate(tmp_path, monkeypatch):
+    decisions = []
+    telegram_requests = []
+    write_project_state(tmp_path, approvals={"prd": ApprovalDecision.APPROVED})
+
+    def fake_decide_approval(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    def fake_telegram_request(token, method, params):
+        telegram_requests.append({"token": token, "method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide_approval)
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        {
+            "callback_query": {
+                "id": "callback-decided",
+                "from": {"id": 111},
+                "data": "gt:CONTENTOPS:run-1:prd:rejected",
+            }
+        },
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "ignored", "reason": "gate not actionable"}
+    assert decisions == []
+    assert telegram_requests == [
+        {
+            "token": "secret-token",
+            "method": "answerCallbackQuery",
+            "params": {
+                "callback_query_id": "callback-decided",
                 "text": "GoodTeam approval ignored; this button is stale or no longer actionable.",
             },
         }

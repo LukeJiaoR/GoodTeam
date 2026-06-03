@@ -939,7 +939,7 @@ def process_telegram_update(
     approval = decode_callback_data(callback_data)
     if project_key and approval.project_key != project_key:
         return {"status": "ignored", "reason": "project mismatch"}
-    from goodteam_os.state import StateStore
+    from goodteam_os.state import ApprovalDecision, StateStore
 
     def ignore_legacy_approval(reason: str) -> dict[str, object]:
         if token and callback_id:
@@ -958,7 +958,10 @@ def process_telegram_update(
         return ignore_legacy_approval("no active run")
     if state.run_id != approval.run_id:
         return ignore_legacy_approval("run mismatch")
-    if approval.gate not in state.approvals or state.next_node != f"await_{approval.gate}_approval":
+    if (
+        str(state.approvals.get(approval.gate, "")) != ApprovalDecision.PENDING
+        or state.next_node != f"await_{approval.gate}_approval"
+    ):
         return ignore_legacy_approval("gate not actionable")
     decide_approval(
         workspace=workspace,
