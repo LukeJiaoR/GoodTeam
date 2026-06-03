@@ -517,7 +517,7 @@ def test_build_approval_reviews_includes_empty_rfc_committee(tmp_path):
 def test_build_approval_reviews_includes_rfc_committee_messages(tmp_path):
     state = create_initial_state("run-1", "GTO", "Build AI Team OS")
     state.next_node = "await_rfc_approval"
-    rfc_message = append_message(
+    challenge = append_message(
         tmp_path,
         "GTO",
         "run-1",
@@ -526,6 +526,17 @@ def test_build_approval_reviews_includes_rfc_committee_messages(tmp_path):
         kind="ask",
         gate="rfc",
         body="Which acceptance test protects this design?",
+    )
+    rebuttal = append_message(
+        tmp_path,
+        "GTO",
+        "run-1",
+        from_role="architect",
+        to=["qa"],
+        kind="assert",
+        gate="rfc",
+        body="The integration test covers the approval transition.",
+        in_reply_to=str(challenge["id"]),
     )
     append_message(
         tmp_path,
@@ -546,16 +557,29 @@ def test_build_approval_reviews_includes_rfc_committee_messages(tmp_path):
         "convened": True,
         "messages": [
             {
+                "id": challenge["id"],
                 "from_role": "qa",
                 "to": ["architect"],
                 "kind": "ask",
                 "gate": "rfc",
                 "body": "Which acceptance test protects this design?",
                 "in_reply_to": "",
+            },
+            {
+                "id": rebuttal["id"],
+                "from_role": "architect",
+                "to": ["qa"],
+                "kind": "assert",
+                "gate": "rfc",
+                "body": "The integration test covers the approval transition.",
+                "in_reply_to": challenge["id"],
             }
         ],
     }
-    assert rfc_message["id"]
+    projected_challenge, projected_rebuttal = rfc_review["committee"]["messages"]
+    assert projected_challenge["id"]
+    assert projected_rebuttal["id"]
+    assert projected_rebuttal["in_reply_to"] == projected_challenge["id"]
 
 
 def test_render_dashboard_renders_markdown_artifact_preview(tmp_path):

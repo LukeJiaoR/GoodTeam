@@ -1250,6 +1250,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
         if advisors:
             messages = [
                 {
+                    "id": str(message.get("id", "")),
                     "from_role": str(message.get("from_role", "")),
                     "to": list(message.get("to", [])) if isinstance(message.get("to", []), list) else [],
                     "kind": str(message.get("kind", "")),
