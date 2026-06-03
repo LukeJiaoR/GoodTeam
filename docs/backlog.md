@@ -202,6 +202,15 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   Added `RoleMemoryStore.list_events` + `GET /api/memory/events` + a per-role "Browse events"
   search panel in the Memory tab that reuses the existing detail modal (superseded events
   flagged, kept not dropped). agy finding closed.
+- **Checkpoint filename collision on node revisit** (found 2026-06-03, D2 research). StateStore
+  checkpoints are keyed by `state.current_node` only (`state.py:68,75`) → revisiting a node in one
+  run overwrites its checkpoint, losing audit history. Must be fixed before any topological/looping
+  driver (D2b) that can revisit nodes; add an attempt/sequence suffix.
+- **Dashboard progress stepper is hardcoded, not table-derived** (found 2026-06-03, D2 research).
+  The stepper uses a hardcoded 13-step node order (`web.py:4040-4057`), NOT `WORKFLOW_NODES`/
+  `GATE_TRANSITIONS`. The new workflow-graph viz (#49/#50) IS table-derived → two differently-sourced
+  views that can desync; any added/reordered node silently fails to render in the stepper. Reconcile
+  to a single source of truth (the table) before adding nodes.
 - ~~**Dispatch `--verify` 127s in fresh worktrees**~~ **RESOLVED 2026-06-03 (PR #46).**
   `scripts/dispatch-track.sh` now idempotently links `$WORKTREE/.venv/bin -> $ROOT/.venv/bin`
   after worktree setup, so a relative `.venv/bin/python` resolves to the main venv (deps
