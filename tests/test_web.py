@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import goodteam_os.web as web
+from goodteam_os.messages import append_message
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
@@ -495,6 +496,66 @@ def test_build_approval_reviews_includes_multi_role_prd_reviewers(tmp_path):
         "Architect",
         "Review / QA",
     ]
+
+
+def test_build_approval_reviews_includes_empty_rfc_committee(tmp_path):
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.next_node = "await_rfc_approval"
+
+    reviews = build_approval_reviews(state, workspace=tmp_path)
+    rfc_review = next(review for review in reviews if review["approval"] == "rfc")
+    prd_review = next(review for review in reviews if review["approval"] == "prd")
+
+    assert rfc_review["committee"] == {
+        "advisors": ["qa"],
+        "convened": False,
+        "messages": [],
+    }
+    assert "committee" not in prd_review
+
+
+def test_build_approval_reviews_includes_rfc_committee_messages(tmp_path):
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.next_node = "await_rfc_approval"
+    rfc_message = append_message(
+        tmp_path,
+        "GTO",
+        "run-1",
+        from_role="qa",
+        to=["architect"],
+        kind="ask",
+        gate="rfc",
+        body="Which acceptance test protects this design?",
+    )
+    append_message(
+        tmp_path,
+        "GTO",
+        "run-1",
+        from_role="product",
+        to=["architect"],
+        kind="ask",
+        gate="prd",
+        body="This message belongs to a different gate.",
+    )
+
+    reviews = build_approval_reviews(state, workspace=tmp_path)
+    rfc_review = next(review for review in reviews if review["approval"] == "rfc")
+
+    assert rfc_review["committee"] == {
+        "advisors": ["qa"],
+        "convened": True,
+        "messages": [
+            {
+                "from_role": "qa",
+                "to": ["architect"],
+                "kind": "ask",
+                "gate": "rfc",
+                "body": "Which acceptance test protects this design?",
+                "in_reply_to": "",
+            }
+        ],
+    }
+    assert rfc_message["id"]
 
 
 def test_render_dashboard_renders_markdown_artifact_preview(tmp_path):

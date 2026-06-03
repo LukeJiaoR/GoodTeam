@@ -35,7 +35,7 @@ from goodteam_os.staging import (
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import send_approval_notification
-from goodteam_os.workflow_table import GATE_TRANSITIONS, WORKFLOW_NODES, approved_next_for_gate
+from goodteam_os.workflow_table import GATE_TRANSITIONS, WORKFLOW_NODES, advisors_for_gate, approved_next_for_gate
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
@@ -1227,7 +1227,7 @@ def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_k
     }
 
 
-def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
+def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Path(".")) -> list[dict[str, object]]:
     if state is None:
         return []
 
@@ -1236,18 +1236,35 @@ def build_approval_reviews(state: AgileDevState | None) -> list[dict[str, str]]:
     for approval, decision in state.approvals.items():
         artifact = approval_artifacts.get(approval, approval)
         artifact_path = state.artifacts.get(artifact, "")
-        reviews.append(
-            {
-                "approval": approval,
-                "decision": str(decision),
-                "is_pending": str(decision) == ApprovalDecision.PENDING,
-                "is_actionable": str(decision) == ApprovalDecision.PENDING and state.next_node == f"await_{approval}_approval",
-                "artifact": artifact,
-                "artifact_path": artifact_path,
-                "content": read_artifact_preview(artifact_path),
-                "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
+        review = {
+            "approval": approval,
+            "decision": str(decision),
+            "is_pending": str(decision) == ApprovalDecision.PENDING,
+            "is_actionable": str(decision) == ApprovalDecision.PENDING and state.next_node == f"await_{approval}_approval",
+            "artifact": artifact,
+            "artifact_path": artifact_path,
+            "content": read_artifact_preview(artifact_path),
+            "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
+        }
+        advisors = advisors_for_gate(approval)
+        if advisors:
+            messages = [
+                {
+                    "from_role": str(message.get("from_role", "")),
+                    "to": list(message.get("to", [])) if isinstance(message.get("to", []), list) else [],
+                    "kind": str(message.get("kind", "")),
+                    "gate": str(message.get("gate", "")),
+                    "body": str(message.get("body", "")),
+                    "in_reply_to": str(message.get("in_reply_to", "")),
+                }
+                for message in read_messages(workspace, state.project_key, state.run_id, gate=approval)
+            ]
+            review["committee"] = {
+                "advisors": list(advisors),
+                "convened": bool(messages),
+                "messages": messages,
             }
-        )
+        reviews.append(review)
     return reviews
 
 
@@ -3473,7 +3490,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           ''' if review["is_actionable"] else ''}
         </article>
         """
-        for review in build_approval_reviews(state)
+        for review in build_approval_reviews(state, workspace=workspace)
     )
     if not approval_review_cards:
         approval_review_cards = '<div class="empty-state">No approval review items available.</div>'
@@ -4201,7 +4218,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     """
 
     # Floated Action Required Alert
-    actionable_reviews = [r for r in build_approval_reviews(state) if r["is_actionable"]]
+    actionable_reviews = [r for r in build_approval_reviews(state, workspace=workspace) if r["is_actionable"]]
     action_required_alert_html = ""
     if actionable_reviews:
         review = actionable_reviews[0]
@@ -5050,7 +5067,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                             "active_run": is_active_run(state),
                             "role_observations": build_role_observations(state),
                             "workflow_steps": build_workflow_steps(state),
-                            "approval_reviews": build_approval_reviews(state),
+                            "approval_reviews": build_approval_reviews(state, workspace=workspace),
                             "action_items": build_action_items(workspace, project_key=project_key),
                             "smoke_run_items": build_smoke_run_items(workspace),
                             "agile_board": build_agile_board(state),

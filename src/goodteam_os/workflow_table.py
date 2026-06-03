@@ -9,6 +9,7 @@ class GateTransition:
     on_approved_next: str
     on_changes_requested: str
     on_rejected: str
+    advisors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ _GATE_TRANSITIONS = {
         on_approved_next="planner",
         on_changes_requested="revise_rfc",
         on_rejected="rejected",
+        advisors=("qa",),
     ),
     "staging": GateTransition(
         gate="staging",
@@ -103,6 +105,10 @@ def gate_transition(gate: str) -> GateTransition:
 
 def approved_next_for_gate(gate: str) -> str:
     return gate_transition(gate).on_approved_next
+
+
+def advisors_for_gate(gate: str) -> tuple[str, ...]:
+    return gate_transition(gate).advisors
 
 
 def workflow_node(node: str) -> WorkflowNode | None:
