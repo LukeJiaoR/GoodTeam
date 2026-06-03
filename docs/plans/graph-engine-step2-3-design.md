@@ -49,12 +49,23 @@ Design for safe concurrency:
 - **Dependency model**: declare the impl-stage as a small DAG — `{ui, implementation}` have no
   edge between them; `qa` depends on both. The driver runs a *level* concurrently, then the
   next level. (Generalizes to advisor/committee nodes later — vision §6.2.)
-- **Isolation**: run each concurrent worker in its **own git worktree** off the project repo
-  (not the shared checkout), then **merge** results back deterministically after the level
-  completes (or, if the team accepts disjoint domains — ui→`frontend/`, impl→`backend/` — gate
-  on a path-domain check via the existing collision-detection and skip the merge). The
-  worktree-per-worker + merge is the robust option; the disjoint-domain assumption is the
-  cheap option but must be enforced, not assumed.
+- **Isolation** — ⚠️ **CORRECTION (2026-06-03):** the original "git worktree per worker" idea
+  is INVALID. The `runtime_root` is NOT a git repo — `resolve_project_runtime_root` (graph.py)
+  just picks a repo dir, nothing `git init`s it, and the codex worker passes
+  `--skip-git-repo-check` precisely because it isn't git. So `git worktree add` is not
+  available. Revised isolation options:
+  - **(a) copy-dir snapshot per worker**: snapshot `runtime_root` → a temp dir per concurrent
+    worker, run the worker there, then copy changed files back (merge). Works without git, but
+    cost scales with runtime_root size (cheap for fresh init_project; expensive for large
+    adopt-existing repos), and the merge-back needs a conflict rule (disjoint-domain or
+    last-write + collision report).
+  - **(b) enforced disjoint domains**: only parallelize workers whose write domains are
+    declared disjoint (ui→`frontend/`, impl→`backend/`), run them in the SHARED root
+    concurrently, and FAIL the level if the post-hoc collision-detection reports any overlap.
+    Cheaper (no copy), but relies on the domain declaration being correct + the workers
+    obeying it.
+  - There is no clean git-worktree option. This materially raises 3b's cost/complexity vs the
+    moderate value (parallelizing ~3 workers saves ~1 worker's runtime). **Reassessment below.**
 - **Aggregation**: the returned `list[dict]` keeps the same shape/order (ui, impl, qa) so
   downstream `format_*_evidence` is unchanged.
 - **Failure**: a level fails closed (qa not run if a builder failed) via the 3a failure edges.
@@ -75,6 +86,19 @@ isolated workspace) before land.
 3. **Do NOT** adopt LangGraph (§1) — and update pyproject's "LangGraph-based" description to
    reflect the in-house engine when 3a/3b land.
 
+## 4a. Reassessment after the git-worktree finding (2026-06-03)
+With git-worktree isolation off the table, 3b's options are copy-dir (costly/conflict-prone)
+or enforced-disjoint-domains (cheaper but assumption-heavy) — both materially more complex
+than first scoped, for **moderate** value (parallelizing 3 workers ≈ saves one worker's wall
+time). **Honest recommendation: DEFER 3b.** Its risk/complexity now clearly outweighs the
+payoff at the current scale (3 fixed workers). 3b becomes worthwhile when the worker set is
+larger/dynamic (the real DAG with advisors/experts — vision §6.2), at which point the
+isolation cost is justified and the design should be revisited with the copy-dir-vs-disjoint
+decision made deliberately. Until then, parallel execution is not worth the workflow-core risk.
+
 ## 5. Backlog seed
-- Implement 3a (declarative failure edges) — safe increment.
-- Implement 3b (parallel worker fan-out with worktree-per-worker isolation + merge) — SUPERVISED.
+- **3a (declarative failure edges)** — safe, additive, autonomous-landable. The recommended
+  near-term graph increment IF graph work is wanted now.
+- **3b (parallel worker fan-out)** — DEFERRED (see §4a): revisit when the worker set is
+  larger/dynamic; decide copy-dir vs enforced-disjoint-domain isolation then (NOT git-worktree
+  — runtime_root isn't git). SUPERVISED.
