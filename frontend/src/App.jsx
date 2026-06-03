@@ -362,6 +362,17 @@ export default function App() {
   const memoryBrowseTimers = useRef({});
   const memoryBrowseRequestSeq = useRef({});
 
+  // Cross-project memory search states
+  const [crossRole, setCrossRole] = useState('implementation');
+  const [crossQuery, setCrossQuery] = useState('');
+  const [crossScope, setCrossScope] = useState('all');
+  const [crossLimit, setCrossLimit] = useState(5);
+  const [crossLoading, setCrossLoading] = useState(false);
+  const [crossError, setCrossError] = useState(null);
+  const [crossResults, setCrossResults] = useState(null);
+  const [allProjectKeys, setAllProjectKeys] = useState([]);
+  const crossSearchRequestSeq = useRef(0);
+
   // Workflow Graph states
   const [graphData, setGraphData] = useState(null);
   const [loadingGraph, setLoadingGraph] = useState(false);
@@ -786,6 +797,81 @@ export default function App() {
       fetchMemory(projectKey);
     }
   }, [activeTab, projectKey]);
+
+  useEffect(() => {
+    if (activeTab === 'memory') {
+      fetch('/api/state')
+        .then((res) => {
+          if (!res.ok) throw new Error('Failed to load project keys');
+          return res.json();
+        })
+        .then((payload) => {
+          if (payload && Array.isArray(payload.project_items)) {
+            const keys = payload.project_items.map((item) => item.project_key).filter(Boolean);
+            setAllProjectKeys(keys);
+          }
+        })
+        .catch((err) => {
+          console.error('Error fetching all project keys:', err);
+        });
+    }
+  }, [activeTab]);
+
+  const handleCrossSearch = async (e) => {
+    if (e) e.preventDefault();
+    if (!crossRole.trim() || !crossQuery.trim()) {
+      setCrossError('Role and query are required.');
+      return;
+    }
+
+    const seq = crossSearchRequestSeq.current + 1;
+    crossSearchRequestSeq.current = seq;
+
+    setCrossLoading(true);
+    setCrossError(null);
+    setCrossResults(null);
+
+    try {
+      let scopeVal = crossScope.trim();
+      if (!scopeVal || scopeVal.toLowerCase() === 'all') {
+        if (allProjectKeys.length > 0) {
+          scopeVal = allProjectKeys.join(',');
+        } else if (projectKey) {
+          scopeVal = projectKey;
+        } else {
+          scopeVal = 'all';
+        }
+      }
+
+      const params = new URLSearchParams({
+        role: crossRole.trim(),
+        q: crossQuery.trim(),
+        scope: scopeVal,
+        k: String(crossLimit),
+      });
+
+      const response = await fetch(`/api/memory/cross?${params.toString()}`);
+      const payload = await response.json().catch(() => ({}));
+
+      if (crossSearchRequestSeq.current !== seq) return;
+
+      if (!response.ok) {
+        throw new Error(payload.error || `Failed to fetch cross-project memory (HTTP ${response.status})`);
+      }
+
+      const results = Array.isArray(payload.results) ? payload.results : [];
+      setCrossResults(results);
+    } catch (err) {
+      if (crossSearchRequestSeq.current === seq) {
+        console.error('Error in cross-project memory search:', err);
+        setCrossError(err.message);
+      }
+    } finally {
+      if (crossSearchRequestSeq.current === seq) {
+        setCrossLoading(false);
+      }
+    }
+  };
 
   useEffect(() => () => {
     Object.values(memoryBrowseTimers.current).forEach((timer) => clearTimeout(timer));
@@ -3394,6 +3480,170 @@ export default function App() {
                   <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Compounding Memory Layer</h2>
                     <p className="text-xs text-[#AFAFAF]">Long-term agent memory horizons and the semantic facts retrieved for the latest worker dispatches.</p>
+                  </div>
+
+                  {/* Cross-project Search Card */}
+                  <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col">
+                    <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
+                      <div className="flex items-center space-x-3">
+                        <Search className="h-5 w-5 text-[#1CB0F6] shrink-0" />
+                        <div>
+                          <span className="text-[10px] font-bold text-[#AFAFAF] uppercase tracking-wider">Search Engine</span>
+                          <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 uppercase tracking-wide mt-0.5">Cross-Project Memory Retrieval</h3>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <form onSubmit={handleCrossSearch} className="p-6 space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                        {/* Role Select/Input */}
+                        <div>
+                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
+                            Agent Role
+                          </label>
+                          <select
+                            value={crossRole}
+                            onChange={(e) => setCrossRole(e.target.value)}
+                            className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2.5 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                          >
+                            <option value="implementation">Implementation</option>
+                            <option value="ui">UI</option>
+                            <option value="qa">QA</option>
+                          </select>
+                        </div>
+
+                        {/* Query Text Input */}
+                        <div className="md:col-span-2">
+                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
+                            Memory Query
+                          </label>
+                          <input
+                            type="text"
+                            value={crossQuery}
+                            onChange={(e) => setCrossQuery(e.target.value)}
+                            placeholder="Enter keywords or semantic query..."
+                            required
+                            className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                          />
+                        </div>
+
+                        {/* Search Button */}
+                        <div>
+                          <button
+                            type="submit"
+                            disabled={crossLoading}
+                            className="w-full bg-[#58CC02] hover:bg-[#4EBA02] disabled:bg-zinc-300 text-white border-2 border-[#3D8B00] px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider shadow-[0_3px_0_#3D8B00] hover:shadow-[0_2px_0_#3D8B00] disabled:shadow-none hover:translate-y-0.5 active:translate-y-1 transition-all flex items-center justify-center gap-1.5 focus:outline-none cursor-pointer"
+                          >
+                            {crossLoading ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Search className="h-4 w-4" />
+                            )}
+                            <span>Search</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Optional Advanced Settings (Scope, Limit) */}
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-dashed border-[#F1F1F1] dark:border-zinc-850">
+                        {/* Scope */}
+                        <div className="md:col-span-3">
+                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
+                            Scope (comma-separated project keys, or 'all')
+                          </label>
+                          <input
+                            type="text"
+                            value={crossScope}
+                            onChange={(e) => setCrossScope(e.target.value)}
+                            placeholder="e.g. all, project-a, project-b"
+                            className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                          />
+                        </div>
+
+                        {/* Limit (k) */}
+                        <div>
+                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
+                            Max Results (k)
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={crossLimit}
+                            onChange={(e) => setCrossLimit(parseInt(e.target.value) || 5)}
+                            className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                          />
+                        </div>
+                      </div>
+                    </form>
+
+                    {/* Results / Error / Loading States */}
+                    {(crossLoading || crossError || crossResults) && (
+                      <div className="border-t-2 border-[#E5E5E5] dark:border-zinc-800 p-6 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-4">
+                        <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">
+                          Cross-Project Search Results
+                        </h4>
+
+                        {crossLoading && (
+                          <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl">
+                            <RefreshCw className="h-4 w-4 animate-spin mr-2 text-[#58CC02]" />
+                            <span>Retrieving memories across projects...</span>
+                          </div>
+                        )}
+
+                        {crossError && (
+                          <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900 p-4 rounded-xl text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-start gap-2">
+                            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                            <span>{crossError}</span>
+                          </div>
+                        )}
+
+                        {!crossLoading && !crossError && crossResults && crossResults.length === 0 && (
+                          <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-xs font-semibold">
+                            no cross-project matches
+                          </div>
+                        )}
+
+                        {!crossLoading && !crossError && crossResults && crossResults.length > 0 && (
+                          <div className="space-y-3">
+                            {crossResults.map((item) => (
+                              <div
+                                key={item.id}
+                                className="w-full text-left border border-zinc-250 dark:border-zinc-850 p-4 rounded-xl space-y-2 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-mono text-[10px] font-bold text-[#3D8B00] dark:text-emerald-400">
+                                    {item.id}
+                                  </span>
+                                  <span className="flex flex-wrap items-center gap-2">
+                                    <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-blue-100 dark:border-blue-900/50">
+                                      {item.horizon || 'event'}
+                                    </span>
+                                    {item.score !== undefined && item.score !== null && (
+                                      <span className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded border border-amber-100 dark:border-amber-900/50 text-[9px] font-extrabold uppercase">
+                                        Score: {typeof item.score === 'number' ? item.score.toFixed(2) : item.score}
+                                      </span>
+                                    )}
+                                    <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-zinc-200 dark:border-zinc-700">
+                                      Project: {item.project_key}
+                                    </span>
+                                  </span>
+                                </div>
+                                <p className="text-xs font-semibold leading-relaxed text-zinc-750 dark:text-zinc-250 whitespace-pre-wrap">
+                                  {item.text || item.body || 'No event body recorded.'}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-zinc-500">
+                                  <span className="font-mono text-zinc-500">{item.timestamp || item.ts}</span>
+                                  {item.source && (
+                                    <span className="font-mono text-zinc-400 truncate max-w-full">{item.source}</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {!state ? (
