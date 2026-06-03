@@ -82,6 +82,24 @@ def event_handle(event: dict[str, object]) -> str:
     return "mem:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
+def test_api_workflow_graph_route_returns_static_graph_and_project_run(tmp_path, monkeypatch):
+    state = create_initial_state("run-graph", "CONTENTOPS", "Build AI Content Studio")
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+    StateStore(tmp_path).write_project_current(state)
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+
+    handler = simulate_get("/api/workflow/graph?project=contentops")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["project_key"] == "CONTENTOPS"
+    assert {"from": "prd", "to": "architect", "type": "approved"} in payload["edges"]
+    assert payload["run"]["run_id"] == "run-graph"
+    assert payload["run"]["current_node"] == "rfc_review_gate"
+    assert payload["run"]["next_node"] == "planner"
+
+
 def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     # 1. Capture the DashboardHandler class
     captured_handler_class = None

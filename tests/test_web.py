@@ -1,12 +1,15 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
-from goodteam_os.state import StateStore, create_initial_state
+import goodteam_os.web as web
+from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
 from goodteam_os.web import (
     build_action_items,
     build_agile_board,
+    build_workflow_graph,
     build_project_overview_items,
     build_role_observations,
     build_approval_reviews,
@@ -30,6 +33,96 @@ from goodteam_os.web import (
     is_active_run,
     start_workflow,
 )
+
+
+def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
+    graph = build_workflow_graph(tmp_path)
+
+    assert graph["project_key"] == ""
+    assert graph["run"] is None
+    assert {
+        "name": "architect",
+        "gate": "prd",
+        "runner": "run_architecture_until_gate",
+        "kind": "stage",
+    } in graph["nodes"]
+    assert {
+        "name": "security",
+        "gate": "security",
+        "runner": "noop_security_gate",
+        "kind": "stage",
+    } in graph["nodes"]
+    assert {"name": "prd", "kind": "gate"} in graph["nodes"]
+    assert {"name": "rejected", "kind": "terminal"} in graph["nodes"]
+    assert {"name": "revise_prd", "kind": "revise"} in graph["nodes"]
+    assert {"name": "product_requirement", "kind": "role"} in graph["nodes"]
+    assert {"from": "prd", "to": "architect", "type": "approved"} in graph["edges"]
+    assert {"from": "prd", "to": "revise_prd", "type": "changes_requested"} in graph["edges"]
+    assert {"from": "prd", "to": "rejected", "type": "rejected"} in graph["edges"]
+    node_names = {node["name"] for node in graph["nodes"]}
+    edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
+    assert edge_endpoints <= node_names
+    assert {node["kind"] for node in graph["nodes"]} <= {"stage", "gate", "terminal", "revise", "role"}
+
+
+def test_build_workflow_graph_includes_active_project_run(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    state.approvals["prd"] = ApprovalDecision.APPROVED
+    StateStore(tmp_path).write_project_current(state)
+
+    graph = build_workflow_graph(tmp_path, project_key="contentops")
+
+    assert graph["project_key"] == "CONTENTOPS"
+    assert graph["run"] == {
+        "run_id": "run-1",
+        "current_node": "prd_review_gate",
+        "next_node": "await_prd_approval",
+        "approvals": {
+            "prd": "approved",
+            "rfc": "pending",
+            "staging": "pending",
+            "security": "pending",
+            "release": "pending",
+        },
+    }
+
+
+def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        web,
+        "GATE_TRANSITIONS",
+        {
+            "qa": SimpleNamespace(
+                gate="qa",
+                on_approved_next="release",
+                on_changes_requested="revise_qa",
+                on_rejected="rejected",
+            )
+        },
+    )
+    monkeypatch.setattr(
+        web,
+        "WORKFLOW_NODES",
+        {
+            "qa_runner": SimpleNamespace(
+                name="qa_runner",
+                run_guard_gate="qa",
+                runner_fn="run_qa_until_gate",
+                on_error="qa_error",
+                on_blocked="qa_blocked",
+            )
+        },
+    )
+
+    graph = build_workflow_graph(tmp_path)
+
+    assert {"from": "qa_runner", "to": "qa_error", "type": "error"} in graph["edges"]
+    assert {"from": "qa_runner", "to": "qa_blocked", "type": "blocked"} in graph["edges"]
+    node_names = {node["name"] for node in graph["nodes"]}
+    edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
+    assert edge_endpoints <= node_names
 
 
 def test_render_dashboard_shows_current_gate():

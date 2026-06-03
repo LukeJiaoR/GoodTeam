@@ -35,7 +35,7 @@ from goodteam_os.staging import (
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import send_approval_notification
-from goodteam_os.workflow_table import approved_next_for_gate
+from goodteam_os.workflow_table import GATE_TRANSITIONS, WORKFLOW_NODES, approved_next_for_gate
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
@@ -460,6 +460,77 @@ def resolve_dashboard_state(workspace: Path, project_key: str = "") -> AgileDevS
     if project_key:
         return store.read_project_current(project_key)
     return store.read_current()
+
+
+def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, object]:
+    key = ""
+    if project_key.strip():
+        try:
+            key = normalize_project_key(project_key)
+        except ValueError:
+            key = ""
+
+    edge_fields = (
+        ("on_approved_next", "approved"),
+        ("on_changes_requested", "changes_requested"),
+        ("on_rejected", "rejected"),
+    )
+    edges: list[dict[str, str]] = []
+    identifiers = set(WORKFLOW_NODES) | set(GATE_TRANSITIONS)
+    for gate, transition in GATE_TRANSITIONS.items():
+        identifiers.add(gate)
+        identifiers.add(transition.gate)
+        for field, edge_type in edge_fields:
+            target = getattr(transition, field, None)
+            if target:
+                edges.append({"from": transition.gate, "to": target, "type": edge_type})
+                identifiers.add(target)
+    for node in WORKFLOW_NODES.values():
+        for field, edge_type in (("on_error", "error"), ("on_blocked", "blocked")):
+            target = getattr(node, field, "")
+            if target:
+                edges.append({"from": node.name, "to": target, "type": edge_type})
+                identifiers.add(node.name)
+                identifiers.add(target)
+
+    nodes = []
+    for identifier in sorted(identifiers):
+        workflow_node = WORKFLOW_NODES.get(identifier)
+        if workflow_node is not None:
+            nodes.append(
+                {
+                    "name": workflow_node.name,
+                    "gate": workflow_node.run_guard_gate,
+                    "runner": workflow_node.runner_fn,
+                    "kind": "stage",
+                }
+            )
+        elif identifier in GATE_TRANSITIONS:
+            nodes.append({"name": identifier, "kind": "gate"})
+        elif identifier in {"rejected", "blocked"}:
+            nodes.append({"name": identifier, "kind": "terminal"})
+        elif identifier.startswith("revise_"):
+            nodes.append({"name": identifier, "kind": "revise"})
+        else:
+            nodes.append({"name": identifier, "kind": "role"})
+
+    run = None
+    if key:
+        state = resolve_dashboard_state(workspace, project_key=key)
+        if is_active_run(state):
+            run = {
+                "run_id": state.run_id,
+                "current_node": state.current_node,
+                "next_node": state.next_node,
+                "approvals": {gate: str(decision) for gate, decision in state.approvals.items()},
+            }
+
+    return {
+        "project_key": key,
+        "nodes": nodes,
+        "edges": edges,
+        "run": run,
+    }
 
 
 def is_active_run(state: AgileDevState | None) -> bool:
@@ -4986,6 +5057,12 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                             "worker_jobs": build_worker_job_items(project_root),
                         }
                     self._send_json(200, res_data)
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path == "/api/workflow/graph":
+                try:
+                    self._send_json(200, build_workflow_graph(workspace, project_key=project_key))
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return
