@@ -2004,7 +2004,10 @@ export default function App() {
                       <AlertTriangle className="h-6 w-6 shrink-0" />
                       <span className="font-bold text-sm">{graphError}</span>
                     </div>
-                  ) : !graphData || !Array.isArray(graphData.nodes) || graphData.nodes.length === 0 ? (
+                  ) : !graphData || (
+                    (Array.isArray(graphData.nodes) ? graphData.nodes : []).length === 0 &&
+                    (Array.isArray(graphData.edges) ? graphData.edges : []).length === 0
+                  ) ? (
                     <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs">
                       No workflow graph nodes or edges recorded for this project yet.
                     </div>
