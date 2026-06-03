@@ -1511,6 +1511,27 @@ def build_memory_overview(project_root: Path | None, project_key: str) -> dict[s
     return {"project_key": project_key, "roles": roles}
 
 
+def build_memory_events(
+    project_root: Path | None,
+    project_key: str,
+    role: str,
+    *,
+    query: str = "",
+    limit: int = 50,
+) -> dict[str, object]:
+    if project_root is None:
+        return {"project_key": project_key, "role": role, "events": []}
+
+    role_store = RoleMemoryStore(project_root)
+    if not role_store.role_root(role).is_dir():
+        return {"project_key": project_key, "role": role, "events": []}
+    return {
+        "project_key": project_key,
+        "role": role,
+        "events": role_store.list_events(role, query=query, limit=limit),
+    }
+
+
 def build_memory_event_detail(project_root: Path | None, event_id: str) -> dict[str, object] | None:
     if project_root is None:
         return None
@@ -4977,6 +4998,32 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     repos = dict(load_project_target(project_config).get("repos", {}))
                     project_root = resolve_project_runtime_root(repos)
                     self._send_json(200, build_memory_overview(project_root, project_key))
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path == "/api/memory/events":
+                try:
+                    role = query.get("role", [""])[0].strip()
+                    memory_query = query.get("q", [""])[0].strip()
+                    if not project_key or not role:
+                        raise ValueError("project and role are required.")
+                    try:
+                        limit = int(query.get("limit", ["50"])[0])
+                    except ValueError:
+                        limit = 50
+                    project_config = _project_config_for_key(workspace, project_key)
+                    repos = dict(load_project_target(project_config).get("repos", {}))
+                    project_root = resolve_project_runtime_root(repos)
+                    self._send_json(
+                        200,
+                        build_memory_events(
+                            project_root,
+                            project_key,
+                            role,
+                            query=memory_query,
+                            limit=limit,
+                        ),
+                    )
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return

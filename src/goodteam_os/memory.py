@@ -344,31 +344,33 @@ class RoleMemoryStore:
             events = [event for event in events if event.get("horizon") in horizons]
         if not events:
             return []
-        vectors = self._embed_events(role_key, events)
-        if vectors is not None:
-            query_vector = self.embedder([query])[0]
-            scored = [(self._cosine(query_vector, vector), event) for vector, event in zip(vectors, events)]
-            candidates = [(score, event) for score, event in scored if score >= COSINE_FLOOR]
-            ranked = sorted(candidates, key=lambda pair: pair[0], reverse=True)
-        else:
-            corpus = [tokenize(str(event.get("text", ""))) for event in events]
-            scores = _bm25_scores(corpus, query_tokens)
-            wanted = set(query_tokens)
-            # Gate relevance on token overlap (BM25 gives terms that appear in every
-            # document a zero/negative IDF, which would drop legitimate matches in a
-            # tiny corpus); use the BM25 score only to rank the overlapping events.
-            candidates = [
-                (score, event)
-                for score, event, doc in zip(scores, events, corpus)
-                if wanted.intersection(doc)
-            ]
-            ranked = sorted(candidates, key=lambda pair: pair[0], reverse=True)
+        ranked = self._rank_events(role_key, query, query_tokens=query_tokens, events=events)
         results: list[dict[str, object]] = []
         for score, event in ranked:
             results.append(self._retrieval_result(float(score), event))
             if len(results) >= top_k:
                 break
         return results
+
+    def list_events(self, role_key, *, query="", limit=50) -> list[dict]:
+        limit_value = min(max(int(limit), 0), 200)
+        if limit_value == 0:
+            return []
+
+        events = self._read_events(str(role_key))
+        if not events:
+            return []
+
+        active_ids = {self._event_id(event) for event in self._active_events(events)}
+        query_text = str(query).strip()
+        if query_text:
+            query_tokens = tokenize(query_text)
+            ranked = self._rank_events(str(role_key), query_text, query_tokens=query_tokens, events=events)
+            selected = [event for _, event in ranked[:limit_value]]
+        else:
+            selected = sorted(events, key=lambda event: str(event.get("timestamp", "")), reverse=True)[:limit_value]
+
+        return [self._browse_result(event, active_ids=active_ids) for event in selected]
 
     def build_pickup_packet(
         self,
@@ -506,6 +508,52 @@ Role: `{role_key}`
             "source": event.get("source", ""),
             "timestamp": event.get("timestamp", ""),
         }
+
+    def _browse_result(self, event: dict[str, object], *, active_ids: set[str]) -> dict[str, object]:
+        event_id = self._event_id(event)
+        text = str(event.get("text", ""))
+        body = text if len(text) <= 240 else text[:237].rstrip() + "..."
+        timestamp = str(event.get("timestamp", ""))
+        return {
+            "id": event_id,
+            "kind": str(event.get("horizon", "")),
+            "horizon": str(event.get("horizon", "")),
+            "role": str(event.get("role_key", "")),
+            "timestamp": timestamp,
+            "ts": timestamp,
+            "body": body,
+            "source": str(event.get("source", "")),
+            "action": str(event.get("action", "")),
+            "is_superseded": event_id not in active_ids,
+        }
+
+    def _rank_events(
+        self,
+        role_key: str,
+        query: str,
+        *,
+        query_tokens: list[str],
+        events: list[dict[str, str]],
+    ) -> list[tuple[float, dict[str, str]]]:
+        vectors = self._embed_events(role_key, events)
+        if vectors is not None:
+            query_vector = self.embedder([query])[0]
+            scored = [(self._cosine(query_vector, vector), event) for vector, event in zip(vectors, events)]
+            candidates = [(score, event) for score, event in scored if score >= COSINE_FLOOR]
+            return sorted(candidates, key=lambda pair: pair[0], reverse=True)
+
+        corpus = [tokenize(str(event.get("text", ""))) for event in events]
+        scores = _bm25_scores(corpus, query_tokens)
+        wanted = set(query_tokens)
+        # Gate relevance on token overlap (BM25 gives terms that appear in every
+        # document a zero/negative IDF, which would drop legitimate matches in a
+        # tiny corpus); use the BM25 score only to rank the overlapping events.
+        candidates = [
+            (score, event)
+            for score, event, doc in zip(scores, events, corpus)
+            if wanted.intersection(doc)
+        ]
+        return sorted(candidates, key=lambda pair: pair[0], reverse=True)
 
     def _embed_events(self, role_key: str, events: list[dict[str, str]]) -> list[list[float]] | None:
         if self.embedder is None:

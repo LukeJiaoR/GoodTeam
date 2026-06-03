@@ -703,3 +703,98 @@ def test_read_memory_index_detects_wal_tamper_and_rebuilds_projection(tmp_path):
     assert "Out-of-band WAL append should force rebuild." in store.memory_path(
         "architect", "short-term"
     ).read_text(encoding="utf-8")
+
+
+def test_list_events_returns_recent_events_newest_first(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    first = store.append_memory_event(
+        "architect",
+        horizon="long-term",
+        text="First browse event.",
+        source="job-first/result.md",
+    )
+    second = store.append_memory_event(
+        "architect",
+        horizon="mid-term",
+        text="Second browse event.",
+        source="job-second/result.md",
+    )
+
+    events = store.list_events("architect", limit=2)
+
+    assert [event["id"] for event in events] == [store._event_id(second), store._event_id(first)]
+    assert events[0]["kind"] == "mid-term"
+    assert events[0]["role"] == "architect"
+    assert events[0]["timestamp"] == second["timestamp"]
+    assert events[0]["ts"] == second["timestamp"]
+    assert events[0]["body"] == "Second browse event."
+    assert events[0]["is_superseded"] is False
+
+
+def test_list_events_query_uses_retrieval_ranking(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.append_memory_event(
+        "implementation",
+        horizon="short-term",
+        text="Search browse event mentions database once.",
+        source="job-one/result.md",
+    )
+    best = store.append_memory_event(
+        "implementation",
+        horizon="short-term",
+        text="Search browse event mentions database and sqlite.",
+        source="job-best/result.md",
+    )
+
+    events = store.list_events("implementation", query="database sqlite", limit=2)
+
+    assert events[0]["id"] == store._event_id(best)
+    assert len(events) == 2
+
+
+def test_list_events_flags_superseded_events_without_dropping_them(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    old_event = store.append_memory_event(
+        "frontend",
+        horizon="mid-term",
+        text="Browse panel uses the old detail route.",
+        source="job-old/result.md",
+    )
+    old_id = store._event_id(old_event)
+    new_event = store.append_memory_event(
+        "frontend",
+        horizon="mid-term",
+        text="Browse panel uses the new detail route.",
+        source="job-new/result.md",
+        supersedes=old_id,
+    )
+
+    events = store.list_events("frontend", limit=10)
+    by_id = {event["id"]: event for event in events}
+
+    assert set(by_id) == {old_id, store._event_id(new_event)}
+    assert by_id[old_id]["is_superseded"] is True
+    assert by_id[store._event_id(new_event)]["is_superseded"] is False
+
+
+def test_list_events_caps_limit(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    for index in range(205):
+        store.append_memory_event(
+            "qa",
+            horizon="short-term",
+            text=f"Browse cap event {index}.",
+            source=f"job-{index}/result.md",
+        )
+
+    events = store.list_events("qa", limit=500)
+
+    assert len(events) == 200
