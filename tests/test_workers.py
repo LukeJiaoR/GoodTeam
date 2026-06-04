@@ -9,6 +9,7 @@ from goodteam_os.workers import (
     WorkerJobStore,
     _claude_summary,
     _codex_summary,
+    _query_codex_models,
     classify_worker_failure,
     discover_installed_agents,
     is_transient,
@@ -1144,6 +1145,71 @@ def test_worker_backend_doctor_accepts_agy_backend(monkeypatch):
     assert report["command"] == "agy"
 
 
+def test_query_codex_models_parses_list_visible_slugs(monkeypatch):
+    calls = []
+
+    def fake_run(command, *, check, capture_output, text, timeout):
+        calls.append(
+            {
+                "command": command,
+                "check": check,
+                "capture_output": capture_output,
+                "text": text,
+                "timeout": timeout,
+            }
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "models": [
+                        {"slug": "gpt-5.5", "visibility": "list"},
+                        {"slug": "hidden-model", "visibility": "hide"},
+                        {"slug": "gpt-5.3-codex", "visibility": "list"},
+                        {"slug": "", "visibility": "list"},
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("goodteam_os.workers.subprocess.run", fake_run)
+
+    assert _query_codex_models("/fake/bin/codex") == ("gpt-5.5", "gpt-5.3-codex")
+    assert calls == [
+        {
+            "command": ["/fake/bin/codex", "debug", "models"],
+            "check": False,
+            "capture_output": True,
+            "text": True,
+            "timeout": 10,
+        }
+    ]
+
+
+def test_query_codex_models_returns_none_on_failures(monkeypatch):
+    def set_run(result_or_exc):
+        def fake_run(command, *, check, capture_output, text, timeout):
+            if isinstance(result_or_exc, BaseException):
+                raise result_or_exc
+            return subprocess.CompletedProcess(command, result_or_exc[0], stdout=result_or_exc[1], stderr="")
+
+        monkeypatch.setattr("goodteam_os.workers.subprocess.run", fake_run)
+
+    set_run((1, '{"models":[{"slug":"gpt-5.5","visibility":"list"}]}'))
+    assert _query_codex_models("/fake/bin/codex") is None
+
+    set_run(subprocess.TimeoutExpired(["codex", "debug", "models"], 10))
+    assert _query_codex_models("/fake/bin/codex") is None
+
+    set_run((0, "{not json"))
+    assert _query_codex_models("/fake/bin/codex") is None
+
+    set_run((0, '{"models":[{"slug":"hidden","visibility":"hide"}]}'))
+    assert _query_codex_models("/fake/bin/codex") is None
+
+
 def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(monkeypatch):
     available_commands = {"codex", "claude", "gemini"}
 
@@ -1165,6 +1231,7 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.delenv("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", raising=False)
     monkeypatch.delenv("AGY_API_KEY", raising=False)
+    monkeypatch.setattr("goodteam_os.workers._query_codex_models", lambda command_path: None)
 
     discovered = discover_installed_agents()
 
@@ -1182,18 +1249,54 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     assert by_backend["codex"]["model_default"] == "gpt-5.3-codex"
     assert "gpt-5.5" in by_backend["codex"]["models"]
     assert "gpt-5.3-codex" in by_backend["codex"]["models"]
+    assert by_backend["codex"]["models_source"] == "static"
     assert by_backend["claude"]["available"] is True
     assert by_backend["claude"]["ready"] is True
     assert by_backend["claude"]["model_default"] == "claude-sonnet-4-6"
     assert "claude-sonnet-4-6" in by_backend["claude"]["models"]
+    assert by_backend["claude"]["models_source"] == "static"
     assert by_backend["gemini"]["available"] is True
     assert by_backend["gemini"]["ready"] is True
     assert by_backend["gemini"]["model_default"] == "auto"
     assert "gemini-2.5-pro" in by_backend["gemini"]["models"]
+    assert by_backend["gemini"]["models_source"] == "static"
     assert by_backend["agy"]["available"] is False
     assert by_backend["agy"]["ready"] is False
     assert by_backend["agy"]["models"] == ["auto"]
     assert by_backend["agy"]["model_default"] == "auto"
+    assert by_backend["agy"]["models_source"] == "static"
+
+
+def test_discover_installed_agents_uses_live_codex_models(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.setenv("CODEX_API_KEY", "codex-secret")
+    monkeypatch.setattr(
+        "goodteam_os.workers._query_codex_models",
+        lambda command_path: ("gpt-live-a", "gpt-live-b", "gpt-live-a"),
+    )
+
+    by_backend = {item["backend"]: item for item in discover_installed_agents()}
+
+    assert by_backend["codex"]["models"] == ["gpt-live-a", "gpt-live-b"]
+    assert by_backend["codex"]["models_source"] == "live"
+    assert by_backend["claude"]["models_source"] == "static"
+    assert "claude-sonnet-4-6" in by_backend["claude"]["models"]
+    assert by_backend["gemini"]["models_source"] == "static"
+    assert "gemini-2.5-pro" in by_backend["gemini"]["models"]
+    assert by_backend["agy"]["models_source"] == "static"
+    assert by_backend["agy"]["models"] == ["auto"]
+
+
+def test_discover_installed_agents_uses_static_codex_models_when_live_query_fails(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.setenv("CODEX_API_KEY", "codex-secret")
+    monkeypatch.setattr("goodteam_os.workers._query_codex_models", lambda command_path: None)
+
+    by_backend = {item["backend"]: item for item in discover_installed_agents()}
+
+    assert "gpt-5.5" in by_backend["codex"]["models"]
+    assert "gpt-5.3-codex" in by_backend["codex"]["models"]
+    assert by_backend["codex"]["models_source"] == "static"
 
 
 def test_agy_build_command_has_no_gemini_only_flags():
