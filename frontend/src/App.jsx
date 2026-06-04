@@ -360,7 +360,7 @@ export default function App() {
   const [actionLoading, setActionLoading] = useState(false);
   const [generatingPrd, setGeneratingPrd] = useState(false);
   const [startingWorkflow, setStartingWorkflow] = useState(false);
-  const [approvingGate, setApprovingGate] = useState(false);
+  const [approvingAction, setApprovingAction] = useState(null);
 
   // Approval review artifact editor state
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
@@ -1211,7 +1211,7 @@ export default function App() {
   };
 
   const handleApproveDecision = async (approvalKey, decision, debateRef = '') => {
-    setApprovingGate(true);
+    setApprovingAction(`${approvalKey}:${decision}`);
     setActionLoading(true);
     try {
       const body = {
@@ -1235,7 +1235,7 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setActionLoading(false);
-      setApprovingGate(false);
+      setApprovingAction(null);
     }
   };
 
@@ -3249,6 +3249,7 @@ export default function App() {
                         const isActionable = review.is_actionable;
                         const isApproved = review.decision === 'approved';
                         const isPending = review.decision === 'pending';
+                        const isApproveLoading = approvingAction === `${review.approval}:approved`;
                         const badge = getBadgeStyle(review.decision);
 
                         const cardBg = isPending 
@@ -3338,17 +3339,17 @@ export default function App() {
                                       e.stopPropagation();
                                       handleApproveDecision(review.approval, 'approved', getResolvingDebateRef(review.approval));
                                     }}
-                                    disabled={actionLoading || approvingGate}
+                                    disabled={actionLoading}
                                     className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
                                   >
-                                    {approvingGate ? (
+                                    {isApproveLoading ? (
                                       <RefreshCw className="h-3 w-3 animate-spin" />
                                     ) : (
                                       <Check className="h-3 w-3" />
                                     )}
-                                    <span>{approvingGate ? 'Approving...' : 'Approve'}</span>
+                                    <span>{isApproveLoading ? 'Approving...' : 'Approve'}</span>
                                   </button>
-                                  {approvingGate && (
+                                  {isApproveLoading && (
                                     <span className="text-[8px] text-zinc-500 mt-1 text-right animate-pulse max-w-[150px] leading-tight">
                                       Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
                                     </span>
@@ -3462,6 +3463,10 @@ export default function App() {
                           const currentDebateRunKey = `${gateDebateProjectKey}:${gateDebateRunId}:${selectedReview.approval}`;
                           const isRunningDebate = debateRun.key === currentDebateRunKey && debateRun.loading;
                           const runDebateError = debateRun.key === currentDebateRunKey ? debateRun.error : '';
+                          const isRejectLoading = approvingAction === `${selectedReview.approval}:rejected`;
+                          const isRequestChangesLoading = approvingAction === `${selectedReview.approval}:changes_requested`;
+                          const isApproveLoading = approvingAction === `${selectedReview.approval}:approved`;
+                          const isSelectedApprovalLoading = isRejectLoading || isRequestChangesLoading || isApproveLoading;
                           return (
                             <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
                               <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
@@ -3605,34 +3610,36 @@ export default function App() {
                                     <button
                                       type="button"
                                       onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
-                                      disabled={actionLoading || approvingGate}
-                                      className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
+                                      disabled={actionLoading}
+                                      className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
                                     >
-                                      Reject
+                                      {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                      <span>{isRejectLoading ? 'Rejecting...' : 'Reject'}</span>
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef)}
-                                      disabled={actionLoading || approvingGate}
-                                      className="bg-white hover:bg-[#FFF0D4] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
+                                      disabled={actionLoading}
+                                      className="bg-white hover:bg-[#FFF0D4] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
                                     >
-                                      Request Changes
+                                      {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                      <span>{isRequestChangesLoading ? 'Requesting...' : 'Request Changes'}</span>
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
-                                      disabled={actionLoading || approvingGate}
+                                      disabled={actionLoading}
                                       className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
                                     >
-                                      {approvingGate ? (
+                                      {isApproveLoading ? (
                                         <RefreshCw className="h-4 w-4 animate-spin" />
                                       ) : (
                                         <Check className="h-4 w-4" />
                                       )}
-                                      <span>{approvingGate ? 'Submitting...' : 'Approve Gate'}</span>
+                                      <span>{isApproveLoading ? 'Submitting...' : 'Approve Gate'}</span>
                                     </button>
                                   </div>
-                                  {approvingGate && (
+                                  {isSelectedApprovalLoading && (
                                     <span className="text-[10px] text-zinc-500 animate-pulse text-right">
                                       Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
                                     </span>
