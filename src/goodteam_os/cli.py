@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from goodteam_os.dispatch import dispatch_tracks, parse_dispatch_track_spec, parse_dispatch_verify_spec
+from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.projects import (
     DELIVERY_MODES,
     WORKER_MODES,
@@ -72,6 +73,14 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--verify", action="append", default=[])
     dispatch.add_argument("--constraints-file", type=Path)
     dispatch.add_argument("--allow-unsafe", action="store_true")
+
+    memory_append = subparsers.add_parser("memory-append")
+    memory_append.add_argument("--project-root", type=Path, required=True)
+    memory_append.add_argument("--role", required=True)
+    memory_append.add_argument("--horizon", required=True)
+    memory_append.add_argument("--text", required=True)
+    memory_append.add_argument("--source", default="")
+    memory_append.add_argument("--supersedes", default="")
 
     tg_poll = subparsers.add_parser("tg-poll")
     tg_poll.add_argument("--workspace", type=Path, default=Path("."))
@@ -161,6 +170,35 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(payload, indent=2))
         return 0 if payload.get("all_ok") else 1
+    if args.command == "memory-append":
+        store = RoleMemoryStore(args.project_root)
+        event_path = store.event_path(args.role)
+        before_count = (
+            sum(1 for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip())
+            if event_path.is_file()
+            else 0
+        )
+        kwargs = {
+            "horizon": args.horizon,
+            "text": args.text,
+            "source": args.source,
+        }
+        if args.supersedes:
+            kwargs["supersedes"] = args.supersedes
+        try:
+            event = store.append_memory_event(args.role, **kwargs)
+        except ValueError as exc:
+            print(f"memory-append: {exc}", file=sys.stderr)
+            return 2
+        after_count = sum(1 for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip())
+        payload = {
+            "status": "ok" if after_count > before_count else "deduped",
+            "role": event["role_key"],
+            "horizon": event["horizon"],
+            "source": event.get("source", ""),
+        }
+        print(json.dumps(payload))
+        return 0
     if args.command == "tg-poll":
         payload = poll_telegram_approvals(workspace=args.workspace, project_key=args.project_key, once=args.once)
         print(json.dumps(payload, indent=2))
