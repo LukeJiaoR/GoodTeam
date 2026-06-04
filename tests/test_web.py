@@ -10,6 +10,7 @@ from goodteam_os.workers import WorkerJobStore
 from goodteam_os.web import (
     build_action_items,
     build_agile_board,
+    build_dev_loop,
     build_workflow_graph,
     build_project_overview_items,
     build_role_observations,
@@ -34,6 +35,108 @@ from goodteam_os.web import (
     is_active_run,
     start_workflow,
 )
+
+
+def test_build_dev_loop_parses_git_worktrees(tmp_path, monkeypatch):
+    git_output = """worktree /repo/main
+HEAD abc1234567890
+branch refs/heads/main
+
+worktree /repo/feature
+HEAD def4567890123
+branch refs/heads/feat/x
+
+"""
+
+    def fake_run(command, **kwargs):
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == web.DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS
+        assert kwargs["check"] is False
+        if command[:3] == ["git", "worktree", "list"]:
+            return SimpleNamespace(returncode=0, stdout=git_output, stderr="")
+        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+
+    dev_loop = build_dev_loop(tmp_path)
+
+    assert dev_loop["worktrees"] == [
+        {"path": "/repo/main", "branch": "main", "head": "abc1234"},
+        {"path": "/repo/feature", "branch": "feat/x", "head": "def4567"},
+    ]
+    assert dev_loop["pull_requests"] == []
+    assert dev_loop["warnings"] == []
+
+
+def test_build_dev_loop_gh_nonzero_degrades_to_warning(tmp_path, monkeypatch):
+    def fake_run(command, **kwargs):
+        if command[:3] == ["git", "worktree", "list"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="not authenticated")
+
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+
+    dev_loop = build_dev_loop(tmp_path)
+
+    assert dev_loop["pull_requests"] == []
+    assert "gh pr list failed" in dev_loop["warnings"]
+
+
+def test_build_dev_loop_pre_reviews_reflect_report_presence(tmp_path, monkeypatch):
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    (report_dir / "pre-review-57-report.md").write_text("ok", encoding="utf-8")
+    monkeypatch.setattr(web, "PRE_REVIEW_REPORT_DIR", report_dir)
+    gh_output = json.dumps(
+        [
+            {
+                "number": 57,
+                "title": "Ready",
+                "headRefName": "feat/ready",
+                "url": "https://github.com/org/repo/pull/57",
+                "statusCheckRollup": [{"conclusion": "SUCCESS", "status": "COMPLETED"}],
+            },
+            {
+                "number": 58,
+                "title": "Waiting",
+                "headRefName": "feat/waiting",
+                "url": "https://github.com/org/repo/pull/58",
+                "statusCheckRollup": [{"status": "IN_PROGRESS"}],
+            },
+        ]
+    )
+
+    def fake_run(command, **kwargs):
+        if command[:3] == ["git", "worktree", "list"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout=gh_output, stderr="")
+
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+
+    dev_loop = build_dev_loop(tmp_path)
+
+    assert dev_loop["pull_requests"] == [
+        {
+            "number": 57,
+            "title": "Ready",
+            "head_branch": "feat/ready",
+            "ci": "pass",
+            "url": "https://github.com/org/repo/pull/57",
+        },
+        {
+            "number": 58,
+            "title": "Waiting",
+            "head_branch": "feat/waiting",
+            "ci": "pending",
+            "url": "https://github.com/org/repo/pull/58",
+        },
+    ]
+    assert dev_loop["pre_reviews"] == [
+        {"pr": 57, "present": True, "report_path": str(report_dir / "pre-review-57-report.md")},
+        {"pr": 58, "present": False, "report_path": str(report_dir / "pre-review-58-report.md")},
+    ]
 
 
 def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
