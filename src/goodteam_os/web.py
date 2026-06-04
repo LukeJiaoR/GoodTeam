@@ -969,10 +969,11 @@ def _dashboard_stepper_table_order() -> list[str]:
     order: list[str] = []
     seen: set[str] = set()
     for gate, transition in GATE_TRANSITIONS.items():
-        if transition.on_approved_next in seen and gate not in seen:
-            continue
         if gate not in seen:
-            order.append(gate)
+            if transition.on_approved_next in seen:
+                order.insert(order.index(transition.on_approved_next), gate)
+            else:
+                order.append(gate)
             seen.add(gate)
         if transition.on_approved_next not in seen:
             order.append(transition.on_approved_next)
@@ -995,6 +996,14 @@ def _dashboard_stepper_node_sequence(steps: list[dict[str, str]]) -> dict[str, i
         approval = step.get("approval")
         if approval:
             sequence[f"await_{approval}_approval"] = index
+    for gate, transition in GATE_TRANSITIONS.items():
+        await_state = f"await_{gate}_approval"
+        if await_state in sequence:
+            continue
+        if gate in sequence:
+            sequence[await_state] = sequence[gate]
+        elif transition.on_approved_next in sequence:
+            sequence[await_state] = sequence[transition.on_approved_next]
     sequence["complete"] = len(steps) + 1
     return sequence
 
