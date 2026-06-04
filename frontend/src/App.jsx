@@ -435,6 +435,57 @@ export default function App() {
   const [devLoopError, setDevLoopError] = useState(null);
   const devLoopRequestSeq = useRef(0);
   const [copiedText, setCopiedText] = useState(null);
+  const [copyFailedText, setCopyFailedText] = useState(null);
+
+  const markLandCommandCopied = (command) => {
+    setCopyFailedText(prev => prev === command ? null : prev);
+    setCopiedText(command);
+    setTimeout(() => {
+      setCopiedText(prev => prev === command ? null : prev);
+    }, 2000);
+  };
+
+  const markLandCommandCopyFailed = (command) => {
+    setCopiedText(prev => prev === command ? null : prev);
+    setCopyFailedText(command);
+    setTimeout(() => {
+      setCopyFailedText(prev => prev === command ? null : prev);
+    }, 2000);
+  };
+
+  const copyLandCommand = (command) => {
+    if (!command) return;
+
+    const clipboard = navigator.clipboard;
+    if (clipboard?.writeText) {
+      clipboard.writeText(command)
+        .then(() => markLandCommandCopied(command))
+        .catch(() => markLandCommandCopyFailed(command));
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = command;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
+      if (copied) {
+        markLandCommandCopied(command);
+      } else {
+        markLandCommandCopyFailed(command);
+      }
+    } catch {
+      markLandCommandCopyFailed(command);
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  };
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -4522,16 +4573,12 @@ export default function App() {
                                     {/* Copy land command button */}
                                     {pr?.land_command && (
                                       <button
-                                        onClick={() => {
-                                          navigator.clipboard.writeText(pr.land_command);
-                                          setCopiedText(pr.land_command);
-                                          setTimeout(() => {
-                                            setCopiedText(prev => prev === pr.land_command ? null : prev);
-                                          }, 2000);
-                                        }}
+                                        onClick={() => copyLandCommand(pr.land_command)}
                                         className={`border-2 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 ${
                                           copiedText === pr.land_command
                                             ? 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30 hover:bg-[#E8F9D9]'
+                                            : copyFailedText === pr.land_command
+                                              ? 'bg-[#FFECEC] text-[#D22F2F] border-[#FF4B4B]/30 hover:bg-[#FFECEC]'
                                             : 'bg-white dark:bg-zinc-850 hover:bg-[#D0F0FF] hover:text-[#0A7BAF] border-[#E5E5E5] dark:border-zinc-800 text-zinc-700 dark:text-zinc-300'
                                         }`}
                                         title={`Copy land command: ${pr.land_command}`}
@@ -4540,6 +4587,11 @@ export default function App() {
                                           <>
                                             <Check className="h-3.5 w-3.5" />
                                             <span className="text-[10px] font-extrabold uppercase">Copied!</span>
+                                          </>
+                                        ) : copyFailedText === pr.land_command ? (
+                                          <>
+                                            <X className="h-3.5 w-3.5" />
+                                            <span className="text-[10px] font-extrabold uppercase">Copy failed</span>
                                           </>
                                         ) : (
                                           <>
