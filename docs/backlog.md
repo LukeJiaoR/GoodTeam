@@ -32,7 +32,16 @@ engine (grounded citations + retrieval), not a separate silo. Ties to the
 "sediment the role chain" charter (the orchestrator/release scripts already capture
 the mechanical half; this captures the document/provenance half).
 
-## Real graph engine: replace the hand-rolled "graph" with a true collaboration DAG  (raised 2026-06-02, charter item — co-equal mainline with the memory engine)
+## 🟡 PARTIAL — Real graph engine: replace the hand-rolled "graph" with a true collaboration DAG  (raised 2026-06-02, charter item — co-equal mainline with the memory engine)
+
+**STATUS 2026-06-04:** LANDED — declarative transition table (#36), D1 declarative failure/blocked
+edges + bounded retry (#48), D2a debate-as-advise-only-committee-at-gate (#51/#52/#53), workflow-graph
+observability endpoint+view (#49/#50). DECISION (committed designs): do NOT adopt LangGraph (in-house
+table+driver; langgraph dep removed #34). DEFERRED with rationale: **D2b** topo driver (nothing
+non-linear to walk yet; prereqs = checkpoint-collision + stepper-desync fixes) and **D3** parallel
+fan-out (runtime_root not git; risk>value at 3 fixed workers) — revisit when the worker set is
+larger/dynamic. langgraph hygiene done.
+
 
 **The uncomfortable fact:** `langgraph>=0.2.0` is in pyproject.toml but
 `src/goodteam_os/` imports it ZERO times. `graph.py` (named "graph") is NOT a
@@ -65,7 +74,14 @@ Moat #1 core, not a bugfix.
   current in-flight work (PRD-real-LLM) wraps. Order memory vs graph-engine when we
   get there.
 
-## code_review role: offload the mechanical pre-review, keep the merge-gate judgement  (raised 2026-06-02, charter item)
+## ✅ RESOLVED 2026-06-02 — code_review role: offload the mechanical pre-review, keep the merge-gate judgement  (raised 2026-06-02, charter item)
+
+**DONE (#34 `scripts/pre-review.sh`).** Independent codex `code_review` pre-review on each PR
+(mechanical report: lane/contract-fields/obvious-bugs/test-sufficiency, file:line) feeds the Claude
+merge-gate judgement; the implementing model never gates its own work. Used on every land this
+session and repeatedly caught real bugs CI was green on (same-origin bypass, save data-loss,
+cross-gate dedup, closure). The judgement+land gate stays human, exactly as the charter prescribed.
+
 
 **Founder:** review feels mechanical, another model could do it. **Half true** —
 split it, because the evidence this session says the judgement half is the only
@@ -97,7 +113,18 @@ the merge-gate judgement stays Claude (or a model that did NOT write the code AN
 holds the intent). This is the "judgement layer automates LAST, only once
 verification is trustworthy" rule from the role-chain charter.
 
-## Self-host the role chain: sediment Claude's manual orchestration into GoodTeam  (raised 2026-06-02, charter item)
+## 🟡 PARTIAL — Self-host the role chain: sediment Claude's manual orchestration into GoodTeam  (raised 2026-06-02, charter item)
+
+**STATUS 2026-06-04 (founder priority: "以自我驱动为先"):** mechanical layers sedimented —
+`dispatch-track.sh` (orchestrator), `pre-review.sh` (code_review mechanical half), `land-pr.sh`
+(release merge/cleanup), `commit-docs.sh` (retro). NOW on GoodTeam's OWN surface: **SA-1** Dev Loop
+observability panel (sees its own worktrees/PRs/CI/pre-reviews, #57/#58) + **SA-2** "Dispatch a
+track" action (starts its own dev work from the dashboard, async + same-origin guard, #59/#60).
+REMAINING: **SA-3** land = surface readiness only, merge stays the HUMAN gate by design (do NOT
+auto-merge from the server — it'd `gh pr merge` + `git checkout/pull` the server's own repo);
+deeper sediment = orchestrator/release as first-class GoodTeam workflow NODES (not just scripts) —
+the §6.2 endgame, larger, gated. Sediment-order hard rule still holds: judgement/auto-land LAST.
+
 
 **Insight:** the steps the planner/reviewer (Claude) performs by hand to ship each
 change ARE GoodTeam's own role chain, still run manually. Every manual round is a
@@ -149,7 +176,15 @@ GoodTeam's 13, never used), not the planner's. Split it:
   PRD → Codex implements → Claude reviews. This also starts exercising GoodTeam's
   `research` role for real (same as we're sedimenting orchestrator/release).
 
-## Agent discovery + per-role agent configuration UI  (raised 2026-06-01)
+## ✅ RESOLVED 2026-06-04 — Agent discovery + per-role agent configuration UI  (raised 2026-06-01)
+
+**DONE (#15 agy backend, Track #4 discovery+config, #63/#65/#64 picker).** Agent discovery
+(`discover_installed_agents`/`GET /api/agents` with readiness) + per-role agent selection for the
+FULL role set + per-agent **model** picker (curated catalog + codex live `codex debug models` +
+"Custom…") + per-role model persistence (`role_model_overrides`). All CLI backends savable. The
+original want is fully delivered. (Remaining nit: agy `--model` reconciliation — see below.)
+
+_Original note (historical):_
 
 **Want:** users should not be stuck with hardcoded agent choices. Two pieces:
 1. **Discover locally-installed AI agents** — scan PATH (and known install dirs)
@@ -185,18 +220,22 @@ readiness/auth hints inline so a user knows before a run whether their pick will
 
 ## Other open follow-ups (smaller)
 
-- **PRD generation is a deterministic template, doesn't use a real LLM** — the
-  `product_requirement` role is mapped to gpt-5.5 in models.yaml but the PRD is
-  produced by a fixed template (zero model call). Decide whether PRD should be
-  LLM-generated for real quality. (Noted 2026-06-01.)
-- **Moat #1 triage / self-correction** — worker failures dead-end into `blocked`
-  with no retry/triage (the 403/token-refresh demo failures, npm 504, etc. eat
-  time). Add failure classification + bounded auto-retry + escalation. The highest-
-  leverage remaining Moat #1 piece (product-vision §6.2).
+- ~~**PRD generation is a deterministic template, doesn't use a real LLM**~~ **RESOLVED 2026-06-04
+  (#62/#61).** Default-flow PRD/RFC now generate via the LLM worker when the role's backend is real
+  (adapter ∉ BUILTIN_WORKER_MODES), with graceful template fallback (fake/not-ready/worker-failure);
+  zero-cred onboarding preserved.
+- **Moat #1 triage / self-correction** — 🟡 **PARTIAL 2026-06-03 (#48 D1, #56 G3a/G3b).** Declarative
+  failure edges + bounded retry (D1) + deterministic classify→route dispositions
+  (escalate_human/block) + failure capture to memory (G3a/G3b) landed. REMAINING (deferred):
+  **G3c** global failure-pattern library (hit-count, §12 north-star) + the **LLM triage agent** for
+  the unknown long tail — both await accumulated failure data + own gates (see items below).
 - **Borrow hcom's edit-collision detection** for dispatch's shared-worktree parallel
-  tracks (see `docs/prior-art-multi-agent-coordination.md`).
-- **Cross-project memory + grounded citations** — the remainder of Moat #2
-  (product-vision §7).
+  tracks (see `docs/prior-art-multi-agent-coordination.md`). *(Still open; not needed yet —
+  parallel tracks use disjoint worktrees, not a shared tree.)*
+- ~~**Cross-project memory + grounded citations**~~ **RESOLVED 2026-06-03 (#45 + #55 + citations).**
+  Read-only cross-project fan-out retrieval (`/api/memory/cross`) + the Memory-tab search UI +
+  grounded `mem:` citations/supersede landed. (Follow-ons — shared index, fact dedup/promotion,
+  read-scope policy — remain, lower priority.)
 - **Cleanup (resolved 2026-06-02):** the M2 plan docs are committed (verified git-tracked); the `~/.codex-postreset-*` snapshot was already deleted. Nothing pending here.
 - ~~**Memory event detail is unreachable via UI navigation**~~ **RESOLVED 2026-06-03 (PR #47).**
   Added `RoleMemoryStore.list_events` + `GET /api/memory/events` + a per-role "Browse events"
