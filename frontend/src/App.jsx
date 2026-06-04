@@ -33,7 +33,8 @@ import {
   Brain,
   MessageSquare,
   Search,
-  GitBranch
+  GitBranch,
+  GitPullRequest
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
 
@@ -378,6 +379,12 @@ export default function App() {
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [graphError, setGraphError] = useState(null);
   const graphRequestSeq = useRef(0);
+
+  // Dev Loop states
+  const [devLoopData, setDevLoopData] = useState(null);
+  const [loadingDevLoop, setLoadingDevLoop] = useState(false);
+  const [devLoopError, setDevLoopError] = useState(null);
+  const devLoopRequestSeq = useRef(0);
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -795,6 +802,42 @@ export default function App() {
   useEffect(() => {
     if (activeTab === 'memory' && projectKey) {
       fetchMemory(projectKey);
+    }
+  }, [activeTab, projectKey]);
+
+  const fetchDevLoop = async (key) => {
+    const seq = devLoopRequestSeq.current + 1;
+    devLoopRequestSeq.current = seq;
+
+    setLoadingDevLoop(true);
+    setDevLoopError(null);
+    try {
+      const url = key ? `/api/devloop?project=${encodeURIComponent(key)}` : '/api/devloop';
+      const response = await fetch(url);
+      const payload = await response.json().catch(() => ({}));
+
+      if (devLoopRequestSeq.current !== seq) return;
+
+      if (!response.ok) {
+        throw new Error(payload.error || `Failed to fetch dev loop (HTTP ${response.status})`);
+      }
+      setDevLoopData(payload);
+    } catch (err) {
+      if (devLoopRequestSeq.current === seq) {
+        console.error('Error fetching dev loop:', err);
+        setDevLoopError(err.message);
+      }
+    } finally {
+      if (devLoopRequestSeq.current === seq) {
+        setLoadingDevLoop(false);
+      }
+    }
+  };
+
+  // Lazy fetch devloop data when the Dev Loop tab is opened
+  useEffect(() => {
+    if (activeTab === 'devloop') {
+      fetchDevLoop(projectKey);
     }
   }, [activeTab, projectKey]);
 
@@ -1862,6 +1905,7 @@ export default function App() {
         <nav className="flex-grow py-4 space-y-1 overflow-y-auto">
           {[
             { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+            { id: 'devloop', label: 'Dev Loop', icon: GitPullRequest },
             { id: 'workflow', label: 'Workflow Graph', icon: GitBranch },
             { id: 'roles', label: 'Roles', icon: Users },
             { id: 'artifacts', label: 'Artifacts', icon: FileCode },
@@ -3875,6 +3919,189 @@ export default function App() {
                         </div>
                         );
                       })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab: Dev Loop */}
+              {activeTab === 'devloop' && (
+                <div className="space-y-6">
+                  {/* Header Section */}
+                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2 flex justify-between items-end flex-wrap gap-2">
+                    <div>
+                      <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Dev Loop</h2>
+                      <p className="text-xs text-[#AFAFAF]">Observability view of in-flight dev loops, including active worktrees, open PRs, CI statuses, and pre-reviews.</p>
+                    </div>
+                    {devLoopData?.generated_at && (
+                      <span className="text-[10px] font-mono font-bold text-[#AFAFAF] uppercase bg-[#F1F1F1] dark:bg-zinc-900 border border-[#E5E5E5] dark:border-zinc-800 px-2 py-0.5 rounded-lg">
+                        Freshness: {formatHumanTime(devLoopData.generated_at)}
+                      </span>
+                    )}
+                  </div>
+
+                  {loadingDevLoop && <Spinner />}
+
+                  {devLoopError && (
+                    <div className="bg-[#FFE2E2] dark:bg-zinc-900 border-2 border-[#FF4B4B]/30 p-4 rounded-xl text-[#EA2B2B] dark:text-[#FF4B4B] text-xs font-semibold flex items-start gap-2 max-w-2xl">
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="font-extrabold uppercase tracking-wide text-[10px]">Error loading Dev Loop status</h4>
+                        <p className="mt-1">{devLoopError}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!loadingDevLoop && !devLoopError && (!devLoopData || (
+                    (!Array.isArray(devLoopData.worktrees) || devLoopData.worktrees.length === 0) &&
+                    (!Array.isArray(devLoopData.pull_requests) || devLoopData.pull_requests.length === 0) &&
+                    (!Array.isArray(devLoopData.warnings) || devLoopData.warnings.length === 0)
+                  )) && (
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 p-12 text-center rounded-2xl text-zinc-550 italic text-xs max-w-2xl">
+                      No active Dev Loop details recorded.
+                    </div>
+                  )}
+
+                  {!loadingDevLoop && !devLoopError && devLoopData && (
+                    <div className="space-y-6 max-w-4xl">
+                      {/* Warnings notice if any warnings exist */}
+                      {Array.isArray(devLoopData.warnings) && devLoopData.warnings.length > 0 && (
+                        <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900/50 p-4 rounded-xl text-amber-700 dark:text-amber-400 text-xs font-semibold space-y-1">
+                          <div className="flex items-center space-x-1.5 text-amber-800 dark:text-amber-300">
+                            <AlertTriangle className="h-4 w-4 shrink-0" />
+                            <span className="font-extrabold uppercase text-[10px] tracking-wider">System Warnings</span>
+                          </div>
+                          <ul className="list-disc pl-5 font-medium space-y-1 mt-1 text-zinc-650 dark:text-zinc-400">
+                            {devLoopData.warnings.map((w, idx) => (
+                              <li key={idx}>{w}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Section 1: Open PRs */}
+                      <div className="space-y-3">
+                        <h3 className="text-xs font-extrabold text-zinc-550 dark:text-zinc-450 uppercase tracking-wider">Open PRs & CI Status</h3>
+                        {Array.isArray(devLoopData.pull_requests) && devLoopData.pull_requests.length > 0 ? (
+                          <div className="grid grid-cols-1 gap-4">
+                            {devLoopData.pull_requests.map((pr, idx) => {
+                              const prNumber = pr?.number;
+
+                              // Join defensively with pre_reviews on pr number
+                              const isPreReviewed = prNumber !== undefined && Array.isArray(devLoopData.pre_reviews) && devLoopData.pre_reviews.some(
+                                (r) => r && r.pr === prNumber && r.present
+                              );
+
+                              // Normalize status
+                              let ciStatus = String(pr?.ci || 'none').toLowerCase().trim();
+                              if (ciStatus === 'pass') ciStatus = 'complete';
+                              if (ciStatus === 'fail') ciStatus = 'failed';
+                              const ciStyle = getBadgeStyle(ciStatus);
+                              const CIIcon = ciStyle.icon;
+
+                              return (
+                                <article
+                                  key={prNumber !== undefined ? prNumber : idx}
+                                  className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] transition-all duration-200 flex flex-col sm:flex-row justify-between sm:items-center gap-4"
+                                >
+                                  <div className="space-y-1.5">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      {prNumber !== undefined && (
+                                        <span className="font-mono text-xs font-bold text-zinc-400">#{prNumber}</span>
+                                      )}
+                                      <h4 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">
+                                        {pr?.title || 'Untitled Pull Request'}
+                                      </h4>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-zinc-500">
+                                      <span className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-650 dark:text-zinc-400 font-mono text-[10px]">
+                                        {pr?.head_branch || 'no branch'}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                    {/* CI badge */}
+                                    <span className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${ciStyle.bg} ${ciStyle.text} ${ciStyle.border}`}>
+                                      <CIIcon className="h-3 w-3 shrink-0" />
+                                      <span>CI: {pr?.ci || 'none'}</span>
+                                    </span>
+
+                                    {/* Pre-reviewed badge */}
+                                    {isPreReviewed && (
+                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border bg-[#D0F0FF] text-[#0A7BAF] border-[#1CB0F6]/30">
+                                        pre-reviewed
+                                      </span>
+                                    )}
+
+                                    {/* External Link */}
+                                    {pr?.url && (
+                                      <a
+                                        href={pr.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="bg-white dark:bg-zinc-850 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer"
+                                        title="View Pull Request on GitHub"
+                                      >
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                      </a>
+                                    )}
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-850 p-6 rounded-2xl text-center text-zinc-400 italic text-xs font-semibold">
+                            No open pull requests.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Section 2: Worktrees */}
+                      <div className="space-y-3">
+                        <h3 className="text-xs font-extrabold text-zinc-550 dark:text-zinc-450 uppercase tracking-wider">Active Worktrees</h3>
+                        {Array.isArray(devLoopData.worktrees) && devLoopData.worktrees.length > 0 ? (
+                          <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden font-semibold text-xs">
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">
+                                    <th className="px-5 py-3">Path</th>
+                                    <th className="px-5 py-3">Branch</th>
+                                    <th className="px-5 py-3">Commit Head</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[#F1F1F1] dark:divide-zinc-900">
+                                  {devLoopData.worktrees.map((wt, idx) => (
+                                    <tr key={idx} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 text-zinc-700 dark:text-zinc-300">
+                                      <td className="px-5 py-3 font-mono text-[11px] truncate max-w-xs" title={wt?.path}>
+                                        <FilePath path={wt?.path} segments={2} />
+                                      </td>
+                                      <td className="px-5 py-3 font-mono text-[11px] text-zinc-800 dark:text-zinc-200 font-bold">
+                                        {wt?.branch || 'no branch'}
+                                      </td>
+                                      <td className="px-5 py-3 font-mono text-[11px]">
+                                        {wt?.head ? (
+                                          <code className="bg-[#F1F1F1] dark:bg-zinc-900 border border-[#E5E5E5] dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-655 dark:text-zinc-400 font-mono text-[10px]">
+                                            {wt.head.slice(0, 7)}
+                                          </code>
+                                        ) : (
+                                          <span className="text-[#AFAFAF] italic">n/a</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-850 p-6 rounded-2xl text-center text-zinc-400 italic text-xs font-semibold">
+                            No active git worktrees.
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
