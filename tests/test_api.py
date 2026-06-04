@@ -873,8 +873,33 @@ def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatc
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     context = payload["start_context"]
-    assert context["worker_backend_options"] == ["fake", "codex", "anthropic", "noop", "human"]
-    assert context["worker_roles"] == ["ui", "implementation", "qa"]
+    assert context["worker_backend_options"] == [
+        "codex",
+        "anthropic",
+        "claude",
+        "gemini",
+        "agy",
+        "antigravity",
+        "fake",
+        "noop",
+        "human",
+    ]
+    assert context["worker_roles"] == [
+        "orchestrator",
+        "research",
+        "product_requirement",
+        "architect",
+        "review",
+        "planner",
+        "ui",
+        "implementation",
+        "frontend",
+        "backend",
+        "qa",
+        "code_review",
+        "release",
+        "retro_memory",
+    ]
 
 
 def test_api_state_reads_runtime_root_when_context_packet_path_empty(tmp_path, monkeypatch):
@@ -988,17 +1013,57 @@ workers:
         {
             "project": "REAL",
             "worker_backend_mode": "codex",
-            "workers": {"implementation": "anthropic", "qa": "codex"},
+            "workers": {
+                "product_requirement": "anthropic",
+                "architect": "claude",
+                "planner": "gemini",
+                "ui": "antigravity",
+                "implementation": "agy",
+                "qa": "codex",
+            },
+            "role_models": {
+                "architect": "claude-sonnet-4-6",
+                "implementation": "gemini-2.5-pro",
+                "qa": "default",
+            },
         }
     )
 
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert payload["ok"] is True
-    assert payload["role_worker_backends"] == {"implementation": "anthropic", "qa": "codex"}
-    assert set(payload["worker_backends_preflight"]) == {"anthropic", "codex"}
+    assert payload["role_worker_backends"] == {
+        "product_requirement": "anthropic",
+        "architect": "claude",
+        "planner": "gemini",
+        "ui": "antigravity",
+        "implementation": "agy",
+        "qa": "codex",
+    }
+    assert payload["role_model_overrides"] == {
+        "architect": "claude-sonnet-4-6",
+        "implementation": "gemini-2.5-pro",
+    }
+    assert set(payload["worker_backends_preflight"]) == {
+        "codex",
+        "anthropic",
+        "claude",
+        "gemini",
+        "agy",
+        "antigravity",
+    }
     assert "mode: codex" in config.read_text(encoding="utf-8")
-    assert "  implementation: anthropic" in config.read_text(encoding="utf-8")
+    assert "  product_requirement: anthropic" in config.read_text(encoding="utf-8")
+    assert "  architect: claude" in config.read_text(encoding="utf-8")
+    assert "  planner: gemini" in config.read_text(encoding="utf-8")
+    assert "  ui: antigravity" in config.read_text(encoding="utf-8")
+    assert "  implementation: agy" in config.read_text(encoding="utf-8")
+    assert "  qa: codex" in config.read_text(encoding="utf-8")
+    content = config.read_text(encoding="utf-8")
+    role_model_block = content.split("role_model_overrides:\n", 1)[1]
+    assert "  architect: claude-sonnet-4-6" in role_model_block
+    assert "  implementation: gemini-2.5-pro" in role_model_block
+    assert "  qa:" not in role_model_block
 
     invalid = simulate_post(
         {
@@ -1100,6 +1165,8 @@ def test_api_agents_returns_discovered_agents(tmp_path, monkeypatch):
                 "command": "claude",
                 "command_path": "/fake/bin/claude",
                 "hint": "ready",
+                "models": ["claude-sonnet-4-6", "claude-opus-4-5"],
+                "model_default": "claude-sonnet-4-6",
             }
         ],
     )
@@ -1118,6 +1185,8 @@ def test_api_agents_returns_discovered_agents(tmp_path, monkeypatch):
                 "command": "claude",
                 "command_path": "/fake/bin/claude",
                 "hint": "ready",
+                "models": ["claude-sonnet-4-6", "claude-opus-4-5"],
+                "model_default": "claude-sonnet-4-6",
             }
         ]
     }
