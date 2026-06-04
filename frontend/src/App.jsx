@@ -323,6 +323,19 @@ export default function App() {
   const [startMode, setStartMode] = useState('existing_project'); // existing_project or new_project
   const [dryRun, setDryRun] = useState(true);
 
+  // Dispatch track form states
+  const [dispatchName, setDispatchName] = useState('');
+  const [dispatchRole, setDispatchRole] = useState('backend');
+  const [dispatchCustomRole, setDispatchCustomRole] = useState('');
+  const [dispatchAdapter, setDispatchAdapter] = useState('codex');
+  const [dispatchCustomAdapter, setDispatchCustomAdapter] = useState('');
+  const [dispatchTask, setDispatchTask] = useState('');
+  const [dispatchConstraints, setDispatchConstraints] = useState('');
+  const [dispatchVerify, setDispatchVerify] = useState('');
+  const [dispatchLoading, setDispatchLoading] = useState(false);
+  const [dispatchError, setDispatchError] = useState(null);
+  const [dispatchSuccess, setDispatchSuccess] = useState(null);
+
   // Adapter states
   const [planeApiHost, setPlaneApiHost] = useState('https://api.plane.so/');
   const [planeWorkspaceSlug, setPlaneWorkspaceSlug] = useState('');
@@ -1106,6 +1119,90 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleDispatchTrack = async (e) => {
+    if (e && e.preventDefault) {
+      e.preventDefault();
+    }
+    if (!dispatchName.trim()) {
+      setDispatchError('Track name is required');
+      return;
+    }
+    if (!dispatchTask.trim()) {
+      setDispatchError('Task description is required');
+      return;
+    }
+
+    const finalRole = dispatchRole === 'custom' ? dispatchCustomRole.trim() : dispatchRole;
+    if (!finalRole) {
+      setDispatchError('Role is required');
+      return;
+    }
+
+    const finalAdapter = dispatchAdapter === 'custom' ? dispatchCustomAdapter.trim() : dispatchAdapter;
+    if (!finalAdapter) {
+      setDispatchError('Adapter is required');
+      return;
+    }
+
+    setDispatchLoading(true);
+    setDispatchError(null);
+    setDispatchSuccess(null);
+
+    try {
+      const body = {
+        name: dispatchName.trim(),
+        role: finalRole,
+        adapter: finalAdapter,
+        task: dispatchTask.trim(),
+      };
+      if (dispatchConstraints.trim()) {
+        body.constraints = dispatchConstraints.trim();
+      }
+      if (dispatchVerify.trim()) {
+        body.verify = dispatchVerify.trim();
+      }
+
+      const response = await fetch('/api/dispatch-track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const res = await response.json();
+      if (!response.ok) {
+        throw new Error(res.error || 'Failed to dispatch track');
+      }
+
+      // Safeguard response shape
+      const successData = {
+        run_id: res?.run_id || '',
+        name: res?.name || '',
+        branch: res?.branch || '',
+        worktree: res?.worktree || '',
+        status: res?.status || 'started',
+      };
+      setDispatchSuccess(successData);
+
+      // Clear form on success
+      setDispatchName('');
+      setDispatchTask('');
+      setDispatchConstraints('');
+      setDispatchVerify('');
+      setDispatchCustomRole('');
+      setDispatchCustomAdapter('');
+
+      showToast('Track dispatched successfully!');
+
+      // Refresh the Dev Loop panel
+      fetchDevLoop(projectKey);
+    } catch (err) {
+      setDispatchError(err.message);
+      showToast(err.message, true);
+    } finally {
+      setDispatchLoading(false);
     }
   };
 
@@ -3940,6 +4037,10 @@ export default function App() {
                     )}
                   </div>
 
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                    {/* Left/Main Column: Observability lists (PRs, Worktrees, Warnings) */}
+                    <div className="lg:col-span-2 space-y-6">
+
                   {loadingDevLoop && <Spinner />}
 
                   {devLoopError && (
@@ -4104,6 +4205,167 @@ export default function App() {
                       </div>
                     </div>
                   )}
+                    </div> {/* closes lg:col-span-2 */}
+
+                    {/* Right Column: Dispatch form card */}
+                    <div className="lg:col-span-1">
+                      <div className="bg-white dark:bg-zinc-955 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-5 rounded-2xl space-y-4">
+                        <div className="border-b border-[#F1F1F1] dark:border-zinc-900 pb-2">
+                          <h3 className="font-extrabold text-sm text-zinc-855 dark:text-zinc-200">Dispatch a Track</h3>
+                          <p className="text-[11px] text-[#AFAFAF] mt-0.5">Start a new parallel development track.</p>
+                        </div>
+
+                        {dispatchSuccess && (
+                          <div className="bg-[#E8F9D9] dark:bg-zinc-900 border-2 border-[#58CC02]/30 p-3 rounded-xl text-[#3D8B00] dark:text-[#58CC02] text-xs font-semibold space-y-1">
+                            <div className="flex items-center gap-1 font-bold">
+                              <CheckCircle className="h-4 w-4 shrink-0" />
+                              <span>Track started asynchronously!</span>
+                            </div>
+                            <ul className="list-disc pl-4 font-mono text-[10px] space-y-0.5 mt-1">
+                              <li>Run ID: {dispatchSuccess.run_id}</li>
+                              <li>Branch: {dispatchSuccess.branch}</li>
+                              <li>Worktree: {dispatchSuccess.worktree}</li>
+                            </ul>
+                          </div>
+                        )}
+
+                        {dispatchError && (
+                          <div className="bg-[#FFE2E2] dark:bg-zinc-900 border-2 border-[#FF4B4B]/30 p-3 rounded-xl text-[#EA2B2B] dark:text-[#FF4B4B] text-xs font-semibold flex items-start gap-1.5">
+                            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                            <div className="break-all">{dispatchError}</div>
+                          </div>
+                        )}
+
+                        <form onSubmit={handleDispatchTrack} className="space-y-3.5 text-xs font-semibold">
+                          <div>
+                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Track Name</label>
+                            <input
+                              type="text"
+                              value={dispatchName}
+                              onChange={(e) => setDispatchName(e.target.value)}
+                              placeholder="e.g. feat-login-page"
+                              disabled={dispatchLoading}
+                              className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Role</label>
+                              <select
+                                value={dispatchRole}
+                                onChange={(e) => setDispatchRole(e.target.value)}
+                                disabled={dispatchLoading}
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#58CC02] transition-colors"
+                              >
+                                {['backend', 'frontend', ...workerRoles.filter(r => r !== 'backend' && r !== 'frontend')].map((role) => (
+                                  <option key={role} value={role}>{role}</option>
+                                ))}
+                                <option value="custom">Custom...</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Adapter</label>
+                              <select
+                                value={dispatchAdapter}
+                                onChange={(e) => setDispatchAdapter(e.target.value)}
+                                disabled={dispatchLoading}
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#58CC02] transition-colors"
+                              >
+                                {roleBackendOptions.map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt === 'codex' ? 'Codex CLI' : opt === 'anthropic' || opt === 'claude' ? 'Claude CLI' : opt}
+                                  </option>
+                                ))}
+                                <option value="custom">Custom...</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {dispatchRole === 'custom' && (
+                            <div>
+                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Custom Role Name</label>
+                              <input
+                                type="text"
+                                value={dispatchCustomRole}
+                                onChange={(e) => setDispatchCustomRole(e.target.value)}
+                                placeholder="e.g. backend_audit"
+                                disabled={dispatchLoading}
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                              />
+                            </div>
+                          )}
+
+                          {dispatchAdapter === 'custom' && (
+                            <div>
+                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Custom Adapter Name</label>
+                              <input
+                                type="text"
+                                value={dispatchCustomAdapter}
+                                onChange={(e) => setDispatchCustomAdapter(e.target.value)}
+                                placeholder="e.g. openai"
+                                disabled={dispatchLoading}
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                              />
+                            </div>
+                          )}
+
+                          <div>
+                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Task Details</label>
+                            <textarea
+                              value={dispatchTask}
+                              onChange={(e) => setDispatchTask(e.target.value)}
+                              placeholder="Describe the task for this worker..."
+                              disabled={dispatchLoading}
+                              className="w-full h-24 bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Constraints (Optional)</label>
+                            <textarea
+                              value={dispatchConstraints}
+                              onChange={(e) => setDispatchConstraints(e.target.value)}
+                              placeholder="Optional constraints to restrict the worker..."
+                              disabled={dispatchLoading}
+                              className="w-full h-16 bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Verification Command (Optional)</label>
+                            <input
+                              type="text"
+                              value={dispatchVerify}
+                              onChange={(e) => setDispatchVerify(e.target.value)}
+                              placeholder="e.g. npm run test"
+                              disabled={dispatchLoading}
+                              className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                            />
+                          </div>
+
+                          <button
+                            type="submit"
+                            disabled={dispatchLoading}
+                            className="w-full bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_4px_0_#3D8B00] text-white font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {dispatchLoading ? (
+                              <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                <span>Dispatching...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Play className="h-3.5 w-3.5 fill-current" />
+                                <span>Dispatch Track</span>
+                              </>
+                            )}
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
