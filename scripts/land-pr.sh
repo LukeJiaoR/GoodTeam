@@ -61,8 +61,22 @@ echo "[land] squash-merging PR #$PR ..."
 gh pr merge "$PR" --squash --delete-branch
 
 echo "[land] syncing main ..."
+MAIN_STASH_CREATED=0
+if ! git diff --quiet --ignore-submodules || ! git diff --cached --quiet --ignore-submodules; then
+  echo "[land] stashing local tracked changes before syncing main ..."
+  git stash push -m "land-pr.sh: local tracked edits before syncing main for PR #$PR"
+  MAIN_STASH_CREATED=1
+fi
 git checkout main
 git pull --ff-only
+if [ "$MAIN_STASH_CREATED" = 1 ]; then
+  echo "[land] restoring stashed local tracked changes ..."
+  if ! git stash pop; then
+    echo "[land] stash pop had conflicts while restoring local tracked changes." >&2
+    echo "[land] Resolve the conflicts, then run 'git stash drop' only after confirming the local edits are restored." >&2
+    exit 1
+  fi
+fi
 
 if [ "$RUN_TEST" = 1 ]; then
   echo "[land] post-merge sanity: pytest ..."
