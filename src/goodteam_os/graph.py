@@ -19,7 +19,7 @@ from goodteam_os.workflow_table import (
     retry_policy_for_node,
     workflow_node,
 )
-from goodteam_os.workers import WorkerJobStore
+from goodteam_os.workers import BUILTIN_WORKER_MODES, WorkerJobStore
 
 
 DELIVERY_MODE_STANDARDS = {
@@ -741,11 +741,23 @@ def run_architecture_until_gate(
     project_config: Path | None = None,
 ) -> AgileDevState:
     store = ArtifactStore(root=workspace)
+    content = render_downstream_artifact_markdown("rfc", state, project_config)
+    if should_generate_artifact_with_worker(project_config, "architect"):
+        worker_content = generate_artifact_via_worker(
+            state=state,
+            workspace=workspace,
+            project_config=project_config,
+            role="architect",
+            artifact_key="rfc",
+            task_text=rfc_worker_task(state),
+        )
+        if worker_content is not None:
+            content = worker_content
     rfc_path = store.write_markdown(
         state.run_id,
         "rfc",
         "rfc.md",
-        render_downstream_artifact_markdown("rfc", state, project_config),
+        content,
     )
     state.artifacts["rfc"] = str(rfc_path)
     state.approvals["rfc"] = state.approvals.get("rfc", "pending")
@@ -1400,11 +1412,23 @@ def run_until_next_gate(
     project_config: Path | None = None,
 ) -> AgileDevState:
     store = ArtifactStore(root=workspace)
+    content = render_prd_markdown(state, project_config)
+    if should_generate_artifact_with_worker(project_config, "product_requirement"):
+        worker_content = generate_artifact_via_worker(
+            state=state,
+            workspace=workspace,
+            project_config=project_config,
+            role="product_requirement",
+            artifact_key="prd",
+            task_text=prd_worker_task(state),
+        )
+        if worker_content is not None:
+            content = worker_content
     prd_path = store.write_markdown(
         state.run_id,
         "prd",
         "prd.md",
-        render_prd_markdown(state, project_config),
+        content,
     )
     state.artifacts["prd"] = str(prd_path)
     state.current_node = "prd_review_gate"
@@ -1428,6 +1452,83 @@ def _project_config_for_key(workspace: Path, project_key: str) -> Path | None:
     return None
 
 
+def should_generate_artifact_with_worker(project_config: Path | None, role: str) -> bool:
+    if project_config is None or not project_config.is_file():
+        return False
+    target = load_project_target(project_config)
+    adapter = resolve_role_adapter(target, role)
+    return adapter not in BUILTIN_WORKER_MODES
+
+
+def prd_worker_task(state: AgileDevState) -> str:
+    return (
+        "Write a complete PRD for the following product idea: "
+        f"{state.idea}. Cover: intent/why, users & value, V1 scope, non-goals, acceptance criteria, "
+        "risks & open questions. Ground it in the project context provided. "
+        "Output the PRD as markdown only - no preamble."
+    )
+
+
+def rfc_worker_task(state: AgileDevState) -> str:
+    return (
+        "Write a complete RFC / technical design for: "
+        f"{state.idea}, grounded in the approved PRD and project context (see artifacts). "
+        "Cover architecture, data model, API contract, migration/rollback, testing strategy, risks. "
+        "Output markdown only."
+    )
+
+
+def generate_artifact_via_worker(
+    *,
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None,
+    role: str,
+    artifact_key: str,
+    task_text: str,
+    failure_status: dict[str, object] | None = None,
+) -> str | None:
+    if project_config is None or not project_config.is_file():
+        return None
+    try:
+        target = load_project_target(project_config)
+        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        if runtime_root is None:
+            return None
+
+        store = WorkerJobStore(runtime_root)
+        job = store.create_job(
+            run_id=state.run_id,
+            role=role,
+            adapter=resolve_role_adapter(target, role),
+            model=worker_model_for_role(state, role),
+            task=task_text,
+            context=worker_context(state),
+            constraints=[
+                "Output markdown only.",
+                "Ground the artifact in the provided project context.",
+                f"Do not include preamble text outside the {artifact_key.upper()} content.",
+            ],
+            expected_artifacts=[_artifact_filename(artifact_key)],
+        )
+        status = store.run_job(str(job["id"]))
+        if str(status.get("status", "")) != "completed":
+            if failure_status is not None:
+                failure_status.update(status)
+            return None
+
+        result_path = Path(str(status.get("result_path", ""))).expanduser()
+        if not result_path.is_file():
+            result_path = store.root / str(job["id"]) / "result.md"
+        if not result_path.is_file():
+            return None
+        return result_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        if failure_status is not None:
+            failure_status.update({"status": "failed", "summary": str(exc)})
+        return None
+
+
 def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
@@ -1442,44 +1543,25 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
         raise ValueError(f"Project config not found for project: {key}")
 
     target = load_project_target(project_config)
-    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
-    if runtime_root is None:
+    if resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
         raise ValueError(f"Project runtime root not found for project: {key}")
 
-    store = WorkerJobStore(runtime_root)
-    job = store.create_job(
-        run_id=state.run_id,
+    failure_status: dict[str, object] = {}
+    content = generate_artifact_via_worker(
+        state=state,
+        workspace=workspace,
+        project_config=project_config,
         role="product_requirement",
-        adapter=resolve_role_adapter(target, "product_requirement"),
-        model=worker_model_for_role(state, "product_requirement"),
-        task=(
-            "Write a complete PRD for the following product idea: "
-            f"{state.idea}. Cover: intent/why, users & value, V1 scope, non-goals, acceptance criteria, "
-            "risks & open questions. Ground it in the project context provided. "
-            "Output the PRD as markdown only - no preamble."
-        ),
-        context=worker_context(state),
-        constraints=[
-            "Output markdown only.",
-            "Ground requirements in the provided project context.",
-            "Do not include preamble text outside the PRD content.",
-        ],
-        expected_artifacts=["prd.md"],
+        artifact_key="prd",
+        task_text=prd_worker_task(state),
+        failure_status=failure_status,
     )
-    status = store.run_job(str(job["id"]))
-    if str(status.get("status", "")) != "completed":
-        summary = str(status.get("summary", "") or "product_requirement worker failed")
-        failure_class = str(status.get("failure_class", "")).strip()
+    if content is None:
+        summary = str(failure_status.get("summary", "") or "product_requirement worker failed")
+        failure_class = str(failure_status.get("failure_class", "")).strip()
         if failure_class:
             raise RuntimeError(f"product_requirement worker failed [{failure_class}]: {summary}")
         raise RuntimeError(f"product_requirement worker failed: {summary}")
-
-    result_path = Path(str(status.get("result_path", ""))).expanduser()
-    if not result_path.is_file():
-        result_path = store.root / str(job["id"]) / "result.md"
-    if not result_path.is_file():
-        raise RuntimeError("product_requirement worker completed without a result.md output")
-    content = result_path.read_text(encoding="utf-8")
 
     artifact_store = ArtifactStore(root=workspace)
     prd_path = artifact_store.write_markdown(state.run_id, "prd", "prd.md", content)
@@ -1505,44 +1587,25 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
         raise ValueError(f"Project config not found for project: {key}")
 
     target = load_project_target(project_config)
-    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
-    if runtime_root is None:
+    if resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
         raise ValueError(f"Project runtime root not found for project: {key}")
 
-    store = WorkerJobStore(runtime_root)
-    job = store.create_job(
-        run_id=state.run_id,
+    failure_status: dict[str, object] = {}
+    content = generate_artifact_via_worker(
+        state=state,
+        workspace=workspace,
+        project_config=project_config,
         role="architect",
-        adapter=resolve_role_adapter(target, "architect"),
-        model=worker_model_for_role(state, "architect"),
-        task=(
-            "Write a complete RFC / technical design for: "
-            f"{state.idea}, grounded in the approved PRD and project context (see artifacts). "
-            "Cover architecture, data model, API contract, migration/rollback, testing strategy, risks. "
-            "Output markdown only."
-        ),
-        context=worker_context(state),
-        constraints=[
-            "Output markdown only.",
-            "Ground architecture in the approved PRD and provided project context.",
-            "Do not include preamble text outside the RFC content.",
-        ],
-        expected_artifacts=["rfc.md"],
+        artifact_key="rfc",
+        task_text=rfc_worker_task(state),
+        failure_status=failure_status,
     )
-    status = store.run_job(str(job["id"]))
-    if str(status.get("status", "")) != "completed":
-        summary = str(status.get("summary", "") or "architect worker failed")
-        failure_class = str(status.get("failure_class", "")).strip()
+    if content is None:
+        summary = str(failure_status.get("summary", "") or "architect worker failed")
+        failure_class = str(failure_status.get("failure_class", "")).strip()
         if failure_class:
             raise RuntimeError(f"architect worker failed [{failure_class}]: {summary}")
         raise RuntimeError(f"architect worker failed: {summary}")
-
-    result_path = Path(str(status.get("result_path", ""))).expanduser()
-    if not result_path.is_file():
-        result_path = store.root / str(job["id"]) / "result.md"
-    if not result_path.is_file():
-        raise RuntimeError("architect worker completed without a result.md output")
-    content = result_path.read_text(encoding="utf-8")
 
     artifact_store = ArtifactStore(root=workspace)
     rfc_path = artifact_store.write_markdown(state.run_id, "rfc", "rfc.md", content)
