@@ -117,7 +117,7 @@ def test_advance_approved_workflow_uses_node_table(tmp_path, monkeypatch):
     docs.mkdir()
     project_config = tmp_path / "project.local.yaml"
     project_config.write_text(
-        f"name: Test\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        f"name: Test\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
         encoding="utf-8",
     )
     state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")

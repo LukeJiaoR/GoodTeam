@@ -657,7 +657,7 @@ def test_resolve_project_runtime_root_prefers_parent_project_directory(tmp_path)
     assert root == project
 
 
-def test_advance_approved_workflow_generates_rfc_after_prd_approval(tmp_path):
+def test_advance_approved_workflow_generates_rfc_after_prd_approval(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state(
         "run-1",
@@ -669,6 +669,7 @@ def test_advance_approved_workflow_generates_rfc_after_prd_approval(tmp_path):
     state.approvals["prd"] = "approved"
     state.current_node = "prd_review_gate"
     state.next_node = "architect"
+    monkeypatch.setattr("goodteam_os.graph.generate_artifact_via_worker", lambda **kwargs: None)
 
     result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
 

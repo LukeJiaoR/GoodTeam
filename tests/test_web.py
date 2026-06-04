@@ -1309,7 +1309,7 @@ def test_decide_approval_notifies_when_takeover_approval_generates_prd_gate(tmp_
     docs = tmp_path / "content-research"
     docs.mkdir()
     project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        f"name: AI Content Studio\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
         encoding="utf-8",
     )
     state = create_initial_state("run-1", "CONTENTOPS", "Take over AI Content Studio")
@@ -1868,7 +1868,7 @@ def test_decide_approval_approves_takeover_and_generates_prd(tmp_path):
     )
     project_config = tmp_path / "project.local.yaml"
     project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        f"name: AI Content Studio\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
         encoding="utf-8",
     )
     state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
@@ -1950,7 +1950,7 @@ def test_decide_approval_rejects_rfc_by_regenerating_for_review(tmp_path):
     docs = tmp_path / "contentops" / "docs"
     docs.mkdir(parents=True)
     project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        f"name: AI Content Studio\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
         encoding="utf-8",
     )
     state = create_initial_state("run-1", "CONTENTOPS", "Build ContentOps Studio")
