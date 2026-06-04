@@ -1524,6 +1524,9 @@ def test_worker_job_store_flags_stale_running_jobs(tmp_path, monkeypatch):
                 "summary": "Codex CLI is running.",
                 "updated_at": old_heartbeat,
                 "heartbeat_at": old_heartbeat,
+                "stdout_path": str(job_root / "stdout.txt"),
+                "stderr_path": str(job_root / "stderr.txt"),
+                "result_path": str(job_root / "result.md"),
             }
         ),
         encoding="utf-8",
@@ -1561,6 +1564,9 @@ def test_worker_job_store_reports_stale_dead_pid_as_failed(tmp_path, monkeypatch
                 "updated_at": old_heartbeat,
                 "heartbeat_at": old_heartbeat,
                 "pid": 4242,
+                "stdout_path": str(job_root / "stdout.txt"),
+                "stderr_path": str(job_root / "stderr.txt"),
+                "result_path": str(job_root / "result.md"),
             }
         ),
         encoding="utf-8",
@@ -1572,6 +1578,8 @@ def test_worker_job_store_reports_stale_dead_pid_as_failed(tmp_path, monkeypatch
     assert listed["raw_status"] == "running"
     assert listed["failure_class"] == "stuck"
     assert listed["disposition"] == "abandoned"
+    assert listed["summary"] == "Worker heartbeat is stale and the process is no longer alive."
+    assert listed["summary"] != "Codex CLI is running."
 
 
 def test_worker_job_store_does_not_fail_live_running_job(tmp_path, monkeypatch):
@@ -1599,6 +1607,9 @@ def test_worker_job_store_does_not_fail_live_running_job(tmp_path, monkeypatch):
                 "updated_at": old_heartbeat,
                 "heartbeat_at": old_heartbeat,
                 "pid": 4242,
+                "stdout_path": str(job_root / "stdout.txt"),
+                "stderr_path": str(job_root / "stderr.txt"),
+                "result_path": str(job_root / "result.md"),
             }
         ),
         encoding="utf-8",

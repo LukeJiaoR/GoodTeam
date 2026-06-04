@@ -527,7 +527,11 @@ class WorkerJobStore:
                         }
                     },
                 }
-                if status_payload.get("status") == "running" and _is_stale_heartbeat(_heartbeat_reference(status_payload)):
+                if (
+                    status_payload.get("status") == "running"
+                    and _has_worker_runtime_paths(status_payload)
+                    and _is_stale_heartbeat(_heartbeat_reference(status_payload))
+                ):
                     job = reconcile_stale_job(job, status_payload)
             jobs.append(job)
         return jobs
@@ -1202,14 +1206,19 @@ def _claude_auth_hint(available: bool, auth_present: bool) -> str:
 def reconcile_stale_job(job: dict[str, Any], status_payload: dict[str, Any]) -> dict[str, Any]:
     reconciled = {**job, "raw_status": "running"}
     if _is_pid_alive(status_payload.get("pid")) is False:
+        summary = "Worker heartbeat is stale and the process is no longer alive."
         return {
             **reconciled,
             "status": "failed",
             "failure_class": "stuck",
             "disposition": "abandoned",
-            "summary": str(status_payload.get("summary") or "Worker heartbeat is stale and the process is no longer alive."),
+            "summary": summary,
         }
     return {**reconciled, "status": "possibly_stuck"}
+
+
+def _has_worker_runtime_paths(status_payload: dict[str, Any]) -> bool:
+    return all(str(status_payload.get(key, "")).strip() for key in ("stdout_path", "stderr_path", "result_path"))
 
 
 def _heartbeat_reference(status_payload: dict[str, Any]) -> str:
