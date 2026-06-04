@@ -102,6 +102,100 @@ def test_cli_workers_outputs_worker_job_status_json(tmp_path, capsys):
     assert payload["jobs"][0]["status"] == "needs_review"
 
 
+def test_cli_memory_append_writes_event_jsonl(tmp_path, capsys):
+    from goodteam_os import cli
+
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    result = cli.main(
+        [
+            "memory-append",
+            "--project-root",
+            str(project_root),
+            "--role",
+            "release",
+            "--horizon",
+            "short-term",
+            "--text",
+            "PR 123 landed with dispatch provenance.",
+            "--source",
+            "land/pr-123",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    event_path = project_root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
+    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+
+    assert result == 0
+    assert captured.err == ""
+    assert payload == {"status": "ok", "role": "release", "horizon": "short-term", "source": "land/pr-123"}
+    assert len(events) == 1
+    assert events[0]["horizon"] == "short-term"
+    assert events[0]["text"] == "PR 123 landed with dispatch provenance."
+    assert events[0]["source"] == "land/pr-123"
+
+
+def test_cli_memory_append_duplicate_exits_zero_without_second_event(tmp_path, capsys):
+    from goodteam_os import cli
+
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    command = [
+        "memory-append",
+        "--project-root",
+        str(project_root),
+        "--role",
+        "release",
+        "--horizon",
+        "mid-term",
+        "--text",
+        "Record the same release event once.",
+        "--source",
+        "land/pr-456",
+    ]
+
+    assert cli.main(command) == 0
+    capsys.readouterr()
+    result = cli.main(command)
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    event_path = project_root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
+    lines = [line for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert result == 0
+    assert captured.err == ""
+    assert payload["status"] == "deduped"
+    assert len(lines) == 1
+
+
+def test_cli_memory_append_invalid_horizon_exits_nonzero(tmp_path, capsys):
+    from goodteam_os import cli
+
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    result = cli.main(
+        [
+            "memory-append",
+            "--project-root",
+            str(project_root),
+            "--role",
+            "release",
+            "--horizon",
+            "forever",
+            "--text",
+            "Invalid horizon should fail.",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert captured.out == ""
+    assert "Unknown memory horizon: forever" in captured.err
+
+
 def test_cli_start_accepts_model_profile_and_role_override(tmp_path):
     command = [
         sys.executable,
