@@ -1,11 +1,11 @@
 import hashlib
 import json
 import threading
-import time
 from io import BytesIO
 from pathlib import Path
 
 
+import goodteam_os.web as web
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import append_message
 from goodteam_os.state import StateStore, create_initial_state
@@ -83,7 +83,7 @@ def capture_post_handler(tmp_path, monkeypatch, *, host: str = "127.0.0.1", port
     serve(tmp_path, host=host, port=port)
     assert captured_handler_class is not None
 
-    def simulate_post(path, body_dict, headers=None):
+    def simulate_post(path, body_dict, headers=None, wfile=None):
         class SimulatedHandler(captured_handler_class):
             def __init__(self):
                 self.request = FakeRequest()
@@ -92,7 +92,7 @@ def capture_post_handler(tmp_path, monkeypatch, *, host: str = "127.0.0.1", port
                 body_bytes = json.dumps(body_dict).encode("utf-8")
                 self.headers = {"Content-Length": str(len(body_bytes)), **(headers or {})}
                 self.path = path
-                self.wfile = BytesIO()
+                self.wfile = wfile if wfile is not None else BytesIO()
                 self.rfile = BytesIO(body_bytes)
                 self.responses = []
                 self.response_headers = {}
@@ -433,19 +433,31 @@ def test_api_post_same_origin_guard_rejects_cross_origin_and_allows_trusted_requ
 
 
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     worktree = tmp_path / "goodteam-dev-my-track"
+    response_flushed = threading.Event()
     dispatch_entered = threading.Event()
     dispatch_can_finish = threading.Event()
+    completed_status_written = threading.Event()
     calls = []
+    thread_errors = []
+
+    class ResponseStream(BytesIO):
+        def flush(self):
+            super().flush()
+            response_flushed.set()
 
     def fake_ensure_worktree(workspace, *, name, branch):
-        assert workspace == tmp_path
+        assert workspace == tmp_path / "workspace"
         assert name == "my-track"
         assert branch == "feat/my-track"
         worktree.mkdir(exist_ok=True)
         return worktree
 
     def fake_dispatch_tracks(**kwargs):
+        if not response_flushed.is_set():
+            thread_errors.append("dispatch started before the 202 response was flushed")
         calls.append(kwargs)
         dispatch_entered.set()
         dispatch_can_finish.wait(timeout=5)
@@ -454,14 +466,21 @@ def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path
     monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
     def fake_safety_check(project_root, *, projects_dir):
         assert project_root == worktree
-        assert projects_dir == tmp_path / "projects"
+        assert projects_dir == tmp_path / "workspace" / "projects"
         return {"safe": True, "reason": ""}
 
     monkeypatch.setattr("goodteam_os.web.ensure_dispatch_project_root_is_safe", fake_safety_check)
     monkeypatch.setattr("goodteam_os.web.dispatch_tracks", fake_dispatch_tracks)
-    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+    original_write_status = web._write_dispatch_track_status
 
-    started_at = time.monotonic()
+    def write_status_and_signal(*args, **kwargs):
+        original_write_status(*args, **kwargs)
+        if kwargs.get("status") == "completed":
+            completed_status_written.set()
+
+    monkeypatch.setattr("goodteam_os.web._write_dispatch_track_status", write_status_and_signal)
+    simulate_post = capture_post_handler(workspace, monkeypatch)
+
     response = simulate_post(
         "/api/dispatch-track",
         {
@@ -473,11 +492,10 @@ def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path
             "verify": "pytest tests/test_api.py -q",
         },
         headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+        wfile=ResponseStream(),
     )
-    elapsed = time.monotonic() - started_at
     assert 202 in response.responses
-    assert elapsed < 1
-    assert dispatch_entered.wait(timeout=1)
+    assert response_flushed.is_set()
 
     payload = json.loads(response.wfile.getvalue().decode("utf-8"))
     assert payload["run_id"].startswith("dispatch-")
@@ -488,20 +506,18 @@ def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path
         "worktree": str(worktree),
         "status": "started",
     }
+    assert dispatch_entered.wait(timeout=1)
+    assert not thread_errors
     assert calls[0]["project_root"] == worktree
     assert calls[0]["tracks"][0]["role"] == "backend"
     assert calls[0]["tracks"][0]["adapter"] == "codex"
     assert calls[0]["tracks"][0]["task"] == "Implement backend dispatch."
     assert calls[0]["verify_commands"] == {"backend": "pytest tests/test_api.py -q"}
     assert calls[0]["constraints_file"].read_text(encoding="utf-8") == "Keep changes scoped."
-    assert calls[0]["projects_dir"] == tmp_path / "projects"
+    assert calls[0]["projects_dir"] == workspace / "projects"
     dispatch_can_finish.set()
-    status_path = tmp_path / "state" / "dispatch-tracks" / f"dispatch-track-{payload['run_id']}.json"
-    deadline = time.monotonic() + 1
-    while time.monotonic() < deadline:
-        if status_path.exists() and json.loads(status_path.read_text(encoding="utf-8"))["status"] == "completed":
-            break
-        time.sleep(0.01)
+    assert completed_status_written.wait(timeout=1)
+    status_path = workspace / "state" / "dispatch-tracks" / f"dispatch-track-{payload['run_id']}.json"
     status = json.loads(status_path.read_text(encoding="utf-8"))
     assert status["run_id"] == payload["run_id"]
     assert status["name"] == "my-track"
@@ -511,8 +527,18 @@ def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path
 
 
 def test_api_dispatch_track_background_failure_writes_status(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     worktree = tmp_path / "goodteam-dev-my-track"
+    response_flushed = threading.Event()
     dispatch_entered = threading.Event()
+    failed_status_written = threading.Event()
+    thread_errors = []
+
+    class ResponseStream(BytesIO):
+        def flush(self):
+            super().flush()
+            response_flushed.set()
 
     def fake_ensure_worktree(workspace, *, name, branch):
         worktree.mkdir(exist_ok=True)
@@ -522,13 +548,23 @@ def test_api_dispatch_track_background_failure_writes_status(tmp_path, monkeypat
         return {"safe": True, "reason": ""}
 
     def fake_dispatch_tracks(**kwargs):
+        if not response_flushed.is_set():
+            thread_errors.append("dispatch started before the 202 response was flushed")
         dispatch_entered.set()
         raise RuntimeError("dispatch failed after acceptance")
 
     monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
     monkeypatch.setattr("goodteam_os.web.ensure_dispatch_project_root_is_safe", fake_safety_check)
     monkeypatch.setattr("goodteam_os.web.dispatch_tracks", fake_dispatch_tracks)
-    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+    original_write_status = web._write_dispatch_track_status
+
+    def write_status_and_signal(*args, **kwargs):
+        original_write_status(*args, **kwargs)
+        if kwargs.get("status") == "failed":
+            failed_status_written.set()
+
+    monkeypatch.setattr("goodteam_os.web._write_dispatch_track_status", write_status_and_signal)
+    simulate_post = capture_post_handler(workspace, monkeypatch)
 
     response = simulate_post(
         "/api/dispatch-track",
@@ -539,20 +575,16 @@ def test_api_dispatch_track_background_failure_writes_status(tmp_path, monkeypat
             "task": "Implement backend dispatch.",
         },
         headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+        wfile=ResponseStream(),
     )
 
     assert 202 in response.responses
-    assert dispatch_entered.wait(timeout=1)
+    assert response_flushed.is_set()
     payload = json.loads(response.wfile.getvalue().decode("utf-8"))
-    status_path = tmp_path / "state" / "dispatch-tracks" / f"dispatch-track-{payload['run_id']}.json"
-    deadline = time.monotonic() + 1
-    while time.monotonic() < deadline:
-        if status_path.exists():
-            status = json.loads(status_path.read_text(encoding="utf-8"))
-            if status["status"] == "failed":
-                break
-        time.sleep(0.01)
-
+    assert dispatch_entered.wait(timeout=1)
+    assert not thread_errors
+    assert failed_status_written.wait(timeout=1)
+    status_path = workspace / "state" / "dispatch-tracks" / f"dispatch-track-{payload['run_id']}.json"
     status = json.loads(status_path.read_text(encoding="utf-8"))
     assert status["run_id"] == payload["run_id"]
     assert status["name"] == "my-track"
@@ -622,8 +654,7 @@ def test_api_dispatch_track_rejects_unsafe_target(tmp_path, monkeypatch):
     worktree = tmp_path / "goodteam-dev-my-track"
 
     def fake_ensure_worktree(workspace, *, name, branch):
-        worktree.mkdir(exist_ok=True)
-        return worktree
+        raise AssertionError("worktree must not be created before safety passes")
 
     monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
     monkeypatch.setattr(
@@ -640,15 +671,57 @@ def test_api_dispatch_track_rejects_unsafe_target(tmp_path, monkeypatch):
 
     assert 400 in response.responses
     assert "configured project repo" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    assert not worktree.exists()
+
+
+def test_api_dispatch_track_rejects_unsafe_target_without_creating_worktree(tmp_path, monkeypatch):
+    configured_repo = tmp_path / "served-repo"
+    workspace = configured_repo / "workspace"
+    workspace.mkdir(parents=True)
+    write_project_config(workspace, repos={"app": configured_repo})
+    worktree = configured_repo / "goodteam-dev-my-track"
+
+    def fail_if_git_runs(*args, **kwargs):
+        raise AssertionError("git worktree add must not run for unsafe targets")
+
+    monkeypatch.setattr("goodteam_os.web.subprocess.run", fail_if_git_runs)
+    simulate_post = capture_post_handler(workspace, monkeypatch)
+
+    response = simulate_post(
+        "/api/dispatch-track",
+        {"name": "my-track", "role": "backend", "adapter": "codex", "task": "Implement."},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 400 in response.responses
+    assert "configured project repo" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    assert not worktree.exists()
+
+
+def test_link_dispatch_worktree_venv_uses_absolute_target_for_relative_workspace(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    worktree = tmp_path / "goodteam-dev-my-track"
+    (workspace / ".venv" / "bin").mkdir(parents=True)
+    worktree.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    web._link_dispatch_worktree_venv(Path("workspace"), worktree)
+
+    bin_link = worktree / ".venv" / "bin"
+    assert bin_link.is_symlink()
+    assert bin_link.readlink().is_absolute()
+    assert bin_link.resolve() == workspace.resolve() / ".venv" / "bin"
 
 
 def test_api_dispatch_track_safety_uses_served_workspace_projects_dir(tmp_path, monkeypatch):
     configured_repo = tmp_path / "served-repo"
+    workspace = configured_repo / "workspace"
     worktree = configured_repo / "goodteam-dev-my-track"
-    write_project_config(tmp_path, repos={"app": configured_repo})
+    workspace.mkdir(parents=True)
+    write_project_config(workspace, repos={"app": configured_repo})
 
     def fake_ensure_worktree(workspace, *, name, branch):
-        assert workspace == tmp_path
+        assert workspace == configured_repo / "workspace"
         assert name == "my-track"
         assert branch == "feat/my-track"
         worktree.mkdir(parents=True)
@@ -659,7 +732,7 @@ def test_api_dispatch_track_safety_uses_served_workspace_projects_dir(tmp_path, 
 
     monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
     monkeypatch.setattr("goodteam_os.web.dispatch_tracks", fail_if_dispatch_starts)
-    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+    simulate_post = capture_post_handler(workspace, monkeypatch)
 
     response = simulate_post(
         "/api/dispatch-track",

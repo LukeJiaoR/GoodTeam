@@ -316,10 +316,12 @@ def _ensure_dispatch_worktree(workspace: Path, *, name: str, branch: str) -> Pat
 
 
 def _link_dispatch_worktree_venv(workspace: Path, worktree: Path) -> None:
-    source_bin = workspace / ".venv" / "bin"
+    workspace_root = workspace.resolve()
+    worktree_root = worktree.resolve() if worktree.exists() else worktree.absolute().resolve(strict=False)
+    source_bin = workspace_root / ".venv" / "bin"
     if not source_bin.exists():
         return
-    venv_dir = worktree / ".venv"
+    venv_dir = worktree_root / ".venv"
     bin_link = venv_dir / "bin"
     if venv_dir.exists() or venv_dir.is_symlink():
         return
@@ -380,10 +382,13 @@ def _start_dispatch_track_background(
     tracks: list[dict[str, object]],
     verify_commands: dict[str, str],
     constraints_file: Path | None,
+    response_written: threading.Event | None = None,
 ) -> None:
     projects_dir = workspace / "projects"
 
     def run_dispatch_track() -> None:
+        if response_written is not None:
+            response_written.wait()
         _write_dispatch_track_status(
             workspace,
             run_id=run_id,
@@ -424,7 +429,12 @@ def _start_dispatch_track_background(
     thread.start()
 
 
-def start_dispatch_track(workspace: Path, request: dict[str, object]) -> dict[str, object]:
+def start_dispatch_track(
+    workspace: Path,
+    request: dict[str, object],
+    *,
+    response_written: threading.Event | None = None,
+) -> dict[str, object]:
     name = str(request.get("name", "")).strip()
     role = str(request.get("role", "")).strip()
     adapter = str(request.get("adapter", "")).strip()
@@ -441,10 +451,11 @@ def start_dispatch_track(workspace: Path, request: dict[str, object]) -> dict[st
         raise ValueError("task is required")
 
     branch = f"feat/{name}"
-    worktree = _ensure_dispatch_worktree(workspace, name=name, branch=branch)
+    worktree = _dispatch_worktree_path(workspace, name)
     safety = ensure_dispatch_project_root_is_safe(worktree, projects_dir=workspace / "projects")
     if not safety.get("safe"):
         raise ValueError(str(safety.get("reason", "unsafe dispatch target")))
+    worktree = _ensure_dispatch_worktree(workspace, name=name, branch=branch)
 
     run_id = f"dispatch-{uuid4()}"
     task_file, constraints_file = _prepare_dispatch_track_inputs(
@@ -466,6 +477,7 @@ def start_dispatch_track(workspace: Path, request: dict[str, object]) -> dict[st
         tracks=tracks,
         verify_commands=verify_commands,
         constraints_file=constraints_file,
+        response_written=response_written,
     )
     return {
         "run_id": run_id,
@@ -5706,8 +5718,10 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         relative_path=str(request.get("path", "")),
                     )
                 elif normalized_path == "/dispatch-track":
-                    result = start_dispatch_track(workspace, request)
+                    response_written = threading.Event()
+                    result = start_dispatch_track(workspace, request, response_written=response_written)
                     self._send_json(202, result)
+                    response_written.set()
                     return
                 # `/project-config` carries two operations: the worker-backends
                 # panel sends `project` + `workers` for an existing project; the
@@ -5768,6 +5782,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+            self.wfile.flush()
 
         def log_message(self, format: str, *args: object) -> None:
             return
