@@ -163,7 +163,7 @@ const drawEdgePath = (u, v) => {
 // Semantic status badges mapping with 15% transparent backgrounds and solid text colors
 function getBadgeStyle(status) {
   const norm = String(status || '').toLowerCase().trim();
-  
+
   if (['complete', 'approved', 'done', 'pass', 'success', 'active', 'running'].includes(norm)) {
     return {
       bg: 'bg-[#E8F9D9]',
@@ -222,7 +222,7 @@ function FilePath({ path, segments = 1 }) {
 
   const pathStr = String(path);
   const parts = pathStr.split(/[/\\]/);
-  
+
   let displayName = pathStr;
   if (parts.length > 0) {
     if (segments === 1) {
@@ -271,6 +271,34 @@ function formatHumanTime(timestamp) {
 
 const DEFAULT_BACKEND_OPTIONS = ["fake", "codex", "anthropic", "noop", "human"];
 const DEFAULT_WORKER_ROLES = ["ui", "implementation", "qa"];
+const MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human", "agy", "antigravity"];
+
+const FALLBACK_AGENT_MODES = {
+  codex: {
+    models: ["gpt-5.3-codex", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
+    model_default: "gpt-5.3-codex"
+  },
+  anthropic: {
+    models: ["claude-sonnet-4-6", "claude-3-5-sonnet-latest", "claude-3-opus-latest", "claude-3-5-haiku-latest"],
+    model_default: "claude-sonnet-4-6"
+  },
+  claude: {
+    models: ["claude-sonnet-4-6", "claude-3-5-sonnet-latest", "claude-3-opus-latest", "claude-3-5-haiku-latest"],
+    model_default: "claude-sonnet-4-6"
+  },
+  gemini: {
+    models: ["auto", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash-exp"],
+    model_default: "auto"
+  },
+  agy: {
+    models: ["auto"],
+    model_default: "auto"
+  },
+  antigravity: {
+    models: ["auto"],
+    model_default: "auto"
+  }
+};
 
 export default function App() {
   // Sync project key from URL search query parameter '?project='
@@ -289,11 +317,16 @@ export default function App() {
   // Worker backend settings states
   const [panelGlobalMode, setPanelGlobalMode] = useState('codex');
   const [panelRoleOverrides, setPanelRoleOverrides] = useState({});
+  const [panelRoleModels, setPanelRoleModels] = useState({});
+  const [customModelSelected, setCustomModelSelected] = useState({});
+  const [configuringRoles, setConfiguringRoles] = useState({});
+  const [backendsError, setBackendsError] = useState(null);
+  const [backendsSuccess, setBackendsSuccess] = useState(null);
   const [savingBackends, setSavingBackends] = useState(false);
   const [discoveredAgents, setDiscoveredAgents] = useState(null);
   const [loadingDiscoveredAgents, setLoadingDiscoveredAgents] = useState(false);
 
-  
+
   // Theme state
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('color-scheme');
@@ -464,7 +497,7 @@ export default function App() {
       }
       const payload = await response.json();
       setData(payload);
-      
+
       // Seed form values when switching to a project dashboard
       if (payload.type === 'project' && payload.start_context) {
         const sc = payload.start_context;
@@ -474,7 +507,7 @@ export default function App() {
         setDeliveryMode(sc.delivery_mode || 'init_project');
         setProjectConfig(sc.project_config || '');
         setWorkerBackendMode(sc.worker_backend?.mode || 'codex');
-        
+
         // Repos paths
         const target = sc.project_report?.project || {};
         const repos = target.repos || {};
@@ -510,6 +543,40 @@ export default function App() {
         if (showLoading) {
           setPanelGlobalMode(sc.worker_backend?.mode || 'codex');
           setPanelRoleOverrides(sc.project_report?.role_worker_backends || {});
+
+          const initialModels = sc.role_model_overrides || {};
+          setPanelRoleModels(initialModels);
+          setBackendsError(null);
+          setBackendsSuccess(null);
+
+          const customSelected = {};
+          if (discoveredAgents) {
+            const agentMap = {};
+            discoveredAgents.forEach(a => {
+              if (a && a.backend) {
+                agentMap[a.backend] = a;
+                if (a.aliases) {
+                  a.aliases.forEach(alias => {
+                    agentMap[alias] = a;
+                  });
+                }
+              }
+            });
+            const roles = sc.worker_roles || DEFAULT_WORKER_ROLES;
+            roles.forEach(role => {
+              const currentModel = initialModels[role];
+              const currentBackend = sc.project_report?.role_worker_backends?.[role] || sc.worker_backend?.mode || 'codex';
+              const fallbackAgent = FALLBACK_AGENT_MODES[currentBackend];
+              const agent = currentBackend ? agentMap[currentBackend] || (fallbackAgent ? { backend: currentBackend, ...fallbackAgent } : null) : null;
+              if (agent && currentModel) {
+                const models = agent.models || FALLBACK_AGENT_MODES[agent.backend]?.models || ["auto"];
+                if (!models.includes(currentModel)) {
+                  customSelected[role] = true;
+                }
+              }
+            });
+          }
+          setCustomModelSelected(customSelected);
         }
 
         // Delivery Contract
@@ -618,11 +685,13 @@ export default function App() {
     return () => {
       if (interval) clearInterval(interval);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchState is intentionally omitted so polling follows active run state only.
   }, [projectKey, data]);
 
   // Fetch state on mount and projectKey changes
   useEffect(() => {
     fetchState(projectKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchState is intentionally omitted so loading fetches only when the project key changes.
   }, [projectKey]);
 
   const fetchMemory = async (key) => {
@@ -1109,7 +1178,7 @@ export default function App() {
       });
       const res = await response.json();
       if (!response.ok) throw new Error(res.error || 'Failed to start workflow');
-      
+
       showToast(dryRun ? 'Dry run simulation finished' : 'Workflow started!');
       if (!dryRun) {
         setIdea('');
@@ -1313,16 +1382,122 @@ export default function App() {
     }
   };
 
+  const handleAgentChange = (role, newAgent) => {
+    setPanelRoleOverrides(prev => ({
+      ...prev,
+      [role]: newAgent
+    }));
+
+    const effectiveAgent = newAgent || panelGlobalMode;
+
+    if (MODEL_UNAVAILABLE_BACKENDS.includes(effectiveAgent)) {
+      setPanelRoleModels(prev => ({
+        ...prev,
+        [role]: ''
+      }));
+      setCustomModelSelected(prev => ({
+        ...prev,
+        [role]: false
+      }));
+    } else {
+      const agent = discoveredAgentByBackend[effectiveAgent];
+      const defaultModel = agent?.model_default || FALLBACK_AGENT_MODES[effectiveAgent]?.model_default || 'auto';
+      setPanelRoleModels(prev => ({
+        ...prev,
+        [role]: defaultModel
+      }));
+      setCustomModelSelected(prev => ({
+        ...prev,
+        [role]: false
+      }));
+    }
+  };
+
+  const handleModelDropdownChange = (role, val) => {
+    if (val === '__custom__') {
+      setCustomModelSelected(prev => ({
+        ...prev,
+        [role]: true
+      }));
+      setPanelRoleModels(prev => ({
+        ...prev,
+        [role]: ''
+      }));
+    } else {
+      setCustomModelSelected(prev => ({
+        ...prev,
+        [role]: false
+      }));
+      setPanelRoleModels(prev => ({
+        ...prev,
+        [role]: val
+      }));
+    }
+  };
+
+  const handleCustomModelChange = (role, val) => {
+    setPanelRoleModels(prev => ({
+      ...prev,
+      [role]: val
+    }));
+  };
+
+  useEffect(() => {
+    if (discoveredAgents && data?.start_context?.role_model_overrides) {
+      const roleModels = data.start_context.role_model_overrides;
+      const customSelected = {};
+      const agentMap = {};
+      discoveredAgents.forEach(a => {
+        if (a && a.backend) {
+          agentMap[a.backend] = a;
+          if (a.aliases) {
+            a.aliases.forEach(alias => {
+              agentMap[alias] = a;
+            });
+          }
+        }
+      });
+      const roles = data.start_context.worker_roles || DEFAULT_WORKER_ROLES;
+      roles.forEach(role => {
+        const currentModel = roleModels[role];
+        const currentBackend = panelRoleOverrides[role] || data.start_context.project_report?.role_worker_backends?.[role] || panelGlobalMode;
+        const fallbackAgent = FALLBACK_AGENT_MODES[currentBackend];
+        const agent = currentBackend ? agentMap[currentBackend] || (fallbackAgent ? { backend: currentBackend, ...fallbackAgent } : null) : null;
+        if (agent && currentModel) {
+          const models = agent.models || FALLBACK_AGENT_MODES[agent.backend]?.models || ["auto"];
+          if (!models.includes(currentModel)) {
+            customSelected[role] = true;
+          }
+        }
+      });
+      setCustomModelSelected(prev => ({ ...customSelected, ...prev }));
+    }
+  }, [discoveredAgents, data, panelRoleOverrides, panelGlobalMode]);
+
   const handleSaveWorkerBackends = async () => {
     setSavingBackends(true);
+    setBackendsError(null);
+    setBackendsSuccess(null);
     try {
       // Build workers object containing ONLY explicit overrides for managed roles (exclude empty strings or "default")
       const workers = {};
+      const role_models = {};
       const managedRoles = data?.start_context?.worker_roles || DEFAULT_WORKER_ROLES;
       managedRoles.forEach((role) => {
         const backend = panelRoleOverrides[role];
         if (backend && backend !== 'default' && backend !== '') {
           workers[role] = backend;
+        }
+
+        const effectiveBackend = backend && backend !== 'default' && backend !== '' ? backend : panelGlobalMode;
+        if (!MODEL_UNAVAILABLE_BACKENDS.includes(effectiveBackend)) {
+          const agent = discoveredAgentByBackend[effectiveBackend];
+          const defaultModel = agent?.model_default || FALLBACK_AGENT_MODES[effectiveBackend]?.model_default || 'auto';
+          const modelVal = panelRoleModels[role];
+          const trimmedModel = modelVal?.trim() || '';
+          if (trimmedModel && trimmedModel !== defaultModel) {
+            role_models[role] = trimmedModel;
+          }
         }
       });
 
@@ -1333,15 +1508,18 @@ export default function App() {
           project: projectKey,
           worker_backend_mode: panelGlobalMode,
           workers: workers,
+          role_models: role_models,
         }),
       });
       const res = await response.json();
       if (!response.ok) {
         throw new Error(res.error || 'Failed to save worker backends');
       }
+      setBackendsSuccess('Configurations saved successfully');
       showToast('Worker backends updated successfully');
-      await fetchState(projectKey, false); // Fetch state without full screen loader
+      await fetchState(projectKey, true); // Fetch state with full screen loader
     } catch (err) {
+      setBackendsError(err.message);
       showToast(err.message, true);
     } finally {
       setSavingBackends(false);
@@ -1512,7 +1690,7 @@ export default function App() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
-                          
+
                           <div className="flex space-x-2">
                             {isActive && (
                               <button
@@ -1779,9 +1957,9 @@ export default function App() {
                               <label className="block text-[9px] text-zinc-500 mb-1">Smoke Command</label>
                               <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
                             </div>
-                            
+
                             <div className="col-span-2 border-t-2 border-[#F1F1F1] dark:border-zinc-900 my-1" />
-                            
+
                             <div className="col-span-2 flex items-center space-x-2">
                               <input type="checkbox" id="contract-req" checked={deliveryContractRequired} onChange={(e) => setDeliveryContractRequired(e.target.checked)} className="rounded text-[#58CC02] focus:ring-[#58CC02] h-4 w-4" />
                               <label htmlFor="contract-req" className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Require functional delivery evidence</label>
@@ -1936,10 +2114,19 @@ export default function App() {
     ...discoveredBackendOptions,
   ]));
   const workerRoles = startContext.worker_roles || DEFAULT_WORKER_ROLES;
-  const discoveredAgentByBackend = Object.fromEntries(
-    safeDiscoveredAgents
-      .map((agent) => [agent.backend, agent])
-  );
+  const discoveredAgentByBackend = {};
+  safeDiscoveredAgents.forEach((agent) => {
+    if (agent?.backend) {
+      discoveredAgentByBackend[agent.backend] = agent;
+    }
+    if (Array.isArray(agent?.aliases)) {
+      agent.aliases.forEach((alias) => {
+        if (alias) {
+          discoveredAgentByBackend[alias] = agent;
+        }
+      });
+    }
+  });
   const getBackendOptionLabel = (backend) => {
     const baseLabel = backend === 'codex'
       ? 'Codex CLI'
@@ -1991,7 +2178,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-150 transition-colors flex flex-col lg:flex-row font-sans antialiased">
-      
+
       {/* Sidebar - fixed desktop 220px wide, white, right border */}
       <aside className={`w-full lg:w-[220px] shrink-0 bg-white dark:bg-zinc-950 text-zinc-700 dark:text-zinc-400 flex flex-col border-r-2 border-[#E5E5E5] dark:border-zinc-800 lg:min-h-screen ${mobileMenuOpen ? 'block' : 'hidden lg:flex'}`}>
         <div className="p-5 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center bg-zinc-50/50 dark:bg-black/30">
@@ -2084,11 +2271,11 @@ export default function App() {
 
       {/* Content wrapper */}
       <div className="flex-grow flex flex-col min-w-0 min-h-screen">
-        
+
         {/* Top Header Bar on Desktop - 60px high, white background, bottom border */}
         <header className="hidden lg:flex h-[60px] shrink-0 border-b-2 border-[#E5E5E5] dark:border-zinc-850 bg-white dark:bg-zinc-950 items-center justify-between px-6 shadow-sm">
           <div className="flex items-center space-x-3">
-            <div 
+            <div
               onClick={() => updateUrl('')}
               className="w-8 h-8 rounded-xl bg-[#58CC02] border-2 border-[#3D8B00] flex items-center justify-center text-white font-black text-lg shadow-[0_2.5px_0_#3D8B00] shrink-0 cursor-pointer"
             >
@@ -2103,7 +2290,7 @@ export default function App() {
 
           <div className="flex items-center space-x-4">
             <span className="text-[10px] font-mono font-bold text-[#AFAFAF] uppercase hidden sm:inline">Run ID: <code className="bg-[#F1F1F1] dark:bg-zinc-900 border border-[#E5E5E5] dark:border-zinc-800 px-2 py-0.5 rounded-lg text-zinc-650 dark:text-zinc-400 select-all font-mono">{state?.run_id || 'none'}</code></span>
-            
+
             {headerStatus.toLowerCase() === 'complete' ? (
               <div className="bg-[#E8F9D9] text-[#3D8B00] font-[800] text-[16px] px-5 py-2.5 rounded-full border-2 border-[#58CC02]/30 flex items-center space-x-1.5 shadow-[0_2px_0_#3D8B00]/10">
                 <span>✅</span>
@@ -2479,7 +2666,7 @@ export default function App() {
               {/* Tab: Overview */}
               {activeTab === 'overview' && (
                 <div className="space-y-6">
-                  
+
                   {/* KPI Cards (First row: 4 KPI Cards) */}
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
                     {[
@@ -2511,7 +2698,7 @@ export default function App() {
                       <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 leading-relaxed font-mono select-all">
                         {missionExpanded ? state.idea : getMissionSummary(state.idea)}
                       </p>
-                      
+
                       {state.idea && state.idea.match(/[^.!?]+[.!?]+/g)?.length > 2 && (
                         <button
                           type="button"
@@ -2635,7 +2822,7 @@ export default function App() {
                               <option value="multi_service">Multi-service product</option>
                             </select>
                           </div>
-                          
+
                           <div className="col-span-2 border-t-2 border-[#E5E5E5] dark:border-zinc-850 my-2" />
 
                            <div className="col-span-2 flex items-center justify-between">
@@ -2708,7 +2895,7 @@ export default function App() {
                                 <span className="text-zinc-700 dark:text-zinc-300 capitalize">{role.mode}</span>
                               </div>
                             </div>
-                            
+
                             {role.artifact && (
                               <div className="pt-1 flex justify-between items-center gap-2">
                                 <div>
@@ -2801,7 +2988,7 @@ export default function App() {
                               {action.decision && <span>Decision: <span className="font-bold text-zinc-700 dark:text-zinc-300">{action.decision}</span></span>}
                               {action.node_transition && <span>Node: <span className="font-bold text-zinc-700 dark:text-zinc-300 font-mono text-[9px]">{action.node_transition}</span></span>}
                             </div>
-                            
+
                             {action.artifact_path && (
                               <div className="pt-1.5 border-t border-[#F1F1F1] dark:border-zinc-900 flex items-center space-x-2 text-[10px] font-bold">
                                 <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px]">{action.artifact || 'Artifact'}</span>
@@ -2839,7 +3026,7 @@ export default function App() {
                       const columns = agileBoard.columns || {};
                       const counts = agileBoard.counts || {};
                       const columnTasks = columns[columnKey] || [];
-                      
+
                       const columnLabel = {
                         backlog: 'Backlog',
                         doing: 'Doing',
@@ -2962,7 +3149,7 @@ export default function App() {
                                 </div>
                               )}
                             </dl>
-                            
+
                             {item.report_path && (
                               <div className="pt-2 flex items-center space-x-2 text-[9px] font-bold">
                                 <span className="text-[#AFAFAF] uppercase tracking-wider">Report:</span>
@@ -3036,78 +3223,199 @@ export default function App() {
                               ))}
                             </div>
                           )}
-                          {workerRoles.map((role) => (
-                            <div key={role} className="flex items-center justify-between space-x-4 border-b border-[#F1F1F1] dark:border-zinc-900 pb-2.5">
-                              <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 capitalize">{role} Role</span>
-                              <div className="w-48">
-                                <select
-                                  value={panelRoleOverrides[role] || ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setPanelRoleOverrides(prev => ({
-                                      ...prev,
-                                      [role]: val
-                                    }));
-                                  }}
-                                  disabled={savingBackends || actionLoading}
-                                  className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
-                                >
-                                  <option value="">Use default</option>
-                                  {roleBackendOptions.map((opt) => (
-                                    <option key={opt} value={opt}>
-                                      {getBackendOptionLabel(opt)}
-                                    </option>
-                                  ))}
-                                </select>
-                                {(() => {
-                                  const selectedBackend = panelRoleOverrides[role];
-                                  const selectedAgent = selectedBackend ? discoveredAgentByBackend[selectedBackend] : null;
-                                  if (!selectedAgent) return null;
-                                  return (
-                                    <p className="mt-1 text-[10px] text-zinc-550 dark:text-zinc-400 font-medium leading-relaxed">
-                                      {selectedAgent.ready ? '✓ Ready' : '⚠ Not ready'}
-                                      {selectedAgent.hint ? ` - ${selectedAgent.hint}` : ''}
-                                    </p>
-                                  );
-                                })()}
+                          {workerRoles.map((role) => {
+                            const isConfiguring = configuringRoles[role];
+                            const selectedBackend = panelRoleOverrides[role] || '';
+                            const effectiveBackend = selectedBackend || panelGlobalMode;
+                            const selectedModel = panelRoleModels[role] || '';
+
+                            const selectedAgent = effectiveBackend ? discoveredAgentByBackend[effectiveBackend] : null;
+                            const isAgy = effectiveBackend === 'agy' || effectiveBackend === 'antigravity';
+                            const isBuiltin = ['fake', 'noop', 'human'].includes(effectiveBackend);
+                            const hasModel = effectiveBackend && !isAgy && !isBuiltin;
+
+                            return (
+                              <div key={role} className="border-b border-[#F1F1F1] dark:border-zinc-900 pb-3.5 pt-1">
+                                <div className="flex items-center justify-between space-x-4">
+                                  <div className="space-y-1">
+                                    <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 capitalize">{role} Role</span>
+                                    <div className="text-[11px] text-[#AFAFAF] dark:text-zinc-550 flex items-center space-x-1.5 flex-wrap">
+                                      <span className="font-semibold text-zinc-600 dark:text-zinc-400">
+                                        {selectedBackend ? getBackendOptionLabel(selectedBackend) : `Inherit default (${getBackendOptionLabel(panelGlobalMode)})`}
+                                      </span>
+                                      {hasModel && (
+                                        <>
+                                          <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                          <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                                            {selectedModel || 'default'}
+                                          </span>
+                                        </>
+                                      )}
+                                      {isAgy && (
+                                        <>
+                                          <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                          <span className="italic text-zinc-500 dark:text-zinc-500">model N/A</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfiguringRoles(prev => ({ ...prev, [role]: !prev[role] }))}
+                                    className={`px-3 py-1.5 border-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 ${
+                                      isConfiguring
+                                        ? 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300'
+                                        : 'bg-white dark:bg-zinc-900 border-[#E5E5E5] dark:border-zinc-800 hover:border-[#58CC02] text-zinc-700 dark:text-zinc-300'
+                                    }`}
+                                  >
+                                    <span>{isConfiguring ? 'Close' : 'Configure'}</span>
+                                  </button>
+                                </div>
+
+                                {isConfiguring && (
+                                  <div className="mt-3 bg-zinc-50/50 dark:bg-zinc-900/10 border border-[#F1F1F1] dark:border-zinc-800/80 rounded-xl p-4 space-y-4">
+                                    <div>
+                                      <label className="block text-[10px] text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
+                                        Step 1: Select Agent Backend
+                                      </label>
+                                      <select
+                                        value={selectedBackend}
+                                        onChange={(e) => handleAgentChange(role, e.target.value)}
+                                        disabled={savingBackends || actionLoading}
+                                        className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                      >
+                                        <option value="">Use default</option>
+                                        {roleBackendOptions.map((opt) => (
+                                          <option key={opt} value={opt}>
+                                            {getBackendOptionLabel(opt)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {selectedAgent && (
+                                        <p className="mt-1 text-[10px] text-zinc-550 dark:text-zinc-500 font-medium leading-relaxed">
+                                          {selectedAgent.ready ? '✓ Ready' : '⚠ Not ready'}
+                                          {selectedAgent.hint ? ` - ${selectedAgent.hint}` : ''}
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    {effectiveBackend && (
+                                      <div className="border-t border-[#F1F1F1] dark:border-zinc-900/60 pt-3">
+                                        {isAgy ? (
+                                          <div className="text-[11px] text-zinc-550 dark:text-zinc-500 font-medium bg-zinc-100/50 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800 px-3 py-2 rounded-lg italic">
+                                            Model is not applicable for Antigravity (agy) CLI.
+                                          </div>
+                                        ) : isBuiltin ? (
+                                          <div className="text-[11px] text-zinc-550 dark:text-zinc-500 font-medium bg-zinc-100/50 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800 px-3 py-2 rounded-lg italic">
+                                            Model selection not applicable for built-in backends.
+                                          </div>
+                                        ) : (
+                                          <div className="space-y-3">
+                                            <div>
+                                              <label className="block text-[10px] text-zinc-550 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
+                                                Step 2: Select Model
+                                              </label>
+                                              {(() => {
+                                                const agentInfo = discoveredAgentByBackend[effectiveBackend];
+                                                const modelsList = agentInfo?.models || FALLBACK_AGENT_MODES[effectiveBackend]?.models || ['auto'];
+                                                const defaultModel = agentInfo?.model_default || FALLBACK_AGENT_MODES[effectiveBackend]?.model_default || 'auto';
+                                                const isCustom = customModelSelected[role] || Boolean(selectedModel && !modelsList.includes(selectedModel));
+                                                const dropdownVal = isCustom ? '__custom__' : (modelsList.includes(selectedModel) ? selectedModel : (selectedModel ? '__custom__' : defaultModel));
+
+                                                return (
+                                                  <div className="space-y-3">
+                                                    <select
+                                                      value={dropdownVal}
+                                                      onChange={(e) => handleModelDropdownChange(role, e.target.value)}
+                                                      disabled={savingBackends || actionLoading}
+                                                      className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                                    >
+                                                      {modelsList.map((m) => (
+                                                        <option key={m} value={m}>
+                                                          {m === defaultModel ? `${m} (Default)` : m}
+                                                        </option>
+                                                      ))}
+                                                      <option value="__custom__">Custom...</option>
+                                                    </select>
+
+                                                    {isCustom && (
+                                                      <div className="space-y-1">
+                                                        <label className="block text-[9px] text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
+                                                          Custom Model Name
+                                                        </label>
+                                                        <input
+                                                          type="text"
+                                                          placeholder="e.g. gpt-5.5-custom"
+                                                          value={selectedModel}
+                                                          onChange={(e) => handleCustomModelChange(role, e.target.value)}
+                                                          disabled={savingBackends || actionLoading}
+                                                          className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold font-mono focus:outline-none focus:border-[#58CC02] transition-colors"
+                                                        />
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })()}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
 
-                        {/* Save Button */}
-                        <div className="pt-2 flex justify-end">
-                          <button
-                            onClick={handleSaveWorkerBackends}
-                            disabled={savingBackends || actionLoading}
-                            className="bg-[#58CC02] hover:bg-[#46A302] text-white border-b-4 border-[#3D8B00] active:border-b-0 active:translate-y-1 px-5 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center space-x-2"
-                          >
-                            {savingBackends ? (
-                              <>
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                <span>Saving...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Check className="h-3.5 w-3.5" />
-                                <span>Save Configurations</span>
-                              </>
-                            )}
-                          </button>
+                        {/* Save Button & Messages */}
+                        <div className="pt-2 space-y-3">
+                          {backendsError && (
+                            <div className="p-3 bg-[#FFE2E2] dark:bg-red-950/20 border border-[#FF4B4B]/30 rounded-xl text-xs font-bold text-[#EA2B2B] dark:text-red-400 flex items-center space-x-2">
+                              <AlertTriangle className="h-4 w-4 shrink-0" />
+                              <span>{backendsError}</span>
+                            </div>
+                          )}
+                          {backendsSuccess && (
+                            <div className="p-3 bg-[#E8F9D9] dark:bg-[#E8F9D9]/10 border border-[#58CC02]/30 rounded-xl text-xs font-bold text-[#3D8B00] dark:text-emerald-400 flex items-center space-x-2">
+                              <CheckCircle2 className="h-4 w-4 shrink-0" />
+                              <span>{backendsSuccess}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-end">
+                            <button
+                              onClick={handleSaveWorkerBackends}
+                              disabled={savingBackends || actionLoading}
+                              className="bg-[#58CC02] hover:bg-[#46A302] text-white border-b-4 border-[#3D8B00] active:border-b-0 active:translate-y-1 px-5 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center space-x-2"
+                            >
+                              {savingBackends ? (
+                                <>
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                  <span>Saving...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="h-3.5 w-3.5" />
+                                  <span>Save Configurations</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
                         </div>
                       </div>
 
                       {/* Right Column: Preflight / Readiness Badges */}
                       <div className="space-y-4 border-t lg:border-t-0 lg:border-l border-[#F1F1F1] dark:border-zinc-900 lg:pl-8 pt-4 lg:pt-0">
                         <div className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Backend Readiness Preflight</div>
-                        
+
                         <div className="space-y-3.5">
                           {usedBackends.map((backend) => {
                             const preflight = startContext.project_report?.worker_backends_preflight?.[backend] || {};
                             const isReady = preflight.ready ?? false;
                             const badge = getBadgeStyle(isReady ? 'success' : 'error');
                             const Icon = badge.icon;
-                            
+
                             return (
                               <div key={backend} className="bg-zinc-50 dark:bg-zinc-900/30 border border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3.5 space-y-2">
                                 <div className="flex justify-between items-center">
@@ -3115,13 +3423,13 @@ export default function App() {
                                     {backend === 'codex' ? 'Codex CLI' : backend === 'anthropic' || backend === 'claude' ? 'Claude CLI' : backend}
                                     {backend === panelGlobalMode && <span className="text-[9px] text-[#AFAFAF] font-normal ml-1.5 lowercase">(global default)</span>}
                                   </span>
-                                  
+
                                   <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold border uppercase tracking-wider ${badge.bg} ${badge.text} ${badge.border}`}>
                                     <Icon className="h-3 w-3" />
                                     <span>{isReady ? 'Ready' : 'Not Ready'}</span>
                                   </span>
                                 </div>
-                                
+
                                 {preflight.hint ? (
                                   <p className="text-[10px] text-zinc-550 dark:text-zinc-400 font-medium leading-relaxed bg-white dark:bg-zinc-950/40 p-2 rounded-lg border border-[#F1F1F1] dark:border-zinc-900 font-mono select-all">
                                     {preflight.hint}
@@ -3155,7 +3463,7 @@ export default function App() {
                       const isCompleted = job.status === 'completed';
                       const isRunning = job.status === 'running';
                       const isZeroExit = String(job.summary || '').includes('exit code 0') || isCompleted; // check exit code
-                      
+
                       return (
                         <div
                           key={job.id}
@@ -3166,7 +3474,7 @@ export default function App() {
                               <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 leading-snug">{job.role}</h3>
                               <span className="text-[10px] text-[#AFAFAF] font-bold capitalize tracking-wide">{job.adapter} adapter</span>
                             </div>
-                            
+
                             <div className="flex items-center space-x-1.5 shrink-0">
                               {isCompleted ? (
                                 <span className="bg-[#E8F9D9] text-[#3D8B00] border border-[#58CC02]/20 font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center space-x-1 select-none">
@@ -3199,7 +3507,7 @@ export default function App() {
                               <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px]">Heartbeat</span>
                               <span className="text-zinc-750 dark:text-zinc-300">{job.heartbeat_at ? new Date(job.heartbeat_at).toLocaleTimeString() : 'none'}</span>
                             </div>
-                            
+
                             <div className="border-t border-[#F1F1F1] dark:border-zinc-900 pt-2 font-sans normal-case text-xs font-semibold leading-relaxed flex items-start space-x-2 text-zinc-700 dark:text-zinc-300">
                               {isCompleted && isZeroExit ? (
                                 <CheckCircle className="h-4 w-4 text-[#58CC02] shrink-0 mt-0.5" />
@@ -3252,18 +3560,18 @@ export default function App() {
                         const isApproveLoading = approvingAction === `${review.approval}:approved`;
                         const badge = getBadgeStyle(review.decision);
 
-                        const cardBg = isPending 
-                          ? 'bg-[#FFFBF4] dark:bg-amber-950/10' 
+                        const cardBg = isPending
+                          ? 'bg-[#FFFBF4] dark:bg-amber-950/10'
                           : 'bg-white dark:bg-zinc-950';
-                        const cardBorder = isPending 
-                          ? 'border-[#FF9600]' 
-                          : isApproved 
-                            ? 'border-[#58CC02]' 
+                        const cardBorder = isPending
+                          ? 'border-[#FF9600]'
+                          : isApproved
+                            ? 'border-[#58CC02]'
                             : 'border-[#E5E5E5] dark:border-zinc-800';
-                        const cardShadow = isPending 
-                          ? 'shadow-[0_4px_0_#FF9600] hover:shadow-[0_6px_0_#FF9600]' 
-                          : isApproved 
-                            ? 'shadow-[0_4px_0_#58CC02] hover:shadow-[0_6px_0_#58CC02]' 
+                        const cardShadow = isPending
+                          ? 'shadow-[0_4px_0_#FF9600] hover:shadow-[0_6px_0_#FF9600]'
+                          : isApproved
+                            ? 'shadow-[0_4px_0_#58CC02] hover:shadow-[0_6px_0_#58CC02]'
                             : 'shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] hover:shadow-[0_6px_0_#D1D1D1] dark:hover:shadow-[0_6px_0_#1a1a1a]';
 
                         return (
@@ -3689,7 +3997,7 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                    
+
                     <form onSubmit={handleCrossSearch} className="p-6 space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                         {/* Role Select/Input */}
@@ -4434,14 +4742,14 @@ export default function App() {
 
                   {/* Two columns of white cards: STATE / TARGET */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start font-semibold text-xs">
-                    
+
                     {/* STATE Card */}
                     <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 space-y-4">
                       <div className="border-b border-[#F1F1F1] pb-2 flex justify-between items-center">
                         <h3 className="font-extrabold text-sm text-zinc-850 dark:text-zinc-200">Active Workflow State</h3>
                         <span className="text-[10px] text-[#AFAFAF] uppercase tracking-wider">state/current.json</span>
                       </div>
-                      
+
                       {state ? (
                         <dl className="space-y-3 font-semibold text-zinc-700 dark:text-zinc-300">
                           {[
