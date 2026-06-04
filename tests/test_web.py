@@ -1045,7 +1045,7 @@ def test_start_workflow_writes_state_and_checkpoint(tmp_path):
     assert payload["dry_run"] is False
     assert Path(payload["artifacts"]["prd"]).is_file()
     assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "current.json").is_file()
-    assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / payload["run_id"] / "prd_review_gate.json").is_file()
+    assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", payload["run_id"], "prd_review_gate").is_file()
     assert not (tmp_path / "state" / "current.json").exists()
     action_log = tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl"
     actions = [json.loads(line) for line in action_log.read_text(encoding="utf-8").splitlines()]
@@ -1112,7 +1112,7 @@ def test_start_workflow_can_adopt_existing_project_first(tmp_path):
     assert payload["dry_run"] is False
     assert Path(payload["artifacts"]["takeover"]).is_file()
     assert "prd" not in payload["artifacts"]
-    assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / payload["run_id"] / "takeover_review_gate.json").is_file()
+    assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", payload["run_id"], "takeover_review_gate").is_file()
 
 
 def test_start_workflow_notifies_when_takeover_approval_gate_is_ready(tmp_path, monkeypatch):
@@ -1293,7 +1293,7 @@ def test_decide_approval_approves_prd_and_generates_rfc(tmp_path):
     assert payload["next_node"] == "await_rfc_approval"
     assert "rfc" in payload["artifacts"]
     assert Path(payload["artifacts"]["rfc"]).is_file()
-    assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / "run-1" / "rfc_review_gate.json").is_file()
+    assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", "run-1", "rfc_review_gate").is_file()
 
 
 def test_decide_approval_notifies_when_takeover_approval_generates_prd_gate(tmp_path, monkeypatch):
@@ -1790,7 +1790,7 @@ def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeyp
     assert payload["next_node"] == "await_release_approval"
     assert payload["blockers"] == []
     assert "release_notes" in payload["artifacts"]
-    assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / "run-1" / "release_review_gate.json").is_file()
+    assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", "run-1", "release_review_gate").is_file()
 
 
 def test_retry_blocked_workflow_refreshes_role_models_before_dispatch(tmp_path, monkeypatch):
@@ -1891,7 +1891,7 @@ def test_decide_approval_approves_takeover_and_generates_prd(tmp_path):
     assert payload["current_node"] == "prd_review_gate"
     assert payload["next_node"] == "await_prd_approval"
     assert Path(payload["artifacts"]["prd"]).is_file()
-    assert (tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / "run-1" / "prd_review_gate.json").is_file()
+    assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", "run-1", "prd_review_gate").is_file()
 
 
 def test_decide_approval_can_request_changes(tmp_path):

@@ -26,6 +26,8 @@ def test_state_store_writes_current_and_checkpoint(tmp_path):
     assert checkpoint.exists()
     assert current.read_text(encoding="utf-8").count('"run_id": "run-1"') == 1
     assert "state/checkpoints/run-1" in str(checkpoint)
+    assert checkpoint.name == "start-001.json"
+    assert store.latest_checkpoint_path("run-1", "start") == checkpoint
 
 
 def test_state_store_writes_project_scoped_current_and_checkpoint(tmp_path):
@@ -40,9 +42,42 @@ def test_state_store_writes_project_scoped_current_and_checkpoint(tmp_path):
     checkpoint = store.write_project_checkpoint(state)
 
     assert current == tmp_path / "state" / "projects" / "CONTENTOPS" / "current.json"
-    assert checkpoint == tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / "run-1" / "start.json"
+    assert checkpoint == tmp_path / "state" / "projects" / "CONTENTOPS" / "checkpoints" / "run-1" / "start-001.json"
+    assert store.latest_project_checkpoint_path("CONTENTOPS", "run-1", "start") == checkpoint
     assert store.read_project_current("CONTENTOPS").run_id == "run-1"
     assert not (tmp_path / "state" / "current.json").exists()
+
+
+def test_state_store_disambiguates_revisited_checkpoint_nodes(tmp_path):
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    store = StateStore(root=tmp_path)
+
+    first = store.write_checkpoint(state)
+    state.next_node = "implementation"
+    second = store.write_checkpoint(state)
+
+    assert first != second
+    assert first.name == "start-001.json"
+    assert second.name == "start-002.json"
+    assert first.exists()
+    assert second.exists()
+    assert store.latest_checkpoint_path("run-1", "start") == second
+
+
+def test_state_store_disambiguates_revisited_project_checkpoint_nodes(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Build an AI content studio")
+    store = StateStore(root=tmp_path)
+
+    first = store.write_project_checkpoint(state)
+    state.next_node = "implementation"
+    second = store.write_project_checkpoint(state)
+
+    assert first != second
+    assert first.name == "start-001.json"
+    assert second.name == "start-002.json"
+    assert first.exists()
+    assert second.exists()
+    assert store.latest_project_checkpoint_path("CONTENTOPS", "run-1", "start") == second
 
 
 def test_state_store_archives_and_clears_project_current(tmp_path):

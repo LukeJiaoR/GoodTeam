@@ -65,16 +65,27 @@ class StateStore:
         return path
 
     def write_checkpoint(self, state: AgileDevState) -> Path:
-        path = self.root / "state" / "checkpoints" / state.run_id / f"{state.current_node}.json"
-        self._write(path, state)
-        return path
+        directory = self.root / "state" / "checkpoints" / state.run_id
+        return self._write_checkpoint(directory, state)
 
     def write_project_checkpoint(self, state: AgileDevState, project_key: str | None = None) -> Path:
         key = normalize_project_key(project_key or state.project_key)
         state.project_key = key
-        path = self.project_state_dir(key) / "checkpoints" / state.run_id / f"{state.current_node}.json"
-        self._write(path, state)
-        return path
+        directory = self.project_state_dir(key) / "checkpoints" / state.run_id
+        return self._write_checkpoint(directory, state)
+
+    def latest_checkpoint_path(self, run_id: str, current_node: str) -> Path | None:
+        directory = self.root / "state" / "checkpoints" / run_id
+        return self._latest_checkpoint_path(directory, current_node)
+
+    def latest_project_checkpoint_path(
+        self,
+        project_key: str,
+        run_id: str,
+        current_node: str,
+    ) -> Path | None:
+        directory = self.project_state_dir(project_key) / "checkpoints" / run_id
+        return self._latest_checkpoint_path(directory, current_node)
 
     def read_current(self) -> AgileDevState | None:
         path = self.root / "state" / "current.json"
@@ -114,6 +125,45 @@ class StateStore:
     def _write(self, path: Path, state: AgileDevState) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(asdict(state), indent=2), encoding="utf-8")
+
+    def _write_checkpoint(self, directory: Path, state: AgileDevState) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        while True:
+            path = self._next_checkpoint_path(directory, state.current_node)
+            try:
+                with path.open("x", encoding="utf-8") as file:
+                    json.dump(asdict(state), file, indent=2)
+                return path
+            except FileExistsError:
+                continue
+
+    def _next_checkpoint_path(self, directory: Path, current_node: str) -> Path:
+        latest = self._latest_checkpoint_path(directory, current_node)
+        sequence = self._checkpoint_sequence(latest, current_node) if latest is not None else 0
+        return directory / f"{current_node}-{sequence + 1:03d}.json"
+
+    def _latest_checkpoint_path(self, directory: Path, current_node: str) -> Path | None:
+        if not directory.exists():
+            return None
+        candidates = [
+            (sequence, path)
+            for path in directory.glob("*.json")
+            if (sequence := self._checkpoint_sequence(path, current_node)) is not None
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item[0])[1]
+
+    def _checkpoint_sequence(self, path: Path, current_node: str) -> int | None:
+        if path.stem == current_node:
+            return 1
+        prefix = f"{current_node}-"
+        if not path.stem.startswith(prefix):
+            return None
+        suffix = path.stem[len(prefix) :]
+        if not suffix.isdecimal():
+            return None
+        return int(suffix)
 
 
 def normalize_project_key(value: str) -> str:
