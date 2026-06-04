@@ -505,6 +505,49 @@ def test_dispatch_tracks_reports_no_file_collisions_for_disjoint_changes(tmp_pat
     assert payload["file_collisions"] == []
 
 
+def test_dispatch_tracks_passes_projects_dir_to_safety_check(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_safety_check(project_root, *, projects_dir, allow_unsafe):
+        seen["project_root"] = project_root
+        seen["projects_dir"] = projects_dir
+        seen["allow_unsafe"] = allow_unsafe
+        return {"safe": True, "reason": ""}
+
+    def fake_run_dispatched_job(project_root, job, verify_commands):
+        return {
+            "job_id": job["id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": "completed",
+            "outcome": "ok",
+            "summary": "done",
+            "memory_writeback": {"status": "skipped"},
+            "verify": {"passed": True, "skipped": True, "reason": "none"},
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.dispatch.ensure_dispatch_project_root_is_safe", fake_safety_check)
+    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    projects_dir = tmp_path / "served-workspace" / "projects"
+
+    dispatch_tracks(
+        project_root=project_root,
+        projects_dir=projects_dir,
+        tracks=[
+            {"role": "implementation", "adapter": "fake", "task": "Backend edits."},
+        ],
+    )
+
+    assert seen == {
+        "project_root": project_root,
+        "projects_dir": projects_dir,
+        "allow_unsafe": False,
+    }
+
+
 def test_worker_job_store_creates_protocol_files(tmp_path):
     store = WorkerJobStore(tmp_path)
 

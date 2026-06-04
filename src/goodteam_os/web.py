@@ -345,21 +345,80 @@ def _prepare_dispatch_track_inputs(
     return task_file, constraints_file
 
 
+def _dispatch_track_status_path(workspace: Path, run_id: str) -> Path:
+    return workspace / "state" / "dispatch-tracks" / f"dispatch-track-{run_id}.json"
+
+
+def _write_dispatch_track_status(
+    workspace: Path,
+    *,
+    run_id: str,
+    name: str,
+    worktree: Path,
+    status: str,
+    error: str = "",
+) -> None:
+    status_path = _dispatch_track_status_path(workspace, run_id)
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run_id": run_id,
+        "name": name,
+        "worktree": str(worktree),
+        "status": status,
+        "error": error,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _start_dispatch_track_background(
     *,
+    workspace: Path,
+    run_id: str,
+    name: str,
     worktree: Path,
     tracks: list[dict[str, object]],
     verify_commands: dict[str, str],
     constraints_file: Path | None,
 ) -> None:
+    projects_dir = workspace / "projects"
+
+    def run_dispatch_track() -> None:
+        _write_dispatch_track_status(
+            workspace,
+            run_id=run_id,
+            name=name,
+            worktree=worktree,
+            status="started",
+        )
+        try:
+            dispatch_tracks(
+                project_root=worktree,
+                tracks=tracks,
+                verify_commands=verify_commands,
+                constraints_file=constraints_file,
+                projects_dir=projects_dir,
+            )
+        except Exception as exc:
+            _write_dispatch_track_status(
+                workspace,
+                run_id=run_id,
+                name=name,
+                worktree=worktree,
+                status="failed",
+                error=str(exc),
+            )
+            return
+        _write_dispatch_track_status(
+            workspace,
+            run_id=run_id,
+            name=name,
+            worktree=worktree,
+            status="completed",
+        )
+
     thread = threading.Thread(
-        target=dispatch_tracks,
-        kwargs={
-            "project_root": worktree,
-            "tracks": tracks,
-            "verify_commands": verify_commands,
-            "constraints_file": constraints_file,
-        },
+        target=run_dispatch_track,
         daemon=True,
     )
     thread.start()
@@ -400,6 +459,9 @@ def start_dispatch_track(workspace: Path, request: dict[str, object]) -> dict[st
         verify_commands = dict([parse_dispatch_verify_spec(f"{role}:{verify}")])
 
     _start_dispatch_track_background(
+        workspace=workspace,
+        run_id=run_id,
+        name=name,
         worktree=worktree,
         tracks=tracks,
         verify_commands=verify_commands,

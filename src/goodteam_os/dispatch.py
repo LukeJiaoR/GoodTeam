@@ -119,9 +119,13 @@ def dispatch_tracks(
     tracks: list[dict[str, object]],
     verify_commands: dict[str, str] | None = None,
     constraints_file: Path | None = None,
+    projects_dir: Path | None = None,
     allow_unsafe: bool = False,
 ) -> dict[str, object]:
-    safety = ensure_dispatch_project_root_is_safe(project_root, allow_unsafe=allow_unsafe)
+    safety_kwargs: dict[str, object] = {"allow_unsafe": allow_unsafe}
+    if projects_dir is not None:
+        safety_kwargs["projects_dir"] = projects_dir
+    safety = ensure_dispatch_project_root_is_safe(project_root, **safety_kwargs)
     if not safety["safe"]:
         raise ValueError(str(safety["reason"]))
     constraints = _constraints_from_file(constraints_file)

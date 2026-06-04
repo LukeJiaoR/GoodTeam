@@ -494,7 +494,71 @@ def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path
     assert calls[0]["tracks"][0]["task"] == "Implement backend dispatch."
     assert calls[0]["verify_commands"] == {"backend": "pytest tests/test_api.py -q"}
     assert calls[0]["constraints_file"].read_text(encoding="utf-8") == "Keep changes scoped."
+    assert calls[0]["projects_dir"] == tmp_path / "projects"
     dispatch_can_finish.set()
+    status_path = tmp_path / "state" / "dispatch-tracks" / f"dispatch-track-{payload['run_id']}.json"
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        if status_path.exists() and json.loads(status_path.read_text(encoding="utf-8"))["status"] == "completed":
+            break
+        time.sleep(0.01)
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["run_id"] == payload["run_id"]
+    assert status["name"] == "my-track"
+    assert status["worktree"] == str(worktree)
+    assert status["status"] == "completed"
+    assert status["error"] == ""
+
+
+def test_api_dispatch_track_background_failure_writes_status(tmp_path, monkeypatch):
+    worktree = tmp_path / "goodteam-dev-my-track"
+    dispatch_entered = threading.Event()
+
+    def fake_ensure_worktree(workspace, *, name, branch):
+        worktree.mkdir(exist_ok=True)
+        return worktree
+
+    def fake_safety_check(project_root, *, projects_dir):
+        return {"safe": True, "reason": ""}
+
+    def fake_dispatch_tracks(**kwargs):
+        dispatch_entered.set()
+        raise RuntimeError("dispatch failed after acceptance")
+
+    monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
+    monkeypatch.setattr("goodteam_os.web.ensure_dispatch_project_root_is_safe", fake_safety_check)
+    monkeypatch.setattr("goodteam_os.web.dispatch_tracks", fake_dispatch_tracks)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/dispatch-track",
+        {
+            "name": "my-track",
+            "role": "backend",
+            "adapter": "codex",
+            "task": "Implement backend dispatch.",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 202 in response.responses
+    assert dispatch_entered.wait(timeout=1)
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    status_path = tmp_path / "state" / "dispatch-tracks" / f"dispatch-track-{payload['run_id']}.json"
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        if status_path.exists():
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            if status["status"] == "failed":
+                break
+        time.sleep(0.01)
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["run_id"] == payload["run_id"]
+    assert status["name"] == "my-track"
+    assert status["worktree"] == str(worktree)
+    assert status["status"] == "failed"
+    assert status["error"] == "dispatch failed after acceptance"
 
 
 def test_api_dispatch_track_rejects_cross_origin_before_dispatch(tmp_path, monkeypatch):
