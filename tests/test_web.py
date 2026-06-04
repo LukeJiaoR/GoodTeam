@@ -88,7 +88,13 @@ def test_build_dev_loop_pre_reviews_reflect_report_presence(tmp_path, monkeypatc
     report_dir = tmp_path / "reports"
     report_dir.mkdir()
     (report_dir / "pre-review-57-report.md").write_text("ok", encoding="utf-8")
+    (report_dir / "pre-review-59-report.md").write_text("failed ci", encoding="utf-8")
     monkeypatch.setattr(web, "PRE_REVIEW_REPORT_DIR", report_dir)
+    git_output = """worktree /repo/ready
+HEAD abc1234567890
+branch refs/heads/feat/ready
+
+"""
     gh_output = json.dumps(
         [
             {
@@ -105,12 +111,19 @@ def test_build_dev_loop_pre_reviews_reflect_report_presence(tmp_path, monkeypatc
                 "url": "https://github.com/org/repo/pull/58",
                 "statusCheckRollup": [{"status": "IN_PROGRESS"}],
             },
+            {
+                "number": 59,
+                "title": "Failing",
+                "headRefName": "feat/failing",
+                "url": "https://github.com/org/repo/pull/59",
+                "statusCheckRollup": [{"conclusion": "FAILURE", "status": "COMPLETED"}],
+            },
         ]
     )
 
     def fake_run(command, **kwargs):
         if command[:3] == ["git", "worktree", "list"]:
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout=git_output, stderr="")
         return SimpleNamespace(returncode=0, stdout=gh_output, stderr="")
 
     monkeypatch.setattr(web.subprocess, "run", fake_run)
@@ -124,6 +137,8 @@ def test_build_dev_loop_pre_reviews_reflect_report_presence(tmp_path, monkeypatc
             "head_branch": "feat/ready",
             "ci": "pass",
             "url": "https://github.com/org/repo/pull/57",
+            "land_ready": True,
+            "land_command": "scripts/land-pr.sh 57 --worktree /repo/ready",
         },
         {
             "number": 58,
@@ -131,11 +146,23 @@ def test_build_dev_loop_pre_reviews_reflect_report_presence(tmp_path, monkeypatc
             "head_branch": "feat/waiting",
             "ci": "pending",
             "url": "https://github.com/org/repo/pull/58",
+            "land_ready": False,
+            "land_command": "scripts/land-pr.sh 58",
+        },
+        {
+            "number": 59,
+            "title": "Failing",
+            "head_branch": "feat/failing",
+            "ci": "fail",
+            "url": "https://github.com/org/repo/pull/59",
+            "land_ready": False,
+            "land_command": "scripts/land-pr.sh 59",
         },
     ]
     assert dev_loop["pre_reviews"] == [
         {"pr": 57, "present": True, "report_path": str(report_dir / "pre-review-57-report.md")},
         {"pr": 58, "present": False, "report_path": str(report_dir / "pre-review-58-report.md")},
+        {"pr": 59, "present": True, "report_path": str(report_dir / "pre-review-59-report.md")},
     ]
 
 
@@ -167,6 +194,61 @@ def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
     edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
     assert edge_endpoints <= node_names
     assert {node["kind"] for node in graph["nodes"]} <= {"stage", "gate", "terminal", "revise", "role"}
+
+
+def test_dashboard_stepper_order_follows_workflow_table_happy_path():
+    assert web._dashboard_stepper_table_order() == [
+        "takeover",
+        "product_requirement",
+        "prd",
+        "architect",
+        "rfc",
+        "security",
+        "planner",
+        "staging",
+        "release",
+        "retro_memory",
+    ]
+
+    steps = web._dashboard_stepper_steps()
+
+    assert [step["label"] for step in steps] == [
+        "Intake",
+        "Research",
+        "PRD",
+        "RFC",
+        "Arch Rev",
+        "Planning",
+        "UI Design",
+        "Impl",
+        "QA",
+        "Staging",
+        "Security",
+        "Release",
+        "Retro",
+    ]
+    assert web._dashboard_stepper_node_sequence(steps) == {
+        "takeover_review_gate": 1,
+        "await_takeover_approval": 1,
+        "research": 2,
+        "product_requirement": 3,
+        "await_prd_approval": 3,
+        "architect": 4,
+        "rfc_review_gate": 5,
+        "await_rfc_approval": 5,
+        "await_security_approval": 6,
+        "planner": 6,
+        "ui": 7,
+        "implementation": 8,
+        "qa": 9,
+        "code_review": 10,
+        "staging": 11,
+        "await_staging_approval": 11,
+        "release": 12,
+        "await_release_approval": 12,
+        "retro_memory": 13,
+        "complete": 14,
+    }
 
 
 def test_build_workflow_graph_includes_active_project_run(tmp_path):
