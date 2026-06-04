@@ -452,10 +452,12 @@ def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path
         return {"all_ok": True, "run_id": "dispatch-worker"}
 
     monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
-    monkeypatch.setattr(
-        "goodteam_os.web.ensure_dispatch_project_root_is_safe",
-        lambda project_root: {"safe": True, "reason": ""},
-    )
+    def fake_safety_check(project_root, *, projects_dir):
+        assert project_root == worktree
+        assert projects_dir == tmp_path / "projects"
+        return {"safe": True, "reason": ""}
+
+    monkeypatch.setattr("goodteam_os.web.ensure_dispatch_project_root_is_safe", fake_safety_check)
     monkeypatch.setattr("goodteam_os.web.dispatch_tracks", fake_dispatch_tracks)
     simulate_post = capture_post_handler(tmp_path, monkeypatch)
 
@@ -517,6 +519,28 @@ def test_api_dispatch_track_rejects_cross_origin_before_dispatch(tmp_path, monke
     assert json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
 
 
+def test_api_dispatch_track_legacy_path_rejects_cross_origin_before_dispatch(tmp_path, monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("dispatch setup should not run for cross-origin requests")
+
+    monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fail_if_called)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/dispatch-track",
+        {
+            "name": "my-track",
+            "role": "backend",
+            "adapter": "codex",
+            "task": "Implement backend dispatch.",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "https://evil.test"},
+    )
+
+    assert 403 in response.responses
+    assert json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+
+
 def test_api_dispatch_track_rejects_bad_input(tmp_path, monkeypatch):
     simulate_post = capture_post_handler(tmp_path, monkeypatch)
 
@@ -540,8 +564,37 @@ def test_api_dispatch_track_rejects_unsafe_target(tmp_path, monkeypatch):
     monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
     monkeypatch.setattr(
         "goodteam_os.web.ensure_dispatch_project_root_is_safe",
-        lambda project_root: {"safe": False, "reason": "project_root is inside configured project repo"},
+        lambda project_root, *, projects_dir: {"safe": False, "reason": "project_root is inside configured project repo"},
     )
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/dispatch-track",
+        {"name": "my-track", "role": "backend", "adapter": "codex", "task": "Implement."},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 400 in response.responses
+    assert "configured project repo" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+
+
+def test_api_dispatch_track_safety_uses_served_workspace_projects_dir(tmp_path, monkeypatch):
+    configured_repo = tmp_path / "served-repo"
+    worktree = configured_repo / "goodteam-dev-my-track"
+    write_project_config(tmp_path, repos={"app": configured_repo})
+
+    def fake_ensure_worktree(workspace, *, name, branch):
+        assert workspace == tmp_path
+        assert name == "my-track"
+        assert branch == "feat/my-track"
+        worktree.mkdir(parents=True)
+        return worktree
+
+    def fail_if_dispatch_starts(**kwargs):
+        raise AssertionError("dispatch should not start for unsafe targets")
+
+    monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
+    monkeypatch.setattr("goodteam_os.web.dispatch_tracks", fail_if_dispatch_starts)
     simulate_post = capture_post_handler(tmp_path, monkeypatch)
 
     response = simulate_post(

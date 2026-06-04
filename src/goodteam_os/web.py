@@ -383,7 +383,7 @@ def start_dispatch_track(workspace: Path, request: dict[str, object]) -> dict[st
 
     branch = f"feat/{name}"
     worktree = _ensure_dispatch_worktree(workspace, name=name, branch=branch)
-    safety = ensure_dispatch_project_root_is_safe(worktree)
+    safety = ensure_dispatch_project_root_is_safe(worktree, projects_dir=workspace / "projects")
     if not safety.get("safe"):
         raise ValueError(str(safety.get("reason", "unsafe dispatch target")))
 
@@ -5548,14 +5548,13 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
 
         def do_POST(self) -> None:
             normalized_path = self.path
-            is_api_post = normalized_path.startswith("/api/")
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
             if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/open-path", "/debate", "/dispatch-track"}:
                 self.send_error(404)
                 return
-            if is_api_post and not _request_origin_is_same_origin(
+            if not _request_origin_is_same_origin(
                 origin=str(self.headers.get("Origin", "")),
                 host=str(self.headers.get("Host", "")),
             ):
