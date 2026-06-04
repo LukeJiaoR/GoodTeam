@@ -54,13 +54,28 @@ PRD_REVIEW_ROLES = [
     "Review / QA",
 ]
 
-_PREFERRED_WORKER_BACKEND_ORDER = ("fake", "codex", "anthropic", "noop", "human")
+_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "anthropic", "claude", "gemini", "agy", "antigravity", "fake", "noop", "human")
 WORKER_BACKEND_OPTIONS = [
     mode
     for mode in _PREFERRED_WORKER_BACKEND_ORDER
     if mode in {*BUILTIN_WORKER_MODES, *CLI_BACKENDS}
 ]
-WORKER_ROLES = ["ui", "implementation", "qa"]
+WORKER_ROLES = [
+    "orchestrator",
+    "research",
+    "product_requirement",
+    "architect",
+    "review",
+    "planner",
+    "ui",
+    "implementation",
+    "frontend",
+    "backend",
+    "qa",
+    "code_review",
+    "release",
+    "retro_memory",
+]
 PRE_REVIEW_REPORT_DIR = Path("/tmp")
 DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS = 10
 DISPATCH_TRACK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -1755,23 +1770,42 @@ def update_project_worker_backend_settings(workspace: Path, request: dict[str, o
     if not isinstance(workers_value, dict):
         raise ValueError("workers must be an object")
     workers = {str(role).strip(): str(backend).strip() for role, backend in workers_value.items()}
-    _validate_worker_backend_config(mode=mode, workers=workers)
+    role_models_present = "role_models" in request or "role_model_overrides" in request
+    role_models_value = request.get("role_models", request.get("role_model_overrides", {}))
+    if not isinstance(role_models_value, dict):
+        raise ValueError("role_models must be an object")
+    role_models = {str(role).strip(): str(model).strip() for role, model in role_models_value.items()}
+    _validate_worker_backend_config(mode=mode, workers=workers, role_models=role_models)
 
     config_path = _project_config_for_key(workspace, project_key)
+    target = load_project_target(config_path)
+    existing_role_models = target.get("role_model_overrides", {})
+    role_model_overrides = (
+        {str(role): str(model) for role, model in existing_role_models.items()}
+        if not role_models_present and isinstance(existing_role_models, dict)
+        else {}
+    )
+    for role, model in role_models.items():
+        if not model or model.lower() == "default":
+            role_model_overrides.pop(role, None)
+        else:
+            role_model_overrides[role] = model
     update_worker_backend_config(
         config_path,
         mode=mode,
         workers=_ordered_worker_overrides(workers),
+        role_model_overrides=_ordered_role_model_overrides(role_model_overrides),
     )
     report = check_project_target(load_project_target(config_path))
     return {
         "ok": True,
         "role_worker_backends": report["role_worker_backends"],
         "worker_backends_preflight": report["worker_backends_preflight"],
+        "role_model_overrides": _ordered_role_model_overrides(role_model_overrides),
     }
 
 
-def _validate_worker_backend_config(*, mode: str, workers: dict[str, str]) -> None:
+def _validate_worker_backend_config(*, mode: str, workers: dict[str, str], role_models: dict[str, str] | None = None) -> None:
     valid_backends = set(WORKER_BACKEND_OPTIONS)
     if mode not in valid_backends:
         raise ValueError(f"Unknown worker backend: {mode}. Use one of: {', '.join(WORKER_BACKEND_OPTIONS)}")
@@ -1783,6 +1817,11 @@ def _validate_worker_backend_config(*, mode: str, workers: dict[str, str]) -> No
             raise ValueError(f"Unknown worker role: {role}. Use one of: {', '.join(WORKER_ROLES)}")
         if backend not in valid_backends:
             raise ValueError(f"Unknown worker backend for {role}: {backend}. Use one of: {', '.join(WORKER_BACKEND_OPTIONS)}")
+    for role, model in (role_models or {}).items():
+        if not role:
+            raise ValueError("worker role cannot be empty")
+        if role not in valid_roles:
+            raise ValueError(f"Unknown worker role: {role}. Use one of: {', '.join(WORKER_ROLES)}")
 
 
 def _ordered_worker_overrides(workers: dict[str, str]) -> dict[str, str]:
@@ -1793,6 +1832,19 @@ def _ordered_worker_overrides(workers: dict[str, str]) -> dict[str, str]:
     for role in sorted(set(workers) - set(WORKER_ROLES)):
         if workers.get(role):
             ordered[role] = workers[role]
+    return ordered
+
+
+def _ordered_role_model_overrides(role_models: dict[str, str]) -> dict[str, str]:
+    ordered: dict[str, str] = {}
+    for role in WORKER_ROLES:
+        model = role_models.get(role, "").strip()
+        if model:
+            ordered[role] = model
+    for role in sorted(set(role_models) - set(WORKER_ROLES)):
+        model = role_models.get(role, "").strip()
+        if model:
+            ordered[role] = model
     return ordered
 
 

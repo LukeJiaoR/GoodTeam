@@ -203,6 +203,7 @@ class CliBackendSpec:
     # module global on each run instead of freezing the value at import time.
     default_path: Callable[[], str]
     model_default: str
+    models: tuple[str, ...]
     auth_env: tuple[str, ...]
     capture: str  # "output_file" | "stdout"
     label: str
@@ -327,6 +328,7 @@ CODEX_BACKEND = CliBackendSpec(
     which_name="codex",
     default_path=lambda: DEFAULT_CODEX_PATH,
     model_default=DEFAULT_CODEX_MODEL,
+    models=(DEFAULT_CODEX_MODEL, "gpt-5.5", "gpt-5.3-codex"),
     auth_env=CODEX_AUTH_ENV_NAMES,
     capture="output_file",
     label="Codex CLI",
@@ -341,6 +343,15 @@ CLAUDE_BACKEND = CliBackendSpec(
     which_name="claude",
     default_path=lambda: DEFAULT_CLAUDE_PATH,
     model_default=DEFAULT_CLAUDE_MODEL,
+    models=(
+        DEFAULT_CLAUDE_MODEL,
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+        "opus",
+        "sonnet",
+        "haiku",
+    ),
     auth_env=CLAUDE_AUTH_ENV_NAMES,
     capture="stdout",
     label="Claude Code CLI",
@@ -356,6 +367,7 @@ GEMINI_BACKEND = CliBackendSpec(
     which_name="gemini",
     default_path=lambda: DEFAULT_GEMINI_PATH,
     model_default=DEFAULT_GEMINI_MODEL,
+    models=("auto", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"),
     auth_env=GEMINI_AUTH_ENV_NAMES,
     capture="stdout",
     label="Gemini CLI",
@@ -370,6 +382,7 @@ AGY_BACKEND = CliBackendSpec(
     which_name="agy",
     default_path=lambda: DEFAULT_AGY_PATH,
     model_default=DEFAULT_AGY_MODEL,
+    models=("auto",),
     auth_env=AGY_AUTH_ENV_NAMES,
     capture="stdout",
     label="Antigravity (agy) CLI",
@@ -1103,6 +1116,8 @@ def discover_installed_agents() -> list[dict[str, Any]]:
                 "command": str(report.get("command", "")),
                 "command_path": str(report.get("command_path", "")),
                 "hint": str(report.get("hint", "")),
+                "models": list(dict.fromkeys(spec.models)),
+                "model_default": spec.model_default,
             }
         )
     return discovered

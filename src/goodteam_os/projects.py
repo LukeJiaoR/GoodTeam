@@ -123,7 +123,13 @@ def init_project(
     }
 
 
-def update_worker_backend_config(config_path: Path, *, mode: str, workers: dict[str, str]) -> None:
+def update_worker_backend_config(
+    config_path: Path,
+    *,
+    mode: str,
+    workers: dict[str, str],
+    role_model_overrides: dict[str, str] | None = None,
+) -> None:
     """Update only worker backend blocks in a local project config."""
     lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
     worker_backend_block = ["worker_backend:\n", f"  mode: {mode}\n"]
@@ -132,6 +138,10 @@ def update_worker_backend_config(config_path: Path, *, mode: str, workers: dict[
 
     lines = _replace_or_append_top_level_block(lines, "worker_backend", worker_backend_block)
     lines = _replace_or_append_top_level_block(lines, "workers", workers_block)
+    if role_model_overrides is not None:
+        model_lines = [f"  {role}: {model}\n" for role, model in role_model_overrides.items()]
+        model_block = ["role_model_overrides:\n", *model_lines] if model_lines else []
+        lines = _replace_or_append_top_level_block(lines, "role_model_overrides", model_block)
     config_path.write_text("".join(lines), encoding="utf-8")
 
 

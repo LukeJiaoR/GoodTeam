@@ -1179,12 +1179,21 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     assert by_backend["codex"]["available"] is True
     assert by_backend["codex"]["ready"] is True
     assert by_backend["codex"]["command"] == "codex"
+    assert by_backend["codex"]["model_default"] == "gpt-5.3-codex"
+    assert "gpt-5.5" in by_backend["codex"]["models"]
+    assert "gpt-5.3-codex" in by_backend["codex"]["models"]
     assert by_backend["claude"]["available"] is True
     assert by_backend["claude"]["ready"] is True
+    assert by_backend["claude"]["model_default"] == "claude-sonnet-4-6"
+    assert "claude-sonnet-4-6" in by_backend["claude"]["models"]
     assert by_backend["gemini"]["available"] is True
     assert by_backend["gemini"]["ready"] is True
+    assert by_backend["gemini"]["model_default"] == "auto"
+    assert "gemini-2.5-pro" in by_backend["gemini"]["models"]
     assert by_backend["agy"]["available"] is False
     assert by_backend["agy"]["ready"] is False
+    assert by_backend["agy"]["models"] == ["auto"]
+    assert by_backend["agy"]["model_default"] == "auto"
 
 
 def test_agy_build_command_has_no_gemini_only_flags():
