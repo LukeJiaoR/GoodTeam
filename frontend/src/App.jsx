@@ -359,6 +359,8 @@ export default function App() {
   // Form submit button loading states
   const [actionLoading, setActionLoading] = useState(false);
   const [generatingPrd, setGeneratingPrd] = useState(false);
+  const [startingWorkflow, setStartingWorkflow] = useState(false);
+  const [approvingGate, setApprovingGate] = useState(false);
 
   // Approval review artifact editor state
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
@@ -1082,6 +1084,7 @@ export default function App() {
       showToast('Workflow goal is required', true);
       return;
     }
+    setStartingWorkflow(true);
     setActionLoading(true);
     showToast('Starting workflow...');
     try {
@@ -1119,6 +1122,7 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setActionLoading(false);
+      setStartingWorkflow(false);
     }
   };
 
@@ -1207,6 +1211,7 @@ export default function App() {
   };
 
   const handleApproveDecision = async (approvalKey, decision, debateRef = '') => {
+    setApprovingGate(true);
     setActionLoading(true);
     try {
       const body = {
@@ -1230,6 +1235,7 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setActionLoading(false);
+      setApprovingGate(false);
     }
   };
 
@@ -1884,12 +1890,21 @@ export default function App() {
                     <button
                       type="button"
                       onClick={handleStartWorkflow}
-                      disabled={actionLoading}
+                      disabled={actionLoading || startingWorkflow}
                       className="w-full bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_4px_0_#3D8B00] text-white font-bold py-3 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-2"
                     >
-                      <Play className="h-3.5 w-3.5 fill-current" />
-                      <span>{dryRun ? 'Preview Workflow' : (startMode === 'existing_project' ? 'Start Adoption' : 'Start New Project')}</span>
+                      {startingWorkflow ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5 fill-current" />
+                      )}
+                      <span>{startingWorkflow ? 'Starting...' : (dryRun ? 'Preview Workflow' : (startMode === 'existing_project' ? 'Start Adoption' : 'Start New Project'))}</span>
                     </button>
+                    {startingWorkflow && (
+                      <p className="text-[10px] text-zinc-500 text-center mt-2 animate-pulse">
+                        Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2623,19 +2638,30 @@ export default function App() {
                           
                           <div className="col-span-2 border-t-2 border-[#E5E5E5] dark:border-zinc-850 my-2" />
 
-                          <div className="col-span-2 flex items-center justify-between">
+                           <div className="col-span-2 flex items-center justify-between">
                             <div className="flex items-center space-x-2">
                               <input type="checkbox" id="run-dry" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="rounded text-[#58CC02] focus:ring-[#58CC02] h-4 w-4 cursor-pointer" />
                               <label htmlFor="run-dry" className="font-bold text-zinc-500 uppercase tracking-wider text-[10px]">Dry run simulation</label>
                             </div>
-                            <button
-                              onClick={handleStartWorkflow}
-                              disabled={actionLoading}
-                              className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-6 py-2.5 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-2"
-                            >
-                              <Play className="h-3.5 w-3.5 fill-current" />
-                              <span>{dryRun ? 'Preview Workflow' : 'Start Workflow'}</span>
-                            </button>
+                            <div className="flex flex-col items-end">
+                              <button
+                                onClick={handleStartWorkflow}
+                                disabled={actionLoading || startingWorkflow}
+                                className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-6 py-2.5 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-2"
+                              >
+                                {startingWorkflow ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Play className="h-3.5 w-3.5 fill-current" />
+                                )}
+                                <span>{startingWorkflow ? 'Starting...' : (dryRun ? 'Preview Workflow' : 'Start Workflow')}</span>
+                              </button>
+                              {startingWorkflow && (
+                                <span className="text-[10px] text-zinc-500 mt-2 text-right animate-pulse max-w-xs">
+                                  Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -3305,18 +3331,29 @@ export default function App() {
                                 </button>
                               )}
                               {isActionable && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleApproveDecision(review.approval, 'approved', getResolvingDebateRef(review.approval));
-                                  }}
-                                  disabled={actionLoading}
-                                  className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
-                                >
-                                  <Check className="h-3 w-3" />
-                                  <span>Approve</span>
-                                </button>
+                                <div className="flex flex-col items-end">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleApproveDecision(review.approval, 'approved', getResolvingDebateRef(review.approval));
+                                    }}
+                                    disabled={actionLoading || approvingGate}
+                                    className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
+                                  >
+                                    {approvingGate ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Check className="h-3 w-3" />
+                                    )}
+                                    <span>{approvingGate ? 'Approving...' : 'Approve'}</span>
+                                  </button>
+                                  {approvingGate && (
+                                    <span className="text-[8px] text-zinc-500 mt-1 text-right animate-pulse max-w-[150px] leading-tight">
+                                      Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </div>
                           </article>
@@ -3563,32 +3600,43 @@ export default function App() {
                               </div>
 
                               {selectedReview.is_actionable && (
-                                <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-end space-x-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
-                                    disabled={actionLoading}
-                                    className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
-                                  >
-                                    Reject
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef)}
-                                    disabled={actionLoading}
-                                    className="bg-white hover:bg-[#FFF0D4] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
-                                  >
-                                    Request Changes
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
-                                    disabled={actionLoading}
-                                    className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                  >
-                                    <Check className="h-4 w-4" />
-                                    <span>Approve Gate</span>
-                                  </button>
+                                <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex flex-col items-end space-y-2">
+                                  <div className="flex justify-end space-x-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
+                                      disabled={actionLoading || approvingGate}
+                                      className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
+                                    >
+                                      Reject
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef)}
+                                      disabled={actionLoading || approvingGate}
+                                      className="bg-white hover:bg-[#FFF0D4] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
+                                    >
+                                      Request Changes
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
+                                      disabled={actionLoading || approvingGate}
+                                      className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                    >
+                                      {approvingGate ? (
+                                        <RefreshCw className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Check className="h-4 w-4" />
+                                      )}
+                                      <span>{approvingGate ? 'Submitting...' : 'Approve Gate'}</span>
+                                    </button>
+                                  </div>
+                                  {approvingGate && (
+                                    <span className="text-[10px] text-zinc-500 animate-pulse text-right">
+                                      Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </div>
