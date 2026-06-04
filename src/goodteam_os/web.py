@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -12,6 +13,12 @@ from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 from goodteam_os.debate import default_debate_dispatch, run_gate_debate
+from goodteam_os.dispatch import (
+    dispatch_tracks,
+    ensure_dispatch_project_root_is_safe,
+    parse_dispatch_track_spec,
+    parse_dispatch_verify_spec,
+)
 from goodteam_os.graph import (
     advance_approved_workflow,
     generate_rfc,
@@ -56,6 +63,7 @@ WORKER_BACKEND_OPTIONS = [
 WORKER_ROLES = ["ui", "implementation", "qa"]
 PRE_REVIEW_REPORT_DIR = Path("/tmp")
 DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS = 10
+DISPATCH_TRACK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def append_action(
@@ -274,6 +282,210 @@ def _map_ci_rollup(status_check_rollup: object) -> str:
             has_pending = True
 
     return "pending" if has_pending else "pass"
+
+
+def _request_origin_is_same_origin(*, origin: str, host: str) -> bool:
+    if not origin:
+        return True
+    if not host:
+        return False
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    return parsed.netloc.lower() == host.split("@")[-1].lower()
+
+
+def _dispatch_worktree_path(workspace: Path, name: str) -> Path:
+    return workspace.resolve().parent / f"goodteam-dev-{name}"
+
+
+def _ensure_dispatch_worktree(workspace: Path, *, name: str, branch: str) -> Path:
+    worktree = _dispatch_worktree_path(workspace, name)
+    workspace_root = workspace.resolve()
+    resolved_worktree = worktree.resolve() if worktree.exists() else worktree.absolute().resolve(strict=False)
+    if resolved_worktree == workspace_root or workspace_root in resolved_worktree.parents:
+        raise ValueError("dispatch worktree must be outside the live repo")
+    if not worktree.exists():
+        subprocess.run(
+            ["git", "worktree", "add", str(worktree), "-b", branch, "main"],
+            cwd=workspace,
+            check=True,
+        )
+    _link_dispatch_worktree_venv(workspace, worktree)
+    return worktree
+
+
+def _link_dispatch_worktree_venv(workspace: Path, worktree: Path) -> None:
+    workspace_root = workspace.resolve()
+    worktree_root = worktree.resolve() if worktree.exists() else worktree.absolute().resolve(strict=False)
+    source_bin = workspace_root / ".venv" / "bin"
+    if not source_bin.exists():
+        return
+    venv_dir = worktree_root / ".venv"
+    bin_link = venv_dir / "bin"
+    if venv_dir.exists() or venv_dir.is_symlink():
+        return
+    venv_dir.mkdir(parents=True, exist_ok=True)
+    bin_link.symlink_to(source_bin)
+
+
+def _prepare_dispatch_track_inputs(
+    worktree: Path,
+    *,
+    run_id: str,
+    task: str,
+    constraints: str,
+) -> tuple[Path, Path | None]:
+    input_dir = worktree / ".goodteam" / "dispatch-inputs" / run_id
+    input_dir.mkdir(parents=True, exist_ok=True)
+    task_file = input_dir / "task.md"
+    task_file.write_text(task, encoding="utf-8")
+    constraints_file = None
+    if constraints.strip():
+        constraints_file = input_dir / "constraints.md"
+        constraints_file.write_text(constraints, encoding="utf-8")
+    return task_file, constraints_file
+
+
+def _dispatch_track_status_path(workspace: Path, run_id: str) -> Path:
+    return workspace / "state" / "dispatch-tracks" / f"dispatch-track-{run_id}.json"
+
+
+def _write_dispatch_track_status(
+    workspace: Path,
+    *,
+    run_id: str,
+    name: str,
+    worktree: Path,
+    status: str,
+    error: str = "",
+) -> None:
+    status_path = _dispatch_track_status_path(workspace, run_id)
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run_id": run_id,
+        "name": name,
+        "worktree": str(worktree),
+        "status": status,
+        "error": error,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _start_dispatch_track_background(
+    *,
+    workspace: Path,
+    run_id: str,
+    name: str,
+    worktree: Path,
+    tracks: list[dict[str, object]],
+    verify_commands: dict[str, str],
+    constraints_file: Path | None,
+    response_written: threading.Event | None = None,
+) -> None:
+    projects_dir = workspace / "projects"
+
+    def run_dispatch_track() -> None:
+        if response_written is not None:
+            response_written.wait()
+        _write_dispatch_track_status(
+            workspace,
+            run_id=run_id,
+            name=name,
+            worktree=worktree,
+            status="started",
+        )
+        try:
+            dispatch_tracks(
+                project_root=worktree,
+                tracks=tracks,
+                verify_commands=verify_commands,
+                constraints_file=constraints_file,
+                projects_dir=projects_dir,
+            )
+        except Exception as exc:
+            _write_dispatch_track_status(
+                workspace,
+                run_id=run_id,
+                name=name,
+                worktree=worktree,
+                status="failed",
+                error=str(exc),
+            )
+            return
+        _write_dispatch_track_status(
+            workspace,
+            run_id=run_id,
+            name=name,
+            worktree=worktree,
+            status="completed",
+        )
+
+    thread = threading.Thread(
+        target=run_dispatch_track,
+        daemon=True,
+    )
+    thread.start()
+
+
+def start_dispatch_track(
+    workspace: Path,
+    request: dict[str, object],
+    *,
+    response_written: threading.Event | None = None,
+) -> dict[str, object]:
+    name = str(request.get("name", "")).strip()
+    role = str(request.get("role", "")).strip()
+    adapter = str(request.get("adapter", "")).strip()
+    task = str(request.get("task", ""))
+    constraints = str(request.get("constraints", ""))
+    verify = str(request.get("verify", "")).strip()
+    if not DISPATCH_TRACK_NAME_RE.fullmatch(name):
+        raise ValueError("name must be a slug using lowercase letters, numbers, and hyphens")
+    if not role:
+        raise ValueError("role is required")
+    if not adapter:
+        raise ValueError("adapter is required")
+    if not task.strip():
+        raise ValueError("task is required")
+
+    branch = f"feat/{name}"
+    worktree = _dispatch_worktree_path(workspace, name)
+    safety = ensure_dispatch_project_root_is_safe(worktree, projects_dir=workspace / "projects")
+    if not safety.get("safe"):
+        raise ValueError(str(safety.get("reason", "unsafe dispatch target")))
+    worktree = _ensure_dispatch_worktree(workspace, name=name, branch=branch)
+
+    run_id = f"dispatch-{uuid4()}"
+    task_file, constraints_file = _prepare_dispatch_track_inputs(
+        worktree,
+        run_id=run_id,
+        task=task,
+        constraints=constraints,
+    )
+    tracks = [parse_dispatch_track_spec(f"{role}:{adapter}:{task_file}", base_dir=worktree)]
+    verify_commands = {}
+    if verify:
+        verify_commands = dict([parse_dispatch_verify_spec(f"{role}:{verify}")])
+
+    _start_dispatch_track_background(
+        workspace=workspace,
+        run_id=run_id,
+        name=name,
+        worktree=worktree,
+        tracks=tracks,
+        verify_commands=verify_commands,
+        constraints_file=constraints_file,
+        response_written=response_written,
+    )
+    return {
+        "run_id": run_id,
+        "name": name,
+        "branch": branch,
+        "worktree": str(worktree),
+        "status": "started",
+    }
 
 
 def _parse_gh_pull_requests(output: str, warnings: list[str]) -> list[dict[str, object]]:
@@ -5413,8 +5625,14 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/open-path", "/debate"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/open-path", "/debate", "/dispatch-track"}:
                 self.send_error(404)
+                return
+            if not _request_origin_is_same_origin(
+                origin=str(self.headers.get("Origin", "")),
+                host=str(self.headers.get("Host", "")),
+            ):
+                self._send_json(403, {"error": "cross-origin POST requests are not allowed"})
                 return
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
@@ -5499,6 +5717,14 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         workspace=workspace,
                         relative_path=str(request.get("path", "")),
                     )
+                elif normalized_path == "/dispatch-track":
+                    response_written = threading.Event()
+                    result = start_dispatch_track(workspace, request, response_written=response_written)
+                    try:
+                        self._send_json(202, result)
+                    finally:
+                        response_written.set()
+                    return
                 # `/project-config` carries two operations: the worker-backends
                 # panel sends `project` + `workers` for an existing project; the
                 # create-config form sends neither. Route both explicitly so an
@@ -5558,6 +5784,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+            self.wfile.flush()
 
         def log_message(self, format: str, *args: object) -> None:
             return
