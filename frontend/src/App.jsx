@@ -3986,7 +3986,7 @@ export default function App() {
                           <div className="grid grid-cols-1 gap-4">
                             {devLoopData.pull_requests.map((pr, idx) => {
                               const prNumber = pr?.number;
-                              
+
                               // Join defensively with pre_reviews on pr number
                               const isPreReviewed = prNumber !== undefined && Array.isArray(devLoopData.pre_reviews) && devLoopData.pre_reviews.some(
                                 (r) => r && r.pr === prNumber && r.present
