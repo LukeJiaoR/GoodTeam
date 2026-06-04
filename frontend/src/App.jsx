@@ -272,6 +272,33 @@ function formatHumanTime(timestamp) {
 const DEFAULT_BACKEND_OPTIONS = ["fake", "codex", "anthropic", "noop", "human"];
 const DEFAULT_WORKER_ROLES = ["ui", "implementation", "qa"];
 
+const FALLBACK_AGENT_MODES = {
+  codex: {
+    models: ["gpt-5.3-codex", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
+    model_default: "gpt-5.3-codex"
+  },
+  anthropic: {
+    models: ["claude-sonnet-4-6", "claude-3-5-sonnet-latest", "claude-3-opus-latest", "claude-3-5-haiku-latest"],
+    model_default: "claude-sonnet-4-6"
+  },
+  claude: {
+    models: ["claude-sonnet-4-6", "claude-3-5-sonnet-latest", "claude-3-opus-latest", "claude-3-5-haiku-latest"],
+    model_default: "claude-sonnet-4-6"
+  },
+  gemini: {
+    models: ["auto", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash-exp"],
+    model_default: "auto"
+  },
+  agy: {
+    models: ["auto"],
+    model_default: "auto"
+  },
+  antigravity: {
+    models: ["auto"],
+    model_default: "auto"
+  }
+};
+
 export default function App() {
   // Sync project key from URL search query parameter '?project='
   const getUrlProject = () => {
@@ -289,6 +316,11 @@ export default function App() {
   // Worker backend settings states
   const [panelGlobalMode, setPanelGlobalMode] = useState('codex');
   const [panelRoleOverrides, setPanelRoleOverrides] = useState({});
+  const [panelRoleModels, setPanelRoleModels] = useState({});
+  const [customModelSelected, setCustomModelSelected] = useState({});
+  const [configuringRoles, setConfiguringRoles] = useState({});
+  const [backendsError, setBackendsError] = useState(null);
+  const [backendsSuccess, setBackendsSuccess] = useState(null);
   const [savingBackends, setSavingBackends] = useState(false);
   const [discoveredAgents, setDiscoveredAgents] = useState(null);
   const [loadingDiscoveredAgents, setLoadingDiscoveredAgents] = useState(false);
@@ -510,6 +542,39 @@ export default function App() {
         if (showLoading) {
           setPanelGlobalMode(sc.worker_backend?.mode || 'codex');
           setPanelRoleOverrides(sc.project_report?.role_worker_backends || {});
+          
+          const initialModels = sc.role_model_overrides || {};
+          setPanelRoleModels(initialModels);
+          setBackendsError(null);
+          setBackendsSuccess(null);
+
+          const customSelected = {};
+          if (discoveredAgents) {
+            const agentMap = {};
+            discoveredAgents.forEach(a => {
+              if (a && a.backend) {
+                agentMap[a.backend] = a;
+                if (a.aliases) {
+                  a.aliases.forEach(alias => {
+                    agentMap[alias] = a;
+                  });
+                }
+              }
+            });
+            const roles = sc.worker_roles || DEFAULT_WORKER_ROLES;
+            roles.forEach(role => {
+              const currentModel = initialModels[role];
+              const currentBackend = sc.project_report?.role_worker_backends?.[role] || '';
+              const agent = currentBackend ? agentMap[currentBackend] : null;
+              if (agent && currentModel) {
+                const models = agent.models || FALLBACK_AGENT_MODES[agent.backend]?.models || ["auto"];
+                if (!models.includes(currentModel)) {
+                  customSelected[role] = true;
+                }
+              }
+            });
+          }
+          setCustomModelSelected(customSelected);
         }
 
         // Delivery Contract
@@ -618,11 +683,13 @@ export default function App() {
     return () => {
       if (interval) clearInterval(interval);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchState is intentionally omitted so polling follows active run state only.
   }, [projectKey, data]);
 
   // Fetch state on mount and projectKey changes
   useEffect(() => {
     fetchState(projectKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchState is intentionally omitted so loading fetches only when the project key changes.
   }, [projectKey]);
 
   const fetchMemory = async (key) => {
@@ -1313,16 +1380,114 @@ export default function App() {
     }
   };
 
+  const handleAgentChange = (role, newAgent) => {
+    setPanelRoleOverrides(prev => ({
+      ...prev,
+      [role]: newAgent
+    }));
+    
+    if (!newAgent || ['fake', 'noop', 'human', 'agy', 'antigravity'].includes(newAgent)) {
+      setPanelRoleModels(prev => ({
+        ...prev,
+        [role]: ''
+      }));
+      setCustomModelSelected(prev => ({
+        ...prev,
+        [role]: false
+      }));
+    } else {
+      const agent = discoveredAgentByBackend[newAgent];
+      const defaultModel = agent?.model_default || FALLBACK_AGENT_MODES[newAgent]?.model_default || 'auto';
+      setPanelRoleModels(prev => ({
+        ...prev,
+        [role]: defaultModel
+      }));
+      setCustomModelSelected(prev => ({
+        ...prev,
+        [role]: false
+      }));
+    }
+  };
+
+  const handleModelDropdownChange = (role, val) => {
+    if (val === '__custom__') {
+      setCustomModelSelected(prev => ({
+        ...prev,
+        [role]: true
+      }));
+      setPanelRoleModels(prev => ({
+        ...prev,
+        [role]: ''
+      }));
+    } else {
+      setCustomModelSelected(prev => ({
+        ...prev,
+        [role]: false
+      }));
+      setPanelRoleModels(prev => ({
+        ...prev,
+        [role]: val
+      }));
+    }
+  };
+
+  const handleCustomModelChange = (role, val) => {
+    setPanelRoleModels(prev => ({
+      ...prev,
+      [role]: val
+    }));
+  };
+
+  useEffect(() => {
+    if (discoveredAgents && data?.start_context?.role_model_overrides) {
+      const roleModels = data.start_context.role_model_overrides;
+      const customSelected = {};
+      const agentMap = {};
+      discoveredAgents.forEach(a => {
+        if (a && a.backend) {
+          agentMap[a.backend] = a;
+          if (a.aliases) {
+            a.aliases.forEach(alias => {
+              agentMap[alias] = a;
+            });
+          }
+        }
+      });
+      const roles = data.start_context.worker_roles || DEFAULT_WORKER_ROLES;
+      roles.forEach(role => {
+        const currentModel = roleModels[role];
+        const currentBackend = panelRoleOverrides[role] || data.start_context.project_report?.role_worker_backends?.[role] || '';
+        const agent = currentBackend ? agentMap[currentBackend] : null;
+        if (agent && currentModel) {
+          const models = agent.models || FALLBACK_AGENT_MODES[agent.backend]?.models || ["auto"];
+          if (!models.includes(currentModel)) {
+            customSelected[role] = true;
+          }
+        }
+      });
+      setCustomModelSelected(prev => ({ ...customSelected, ...prev }));
+    }
+  }, [discoveredAgents, data, panelRoleOverrides]);
+
   const handleSaveWorkerBackends = async () => {
     setSavingBackends(true);
+    setBackendsError(null);
+    setBackendsSuccess(null);
     try {
       // Build workers object containing ONLY explicit overrides for managed roles (exclude empty strings or "default")
       const workers = {};
+      const role_models = {};
       const managedRoles = data?.start_context?.worker_roles || DEFAULT_WORKER_ROLES;
       managedRoles.forEach((role) => {
         const backend = panelRoleOverrides[role];
         if (backend && backend !== 'default' && backend !== '') {
           workers[role] = backend;
+          if (backend !== 'agy' && backend !== 'antigravity') {
+            const modelVal = panelRoleModels[role];
+            if (modelVal && modelVal.trim() !== '') {
+              role_models[role] = modelVal.trim();
+            }
+          }
         }
       });
 
@@ -1333,15 +1498,18 @@ export default function App() {
           project: projectKey,
           worker_backend_mode: panelGlobalMode,
           workers: workers,
+          role_models: role_models,
         }),
       });
       const res = await response.json();
       if (!response.ok) {
         throw new Error(res.error || 'Failed to save worker backends');
       }
+      setBackendsSuccess('Configurations saved successfully');
       showToast('Worker backends updated successfully');
-      await fetchState(projectKey, false); // Fetch state without full screen loader
+      await fetchState(projectKey, true); // Fetch state with full screen loader
     } catch (err) {
+      setBackendsError(err.message);
       showToast(err.message, true);
     } finally {
       setSavingBackends(false);
@@ -1936,10 +2104,19 @@ export default function App() {
     ...discoveredBackendOptions,
   ]));
   const workerRoles = startContext.worker_roles || DEFAULT_WORKER_ROLES;
-  const discoveredAgentByBackend = Object.fromEntries(
-    safeDiscoveredAgents
-      .map((agent) => [agent.backend, agent])
-  );
+  const discoveredAgentByBackend = {};
+  safeDiscoveredAgents.forEach((agent) => {
+    if (agent?.backend) {
+      discoveredAgentByBackend[agent.backend] = agent;
+    }
+    if (Array.isArray(agent?.aliases)) {
+      agent.aliases.forEach((alias) => {
+        if (alias) {
+          discoveredAgentByBackend[alias] = agent;
+        }
+      });
+    }
+  });
   const getBackendOptionLabel = (backend) => {
     const baseLabel = backend === 'codex'
       ? 'Codex CLI'
@@ -3036,64 +3213,184 @@ export default function App() {
                               ))}
                             </div>
                           )}
-                          {workerRoles.map((role) => (
-                            <div key={role} className="flex items-center justify-between space-x-4 border-b border-[#F1F1F1] dark:border-zinc-900 pb-2.5">
-                              <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 capitalize">{role} Role</span>
-                              <div className="w-48">
-                                <select
-                                  value={panelRoleOverrides[role] || ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setPanelRoleOverrides(prev => ({
-                                      ...prev,
-                                      [role]: val
-                                    }));
-                                  }}
-                                  disabled={savingBackends || actionLoading}
-                                  className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
-                                >
-                                  <option value="">Use default</option>
-                                  {roleBackendOptions.map((opt) => (
-                                    <option key={opt} value={opt}>
-                                      {getBackendOptionLabel(opt)}
-                                    </option>
-                                  ))}
-                                </select>
-                                {(() => {
-                                  const selectedBackend = panelRoleOverrides[role];
-                                  const selectedAgent = selectedBackend ? discoveredAgentByBackend[selectedBackend] : null;
-                                  if (!selectedAgent) return null;
-                                  return (
-                                    <p className="mt-1 text-[10px] text-zinc-550 dark:text-zinc-400 font-medium leading-relaxed">
-                                      {selectedAgent.ready ? '✓ Ready' : '⚠ Not ready'}
-                                      {selectedAgent.hint ? ` - ${selectedAgent.hint}` : ''}
-                                    </p>
-                                  );
-                                })()}
+                          {workerRoles.map((role) => {
+                            const isConfiguring = configuringRoles[role];
+                            const selectedBackend = panelRoleOverrides[role] || '';
+                            const selectedModel = panelRoleModels[role] || '';
+                            
+                            const selectedAgent = selectedBackend ? discoveredAgentByBackend[selectedBackend] : null;
+                            const isAgy = selectedBackend === 'agy' || selectedBackend === 'antigravity';
+                            const isBuiltin = ['fake', 'noop', 'human'].includes(selectedBackend);
+                            const hasModel = selectedBackend && !isAgy && !isBuiltin;
+                            
+                            return (
+                              <div key={role} className="border-b border-[#F1F1F1] dark:border-zinc-900 pb-3.5 pt-1">
+                                <div className="flex items-center justify-between space-x-4">
+                                  <div className="space-y-1">
+                                    <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 capitalize">{role} Role</span>
+                                    <div className="text-[11px] text-[#AFAFAF] dark:text-zinc-550 flex items-center space-x-1.5 flex-wrap">
+                                      <span className="font-semibold text-zinc-600 dark:text-zinc-400">
+                                        {selectedBackend ? getBackendOptionLabel(selectedBackend) : `Inherit default (${getBackendOptionLabel(panelGlobalMode)})`}
+                                      </span>
+                                      {hasModel && (
+                                        <>
+                                          <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                          <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                                            {selectedModel || 'default'}
+                                          </span>
+                                        </>
+                                      )}
+                                      {isAgy && (
+                                        <>
+                                          <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                          <span className="italic text-zinc-500 dark:text-zinc-500">model N/A</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                  
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfiguringRoles(prev => ({ ...prev, [role]: !prev[role] }))}
+                                    className={`px-3 py-1.5 border-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 ${
+                                      isConfiguring 
+                                        ? 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300'
+                                        : 'bg-white dark:bg-zinc-900 border-[#E5E5E5] dark:border-zinc-800 hover:border-[#58CC02] text-zinc-700 dark:text-zinc-300'
+                                    }`}
+                                  >
+                                    <span>{isConfiguring ? 'Close' : 'Configure'}</span>
+                                  </button>
+                                </div>
+                                
+                                {isConfiguring && (
+                                  <div className="mt-3 bg-zinc-50/50 dark:bg-zinc-900/10 border border-[#F1F1F1] dark:border-zinc-800/80 rounded-xl p-4 space-y-4">
+                                    <div>
+                                      <label className="block text-[10px] text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
+                                        Step 1: Select Agent Backend
+                                      </label>
+                                      <select
+                                        value={selectedBackend}
+                                        onChange={(e) => handleAgentChange(role, e.target.value)}
+                                        disabled={savingBackends || actionLoading}
+                                        className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                      >
+                                        <option value="">Use default</option>
+                                        {roleBackendOptions.map((opt) => (
+                                          <option key={opt} value={opt}>
+                                            {getBackendOptionLabel(opt)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {selectedAgent && (
+                                        <p className="mt-1 text-[10px] text-zinc-550 dark:text-zinc-500 font-medium leading-relaxed">
+                                          {selectedAgent.ready ? '✓ Ready' : '⚠ Not ready'}
+                                          {selectedAgent.hint ? ` - ${selectedAgent.hint}` : ''}
+                                        </p>
+                                      )}
+                                    </div>
+                                    
+                                    {selectedBackend && (
+                                      <div className="border-t border-[#F1F1F1] dark:border-zinc-900/60 pt-3">
+                                        {isAgy ? (
+                                          <div className="text-[11px] text-zinc-550 dark:text-zinc-500 font-medium bg-zinc-100/50 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800 px-3 py-2 rounded-lg italic">
+                                            Model is not applicable for Antigravity (agy) CLI.
+                                          </div>
+                                        ) : isBuiltin ? (
+                                          <div className="text-[11px] text-zinc-550 dark:text-zinc-500 font-medium bg-zinc-100/50 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800 px-3 py-2 rounded-lg italic">
+                                            Model selection not applicable for built-in backends.
+                                          </div>
+                                        ) : (
+                                          <div className="space-y-3">
+                                            <div>
+                                              <label className="block text-[10px] text-zinc-550 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
+                                                Step 2: Select Model
+                                              </label>
+                                              {(() => {
+                                                const agentInfo = discoveredAgentByBackend[selectedBackend];
+                                                const modelsList = agentInfo?.models || FALLBACK_AGENT_MODES[selectedBackend]?.models || ['auto'];
+                                                const defaultModel = agentInfo?.model_default || FALLBACK_AGENT_MODES[selectedBackend]?.model_default || 'auto';
+                                                const isCustom = customModelSelected[role];
+                                                const dropdownVal = isCustom ? '__custom__' : (modelsList.includes(selectedModel) ? selectedModel : (selectedModel ? '__custom__' : defaultModel));
+                                                
+                                                return (
+                                                  <div className="space-y-3">
+                                                    <select
+                                                      value={dropdownVal}
+                                                      onChange={(e) => handleModelDropdownChange(role, e.target.value)}
+                                                      disabled={savingBackends || actionLoading}
+                                                      className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                                    >
+                                                      {modelsList.map((m) => (
+                                                        <option key={m} value={m}>
+                                                          {m === defaultModel ? `${m} (Default)` : m}
+                                                        </option>
+                                                      ))}
+                                                      <option value="__custom__">Custom...</option>
+                                                    </select>
+                                                    
+                                                    {isCustom && (
+                                                      <div className="space-y-1">
+                                                        <label className="block text-[9px] text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
+                                                          Custom Model Name
+                                                        </label>
+                                                        <input
+                                                          type="text"
+                                                          placeholder="e.g. gpt-5.5-custom"
+                                                          value={selectedModel}
+                                                          onChange={(e) => handleCustomModelChange(role, e.target.value)}
+                                                          disabled={savingBackends || actionLoading}
+                                                          className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold font-mono focus:outline-none focus:border-[#58CC02] transition-colors"
+                                                        />
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })()}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
 
-                        {/* Save Button */}
-                        <div className="pt-2 flex justify-end">
-                          <button
-                            onClick={handleSaveWorkerBackends}
-                            disabled={savingBackends || actionLoading}
-                            className="bg-[#58CC02] hover:bg-[#46A302] text-white border-b-4 border-[#3D8B00] active:border-b-0 active:translate-y-1 px-5 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center space-x-2"
-                          >
-                            {savingBackends ? (
-                              <>
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                <span>Saving...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Check className="h-3.5 w-3.5" />
-                                <span>Save Configurations</span>
-                              </>
-                            )}
-                          </button>
+                        {/* Save Button & Messages */}
+                        <div className="pt-2 space-y-3">
+                          {backendsError && (
+                            <div className="p-3 bg-[#FFE2E2] dark:bg-red-950/20 border border-[#FF4B4B]/30 rounded-xl text-xs font-bold text-[#EA2B2B] dark:text-red-400 flex items-center space-x-2">
+                              <AlertTriangle className="h-4 w-4 shrink-0" />
+                              <span>{backendsError}</span>
+                            </div>
+                          )}
+                          {backendsSuccess && (
+                            <div className="p-3 bg-[#E8F9D9] dark:bg-[#E8F9D9]/10 border border-[#58CC02]/30 rounded-xl text-xs font-bold text-[#3D8B00] dark:text-emerald-400 flex items-center space-x-2">
+                              <CheckCircle2 className="h-4 w-4 shrink-0" />
+                              <span>{backendsSuccess}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-end">
+                            <button
+                              onClick={handleSaveWorkerBackends}
+                              disabled={savingBackends || actionLoading}
+                              className="bg-[#58CC02] hover:bg-[#46A302] text-white border-b-4 border-[#3D8B00] active:border-b-0 active:translate-y-1 px-5 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center space-x-2"
+                            >
+                              {savingBackends ? (
+                                <>
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                  <span>Saving...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="h-3.5 w-3.5" />
+                                  <span>Save Configurations</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
                         </div>
                       </div>
 
