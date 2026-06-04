@@ -1299,18 +1299,34 @@ def test_discover_installed_agents_uses_static_codex_models_when_live_query_fail
     assert by_backend["codex"]["models_source"] == "static"
 
 
+def test_agy_build_command_includes_model_when_provided():
+    from goodteam_os.workers import _agy_build_command
+
+    cmd = _agy_build_command("/fake/bin/agy", "gpt-5.5", Path("."), Path("r.md"))
+
+    assert "--model" in cmd
+    assert cmd[cmd.index("--model") + 1] == "gpt-5.5"
+
+
+def test_agy_build_command_omits_model_when_blank():
+    from goodteam_os.workers import _agy_build_command
+
+    cmd = _agy_build_command("/fake/bin/agy", "", Path("."), Path("r.md"))
+
+    assert "--model" not in cmd
+
+
 def test_agy_build_command_has_no_gemini_only_flags():
     from goodteam_os.workers import CLI_BACKENDS, _command_with_prompt
 
     spec = CLI_BACKENDS["agy"]
     cmd = _command_with_prompt(
-        spec.build_command("/fake/bin/agy", spec.model_default, Path("."), Path("r.md")),
+        spec.build_command("/fake/bin/agy", "", Path("."), Path("r.md")),
         "do the thing",
         prompt_via=spec.prompt_via,
     )
     assert cmd[:3] == ["/fake/bin/agy", "-p", "do the thing"]
     assert "--dangerously-skip-permissions" in cmd
-    # agy has no --model / --approval-mode (verified via `agy --help`)
     assert "--model" not in cmd
     assert "--approval-mode" not in cmd
 
@@ -1518,6 +1534,81 @@ def test_worker_job_store_flags_stale_running_jobs(tmp_path, monkeypatch):
     assert listed["status"] == "possibly_stuck"
     assert listed["raw_status"] == "running"
     assert listed["heartbeat_at"] == old_heartbeat
+
+
+def test_worker_job_store_reports_stale_dead_pid_as_failed(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.WORKER_STALE_AFTER_SECONDS", 1)
+    monkeypatch.setattr("goodteam_os.workers._is_pid_alive", lambda pid: False)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="qa",
+        adapter="codex",
+        task="Verify",
+        context="Context",
+    )
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    old_heartbeat = "2026-05-27T00:00:00+00:00"
+    (job_root / "status.json").write_text(
+        json.dumps(
+            {
+                "job_id": job["id"],
+                "run_id": "run-1",
+                "role": "qa",
+                "adapter": "codex",
+                "status": "running",
+                "summary": "Codex CLI is running.",
+                "updated_at": old_heartbeat,
+                "heartbeat_at": old_heartbeat,
+                "pid": 4242,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    [listed] = store.list_jobs()
+
+    assert listed["status"] == "failed"
+    assert listed["raw_status"] == "running"
+    assert listed["failure_class"] == "stuck"
+    assert listed["disposition"] == "abandoned"
+
+
+def test_worker_job_store_does_not_fail_live_running_job(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.WORKER_STALE_AFTER_SECONDS", 1)
+    monkeypatch.setattr("goodteam_os.workers._is_pid_alive", lambda pid: True)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="qa",
+        adapter="codex",
+        task="Verify",
+        context="Context",
+    )
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    old_heartbeat = "2026-05-27T00:00:00+00:00"
+    (job_root / "status.json").write_text(
+        json.dumps(
+            {
+                "job_id": job["id"],
+                "run_id": "run-1",
+                "role": "qa",
+                "adapter": "codex",
+                "status": "running",
+                "summary": "Codex CLI is running.",
+                "updated_at": old_heartbeat,
+                "heartbeat_at": old_heartbeat,
+                "pid": 4242,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    [listed] = store.list_jobs()
+
+    assert listed["status"] == "possibly_stuck"
+    assert listed["raw_status"] == "running"
+    assert listed["pid"] == 4242
 
 
 def test_codex_adapter_uses_job_model_when_present(tmp_path, monkeypatch):

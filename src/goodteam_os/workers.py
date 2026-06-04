@@ -273,10 +273,13 @@ def _gemini_build_command(binary: str, model: str, project_root: Path, result_pa
 def _agy_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
     # agy (Antigravity) CLI: `-p`/`--print` runs one prompt non-interactively,
     # `--dangerously-skip-permissions` auto-approves tool use (its YOLO), and
-    # `--print-timeout` bounds the run. It has NO --model / --approval-mode flags
-    # (verified via `agy --help`), so do not pass them. prompt_via="arg" inserts
-    # the prompt right after `-p`.
-    return [binary, "-p", "--dangerously-skip-permissions", "--print-timeout", "30m"]
+    # `--print-timeout` bounds the run. prompt_via="arg" inserts the prompt
+    # right after `-p`.
+    command = [binary, "-p", "--dangerously-skip-permissions", "--print-timeout", "30m"]
+    model = model.strip()
+    if model and model != DEFAULT_AGY_MODEL:
+        command.extend(["--model", model])
+    return command
 
 
 def _command_with_prompt(command: list[str], prompt: str, *, prompt_via: str) -> list[str]:
@@ -519,12 +522,13 @@ class WorkerJobStore:
                             "stderr_path",
                             "result_path",
                             "exit_code",
+                            "failure_class",
+                            "disposition",
                         }
                     },
                 }
-                if status_payload.get("status") == "running" and _is_stale_heartbeat(str(status_payload.get("heartbeat_at", ""))):
-                    job["raw_status"] = "running"
-                    job["status"] = "possibly_stuck"
+                if status_payload.get("status") == "running" and _is_stale_heartbeat(_heartbeat_reference(status_payload)):
+                    job = reconcile_stale_job(job, status_payload)
             jobs.append(job)
         return jobs
 
@@ -1193,6 +1197,39 @@ def _claude_auth_hint(available: bool, auth_present: bool) -> str:
             "session if you have one; otherwise run `claude login` or export ANTHROPIC_API_KEY."
         )
     return "Ready: Claude Code CLI and credentials detected."
+
+
+def reconcile_stale_job(job: dict[str, Any], status_payload: dict[str, Any]) -> dict[str, Any]:
+    reconciled = {**job, "raw_status": "running"}
+    if _is_pid_alive(status_payload.get("pid")) is False:
+        return {
+            **reconciled,
+            "status": "failed",
+            "failure_class": "stuck",
+            "disposition": "abandoned",
+            "summary": str(status_payload.get("summary") or "Worker heartbeat is stale and the process is no longer alive."),
+        }
+    return {**reconciled, "status": "possibly_stuck"}
+
+
+def _heartbeat_reference(status_payload: dict[str, Any]) -> str:
+    return str(status_payload.get("heartbeat_at") or status_payload.get("updated_at") or "")
+
+
+def _is_pid_alive(pid: object) -> bool | None:
+    try:
+        parsed_pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if parsed_pid <= 0:
+        return None
+    try:
+        os.kill(parsed_pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _is_stale_heartbeat(value: str) -> bool:
