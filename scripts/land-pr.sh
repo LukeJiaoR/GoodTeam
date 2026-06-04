@@ -62,20 +62,42 @@ gh pr merge "$PR" --squash --delete-branch
 
 echo "[land] syncing main ..."
 MAIN_STASH_CREATED=0
+MAIN_STASH_POPPED=0
+MAIN_STASH_RESTORE_ACTIVE=0
+restore_main_stash_on_exit() {
+  local status=$?
+  trap - EXIT ERR
+  if [ "$MAIN_STASH_CREATED" = 1 ] && [ "$MAIN_STASH_POPPED" = 0 ] && [ "$MAIN_STASH_RESTORE_ACTIVE" = 0 ]; then
+    echo "[land] restoring stashed local tracked changes before exiting ..."
+    if git stash pop; then
+      MAIN_STASH_POPPED=1
+    else
+      echo "[land] stash pop had conflicts while restoring local tracked changes." >&2
+      echo "[land] Resolve the conflicts, then run 'git stash drop' only after confirming the local edits are restored." >&2
+      exit 1
+    fi
+  fi
+  exit "$status"
+}
 if ! git diff --quiet --ignore-submodules || ! git diff --cached --quiet --ignore-submodules; then
   echo "[land] stashing local tracked changes before syncing main ..."
   git stash push -m "land-pr.sh: local tracked edits before syncing main for PR #$PR"
   MAIN_STASH_CREATED=1
+  trap restore_main_stash_on_exit EXIT ERR
 fi
 git checkout main
 git pull --ff-only
 if [ "$MAIN_STASH_CREATED" = 1 ]; then
   echo "[land] restoring stashed local tracked changes ..."
+  MAIN_STASH_RESTORE_ACTIVE=1
   if ! git stash pop; then
     echo "[land] stash pop had conflicts while restoring local tracked changes." >&2
     echo "[land] Resolve the conflicts, then run 'git stash drop' only after confirming the local edits are restored." >&2
     exit 1
   fi
+  MAIN_STASH_RESTORE_ACTIVE=0
+  MAIN_STASH_POPPED=1
+  trap - EXIT ERR
 fi
 
 if [ "$RUN_TEST" = 1 ]; then
