@@ -230,6 +230,38 @@ def _codex_build_command(binary: str, model: str, project_root: Path, result_pat
     ]
 
 
+def _query_codex_models(command_path: str) -> tuple[str, ...] | None:
+    try:
+        completed = subprocess.run(
+            [command_path, "debug", "models"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return None
+
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return None
+
+    slugs: list[str] = []
+    for model in models:
+        if not isinstance(model, dict) or model.get("visibility") != "list":
+            continue
+        slug = model.get("slug")
+        if isinstance(slug, str) and slug:
+            slugs.append(slug)
+    return tuple(slugs) or None
+
+
 def _claude_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
     return [binary, "-p", "--model", model, "--dangerously-skip-permissions"]
 
@@ -1107,6 +1139,13 @@ def discover_installed_agents() -> list[dict[str, Any]]:
         aliases = sorted(aliases_by_spec[spec_id])
         canonical = canonical_by_spec[spec_id]
         report = worker_backend_doctor(canonical)
+        models = spec.models
+        models_source = "static"
+        if spec.which_name == "codex" and report.get("available"):
+            live_models = _query_codex_models(str(report.get("command_path", "")))
+            if live_models:
+                models = live_models
+                models_source = "live"
         discovered.append(
             {
                 "backend": canonical,
@@ -1116,7 +1155,8 @@ def discover_installed_agents() -> list[dict[str, Any]]:
                 "command": str(report.get("command", "")),
                 "command_path": str(report.get("command_path", "")),
                 "hint": str(report.get("hint", "")),
-                "models": list(dict.fromkeys(spec.models)),
+                "models": list(dict.fromkeys(models)),
+                "models_source": models_source,
                 "model_default": spec.model_default,
             }
         )
