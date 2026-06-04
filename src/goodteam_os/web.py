@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -53,6 +54,8 @@ WORKER_BACKEND_OPTIONS = [
     if mode in {*BUILTIN_WORKER_MODES, *CLI_BACKENDS}
 ]
 WORKER_ROLES = ["ui", "implementation", "qa"]
+PRE_REVIEW_REPORT_DIR = Path("/tmp")
+DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS = 10
 
 
 def append_action(
@@ -187,6 +190,166 @@ def build_smoke_run_items(workspace: Path) -> list[dict[str, str]]:
             raw["report_status"] = str(report.get("status", ""))
             items.append({key: str(value) for key, value in raw.items()})
     return items[:12]
+
+
+def _run_readonly_command(command: list[str], workspace: Path, warnings: list[str]) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            command,
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError:
+        warnings.append(f"{command[0]} not available")
+    except subprocess.TimeoutExpired:
+        warnings.append(f"{command[0]} timed out")
+    except OSError as exc:
+        warnings.append(f"{command[0]} failed: {exc.__class__.__name__}")
+    return None
+
+
+def _parse_git_worktrees(output: str) -> list[dict[str, str]]:
+    worktrees: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if current.get("path"):
+                worktrees.append(
+                    {
+                        "path": current.get("path", ""),
+                        "branch": current.get("branch", ""),
+                        "head": current.get("head", ""),
+                    }
+                )
+            current = {}
+            continue
+        key, _, value = stripped.partition(" ")
+        if key == "worktree":
+            current["path"] = value
+        elif key == "HEAD":
+            current["head"] = value[:7]
+        elif key == "branch":
+            current["branch"] = value.removeprefix("refs/heads/")
+    if current.get("path"):
+        worktrees.append(
+            {
+                "path": current.get("path", ""),
+                "branch": current.get("branch", ""),
+                "head": current.get("head", ""),
+            }
+        )
+    return worktrees
+
+
+def _check_status_value(check: dict[str, object], *keys: str) -> str:
+    for key in keys:
+        value = str(check.get(key, "")).lower()
+        if value:
+            return value
+    return ""
+
+
+def _map_ci_rollup(status_check_rollup: object) -> str:
+    if not isinstance(status_check_rollup, list) or not status_check_rollup:
+        return "none"
+
+    has_pending = False
+    for raw_check in status_check_rollup:
+        if not isinstance(raw_check, dict):
+            has_pending = True
+            continue
+        conclusion = _check_status_value(raw_check, "conclusion")
+        state = _check_status_value(raw_check, "state", "status")
+        if conclusion in {"failure", "startup_failure", "cancelled", "timed_out", "action_required"}:
+            return "fail"
+        if state in {"failure", "failed", "error", "cancelled", "timed_out", "action_required"}:
+            return "fail"
+        if conclusion in {"", "neutral", "skipped"} and state not in {"success", "completed"}:
+            has_pending = True
+        elif state in {"", "queued", "pending", "in_progress", "waiting", "requested", "expected"}:
+            has_pending = True
+
+    return "pending" if has_pending else "pass"
+
+
+def _parse_gh_pull_requests(output: str, warnings: list[str]) -> list[dict[str, object]]:
+    try:
+        raw_pull_requests = json.loads(output)
+    except json.JSONDecodeError:
+        warnings.append("gh pr list returned invalid json")
+        return []
+    if not isinstance(raw_pull_requests, list):
+        warnings.append("gh pr list returned unexpected json")
+        return []
+
+    pull_requests: list[dict[str, object]] = []
+    for item in raw_pull_requests:
+        if not isinstance(item, dict):
+            continue
+        try:
+            number = int(item.get("number", 0))
+        except (TypeError, ValueError):
+            continue
+        if number <= 0:
+            continue
+        pull_requests.append(
+            {
+                "number": number,
+                "title": str(item.get("title", "")),
+                "head_branch": str(item.get("headRefName", "")),
+                "ci": _map_ci_rollup(item.get("statusCheckRollup")),
+                "url": str(item.get("url", "")),
+            }
+        )
+    return pull_requests
+
+
+def build_dev_loop(workspace: Path) -> dict[str, object]:
+    warnings: list[str] = []
+    worktrees: list[dict[str, str]] = []
+    pull_requests: list[dict[str, object]] = []
+
+    git_result = _run_readonly_command(["git", "worktree", "list", "--porcelain"], workspace, warnings)
+    if git_result is not None:
+        if git_result.returncode == 0:
+            worktrees = _parse_git_worktrees(git_result.stdout)
+        else:
+            warnings.append("git worktree list failed")
+
+    gh_result = _run_readonly_command(
+        ["gh", "pr", "list", "--json", "number,title,headRefName,url,statusCheckRollup"],
+        workspace,
+        warnings,
+    )
+    if gh_result is not None:
+        if gh_result.returncode == 0:
+            pull_requests = _parse_gh_pull_requests(gh_result.stdout, warnings)
+        else:
+            warnings.append("gh pr list failed")
+
+    pre_reviews = []
+    for pull_request in pull_requests:
+        number = int(pull_request["number"])
+        report_path = PRE_REVIEW_REPORT_DIR / f"pre-review-{number}-report.md"
+        pre_reviews.append(
+            {
+                "pr": number,
+                "present": report_path.is_file(),
+                "report_path": str(report_path),
+            }
+        )
+
+    return {
+        "worktrees": worktrees,
+        "pull_requests": pull_requests,
+        "pre_reviews": pre_reviews,
+        "warnings": warnings,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
 
 
 def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
@@ -5083,6 +5246,9 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     self._send_json(200, build_workflow_graph(workspace, project_key=project_key))
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path == "/api/devloop":
+                self._send_json(200, build_dev_loop(workspace))
                 return
             if parsed.path == "/api/memory":
                 try:
