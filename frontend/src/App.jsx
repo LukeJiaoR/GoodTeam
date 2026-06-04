@@ -34,7 +34,8 @@ import {
   MessageSquare,
   Search,
   GitBranch,
-  GitPullRequest
+  GitPullRequest,
+  Copy
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
 
@@ -433,6 +434,7 @@ export default function App() {
   const [loadingDevLoop, setLoadingDevLoop] = useState(false);
   const [devLoopError, setDevLoopError] = useState(null);
   const devLoopRequestSeq = useRef(0);
+  const [copiedText, setCopiedText] = useState(null);
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -4481,6 +4483,11 @@ export default function App() {
                                       <span className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-650 dark:text-zinc-400 font-mono text-[10px]">
                                         {pr?.head_branch || 'no branch'}
                                       </span>
+                                      {pr?.land_command && (
+                                        <code className="bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-500 dark:text-zinc-400 font-mono text-[10px] truncate max-w-[200px] sm:max-w-xs md:max-w-md lg:max-w-lg" title={pr.land_command}>
+                                          {pr.land_command}
+                                        </code>
+                                      )}
                                     </div>
                                   </div>
 
@@ -4496,6 +4503,51 @@ export default function App() {
                                       <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border bg-[#D0F0FF] text-[#0A7BAF] border-[#1CB0F6]/30">
                                         pre-reviewed
                                       </span>
+                                    )}
+
+                                    {/* Land Readiness badge */}
+                                    {pr?.land_ready === true && (
+                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30">
+                                        <CheckCircle className="h-3 w-3 shrink-0" />
+                                        <span>Ready to land</span>
+                                      </span>
+                                    )}
+                                    {pr?.land_ready === false && (
+                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border bg-[#F1F1F1] text-[#777777] border-[#AFAFAF]/30">
+                                        <Clock className="h-3 w-3 shrink-0" />
+                                        <span>not ready</span>
+                                      </span>
+                                    )}
+
+                                    {/* Copy land command button */}
+                                    {pr?.land_command && (
+                                      <button
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(pr.land_command);
+                                          setCopiedText(pr.land_command);
+                                          setTimeout(() => {
+                                            setCopiedText(prev => prev === pr.land_command ? null : prev);
+                                          }, 2000);
+                                        }}
+                                        className={`border-2 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 ${
+                                          copiedText === pr.land_command
+                                            ? 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30 hover:bg-[#E8F9D9]'
+                                            : 'bg-white dark:bg-zinc-850 hover:bg-[#D0F0FF] hover:text-[#0A7BAF] border-[#E5E5E5] dark:border-zinc-800 text-zinc-700 dark:text-zinc-300'
+                                        }`}
+                                        title={`Copy land command: ${pr.land_command}`}
+                                      >
+                                        {copiedText === pr.land_command ? (
+                                          <>
+                                            <Check className="h-3.5 w-3.5" />
+                                            <span className="text-[10px] font-extrabold uppercase">Copied!</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Copy className="h-3.5 w-3.5" />
+                                            <span className="text-[10px] font-extrabold uppercase">Copy land command</span>
+                                          </>
+                                        )}
+                                      </button>
                                     )}
 
                                     {/* External Link */}
