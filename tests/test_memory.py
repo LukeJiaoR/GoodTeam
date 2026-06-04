@@ -214,6 +214,42 @@ def test_pickup_packet_uses_index_summaries_without_loading_long_mid_full_text(t
     assert packet["summaries"]["mid-term"]
 
 
+def test_pickup_packet_excludes_worker_failure_short_term_events(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("backend", "Backend", "AI Content Studio")
+    store.append_memory_event(
+        "backend",
+        horizon="short-term",
+        text="FAILURE [backend] pytest failed in setup.",
+        source="worker_failure:job-123",
+    )
+
+    packet = store.build_pickup_packet("backend")
+
+    assert "FAILURE [backend] pytest failed in setup." not in packet["short_term"]
+    assert "worker_failure:job-123" not in packet["short_term"]
+
+
+def test_pickup_packet_preserves_legitimate_failure_prefixed_short_term_note(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = RoleMemoryStore(project_root)
+    store.ensure_role_memory("backend", "Backend", "AI Content Studio")
+    store.append_memory_event(
+        "backend",
+        horizon="short-term",
+        text="FAILURE [backend] is the heading to keep in the human note.",
+        source="job-456/result.md",
+    )
+
+    packet = store.build_pickup_packet("backend")
+
+    assert "FAILURE [backend] is the heading to keep in the human note." in packet["short_term"]
+    assert "job-456/result.md" in packet["short_term"]
+
+
 def test_retrieve_relevant_events_ranks_matching_event_first(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()

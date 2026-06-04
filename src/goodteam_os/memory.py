@@ -508,7 +508,7 @@ Role: `{role_key}`
         lines = [
             line
             for line in content.splitlines()
-            if not line.strip().startswith("- FAILURE [") and " Source: `worker_failure:" not in line
+            if " Source: `worker_failure:" not in line
         ]
         return "\n".join(lines).rstrip()
 
