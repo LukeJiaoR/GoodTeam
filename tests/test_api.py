@@ -1,5 +1,7 @@
 import hashlib
 import json
+import threading
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -62,6 +64,56 @@ def capture_get_handler(tmp_path, monkeypatch):
         return handler
 
     return simulate_get
+
+
+def capture_post_handler(tmp_path, monkeypatch, *, host: str = "127.0.0.1", port: int = 8788):
+    captured_handler_class = None
+
+    def mock_server(addr, handler_class):
+        nonlocal captured_handler_class
+        captured_handler_class = handler_class
+
+        class FakeServer:
+            def serve_forever(self):
+                pass
+
+        return FakeServer()
+
+    monkeypatch.setattr("goodteam_os.web.ThreadingHTTPServer", mock_server)
+    serve(tmp_path, host=host, port=port)
+    assert captured_handler_class is not None
+
+    def simulate_post(path, body_dict, headers=None):
+        class SimulatedHandler(captured_handler_class):
+            def __init__(self):
+                self.request = FakeRequest()
+                self.client_address = ("127.0.0.1", 12345)
+                self.server = None
+                body_bytes = json.dumps(body_dict).encode("utf-8")
+                self.headers = {"Content-Length": str(len(body_bytes)), **(headers or {})}
+                self.path = path
+                self.wfile = BytesIO()
+                self.rfile = BytesIO(body_bytes)
+                self.responses = []
+                self.response_headers = {}
+
+            def send_response(self, code, message=None):
+                self.responses.append(code)
+
+            def send_header(self, keyword, value):
+                self.response_headers[keyword] = value
+
+            def end_headers(self):
+                pass
+
+            def send_error(self, code, message=None, explain=None):
+                self.responses.append(code)
+
+        handler = SimulatedHandler()
+        handler.do_POST()
+        return handler
+
+    return simulate_post
 
 
 def write_project_config(workspace: Path, *, key: str = "REAL", repos: dict[str, Path] | None = None) -> Path:
@@ -347,6 +399,159 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert "error" in payload
+
+
+def test_api_post_same_origin_guard_rejects_cross_origin_and_allows_trusted_requests(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "goodteam_os.web.generate_prd",
+        lambda workspace, project_key: {"project_key": project_key, "current_node": "prd_review_gate"},
+    )
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    cross_origin = simulate_post(
+        "/api/generate-prd",
+        {"project_key": "CONTENTOPS"},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://evil.test"},
+    )
+    assert 403 in cross_origin.responses
+    assert json.loads(cross_origin.wfile.getvalue().decode("utf-8"))["error"]
+
+    same_origin = simulate_post(
+        "/api/generate-prd",
+        {"project_key": "CONTENTOPS"},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+    assert 200 in same_origin.responses
+    assert json.loads(same_origin.wfile.getvalue().decode("utf-8"))["project_key"] == "CONTENTOPS"
+
+    absent_origin = simulate_post(
+        "/api/generate-prd",
+        {"project_key": "CONTENTOPS"},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+    assert 200 in absent_origin.responses
+
+
+def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
+    worktree = tmp_path / "goodteam-dev-my-track"
+    dispatch_entered = threading.Event()
+    dispatch_can_finish = threading.Event()
+    calls = []
+
+    def fake_ensure_worktree(workspace, *, name, branch):
+        assert workspace == tmp_path
+        assert name == "my-track"
+        assert branch == "feat/my-track"
+        worktree.mkdir(exist_ok=True)
+        return worktree
+
+    def fake_dispatch_tracks(**kwargs):
+        calls.append(kwargs)
+        dispatch_entered.set()
+        dispatch_can_finish.wait(timeout=5)
+        return {"all_ok": True, "run_id": "dispatch-worker"}
+
+    monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
+    monkeypatch.setattr(
+        "goodteam_os.web.ensure_dispatch_project_root_is_safe",
+        lambda project_root: {"safe": True, "reason": ""},
+    )
+    monkeypatch.setattr("goodteam_os.web.dispatch_tracks", fake_dispatch_tracks)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    started_at = time.monotonic()
+    response = simulate_post(
+        "/api/dispatch-track",
+        {
+            "name": "my-track",
+            "role": "backend",
+            "adapter": "codex",
+            "task": "Implement backend dispatch.",
+            "constraints": "Keep changes scoped.",
+            "verify": "pytest tests/test_api.py -q",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+    elapsed = time.monotonic() - started_at
+    assert 202 in response.responses
+    assert elapsed < 1
+    assert dispatch_entered.wait(timeout=1)
+
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["run_id"].startswith("dispatch-")
+    assert payload == {
+        "run_id": payload["run_id"],
+        "name": "my-track",
+        "branch": "feat/my-track",
+        "worktree": str(worktree),
+        "status": "started",
+    }
+    assert calls[0]["project_root"] == worktree
+    assert calls[0]["tracks"][0]["role"] == "backend"
+    assert calls[0]["tracks"][0]["adapter"] == "codex"
+    assert calls[0]["tracks"][0]["task"] == "Implement backend dispatch."
+    assert calls[0]["verify_commands"] == {"backend": "pytest tests/test_api.py -q"}
+    assert calls[0]["constraints_file"].read_text(encoding="utf-8") == "Keep changes scoped."
+    dispatch_can_finish.set()
+
+
+def test_api_dispatch_track_rejects_cross_origin_before_dispatch(tmp_path, monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("dispatch setup should not run for cross-origin requests")
+
+    monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fail_if_called)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/dispatch-track",
+        {
+            "name": "my-track",
+            "role": "backend",
+            "adapter": "codex",
+            "task": "Implement backend dispatch.",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "https://evil.test"},
+    )
+
+    assert 403 in response.responses
+    assert json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+
+
+def test_api_dispatch_track_rejects_bad_input(tmp_path, monkeypatch):
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/dispatch-track",
+        {"name": "Bad Name", "role": "backend", "adapter": "codex", "task": "Implement."},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 400 in response.responses
+    assert "name" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+
+
+def test_api_dispatch_track_rejects_unsafe_target(tmp_path, monkeypatch):
+    worktree = tmp_path / "goodteam-dev-my-track"
+
+    def fake_ensure_worktree(workspace, *, name, branch):
+        worktree.mkdir(exist_ok=True)
+        return worktree
+
+    monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
+    monkeypatch.setattr(
+        "goodteam_os.web.ensure_dispatch_project_root_is_safe",
+        lambda project_root: {"safe": False, "reason": "project_root is inside configured project repo"},
+    )
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/dispatch-track",
+        {"name": "my-track", "role": "backend", "adapter": "codex", "task": "Implement."},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 400 in response.responses
+    assert "configured project repo" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
 
 
 def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatch):
