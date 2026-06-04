@@ -593,6 +593,83 @@ def test_api_dispatch_track_background_failure_writes_status(tmp_path, monkeypat
     assert status["error"] == "dispatch failed after acceptance"
 
 
+def test_api_dispatch_track_releases_background_when_accepted_response_write_fails(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    worktree = tmp_path / "goodteam-dev-my-track"
+    dispatch_entered = threading.Event()
+    completed_status_written = threading.Event()
+    captured_response_written = None
+    captured_result = None
+
+    class BrokenResponseStream(BytesIO):
+        def write(self, data):
+            raise OSError("client disconnected")
+
+    def fake_ensure_worktree(workspace, *, name, branch):
+        worktree.mkdir(exist_ok=True)
+        return worktree
+
+    def fake_safety_check(project_root, *, projects_dir):
+        return {"safe": True, "reason": ""}
+
+    def fake_dispatch_tracks(**kwargs):
+        dispatch_entered.set()
+        return {"all_ok": True, "run_id": "dispatch-worker"}
+
+    monkeypatch.setattr("goodteam_os.web._ensure_dispatch_worktree", fake_ensure_worktree)
+    monkeypatch.setattr("goodteam_os.web.ensure_dispatch_project_root_is_safe", fake_safety_check)
+    monkeypatch.setattr("goodteam_os.web.dispatch_tracks", fake_dispatch_tracks)
+    original_start_dispatch_track = web.start_dispatch_track
+
+    def start_dispatch_track_and_capture(*args, response_written=None, **kwargs):
+        nonlocal captured_response_written, captured_result
+        captured_response_written = response_written
+        captured_result = original_start_dispatch_track(*args, response_written=response_written, **kwargs)
+        return captured_result
+
+    monkeypatch.setattr("goodteam_os.web.start_dispatch_track", start_dispatch_track_and_capture)
+    original_write_status = web._write_dispatch_track_status
+
+    def write_status_and_signal(*args, **kwargs):
+        original_write_status(*args, **kwargs)
+        if kwargs.get("status") == "completed":
+            completed_status_written.set()
+
+    monkeypatch.setattr("goodteam_os.web._write_dispatch_track_status", write_status_and_signal)
+    simulate_post = capture_post_handler(workspace, monkeypatch)
+
+    try:
+        simulate_post(
+            "/api/dispatch-track",
+            {
+                "name": "my-track",
+                "role": "backend",
+                "adapter": "codex",
+                "task": "Implement backend dispatch.",
+            },
+            headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+            wfile=BrokenResponseStream(),
+        )
+    except OSError as exc:
+        assert str(exc) == "client disconnected"
+    else:
+        raise AssertionError("broken response stream should raise")
+
+    assert captured_response_written is not None
+    assert captured_response_written.is_set()
+    assert captured_result is not None
+    assert dispatch_entered.wait(timeout=1)
+    assert completed_status_written.wait(timeout=1)
+    status_path = workspace / "state" / "dispatch-tracks" / f"dispatch-track-{captured_result['run_id']}.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["run_id"] == captured_result["run_id"]
+    assert status["name"] == "my-track"
+    assert status["worktree"] == str(worktree)
+    assert status["status"] == "completed"
+    assert status["error"] == ""
+
+
 def test_api_dispatch_track_rejects_cross_origin_before_dispatch(tmp_path, monkeypatch):
     def fail_if_called(*args, **kwargs):
         raise AssertionError("dispatch setup should not run for cross-origin requests")

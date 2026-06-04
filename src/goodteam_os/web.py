@@ -5720,8 +5720,10 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 elif normalized_path == "/dispatch-track":
                     response_written = threading.Event()
                     result = start_dispatch_track(workspace, request, response_written=response_written)
-                    self._send_json(202, result)
-                    response_written.set()
+                    try:
+                        self._send_json(202, result)
+                    finally:
+                        response_written.set()
                     return
                 # `/project-config` carries two operations: the worker-backends
                 # panel sends `project` + `workers` for an existing project; the
