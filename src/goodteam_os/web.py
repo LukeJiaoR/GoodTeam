@@ -535,6 +535,13 @@ def _parse_gh_pull_requests(output: str, warnings: list[str]) -> list[dict[str, 
     return pull_requests
 
 
+def _land_command_for_pull_request(number: int, head_branch: str, worktrees: list[dict[str, str]]) -> str:
+    matching_worktree = next((worktree for worktree in worktrees if worktree.get("branch") == head_branch), None)
+    if matching_worktree is None:
+        return f"scripts/land-pr.sh {number}"
+    return f"scripts/land-pr.sh {number} --worktree {matching_worktree['path']}"
+
+
 def build_dev_loop(workspace: Path) -> dict[str, object]:
     warnings: list[str] = []
     worktrees: list[dict[str, str]] = []
@@ -559,16 +566,24 @@ def build_dev_loop(workspace: Path) -> dict[str, object]:
             warnings.append("gh pr list failed")
 
     pre_reviews = []
+    pre_review_presence_by_pr: dict[int, bool] = {}
     for pull_request in pull_requests:
         number = int(pull_request["number"])
         report_path = PRE_REVIEW_REPORT_DIR / f"pre-review-{number}-report.md"
+        present = report_path.is_file()
+        pre_review_presence_by_pr[number] = present
         pre_reviews.append(
             {
                 "pr": number,
-                "present": report_path.is_file(),
+                "present": present,
                 "report_path": str(report_path),
             }
         )
+    for pull_request in pull_requests:
+        number = int(pull_request["number"])
+        head_branch = str(pull_request["head_branch"])
+        pull_request["land_ready"] = pull_request["ci"] == "pass" and pre_review_presence_by_pr.get(number, False)
+        pull_request["land_command"] = _land_command_for_pull_request(number, head_branch, worktrees)
 
     return {
         "worktrees": worktrees,
@@ -925,6 +940,63 @@ def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, ob
 
 def is_active_run(state: AgileDevState | None) -> bool:
     return state is not None and bool(state.next_node)
+
+
+_DASHBOARD_STEPPER_PRESENTATION: dict[str, tuple[dict[str, str], ...]] = {
+    "takeover": (
+        {"label": "Intake", "node": "takeover_review_gate", "approval": "takeover"},
+        {"label": "Research", "node": "research", "artifact": "research_report"},
+    ),
+    "product_requirement": ({"label": "PRD", "node": "product_requirement", "artifact": "prd", "approval": "prd"},),
+    "prd": (),
+    "architect": ({"label": "RFC", "node": "architect", "artifact": "rfc"},),
+    "rfc": ({"label": "Arch Rev", "node": "rfc_review_gate", "approval": "rfc"},),
+    "planner": (
+        {"label": "Planning", "node": "planner", "artifact": "task_breakdown"},
+        {"label": "UI Design", "node": "ui", "artifact": "ui_spec"},
+        {"label": "Impl", "node": "implementation", "artifact": "implementation_handoff"},
+        {"label": "QA", "node": "qa", "artifact": "qa_report"},
+        {"label": "Staging", "node": "code_review", "artifact": "code_review"},
+        {"label": "Security", "node": "staging", "approval": "staging", "artifact": "staging_report"},
+    ),
+    "staging": (),
+    "release": ({"label": "Release", "node": "release", "approval": "release", "artifact": "release_notes"},),
+    "retro_memory": ({"label": "Retro", "node": "retro_memory", "artifact": "retro_memory"},),
+}
+
+
+def _dashboard_stepper_table_order() -> list[str]:
+    order: list[str] = []
+    seen: set[str] = set()
+    for gate, transition in GATE_TRANSITIONS.items():
+        if transition.on_approved_next in seen and gate not in seen:
+            continue
+        if gate not in seen:
+            order.append(gate)
+            seen.add(gate)
+        if transition.on_approved_next not in seen:
+            order.append(transition.on_approved_next)
+            seen.add(transition.on_approved_next)
+    return order
+
+
+def _dashboard_stepper_steps() -> list[dict[str, str]]:
+    steps: list[dict[str, str]] = []
+    for identifier in _dashboard_stepper_table_order():
+        for step in _DASHBOARD_STEPPER_PRESENTATION.get(identifier, ()):
+            steps.append(dict(step))
+    return steps
+
+
+def _dashboard_stepper_node_sequence(steps: list[dict[str, str]]) -> dict[str, int]:
+    sequence: dict[str, int] = {}
+    for index, step in enumerate(steps, start=1):
+        sequence[step["node"]] = index
+        approval = step.get("approval")
+        if approval:
+            sequence[f"await_{approval}_approval"] = index
+    sequence["complete"] = len(steps) + 1
+    return sequence
 
 
 def start_workflow(
@@ -4553,61 +4625,12 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         else '<div class="empty-state">state/current.json not found.</div>'
     )
 
-    # 13-step progress stepper logic
-    steps = [
-        {"label": "Intake", "node": "takeover_review_gate", "approval": "takeover"},
-        {"label": "Research", "node": "research", "artifact": "research_report"},
-        {"label": "PRD", "node": "product_requirement", "artifact": "prd", "approval": "prd"},
-        {"label": "RFC", "node": "architect", "artifact": "rfc"},
-        {"label": "Arch Rev", "node": "rfc_review_gate", "approval": "rfc"},
-        {"label": "Planning", "node": "planner", "artifact": "task_breakdown"},
-        {"label": "UI Design", "node": "ui", "artifact": "ui_spec"},
-        {"label": "Impl", "node": "implementation", "artifact": "implementation_handoff"},
-        {"label": "QA", "node": "qa", "artifact": "qa_report"},
-        {"label": "Staging", "node": "code_review", "artifact": "code_review"},
-        {"label": "Security", "node": "staging", "approval": "staging", "artifact": "staging_report"},
-        {"label": "Release", "node": "release", "approval": "release", "artifact": "release_notes"},
-        {"label": "Retro", "node": "retro_memory", "artifact": "retro_memory"}
-    ]
-    
-    node_sequence = {
-        "takeover_review_gate": 1,
-        "await_takeover_approval": 1,
-        "research": 2,
-        "product_requirement": 3,
-        "await_prd_approval": 3,
-        "architect": 4,
-        "rfc_review_gate": 5,
-        "await_rfc_approval": 5,
-        "planner": 6,
-        "ui": 7,
-        "implementation": 8,
-        "qa": 9,
-        "code_review": 10,
-        "staging": 11,
-        "await_staging_approval": 11,
-        "release": 12,
-        "await_release_approval": 12,
-        "retro_memory": 13,
-        "complete": 14,
-    }
-    
+    steps = _dashboard_stepper_steps()
+    node_sequence = _dashboard_stepper_node_sequence(steps)
     current_seq = 0
     if state is not None:
         if state.next_node and state.next_node.startswith("await_") and state.next_node.endswith("_approval"):
-            gate = state.next_node[6:-9]
-            if gate == "takeover":
-                current_seq = 1
-            elif gate == "prd":
-                current_seq = 3
-            elif gate == "rfc":
-                current_seq = 5
-            elif gate == "staging":
-                current_seq = 11
-            elif gate == "release":
-                current_seq = 12
-            else:
-                current_seq = node_sequence.get(state.next_node, 1)
+            current_seq = node_sequence.get(state.next_node, 1)
         else:
             current_seq = node_sequence.get(state.current_node, 1)
             
@@ -4638,7 +4661,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             
     stepper_output_html = f"""
     <div class="card">
-      <div class="card-title">Pipeline Progress · {done_count} of 13 steps complete</div>
+      <div class="card-title">Pipeline Progress · {done_count} of {len(steps)} steps complete</div>
       <div class="stepper">
         {"".join(stepper_html)}
       </div>
