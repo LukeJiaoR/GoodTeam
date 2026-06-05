@@ -1078,6 +1078,12 @@ def _dashboard_stepper_node_sequence(steps: list[dict[str, str]]) -> dict[str, i
     return sequence
 
 
+def _normalize_start_delivery_standards(value: list[str] | str) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [line.strip() for line in str(value).splitlines() if line.strip()]
+
+
 def start_workflow(
     *,
     workspace: Path,
@@ -1086,6 +1092,7 @@ def start_workflow(
     model_config: Path,
     model_profile: str,
     delivery_mode: str = "",
+    delivery_standards: list[str] | str = "",
     source_type: str = "new_project",
     project_config: Path | None = None,
     role_model_overrides: list[str] | None = None,
@@ -1118,6 +1125,7 @@ def start_workflow(
     state.source_ref = str(project_config) if source_type == "existing_project" and project_config is not None else "manual"
     state.model_profile = resolved_profile
     state.delivery_mode = normalize_delivery_mode(delivery_mode or str(target.get("delivery_mode", "") or "init_project"))
+    state.delivery_standards = _normalize_start_delivery_standards(delivery_standards) if state.delivery_mode == "custom" else []
     state.role_models = role_models
 
     if dry_run:
@@ -5811,6 +5819,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         model_config=Path(str(request.get("model_config", "models.yaml"))),
                         model_profile=str(request.get("model_profile", "balanced")),
                         delivery_mode=str(request.get("delivery_mode", "")),
+                        delivery_standards=request.get("delivery_standards", ""),
                         source_type=str(request.get("source_type", "new_project")),
                         project_config=Path(str(request["project_config"])) if str(request.get("project_config", "")).strip() else None,
                         role_model_overrides=[str(value) for value in request.get("role_model_overrides", [])],

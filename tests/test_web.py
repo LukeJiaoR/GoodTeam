@@ -1272,6 +1272,43 @@ def test_start_workflow_writes_state_and_checkpoint(tmp_path):
     assert actions[1]["artifact"] == "prd"
 
 
+def test_start_workflow_custom_delivery_standards_are_transient_state_and_prd(tmp_path):
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Build an AI content studio with custom delivery.",
+        project_key="CONTENTOPS",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+        delivery_mode="custom",
+        delivery_standards=[" Run local preview. ", "", "Document rollback."],
+    )
+
+    assert payload["delivery_mode"] == "custom"
+    assert payload["delivery_standards"] == ["Run local preview.", "Document rollback."]
+    prd = Path(payload["artifacts"]["prd"]).read_text(encoding="utf-8")
+    assert "- Run local preview." in prd
+    assert "- Document rollback." in prd
+    assert "Treat this as a real internet product starter" not in prd
+
+
+def test_start_workflow_ignores_transient_standards_for_preset_delivery_mode(tmp_path):
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Build a static AI content studio page.",
+        project_key="CONTENTOPS",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+        delivery_mode="static_site",
+        delivery_standards="Run local preview.\nDocument rollback.",
+    )
+
+    assert payload["delivery_mode"] == "static_site"
+    assert payload["delivery_standards"] == []
+    prd = Path(payload["artifacts"]["prd"]).read_text(encoding="utf-8")
+    assert "- Deliver a static site or landing page with a buildable artifact and local preview path." in prd
+    assert "- Run local preview." not in prd
+
+
 def test_start_workflow_notifies_when_prd_approval_gate_is_ready(tmp_path, monkeypatch):
     notifications = []
 

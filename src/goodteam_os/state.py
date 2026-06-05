@@ -19,6 +19,7 @@ class AgileDevState:
     source_type: str = "idea"
     source_ref: str = "manual"
     delivery_mode: str = "init_project"
+    delivery_standards: list[str] = field(default_factory=list)
     context_packet_path: str = ""
     artifacts: dict[str, str] = field(default_factory=dict)
     approvals: dict[str, ApprovalDecision] = field(default_factory=dict)
@@ -115,6 +116,7 @@ class StateStore:
         data.setdefault("source_type", "idea")
         data.setdefault("source_ref", "manual")
         data.setdefault("delivery_mode", "init_project")
+        data.setdefault("delivery_standards", [])
         data.setdefault("context_packet_path", "")
         data.setdefault("artifacts", {})
         data.setdefault("blockers", [])
