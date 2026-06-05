@@ -27,6 +27,7 @@ PR=""
 WORKTREE=""
 RUN_TEST=1
 FORCE=0
+CI_STATUS="unverified"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --worktree) WORKTREE="$2"; shift 2 ;;
@@ -47,7 +48,10 @@ if [ "$FORCE" != 1 ]; then
     tail -5 /tmp/land-checks-$PR.txt >&2
     exit 1
   fi
+  CI_STATUS="pass"
   echo "[land] CI green."
+else
+  CI_STATUS="forced-unverified"
 fi
 
 # Remove the worktree FIRST: while it's checked out on the PR branch,
@@ -103,7 +107,7 @@ if [ "$MAIN_STASH_CREATED" = 1 ]; then
 fi
 
 LAND_HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-land_provenance_airdrop "$PR" "$ROOT" "$LAND_HEAD_SHA" || true
+land_provenance_airdrop "$PR" "$ROOT" "$LAND_HEAD_SHA" "$CI_STATUS" || true
 
 if [ "$RUN_TEST" = 1 ]; then
   echo "[land] post-merge sanity: pytest ..."

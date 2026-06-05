@@ -86,6 +86,7 @@ land_provenance_airdrop() {
   local pr="$1"
   local root="$2"
   local head_sha="$3"
+  local ci_status="${4:-unverified}"
   local staging="${LAND_PROVENANCE_STAGING:-/tmp/land-provenance-$pr}"
   local archive="$root/.goodteam/provenance/pr-$pr"
   local archive_rel=".goodteam/provenance/pr-$pr/"
@@ -106,7 +107,7 @@ land_provenance_airdrop() {
   [ -n "$branch" ] || branch="unknown"
   [ -f "/tmp/pre-review-$pr-report.md" ] && pre_review="y"
 
-  text="PR #$pr landed; head_branch=$branch; CI=pass; pre_review_report=$pre_review; squash_merge_sha=$head_sha; archive=$archive_rel"
+  text="PR #$pr landed; head_branch=$branch; CI=$ci_status; pre_review_report=$pre_review; squash_merge_sha=$head_sha; archive=$archive_rel"
   if [ -n "${LAND_PROVENANCE_RUN_ID:-}" ]; then
     text="$text; run_id=$LAND_PROVENANCE_RUN_ID"
   fi

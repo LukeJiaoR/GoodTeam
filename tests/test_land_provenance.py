@@ -55,7 +55,7 @@ def test_land_provenance_extract_archives_jobs_and_appends_land_event(tmp_path):
         export PY={_q(python_shim)}
         land_provenance_extract {pr} {_q(worktree)}
         rm -rf {_q(worktree)}
-        land_provenance_airdrop {pr} {_q(root)} abcdef123456
+        land_provenance_airdrop {pr} {_q(root)} abcdef123456 pass
         """,
         env={**os.environ, "PATH": os.environ["PATH"]},
     )
@@ -71,6 +71,7 @@ def test_land_provenance_extract_archives_jobs_and_appends_land_event(tmp_path):
     assert events[0]["horizon"] == "mid-term"
     assert events[0]["source"] == f"land/pr-{pr}"
     assert "PR #98701 landed" in events[0]["text"]
+    assert "CI=pass" in events[0]["text"]
     assert "run_id=run-abc" in events[0]["text"]
     assert "job_id=job-123" in events[0]["text"]
     assert "dispatch_role=implementation" in events[0]["text"]
@@ -141,3 +142,29 @@ def test_land_provenance_missing_worktree_clears_stale_staging_before_airdrop(tm
         assert "PR #98703 landed" in events[0]["text"]
     finally:
         subprocess.run(["rm", "-rf", str(stale_staging)], check=False)
+
+
+def test_land_provenance_airdrop_records_forced_unverified_ci_status(tmp_path):
+    root = tmp_path / "main"
+    python_shim = _make_fake_main(root)
+    pr = "98704"
+
+    result = _run_bash(
+        f"""
+        set -euo pipefail
+        . {_q(HELPER)}
+        export PY={_q(python_shim)}
+        land_provenance_airdrop {pr} {_q(root)} 999999abcdef forced-unverified
+        """,
+        env={**os.environ, "PATH": os.environ["PATH"]},
+    )
+
+    event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
+    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert len(events) == 1
+    assert events[0]["source"] == f"land/pr-{pr}"
+    assert "PR #98704 landed" in events[0]["text"]
+    assert "CI=forced-unverified" in events[0]["text"]
+    assert "CI=pass" not in events[0]["text"]
