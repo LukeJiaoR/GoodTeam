@@ -367,7 +367,7 @@ export default function App() {
   const [workerBackendMode, setWorkerBackendMode] = useState('codex');
   const [deploymentBackendMode, setDeploymentBackendMode] = useState('');
   const [startMode, setStartMode] = useState('existing_project'); // existing_project or new_project
-  const [dryRun, setDryRun] = useState(true);
+  const [dryRun, setDryRun] = useState(false);
   const isNewProjectMode = startMode === 'new_project' || startMode === 'new';
 
   // Dispatch track form states
