@@ -545,12 +545,49 @@ def _land_command_for_pull_request(number: int, head_branch: str, worktrees: lis
     return f"scripts/land-pr.sh {number} --worktree {matching_worktree['path']}"
 
 
-def build_dev_loop(workspace: Path) -> dict[str, object]:
+def build_dev_loop(root: Path | None) -> dict[str, object]:
     warnings: list[str] = []
     worktrees: list[dict[str, str]] = []
     pull_requests: list[dict[str, object]] = []
 
-    git_result = _run_readonly_command(["git", "worktree", "list", "--porcelain"], workspace, warnings)
+    if root is None:
+        warnings.append("no project selected")
+        return {
+            "worktrees": worktrees,
+            "pull_requests": pull_requests,
+            "pre_reviews": [],
+            "warnings": warnings,
+            "generated_at": datetime.now(UTC).isoformat(),
+        }
+
+    root = root.resolve()
+    git_root_result = _run_readonly_command(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        root,
+        warnings,
+    )
+    git_root = ""
+    if git_root_result is not None and git_root_result.returncode == 0:
+        git_root = git_root_result.stdout.strip()
+    try:
+        valid_git_root = bool(git_root) and Path(git_root).resolve().is_relative_to(root)
+    except OSError:
+        valid_git_root = False
+    if not valid_git_root:
+        warnings.append("project repo has no git history yet")
+        return {
+            "worktrees": worktrees,
+            "pull_requests": pull_requests,
+            "pre_reviews": [],
+            "warnings": warnings,
+            "generated_at": datetime.now(UTC).isoformat(),
+        }
+
+    git_result = _run_readonly_command(
+        ["git", "-C", str(root), "worktree", "list", "--porcelain"],
+        root,
+        warnings,
+    )
     if git_result is not None:
         if git_result.returncode == 0:
             worktrees = _parse_git_worktrees(git_result.stdout)
@@ -559,7 +596,7 @@ def build_dev_loop(workspace: Path) -> dict[str, object]:
 
     gh_result = _run_readonly_command(
         ["gh", "pr", "list", "--json", "number,title,headRefName,url,statusCheckRollup"],
-        workspace,
+        root,
         warnings,
     )
     if gh_result is not None:
@@ -5676,7 +5713,16 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     self._send_json(400, {"error": str(exc)})
                 return
             if parsed.path == "/api/devloop":
-                self._send_json(200, build_dev_loop(workspace))
+                project_root = None
+                if project_key:
+                    try:
+                        project_config = _project_config_for_key(workspace, project_key)
+                        project_root = resolve_project_runtime_root(
+                            dict(load_project_target(project_config).get("repos", {}))
+                        )
+                    except Exception:
+                        project_root = None
+                self._send_json(200, build_dev_loop(project_root))
                 return
             if parsed.path == "/api/fs/list":
                 try:
