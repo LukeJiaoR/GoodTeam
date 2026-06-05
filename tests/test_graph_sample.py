@@ -3,11 +3,16 @@ from pathlib import Path
 from types import MappingProxyType
 
 from goodteam_os.graph import (
+    DELIVERY_MODE_STANDARDS,
     advance_approved_workflow,
     collect_project_context,
+    delivery_standards_for_mode,
     generate_rfc,
     generate_prd,
+    implementation_expected_artifacts,
     implementation_task,
+    normalize_delivery_mode,
+    qa_expected_artifacts,
     resolve_project_runtime_root,
     resolve_role_adapter,
     render_downstream_artifact_markdown,
@@ -15,6 +20,8 @@ from goodteam_os.graph import (
     run_architecture_until_gate,
     run_implementation_workers,
     run_until_next_gate,
+    ui_delivery_expected_artifacts,
+    ui_delivery_task,
     worker_blocker_message,
 )
 from goodteam_os.graph import run_adoption_until_next_gate
@@ -655,6 +662,142 @@ def test_resolve_project_runtime_root_prefers_parent_project_directory(tmp_path)
     root = resolve_project_runtime_root({"docs": str(docs), "backend": str(backend), "frontend": str(frontend)})
 
     assert root == project
+
+
+def test_resolve_project_runtime_root_accepts_single_named_root(tmp_path):
+    project = tmp_path / "product"
+    project.mkdir()
+
+    root = resolve_project_runtime_root({"root": str(project)})
+
+    assert root == project
+
+
+def test_delivery_mode_normalize_accepts_new_presets_and_custom():
+    for mode in [
+        "static_site",
+        "cli_tool",
+        "library",
+        "data_pipeline",
+        "mobile_app",
+        "feature_increment",
+        "custom",
+    ]:
+        assert normalize_delivery_mode(mode) == mode
+
+
+def test_cli_tool_implementation_expected_artifacts_use_neutral_contract():
+    artifacts = implementation_expected_artifacts("cli_tool")
+
+    assert "README.md" in artifacts
+    assert "tests" in artifacts
+    assert "runnable entry point / local run command" in artifacts
+    assert "frontend app" not in artifacts
+    assert "backend API" not in artifacts
+
+
+def test_init_project_implementation_expected_artifacts_keep_web_scaffold_contract():
+    artifacts = implementation_expected_artifacts("init_project")
+
+    assert "README.md" in artifacts
+    assert "frontend app" in artifacts
+    assert "backend API" in artifacts
+    assert "data layer schema or migrations" in artifacts
+    assert "router configuration" in artifacts
+    assert "tests" in artifacts
+
+
+def test_new_delivery_modes_and_custom_use_neutral_worker_contracts():
+    state = create_initial_state("run-1", "PIPE", "Build a daily import pipeline")
+
+    data_pipeline_qa_artifacts = qa_expected_artifacts("data_pipeline")
+    data_pipeline_ui_artifacts = ui_delivery_expected_artifacts("data_pipeline")
+    custom_ui_task = ui_delivery_task(state, "custom")
+    custom_implementation_task = implementation_task(state, "custom")
+
+    assert data_pipeline_qa_artifacts == ["QA notes in worker result", "local test command", "acceptance notes"]
+    assert "data-layer verification" not in data_pipeline_qa_artifacts
+    assert data_pipeline_ui_artifacts == ["UI files / acceptance notes if the product has a UI"]
+    assert "browser screenshot evidence" not in data_pipeline_ui_artifacts
+    assert "frontend files" not in data_pipeline_ui_artifacts
+    assert "a runnable product scope appropriate to the delivery mode" in custom_ui_task
+    assert "if the product has a UI" in custom_ui_task
+    assert "screenshot-backed visual acceptance" not in custom_ui_task
+    assert "runnable product appropriate to the custom delivery mode" in custom_implementation_task
+    assert "local run command" in custom_implementation_task
+    assert "focused tests" in custom_implementation_task
+    assert "README verification commands" in custom_implementation_task
+    assert "frontend/backend" not in custom_implementation_task
+    assert "data layer" not in custom_implementation_task
+
+
+def test_delivery_standards_for_mode_uses_custom_project_config():
+    target = {
+        "delivery_standards": {
+            "standard_0002": "Include rollback notes.",
+            "standard_0001": "Run the local smoke path.",
+        }
+    }
+
+    assert delivery_standards_for_mode("custom", target) == [
+        "Run the local smoke path.",
+        "Include rollback notes.",
+    ]
+
+
+def test_delivery_standards_for_mode_uses_preset_table():
+    assert delivery_standards_for_mode("static_site", {}) == DELIVERY_MODE_STANDARDS["static_site"]
+
+
+def test_custom_delivery_standard_is_injected_into_prd(tmp_path):
+    project = tmp_path / "product"
+    project.mkdir()
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: Custom Product",
+                "key: CUSTOM",
+                "delivery_mode: custom",
+                "delivery_standards:",
+                "  standard_0001: Ship the operator checklist.",
+                "repos:",
+                f"  root: {project}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CUSTOM", "Build custom delivery")
+    state.delivery_mode = "custom"
+
+    prd = render_prd_markdown(state, config)
+
+    assert "- Ship the operator checklist." in prd
+    assert "- Treat this as a real internet product starter" not in prd
+
+
+def test_preset_delivery_standard_is_injected_into_prd(tmp_path):
+    project = tmp_path / "product"
+    project.mkdir()
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: Static Product",
+                "key: STATIC",
+                "delivery_mode: static_site",
+                "repos:",
+                f"  root: {project}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "STATIC", "Build static delivery")
+    state.delivery_mode = "static_site"
+
+    prd = render_prd_markdown(state, config)
+
+    assert "- Deliver a static site or landing page with a buildable artifact and local preview path." in prd
 
 
 def test_advance_approved_workflow_generates_rfc_after_prd_approval(tmp_path, monkeypatch):

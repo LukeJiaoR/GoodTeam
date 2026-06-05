@@ -293,6 +293,17 @@ delivery_contract:
       command: ./scripts/e2e-critical.sh https://staging.example.com
 ```
 
+For a new single-root project, the config can use one repo entry:
+
+```yaml
+delivery_mode: custom
+delivery_standards:
+  standard_0001: Deliver a locally runnable first slice with documented setup and verification commands.
+  standard_0002: Preserve existing contracts and include focused regression tests.
+repos:
+  root: /absolute/path/to/my-product
+```
+
 Then check the project target:
 
 ```bash
@@ -375,6 +386,13 @@ Supported delivery modes:
 - `mvp`: validation-ready slice with the smallest useful product surface, local run commands, deterministic tests, and a clear evolution path.
 - `init_project`: production starter for a real internet product, including frontend/backend separation, API contracts, data layer, routing, DevOps, CI/test commands, deployment notes, and health checks.
 - `multi_service`: multi-service product shape with service boundaries, API or event contracts, gateway/router responsibilities, database ownership, async/queue needs, observability, orchestration, and rollback strategy.
+- `static_site`: static site or landing page with build output, local preview, content/route structure, responsive accessibility basics, and deployment notes.
+- `cli_tool`: command-line tool with argument and flag contracts, help text, exit codes, deterministic tests, and installation/run docs.
+- `library`: library or SDK with public API docs, semantic versioning expectations, host-independent examples, and unit tests.
+- `data_pipeline`: idempotent ETL/data pipeline with schemas or contracts, sample data, reproducible backfill, retry behavior, and tests.
+- `mobile_app`: mobile app with target platform, build/run commands, navigation/state expectations, offline/error states, and basic flow verification.
+- `feature_increment`: incremental feature for an existing system with contract compatibility, regression tests, and rollout/rollback notes.
+- `custom`: project-defined delivery standards read from `delivery_standards`.
 
 If omitted, GoodTeam defaults to `init_project`. The selected delivery mode is stored in `state/projects/<project-key>/current.json` and flows into PRD, RFC, implementation handoff, worker expected artifacts, and QA expectations.
 

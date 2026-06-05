@@ -1164,6 +1164,67 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert payload["role_model_overrides"] == {"architect": "codex:gpt-5.5"}
 
 
+def test_create_local_project_config_writes_single_project_root(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+    )
+
+    config = Path(payload["project_config"])
+    content = config.read_text(encoding="utf-8")
+    assert "repos:" in content
+    assert f"  root: {project_root}" in content
+    assert "  docs:" not in content
+    assert "  backend:" not in content
+    assert "  frontend:" not in content
+    assert payload["repos"] == {"root": str(project_root)}
+
+
+def test_create_local_project_config_custom_standards_round_trip(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+        delivery_mode="custom",
+        delivery_standards="Run local preview.\nDocument rollback.",
+    )
+
+    config = Path(payload["project_config"])
+    content = config.read_text(encoding="utf-8")
+    target = web.load_project_target(config)
+    assert "delivery_mode: custom" in content
+    assert "delivery_standards:" in content
+    assert "  standard_0001: Run local preview." in content
+    assert "  standard_0002: Document rollback." in content
+    assert target["delivery_standards"] == {
+        "standard_0001": "Run local preview.",
+        "standard_0002": "Document rollback.",
+    }
+    assert payload["delivery_standards"] == ["Run local preview.", "Document rollback."]
+
+
+def test_web_normalize_delivery_mode_accepts_new_presets_and_custom():
+    for mode in [
+        "static_site",
+        "cli_tool",
+        "library",
+        "data_pipeline",
+        "mobile_app",
+        "feature_increment",
+        "custom",
+    ]:
+        assert web.normalize_delivery_mode(mode) == mode
+
+
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):
     docs = tmp_path / "content-research"
     docs.mkdir()

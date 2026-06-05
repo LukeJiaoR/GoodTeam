@@ -11,12 +11,17 @@
 name: Example App
 key: EXAMPLE
 model_profile: balanced          # see profiles in models.yaml
-delivery_mode: mvp               # mvp | init_project | multi_service
+delivery_mode: custom            # mvp | init_project | multi_service | static_site | cli_tool | library | data_pipeline | mobile_app | feature_increment | custom
+delivery_standards:
+  standard_0001: Deliver a locally runnable first slice with documented setup and verification commands.
+  standard_0002: Preserve the host project's existing contracts and include focused regression tests.
+  standard_0003: Record rollout, rollback, and follow-up risks in the handoff.
 source_type: existing_project    # new_project | existing_project
 
-# Repos GoodTeam may read/write. Add one entry per service for multi_service.
+# Repos GoodTeam may read/write. New projects may use a single root entry;
+# existing projects may keep docs/backend/frontend or one entry per service.
 repos:
-  app: /absolute/path/to/your/repo
+  root: /absolute/path/to/your/repo
 
 # Default worker backend for any role not listed under `workers:` below.
 # `fake` needs no credentials and is great for a first end-to-end run. For real

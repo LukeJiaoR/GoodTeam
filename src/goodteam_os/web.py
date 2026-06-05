@@ -31,7 +31,7 @@ from goodteam_os.graph import (
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.nodes.review_gate import gate_next_node
-from goodteam_os.projects import check_project_target, load_project_target, update_worker_backend_config
+from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import read_messages
@@ -736,6 +736,7 @@ def create_local_project_config(
     workspace: Path,
     project_name: str,
     project_key: str,
+    project_root: str = "",
     docs_path: str = "",
     backend_path: str = "",
     frontend_path: str = "",
@@ -748,6 +749,7 @@ def create_local_project_config(
     worker_backend_mode: str = "codex",
     model_profile: str = "balanced",
     delivery_mode: str = "init_project",
+    delivery_standards: str = "",
     role_model_overrides: dict[str, str] | None = None,
     deployment_backend_mode: str = "",
     staging_ssh_target: str = "",
@@ -770,12 +772,15 @@ def create_local_project_config(
         raise ValueError("Project key is required.")
 
     repos = []
-    if docs_path.strip():
-        repos.append(("docs", _validate_directory_path("Docs", docs_path)))
-    if backend_path.strip():
-        repos.append(("backend", _validate_directory_path("Backend", backend_path)))
-    if frontend_path.strip():
-        repos.append(("frontend", _validate_directory_path("Frontend", frontend_path)))
+    if project_root.strip():
+        repos.append(("root", _validate_directory_path("Project root", project_root)))
+    else:
+        if docs_path.strip():
+            repos.append(("docs", _validate_directory_path("Docs", docs_path)))
+        if backend_path.strip():
+            repos.append(("backend", _validate_directory_path("Backend", backend_path)))
+        if frontend_path.strip():
+            repos.append(("frontend", _validate_directory_path("Frontend", frontend_path)))
     if not repos:
         raise ValueError("Select at least one project directory.")
 
@@ -793,6 +798,10 @@ def create_local_project_config(
         f"model_profile: {profile}",
         f"delivery_mode: {mode}",
     ]
+    custom_standards = [line.strip() for line in delivery_standards.splitlines() if line.strip()]
+    if mode == "custom" and custom_standards:
+        lines.append("delivery_standards:")
+        lines.extend(f"  standard_{index:04d}: {standard}" for index, standard in enumerate(custom_standards, start=1))
     if overrides:
         lines.append("role_model_overrides:")
         lines.extend(f"  {role}: {model}" for role, model in sorted(overrides.items()))
@@ -866,6 +875,7 @@ def create_local_project_config(
         "delivery_contract": delivery_contract_report(load_project_target(path)),
         "model_profile": profile,
         "delivery_mode": mode,
+        "delivery_standards": custom_standards if mode == "custom" else [],
         "role_model_overrides": overrides,
     }
 
@@ -1992,7 +2002,7 @@ def _ordered_role_model_overrides(role_models: dict[str, str]) -> dict[str, str]
 
 def normalize_delivery_mode(value: str) -> str:
     mode = (value or "init_project").strip()
-    if mode not in {"mvp", "init_project", "multi_service"}:
+    if mode not in DELIVERY_MODES:
         raise ValueError(f"Unknown delivery mode: {mode}")
     return mode
 
@@ -5894,6 +5904,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         workspace=workspace,
                         project_name=str(request.get("project_name", "")),
                         project_key=str(request.get("project_key", "")),
+                        project_root=str(request.get("project_root", "")),
                         docs_path=str(request.get("docs_path", "")),
                         backend_path=str(request.get("backend_path", "")),
                         frontend_path=str(request.get("frontend_path", "")),
@@ -5918,6 +5929,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         delivery_contract_acceptance=str(request.get("delivery_contract_acceptance", "")),
                         model_profile=str(request.get("model_profile", "balanced")),
                         delivery_mode=str(request.get("delivery_mode", "init_project")),
+                        delivery_standards=str(request.get("delivery_standards", "")),
                         role_model_overrides=dict(request.get("role_model_overrides", {})),
                     )
                 self._send_json(200, result)
