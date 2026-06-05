@@ -120,6 +120,10 @@ def collect_project_context(project_config: Path | None = None) -> list[dict[str
                     "summary": memory["summary"],
                 }
             )
+    single_root = single_root_context_root(repos)
+    if single_root is not None:
+        packets.extend(discover_single_root_context(single_root))
+        return packets
     for repo_name, files in context_file_specs().items():
         repo_root = repos.get(repo_name)
         if not repo_root:
@@ -139,6 +143,117 @@ def collect_project_context(project_config: Path | None = None) -> list[dict[str
                 }
             )
     return packets
+
+
+def single_root_context_root(repos: dict[object, object]) -> Path | None:
+    if len(repos) != 1:
+        return None
+    raw_root = next(iter(repos.values()), "")
+    if not raw_root:
+        return None
+    root = Path(str(raw_root))
+    return root.resolve() if root.is_dir() else None
+
+
+def discover_single_root_context(root: Path) -> list[dict[str, str]]:
+    packets: list[dict[str, str]] = []
+    seen: set[Path] = set()
+    for path, purpose in single_root_context_files(root):
+        try:
+            resolved = path.resolve()
+            if resolved in seen or not resolved.is_file():
+                continue
+            content = resolved.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, RuntimeError, ValueError):
+            continue
+        seen.add(resolved)
+        packets.append(
+            {
+                "repo": "root",
+                "path": str(resolved),
+                "purpose": purpose,
+                "summary": summarize_context_file(content),
+            }
+        )
+    tree_summary = render_shallow_directory_tree(root)
+    if tree_summary:
+        packets.append(
+            {
+                "repo": "root",
+                "path": str(root),
+                "purpose": "Shallow project directory overview",
+                "summary": tree_summary,
+            }
+        )
+    return packets
+
+
+def single_root_context_files(root: Path) -> list[tuple[Path, str]]:
+    files: list[tuple[Path, str]] = []
+    for path in sorted(root.glob("README*"), key=lambda item: item.name.lower()):
+        if path.is_file():
+            files.append((path, "Top-level project README"))
+    manifest_names = {
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "Cargo.toml",
+        "requirements.txt",
+        "requirements-dev.txt",
+        "requirements.in",
+        "Gemfile",
+        "composer.json",
+        "pom.xml",
+        "build.gradle",
+        "settings.gradle",
+    }
+    for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+        if path.is_file() and (path.name in manifest_names or re.fullmatch(r"requirements[-\w]*\.txt", path.name)):
+            files.append((path, "Project manifest or dependency file"))
+    docs_root = root / "docs"
+    if docs_root.is_dir():
+        docs = [
+            path
+            for path in docs_root.rglob("*")
+            if path.is_file() and len(path.relative_to(docs_root).parts) <= 2
+        ]
+        for path in sorted(docs, key=lambda item: str(item.relative_to(docs_root)).lower())[:20]:
+            files.append((path, "Project documentation"))
+    return files
+
+
+def render_shallow_directory_tree(root: Path, *, max_entries: int = 80) -> str:
+    ignored = {".git", ".goodteam", ".venv", "__pycache__", "node_modules", "dist", "build", ".next"}
+    lines = [f"{root.name}/"]
+    count = 0
+    try:
+        top_level = sorted(root.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        return ""
+    for path in top_level:
+        if count >= max_entries:
+            lines.append("- ...")
+            break
+        if path.name in ignored or path.name.startswith("."):
+            continue
+        suffix = "/" if path.is_dir() else ""
+        lines.append(f"- {path.name}{suffix}")
+        count += 1
+        if not path.is_dir():
+            continue
+        try:
+            children = sorted(path.iterdir(), key=lambda item: item.name.lower())
+        except OSError:
+            continue
+        for child in children[:8]:
+            if count >= max_entries:
+                break
+            if child.name in ignored or child.name.startswith("."):
+                continue
+            child_suffix = "/" if child.is_dir() else ""
+            lines.append(f"  - {child.name}{child_suffix}")
+            count += 1
+    return "\n".join(lines)
 
 
 def select_project_memory_root(repos: dict[object, object]) -> Path | None:
@@ -204,6 +319,13 @@ def ensure_project_role_memories(project_config: Path) -> dict[str, dict[str, Pa
         list_role_definitions(),
         str(target.get("name", "")),
     )
+
+
+def artifact_mirror_root(project_config: Path | None) -> Path | None:
+    if project_config is None or not project_config.is_file():
+        return None
+    target = load_project_target(project_config)
+    return resolve_project_runtime_root(dict(target.get("repos", {})))
 
 
 def summarize_context_file(content: str) -> str:
@@ -801,7 +923,7 @@ def run_architecture_until_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace)
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     content = render_downstream_artifact_markdown("rfc", state, project_config)
     if should_generate_artifact_with_worker(project_config, "architect"):
         worker_content = generate_artifact_via_worker(
@@ -832,7 +954,7 @@ def run_delivery_until_release_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace)
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     for artifact_key in ["review_report", "task_breakdown", "ui_spec"]:
         path = store.write_markdown(
             state.run_id,
@@ -899,7 +1021,7 @@ def run_staging_until_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace)
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     if project_config is None or not project_config.is_file():
         raise ValueError("Project config is required for staging deployment.")
 
@@ -934,7 +1056,7 @@ def run_release_until_gate(
     *,
     worker_results: list[dict[str, object]] | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace)
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     release_path = store.write_markdown(
         state.run_id,
         "release_notes",
@@ -952,7 +1074,7 @@ def run_retro_until_complete(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace)
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     retro_path = store.write_markdown(
         state.run_id,
         "retro_memory",
@@ -1475,7 +1597,7 @@ def run_adoption_until_next_gate(
 ) -> AgileDevState:
     if project_config is None:
         raise ValueError("Project config is required for existing project adoption.")
-    store = ArtifactStore(root=workspace)
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     memory_path = ensure_project_memory(project_config)
     task_ledger_path = ensure_project_task_ledger(project_config)
     ensure_project_role_memories(project_config)
@@ -1503,7 +1625,7 @@ def run_until_next_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace)
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     content = render_prd_markdown(state, project_config)
     if should_generate_artifact_with_worker(project_config, "product_requirement"):
         worker_content = generate_artifact_via_worker(
@@ -1655,7 +1777,7 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
             raise RuntimeError(f"product_requirement worker failed [{failure_class}]: {summary}")
         raise RuntimeError(f"product_requirement worker failed: {summary}")
 
-    artifact_store = ArtifactStore(root=workspace)
+    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     prd_path = artifact_store.write_markdown(state.run_id, "prd", "prd.md", content)
     state.artifacts["prd"] = str(prd_path)
     state.current_node = "prd_review_gate"
@@ -1699,7 +1821,7 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
             raise RuntimeError(f"architect worker failed [{failure_class}]: {summary}")
         raise RuntimeError(f"architect worker failed: {summary}")
 
-    artifact_store = ArtifactStore(root=workspace)
+    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     rfc_path = artifact_store.write_markdown(state.run_id, "rfc", "rfc.md", content)
     state.artifacts["rfc"] = str(rfc_path)
     state.current_node = "rfc_review_gate"

@@ -651,6 +651,64 @@ def test_collect_project_context_reads_project_memory_from_project_root(tmp_path
     assert "Stable local project memory" in memory_packet["summary"]
 
 
+def test_collect_project_context_discovers_single_root_context(tmp_path):
+    project = tmp_path / "contentops"
+    docs = project / "docs"
+    docs.mkdir(parents=True)
+    (project / "README.md").write_text("# ContentOps\n\nRoot overview.", encoding="utf-8")
+    (project / "package.json").write_text('{"scripts":{"test":"vitest"}}\n', encoding="utf-8")
+    (docs / "architecture.md").write_text("# Architecture\n\nSingle service starter.", encoding="utf-8")
+    config = tmp_path / "contentops.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: ContentOps",
+                "key: CONTENTOPS",
+                "repos:",
+                f"  root: {project}",
+                "worker_backend:",
+                "  mode: fake",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    context = collect_project_context(config)
+    paths = [item["path"] for item in context]
+
+    assert str((project / "README.md").resolve()) in paths
+    assert str((project / "package.json").resolve()) in paths
+    assert str((docs / "architecture.md").resolve()) in paths
+    assert any(item["purpose"] == "Shallow project directory overview" for item in context)
+
+
+def test_run_until_next_gate_mirrors_artifact_to_single_root_docs(tmp_path):
+    project = tmp_path / "contentops"
+    project.mkdir()
+    config = tmp_path / "contentops.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: ContentOps",
+                "key: CONTENTOPS",
+                "repos:",
+                f"  root: {project}",
+                "worker_backend:",
+                "  mode: fake",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+
+    result = run_until_next_gate(state=state, workspace=tmp_path, project_config=config)
+
+    assert Path(result.artifacts["prd"]).is_file()
+    mirror = project / "docs" / "prd.md"
+    assert mirror.is_file()
+    assert mirror.read_text(encoding="utf-8") == Path(result.artifacts["prd"]).read_text(encoding="utf-8")
+
+
 def test_resolve_project_runtime_root_prefers_parent_project_directory(tmp_path):
     project = tmp_path / "product"
     docs = project / "docs"
