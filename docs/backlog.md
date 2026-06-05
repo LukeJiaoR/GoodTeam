@@ -282,3 +282,50 @@ readiness/auth hints inline so a user knows before a run whether their pick will
 - **Legacy f-string dashboard renderer's delivery-mode select is stale** (found 2026-06-05, pre-review on #76). The canonical React UI (App.jsx) now lists all 9 presets + custom, but the NON-canonical legacy f-string dashboard renderer in `web.py` (~4308 + the add-project dialog ~5305) still hardcodes only mvp/init_project/multi_service. Generate those option lists from `DELIVERY_MODES` to avoid drift — or delete the legacy renderer outright (CLAUDE.md already marks it not-canonical). Low.
 - **Detail-view repo paths read the wrong layer (latent, shows empty)** (found 2026-06-05, while fixing #81). `frontend/src/App.jsx:3069/3073/3077` read `startContext.project_report?.project?.repos?.docs|backend|frontend`, but the backend shape is `project_report.repos.<name>.path` (repos is top-level under project_report; `project_report.project` only has name/key/plane_project_id). So the project-detail repo path display has silently been empty. Fix to `project_report?.repos?.<name>?.path`. (The create-form hydration had the same bug and was fixed in #81.) Low.
 - **`pre-review.sh` can write an EMPTY report under heavy concurrent runs** (found 2026-06-04, Wave 1). When several pre-reviews ran concurrently, some `/tmp/pre-review-<PR>-report.md` came back empty (the report-copy / newest-result.md selection appears to race across concurrent throwaway worktrees). Re-running sequentially produced correct verdicts. Fix: make the report path/selection robust to concurrency (key the copied result.md to the PR's own job, not "newest"), or serialize. Workaround: run pre-reviews sequentially.
+
+## Raised 2026-06-05 (b) — product-use round 2 (founder using the dashboard)
+
+- **PRD edit → LLM deepen → re-review loop** (founder, 2026-06-05; MAINLINE, design-first). Today
+  editing a PRD/artifact and saving just persists the file: `handleSaveArtifact` POSTs to
+  `/api/artifact` (content write) + refetches state — there is NO LLM follow-up. Founder wants:
+  on save of a human-edited artifact, the LLM reads the edit, *deepens/refines* the doc, and routes
+  it back for review (a refine-on-edit loop). Needs: a backend trigger on artifact save (or an
+  explicit "Refine with AI" action) → dispatch the owning role with the edited doc + a "deepen,
+  don't restart" instruction → write the refined version as a new artifact revision → surface a
+  review/diff in the approvals UI. Design-first (research → design → founder gate → dispatch).
+  Touches web.py (`/api/artifact`), graph/roles (a refine task), App.jsx (Save→Refine UX + diff).
+  Medium–Large; high product value (closes the human-in-the-loop authoring loop).
+  **Deferred to next round per founder ("等这次完全整理完再做").**
+- **Theme System v1 — pick winner + productionize** (founder, 2026-06-05; DESIGN DONE, prototype
+  built, NOT landed). Two switchable light themes (Vivid = refined Duolingo/Wise, Minimal =
+  Claude-web) + semantic token layer + type scale + persisted switcher were prototyped on the
+  home + project-detail slices and live-smoked (branch **`feat/theme-proto`**, worktree
+  `../goodteam-dev-theme-proto`). Design: `docs/plans/theme-system-v1-design.md`. Remaining once
+  founder picks a winner: (1) bump prototyped body/label text off the 11px floor to `text-sm/base`
+  (13.5–15px) — the real "Duolingo-clarity" fix (agy leaned on `text-2xs`, clarity gain was modest);
+  (2) full conversion of the remaining ~837 hardcoded hex + ~113 sub-11px usages to tokens across
+  all screens (also systematically kills any remaining dark-mode-invisible text); (3) add dark mode
+  for the winning theme (data-theme × prefers-color-scheme). FE → agy (model `Gemini 3.5 Flash
+  (Medium)`). **Awaiting founder's Vivid-vs-Minimal pick.**
+- **Worker picker shows "claude" twice** (founder, 2026-06-05). `CLI_BACKENDS` aliases `anthropic`
+  and `claude` to the same `CLAUDE_BACKEND` (and `agy`/`antigravity` likewise), and the UI /
+  `_PREFERRED_WORKER_BACKEND_ORDER` enumerate raw keys, so Claude appears as two entries. Harmless
+  but confusing. Dedup the picker by backend identity (one row per distinct `CliBackendSpec`, keep
+  aliases accepted on input). Low.
+- **codex pre-review channel was auth-down (403 Forbidden) this session** (2026-06-05). `pre-review.sh`
+  (codex gpt-5.5, ChatGPT account) returned `403 Forbidden` / `failure_class: auth` on repeated runs,
+  so the independent pre-review leg was unavailable for #82–#85 (landed on Claude review + CI-green +
+  live smoke, founder-authorized). Likely account/rate auth, not code. Follow-up: confirm codex auth
+  recovers; add a fallback reviewer (claude/agy) when codex auth fails; surface auth failure distinctly
+  (not a silent empty report). Low–Medium.
+- **agy `--model` env-driven default works — productize it** (2026-06-05). To route a specific agy
+  model (`Gemini 3.5 Flash (Medium)`), a LOCAL uncommitted edit made `DEFAULT_AGY_MODEL` read
+  `GOODTEAM_AGY_MODEL` and fixed the `_agy_build_command` guard to compare against the literal `"auto"`
+  (so an env-set default still emits `--model`). Mirrors the `GOODTEAM_CODEX_MODEL` pattern; confirmed
+  to emit `--model "<label>"`. Productize: commit the env-overridable agy default + guard fix (no
+  standing local edit), optionally surface `agy models` labels in the per-role picker. (Supersedes the
+  2026-06-04 "agy supports --model" reconcile note.) Low.
+- **Role prompt template hardcodes "Use model gpt-5.3-codex"** (observed 2026-06-05, in the agy job
+  prompt body). The dispatched worker prompt template carries a literal "Use model gpt-5.3-codex"
+  line regardless of the actual adapter/model (agy still honored its real `--model` flag, so harmless
+  here). Make that line reflect the resolved adapter+model, or drop it. Low.

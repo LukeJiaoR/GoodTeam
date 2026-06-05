@@ -1,5 +1,25 @@
 # Current Progress
 
+- Footprint 2026-06-05 (c) — product-use round 2 + theme exploration. Founder ran the dashboard and
+  reported four issues; landed the four fixes, deferred the rest to backlog ("先把可以落地的落地,
+  新问题整理成 backlog,等这次完全整理完再做"). **Landed to main:** #82 `5b2701f` (dark-mode input
+  text visible + valid zinc shades), #83 `6e19130` (Start = real start + navigates: dry-run default
+  off), #85 `b6e5805` (Dev Loop scopes to the viewed project's repo — no more GoodTeam-self PR
+  pollution; it had run git/gh in the server workspace which lives inside the GoodTeam repo), #84
+  `4c6bb1e` (complete dark-mode text fix for the multi-line-formatted controls #82's single-line
+  grep missed, incl. the Markdown Editor). main = `4c6bb1e`; each landed on Claude review + CI-green
+  + live smoke (codex pre-review was auth-down, 403). :8788 dev server rebuilt + repointed to clean
+  main (`index-DiI13Gnw.js`). **Agent routing this session:** FE flipped founder→gemini→**agy**
+  (final); agy model routed to `Gemini 3.5 Flash (Medium)` via a LOCAL uncommitted `GOODTEAM_AGY_MODEL`
+  edit + guard fix in workers.py (kept uncommitted, like `GOODTEAM_CODEX_MODEL`). PRD-writing tasks →
+  Sonnet 4.6 (cost). **Designed, NOT landed:** Theme System v1 — two switchable light themes (Vivid
+  Duolingo/Wise + Minimal Claude) + semantic token layer + type scale + persisted switcher,
+  prototyped on home + project-detail slices (branch `feat/theme-proto`, design
+  `docs/plans/theme-system-v1-design.md`); awaiting founder's Vivid-vs-Minimal pick, then font-size
+  tuning + full ~837-hex→token conversion + dark for the winner. **Deferred to backlog:** PRD edit →
+  LLM deepen → re-review loop (mainline, design-first); claude-twice picker dedup; codex pre-review
+  auth fallback; productize agy `--model`; stale role-prompt model line. See `docs/backlog.md`
+  "Raised 2026-06-05 (b)".
 - Active: Memory visualization panel (endpoint + FE) and release/dev self-hosting bootstrap landed; implementer model assignment settled (Codex = all landing, GPT-5.5 = planner, Gemini = constrained FE backup).
 - Completed: Fully migrated the dashboard architecture to support clean frontend-backend separation:
   - Implemented `/api/state` and `/api/artifact` endpoints returning raw JSON payloads (`web.py`).
