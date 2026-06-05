@@ -466,6 +466,46 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert "error" in payload
 
+    monkeypatch.setattr(
+        "goodteam_os.web.refine_artifact",
+        lambda workspace, project_key, artifact_key, content: {
+            "artifact": artifact_key,
+            "base_path": "/tmp/prd.md",
+            "proposed_path": "/tmp/prd.proposed.md",
+            "diff_summary": {"added_lines": 1, "removed_lines": 0},
+        },
+    )
+    handler = simulate_post(
+        "/api/refine-artifact",
+        {"project_key": "CONTENTOPS", "artifact": "prd", "content": "# Edited"},
+    )
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["artifact"] == "prd"
+    assert payload["proposed_path"] == "/tmp/prd.proposed.md"
+
+    monkeypatch.setattr(
+        "goodteam_os.web.accept_refinement",
+        lambda workspace, project_key, artifact_key: {"artifact": artifact_key, "accepted": True},
+    )
+    handler = simulate_post(
+        "/api/accept-refinement",
+        {"project_key": "CONTENTOPS", "artifact": "prd"},
+    )
+    assert 200 in handler.responses
+    assert json.loads(handler.wfile.getvalue().decode("utf-8"))["accepted"] is True
+
+    monkeypatch.setattr(
+        "goodteam_os.web.discard_refinement",
+        lambda workspace, project_key, artifact_key: {"artifact": artifact_key, "discarded": True},
+    )
+    handler = simulate_post(
+        "/api/discard-refinement",
+        {"project_key": "CONTENTOPS", "artifact": "prd"},
+    )
+    assert 200 in handler.responses
+    assert json.loads(handler.wfile.getvalue().decode("utf-8"))["discarded"] is True
+
 
 def test_api_post_same_origin_guard_rejects_cross_origin_and_allows_trusted_requests(tmp_path, monkeypatch):
     monkeypatch.setattr(

@@ -14,6 +14,34 @@ TASK_BOARD_STATUS_MAP = {
     "done": "done",
 }
 
+STAGE_TASKS = (
+    {
+        "node": "product_requirement",
+        "title": "Draft and approve PRD",
+        "role": "product_requirement",
+    },
+    {
+        "node": "architect",
+        "title": "Design and approve RFC",
+        "role": "architect",
+    },
+    {
+        "node": "implementation",
+        "title": "Implement approved design",
+        "role": "implementation",
+    },
+    {
+        "node": "qa",
+        "title": "Verify implementation",
+        "role": "qa",
+    },
+    {
+        "node": "release",
+        "title": "Approve and complete release",
+        "role": "release",
+    },
+)
+
 
 class LocalTaskStore:
     def __init__(self, project_root: Path):
@@ -39,6 +67,7 @@ class LocalTaskStore:
         priority: str = "medium",
         dependencies: list[str] | None = None,
         artifact_refs: list[str] | None = None,
+        external_refs: list[str] | None = None,
     ) -> dict[str, Any]:
         ledger = self._read()
         tasks = list(ledger.get("tasks", []))
@@ -53,7 +82,7 @@ class LocalTaskStore:
             "dependencies": dependencies or [],
             "acceptance_criteria": acceptance_criteria or [],
             "artifact_refs": artifact_refs or [],
-            "external_refs": [],
+            "external_refs": external_refs or [],
             "created_at": now,
             "updated_at": now,
         }
@@ -89,6 +118,96 @@ class LocalTaskStore:
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()
+
+
+def sync_stage_tasks(state: Any, store: LocalTaskStore) -> list[dict[str, Any]]:
+    statuses = _stage_statuses(state)
+    existing = store.list_tasks()
+    tasks: list[dict[str, Any]] = []
+    for stage in STAGE_TASKS:
+        node = str(stage["node"])
+        external_ref = f"stage:{node}"
+        task = next(
+            (
+                item
+                for item in existing
+                if external_ref in [str(ref) for ref in item.get("external_refs", [])]
+            ),
+            None,
+        )
+        if task is None:
+            task = store.create_task(
+                title=str(stage["title"]),
+                description=f"Workflow stage task for {node}.",
+                role=str(stage["role"]),
+                external_refs=[external_ref],
+            )
+            existing.append(task)
+        updates: dict[str, Any] = {"status": statuses[node]}
+        artifact_ref = _stage_artifact_ref(state, node)
+        if artifact_ref:
+            updates["artifact_refs"] = [artifact_ref]
+        task = store.update_task(str(task["id"]), **updates)
+        tasks.append(task)
+    return tasks
+
+
+def _stage_statuses(state: Any) -> dict[str, str]:
+    approvals = {
+        str(key): str(value)
+        for key, value in dict(getattr(state, "approvals", {}) or {}).items()
+    }
+    artifacts = dict(getattr(state, "artifacts", {}) or {})
+    current_node = str(getattr(state, "current_node", "") or "")
+    next_node = str(getattr(state, "next_node", "") or "")
+
+    statuses = {str(stage["node"]): "todo" for stage in STAGE_TASKS}
+    if approvals.get("takeover") != "approved" and (
+        current_node == "takeover_review_gate" or next_node in {"await_takeover_approval", "revise_takeover"}
+    ):
+        return statuses
+    if approvals.get("prd") != "approved":
+        statuses["product_requirement"] = "review" if artifacts.get("prd_proposed") else "in_progress"
+        return statuses
+    statuses["product_requirement"] = "done"
+
+    if approvals.get("rfc") != "approved":
+        statuses["architect"] = "in_progress"
+        return statuses
+    statuses["architect"] = "done"
+
+    implementation_active = current_node == "implementation" or next_node in {"planner", "blocked"}
+    if implementation_active:
+        statuses["implementation"] = "in_progress"
+        return statuses
+    statuses["implementation"] = "done"
+
+    release_reached = current_node in {"release_review_gate", "complete"} or next_node in {
+        "release",
+        "await_release_approval",
+        "retro_memory",
+    }
+    if approvals.get("staging") != "approved" and not release_reached:
+        statuses["qa"] = "in_progress"
+        return statuses
+    statuses["qa"] = "done"
+
+    if approvals.get("release") == "approved" or current_node == "complete":
+        statuses["release"] = "done"
+    else:
+        statuses["release"] = "in_progress"
+    return statuses
+
+
+def _stage_artifact_ref(state: Any, node: str) -> str:
+    artifact_keys = {
+        "product_requirement": "prd",
+        "architect": "rfc",
+        "implementation": "implementation_handoff",
+        "qa": "qa_report",
+        "release": "release_notes",
+    }
+    return str(dict(getattr(state, "artifacts", {}) or {}).get(artifact_keys[node], "") or "")
 
 
 def build_task_board(tasks: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

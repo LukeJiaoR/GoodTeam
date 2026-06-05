@@ -1,5 +1,6 @@
 import json
 import re
+from difflib import unified_diff
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +12,7 @@ from goodteam_os.projects import load_project_target
 from goodteam_os.roles import artifact_contract, context_file_specs, list_role_definitions, role_definition
 from goodteam_os.staging import run_staging_backend, staging_backend_enabled
 from goodteam_os.state import AgileDevState, StateStore, normalize_project_key
-from goodteam_os.tasks import LocalTaskStore
+from goodteam_os.tasks import LocalTaskStore, sync_stage_tasks
 from goodteam_os.workflow_table import (
     blocked_next_for_node,
     disposition_for_failure_class,
@@ -306,6 +307,21 @@ def ensure_project_task_ledger(project_config: Path) -> Path | None:
     if not store.path.is_file():
         store.path.write_text('{\n  "version": 1,\n  "next_id": 1,\n  "tasks": []\n}', encoding="utf-8")
     return store.path
+
+
+def sync_project_stage_tasks(state: AgileDevState, project_config: Path | None) -> None:
+    runtime_root = None
+    if project_config is not None and project_config.is_file():
+        target = load_project_target(project_config)
+        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    if runtime_root is None:
+        ledger_ref = str(state.artifacts.get("task_ledger", "") or "")
+        ledger = Path(ledger_ref) if ledger_ref else None
+        if ledger is not None and ledger.name == "tasks.json":
+            runtime_root = ledger.parents[2]
+    if runtime_root is None:
+        return
+    sync_stage_tasks(state, LocalTaskStore(runtime_root))
 
 
 def ensure_project_role_memories(project_config: Path) -> dict[str, dict[str, Path]]:
@@ -946,6 +962,7 @@ def run_architecture_until_gate(
     state.approvals["rfc"] = state.approvals.get("rfc", "pending")
     state.current_node = "rfc_review_gate"
     state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
+    sync_project_stage_tasks(state, project_config)
     return state
 
 
@@ -995,6 +1012,7 @@ def run_delivery_until_release_gate(
             ),
         )
         state.artifacts["implementation_handoff"] = str(handoff_path)
+        sync_project_stage_tasks(state, project_config)
         return state
     for artifact_key in ["implementation_handoff", "qa_report", "code_review"]:
         path = store.write_markdown(
@@ -1046,6 +1064,7 @@ def run_staging_until_gate(
 
     state.current_node = "staging_review_gate"
     state.next_node = gate_next_node(state, gate="staging", approved_next="release")
+    sync_project_stage_tasks(state, project_config)
     return state
 
 
@@ -1066,6 +1085,7 @@ def run_release_until_gate(
     state.artifacts["release_notes"] = str(release_path)
     state.current_node = "release_review_gate"
     state.next_node = gate_next_node(state, gate="release", approved_next="retro_memory")
+    sync_project_stage_tasks(state, project_config)
     return state
 
 
@@ -1084,6 +1104,7 @@ def run_retro_until_complete(
     state.artifacts["retro_memory"] = str(retro_path)
     state.current_node = "complete"
     state.next_node = ""
+    sync_project_stage_tasks(state, project_config)
     return state
 
 
@@ -1617,6 +1638,7 @@ def run_adoption_until_next_gate(
     state.approvals["takeover"] = "pending"
     state.current_node = "takeover_review_gate"
     state.next_node = gate_next_node(state, gate="takeover", approved_next="product_requirement")
+    sync_project_stage_tasks(state, project_config)
     return state
 
 
@@ -1647,6 +1669,7 @@ def run_until_next_gate(
     state.artifacts["prd"] = str(prd_path)
     state.current_node = "prd_review_gate"
     state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
+    sync_project_stage_tasks(state, project_config)
     return state
 
 
@@ -1782,9 +1805,180 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
     state.artifacts["prd"] = str(prd_path)
     state.current_node = "prd_review_gate"
     state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
+    sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
     return asdict(state)
+
+
+def refine_artifact(
+    *,
+    workspace: Path,
+    project_key: str,
+    artifact_key: str,
+    content: str,
+) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    state_store = StateStore(workspace)
+    state = state_store.read_project_current(key)
+    if state is None:
+        raise ValueError(f"No active run for project: {key}")
+
+    project_config = _resolve_state_project_config(workspace, state, key)
+    target = load_project_target(project_config)
+    if resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
+        raise ValueError(f"Project runtime root not found for project: {key}")
+
+    contract = artifact_contract(artifact_key)
+    role = str(contract["role"])
+    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    filename = _artifact_filename(artifact_key)
+    base_path = artifact_store.write_markdown(
+        state.run_id,
+        artifact_key,
+        filename,
+        content,
+    )
+    state.artifacts[artifact_key] = str(base_path)
+    state.artifacts.pop(f"{artifact_key}_proposed", None)
+    sync_project_stage_tasks(state, project_config)
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
+
+    failure_status: dict[str, object] = {}
+    task_text = (
+        f"Here is the current human-edited {artifact_key.upper()}. DEEPEN and refine it - preserve "
+        "the author's intent, structure, and decisions; do NOT restart from the idea or discard "
+        "their edits. Fill gaps, sharpen acceptance criteria, surface risks/open questions, "
+        f"tighten scope. Return the improved {artifact_key.upper()} as markdown only.\n\n"
+        f"{content}"
+    )
+    proposed_content = generate_artifact_via_worker(
+        state=state,
+        workspace=workspace,
+        project_config=project_config,
+        role=role,
+        artifact_key=artifact_key,
+        task_text=task_text,
+        failure_status=failure_status,
+    )
+    if proposed_content is None:
+        summary = str(failure_status.get("summary", "") or f"{role} worker failed")
+        failure_class = str(failure_status.get("failure_class", "")).strip()
+        if failure_class:
+            raise RuntimeError(f"{role} worker failed [{failure_class}]: {summary}")
+        raise RuntimeError(f"{role} worker failed: {summary}")
+
+    proposed_path = artifact_store.write_proposed_markdown(
+        state.run_id,
+        artifact_key,
+        filename,
+        proposed_content,
+    )
+    state.artifacts[f"{artifact_key}_proposed"] = str(proposed_path)
+    sync_project_stage_tasks(state, project_config)
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
+    return {
+        "artifact": artifact_key,
+        "base_path": str(base_path),
+        "proposed_path": str(proposed_path),
+        "diff_summary": _artifact_diff_summary(content, proposed_content, artifact_key),
+    }
+
+
+def accept_refinement(
+    *,
+    workspace: Path,
+    project_key: str,
+    artifact_key: str,
+) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    state_store = StateStore(workspace)
+    state = state_store.read_project_current(key)
+    if state is None:
+        raise ValueError(f"No active run for project: {key}")
+    proposed_key = f"{artifact_key}_proposed"
+    proposed_ref = str(state.artifacts.get(proposed_key, "") or "")
+    if not proposed_ref:
+        raise ValueError(f"No proposed refinement for artifact: {artifact_key}")
+    proposed_path = Path(proposed_ref)
+    if not proposed_path.is_file():
+        raise ValueError(f"Proposed refinement file does not exist: {artifact_key}")
+
+    project_config = _resolve_state_project_config(workspace, state, key)
+    content = proposed_path.read_text(encoding="utf-8")
+    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    base_path = artifact_store.write_markdown(
+        state.run_id,
+        artifact_key,
+        _artifact_filename(artifact_key),
+        content,
+    )
+    proposed_path.unlink()
+    state.artifacts[artifact_key] = str(base_path)
+    state.artifacts.pop(proposed_key, None)
+    if artifact_key == "prd":
+        state.current_node = "prd_review_gate"
+        state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
+    sync_project_stage_tasks(state, project_config)
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
+    payload = asdict(state)
+    payload.update({"artifact": artifact_key, "accepted": True, "path": str(base_path)})
+    return payload
+
+
+def discard_refinement(
+    *,
+    workspace: Path,
+    project_key: str,
+    artifact_key: str,
+) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    state_store = StateStore(workspace)
+    state = state_store.read_project_current(key)
+    if state is None:
+        raise ValueError(f"No active run for project: {key}")
+    proposed_ref = str(state.artifacts.pop(f"{artifact_key}_proposed", "") or "")
+    if proposed_ref:
+        Path(proposed_ref).unlink(missing_ok=True)
+    project_config = _resolve_state_project_config(workspace, state, key)
+    sync_project_stage_tasks(state, project_config)
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
+    return {"artifact": artifact_key, "discarded": True}
+
+
+def _resolve_state_project_config(
+    workspace: Path,
+    state: AgileDevState,
+    project_key: str,
+) -> Path:
+    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+    if project_config is None or not project_config.is_file():
+        project_config = _project_config_for_key(workspace, project_key)
+    if project_config is None or not project_config.is_file():
+        raise ValueError(f"Project config not found for project: {project_key}")
+    return project_config
+
+
+def _artifact_diff_summary(base: str, proposed: str, artifact_key: str) -> dict[str, object]:
+    diff_lines = list(
+        unified_diff(
+            base.splitlines(),
+            proposed.splitlines(),
+            fromfile=f"{artifact_key}.md",
+            tofile=f"{artifact_key}.proposed.md",
+            lineterm="",
+        )
+    )
+    return {
+        "added_lines": sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++")),
+        "removed_lines": sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---")),
+        "unified_diff": "\n".join(diff_lines[:80]),
+        "truncated": len(diff_lines) > 80,
+    }
 
 
 def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
@@ -1826,6 +2020,7 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
     state.artifacts["rfc"] = str(rfc_path)
     state.current_node = "rfc_review_gate"
     state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
+    sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
     return asdict(state)

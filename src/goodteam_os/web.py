@@ -20,14 +20,18 @@ from goodteam_os.dispatch import (
     parse_dispatch_verify_spec,
 )
 from goodteam_os.graph import (
+    accept_refinement,
     advance_approved_workflow,
     artifact_mirror_root,
+    discard_refinement,
     generate_rfc,
     generate_prd,
+    refine_artifact,
     render_downstream_artifact_markdown,
     resolve_project_runtime_root,
     run_adoption_until_next_gate,
     run_until_next_gate,
+    sync_project_stage_tasks,
 )
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
@@ -1377,6 +1381,13 @@ def decide_approval(
             artifact=approval_artifact_map().get(approval, approval),
             artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
         )
+    project_config_for_sync = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+    if project_config_for_sync is None or not project_config_for_sync.is_file():
+        try:
+            project_config_for_sync = _project_config_for_key(workspace, key)
+        except ValueError:
+            project_config_for_sync = None
+    sync_project_stage_tasks(state, project_config_for_sync)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
     notify_current_approval_gate(state, workspace=workspace)
@@ -1412,6 +1423,7 @@ def regenerate_rfc_review_gate(
     state.artifacts["rfc"] = str(rfc_path)
     state.current_node = "rfc_review_gate"
     state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
+    sync_project_stage_tasks(state, project_config)
     return state
 
 
@@ -1427,7 +1439,10 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
     before_node = state.next_node
     project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
     if project_config is None or not project_config.is_file():
-        project_config = _project_config_for_key(workspace, key)
+        try:
+            project_config = _project_config_for_key(workspace, key)
+        except ValueError:
+            project_config = None
     state.role_models = refresh_state_role_models(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
@@ -1464,6 +1479,7 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
         state.current_node = "rfc_review_gate"
         state.next_node = "planner"
         state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
+    sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
 
@@ -1834,6 +1850,13 @@ def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_k
     path.write_text(content, encoding="utf-8")
 
     key = normalize_project_key(project_key or state.project_key)
+    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+    if project_config is None or not project_config.is_file():
+        try:
+            project_config = _project_config_for_key(workspace, key)
+        except ValueError:
+            project_config = None
+    sync_project_stage_tasks(state, project_config)
     edit_log = StateStore(workspace).project_state_dir(key) / "edit-log.jsonl" if project_key else workspace / "state" / "edit-log.jsonl"
     edit_log.parent.mkdir(parents=True, exist_ok=True)
     edit_event = {
@@ -5897,7 +5920,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/open-path", "/debate", "/dispatch-track", "/fs/mkdir"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/fs/mkdir"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -5999,6 +6022,25 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     result = generate_rfc(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
+                    )
+                elif normalized_path == "/refine-artifact":
+                    result = refine_artifact(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        artifact_key=str(request.get("artifact", "")),
+                        content=str(request.get("content", "")),
+                    )
+                elif normalized_path == "/accept-refinement":
+                    result = accept_refinement(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        artifact_key=str(request.get("artifact", "")),
+                    )
+                elif normalized_path == "/discard-refinement":
+                    result = discard_refinement(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        artifact_key=str(request.get("artifact", "")),
                     )
                 elif normalized_path == "/open-path":
                     result = open_path_in_file_manager(
