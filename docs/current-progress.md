@@ -1,5 +1,24 @@
 # Current Progress
 
+- Footprint 2026-06-06 — round-2 tail (post-land observations, all deferred to backlog). After the
+  four fixes landed (#82/#83/#84/#85, main `5d47b87`), founder reported Active Worktrees + Workflow
+  Graph still showed other/stale data. ROOT CAUSE was operational, not a bug: the long-running dev
+  `serve` process (pid 88000) predated the #85 land, so it was still running the OLD `web.py` —
+  rebuilding `frontend/dist` only hot-swaps the FE; a backend (web.py) change needs a serve RESTART.
+  Restarted serve (now pid loads #85); verified `/api/devloop?project=DEMO` → 0 worktrees/0 PRs +
+  "no git history yet" note, `/api/workflow/graph?project=DEMO` → active=None — both correctly
+  scoped, pollution gone. **Operational rule learned: after landing a backend change, restart the
+  dev serve process; FE-only changes just need a dist rebuild.** New gaps captured to backlog (none
+  built — founder "我待会再深入看"): (a) **new-project creation never runs `git init`** — founder
+  chose options 1+3 (default-on "Initialize Git" checkbox → git init + initial commit; PLUS optional
+  "create & link GitHub remote") so Dev Loop PRs + the dispatch→worktree→PR→land self-loop work on
+  fresh projects (today `create_local_project_config` only mkdir's `docs/`); (b) **workflow stages
+  don't materialize as Agile Board tasks** — `ensure_project_task_ledger` writes an EMPTY ledger and
+  `create_task` is called ONLY in smoke.py, never by real PRD/RFC/impl nodes, so a real PRD leaves no
+  board trace (pairs with the PRD-deepen loop). See `docs/backlog.md` "Raised 2026-06-05 (b)".
+  Deferred queue for next round: PRD edit→LLM deepen→re-review · stages→board tasks · new-project
+  git-init+remote · theme v1 pick+productionize · misc (claude-dedup / pre-review-auth fallback /
+  agy --model productize / role-prompt model line).
 - Footprint 2026-06-05 (c) — product-use round 2 + theme exploration. Founder ran the dashboard and
   reported four issues; landed the four fixes, deferred the rest to backlog ("先把可以落地的落地,
   新问题整理成 backlog,等这次完全整理完再做"). **Landed to main:** #82 `5b2701f` (dark-mode input

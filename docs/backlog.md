@@ -329,3 +329,29 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   prompt body). The dispatched worker prompt template carries a literal "Use model gpt-5.3-codex"
   line regardless of the actual adapter/model (agy still honored its real `--model` flag, so harmless
   here). Make that line reflect the resolved adapter+model, or drop it. Low.
+- **New-project creation should git-init the repo (+ optional GitHub remote)** (founder, 2026-06-05;
+  founder picked options 1 **and** 3). Today `create_local_project_config` (web.py:814) creates the
+  project config + auto-mkdir `docs/` but NEVER runs `git init`, so a new project root isn't a git
+  repo. Consequences: Dev Loop is always empty for new projects, AND GoodTeam's own
+  dispatch→worktree→PR→land self-driving loop can't run on them (`dispatch-track.sh` does
+  `git worktree add … main`, which needs a git repo with a `main` branch). Build:
+  (1) a **default-ON "Initialize Git repository" checkbox** on the New-Project form → on create,
+  `git init` the project root + an initial commit of the scaffold/docs (skippable for adopt/existing
+  or users who just want a dir); plus
+  (3) an **optional "Create & link GitHub remote" toggle** (gh-authed: `gh repo create` + set
+  `origin` + push) so the Dev Loop PR list and the full branch→PR→CI→land loop work end-to-end on a
+  fresh project. BE: web.py create path (run git init/commit, optional gh remote, record warnings,
+  never touch existing repos) + FE: two checkboxes on the create form. Design-first for the remote
+  half (gh auth/safety). Medium. Deferred to next round.
+- **Workflow stages don't materialize as Agile Board tasks** (founder, 2026-06-05, while writing a
+  PRD). The Agile Board reads a per-project task ledger (`tasks.json` via `LocalTaskStore`), but the
+  REAL workflow never creates tasks: `ensure_project_task_ledger` (graph.py:297) only writes an
+  EMPTY ledger (`"tasks": []`), and `create_task` is called ONLY in `smoke.py` (the demo/seed path) —
+  never by any real PRD/RFC/implementation/QA node in graph.py. So on a real run, writing a PRD (and
+  every other stage) leaves NO board trace; the board is only populated for the seeded DEMO. Fix:
+  have the workflow materialize stages as board tasks — at minimum a "Write PRD" task created when
+  the product_requirement stage starts and moved todo→doing→done as the run progresses; ideally each
+  role/node (PRD, RFC, implementation, QA, release) gets a task with status synced to the run state.
+  Touches graph.py (create/update tasks at node transitions) + the board projection. Design-first;
+  pairs with the "PRD edit → LLM deepen → re-review loop" item (same human-in-the-loop authoring
+  area). Medium. Deferred to next round.
