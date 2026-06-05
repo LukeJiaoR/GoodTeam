@@ -1657,15 +1657,122 @@ export default function App() {
     return sentences.slice(0, 2).join(' ');
   };
 
+  const directoryPickerOverlay = pickerOpen && (
+    <div className="fixed inset-0 z-45 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dir-picker-title"
+        className="w-full max-w-2xl bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_8px_0_#D1D1D1] dark:shadow-[0_8px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
+      >
+        {/* Header */}
+        <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex items-start justify-between gap-4 shrink-0">
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Directory Browser</p>
+            <h3 id="dir-picker-title" className="font-mono text-xs font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1">
+              Selecting {pickerTarget === 'docs' ? 'Docs' : pickerTarget === 'backend' ? 'Backend' : 'Frontend'} Directory
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPickerOpen(false)}
+            className="bg-white dark:bg-zinc-850 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics cursor-pointer"
+            aria-label="Close directory browser"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Navigation Bar / Breadcrumb */}
+        <div className="px-5 py-3 bg-[#F9F9F9] dark:bg-zinc-900/40 border-b border-[#E5E5E5] dark:border-zinc-800 flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            disabled={pickerParent === null || pickerLoading}
+            onClick={() => fetchDirectory(pickerParent)}
+            className="flex items-center gap-1 bg-white dark:bg-zinc-850 border-2 border-[#E5E5E5] dark:border-zinc-800 disabled:opacity-50 disabled:pointer-events-none hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-1.5 rounded-xl text-xs transition-all duo-button-physics cursor-pointer shrink-0"
+          >
+            <ArrowUp className="h-3 w-3" /> Up
+          </button>
+          <div className="flex-grow font-mono text-[10px] text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 rounded-xl overflow-x-auto whitespace-nowrap scrollbar-thin select-all">
+            {pickerPath || '/'}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 overflow-y-auto flex-grow min-h-0 bg-white dark:bg-zinc-950">
+          {pickerLoading ? (
+            <div className="flex items-center justify-center p-10 text-zinc-500 font-bold">
+              <RefreshCw className="h-5 w-5 animate-spin mr-2 text-[#58CC02]" />
+              <span>Loading directory...</span>
+            </div>
+          ) : pickerError ? (
+            <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-2 border-[#FF9600]/30 p-4 rounded-2xl text-[#B36B00] dark:text-amber-300 text-xs font-bold flex items-center space-x-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <div className="flex-grow">
+                <p className="font-bold">Error loading folder</p>
+                <p className="font-normal font-mono text-[10px] mt-0.5">{pickerError}</p>
+              </div>
+            </div>
+          ) : pickerEntries.length === 0 ? (
+            <div className="text-center py-10 text-zinc-400 dark:text-zinc-500 font-bold text-xs">
+              This directory is empty.
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {pickerEntries.map((entry) => (
+                <button
+                  key={entry.path}
+                  type="button"
+                  onClick={() => fetchDirectory(entry.path)}
+                  className="w-full flex items-center justify-between text-left px-3 py-2 rounded-xl hover:bg-zinc-50 dark:hover:bg-zinc-900/40 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 transition-colors cursor-pointer group"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Folder className="h-4 w-4 text-[#58CC02] dark:text-[#78D639] group-hover:scale-110 transition-transform shrink-0" />
+                    <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300 truncate select-all">{entry.name}</span>
+                  </div>
+                  {entry.is_git_repo && (
+                    <span className="flex items-center gap-0.5 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-md border border-blue-100 dark:border-blue-900/40 shrink-0">
+                      <GitBranch className="h-3 w-3 inline" /> git
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-t-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setPickerOpen(false)}
+            className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-4 py-2 rounded-2xl text-xs transition-all duo-button-physics cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={pickerLoading || !!pickerError}
+            onClick={handleSelectFolder}
+            className="bg-[#58CC02] hover:bg-[#4EB302] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-[#FFFFFF] font-bold px-5 py-2 rounded-2xl text-xs disabled:opacity-50 disabled:pointer-events-none transition-all duo-button-physics cursor-pointer"
+          >
+            Select this folder
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   // Render project overview (Multi-project control room)
   if (!projectKey) {
     const projectItems = data?.project_items || [];
     const legacyState = data?.legacy_state;
 
     return (
-      <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-150 transition-colors flex flex-col font-sans antialiased">
-        {/* Header - 60px height, white background, bottom border */}
-        <header className="h-[60px] border-b-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-6 flex items-center justify-between shadow-sm shrink-0">
+      <>
+        <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-150 transition-colors flex flex-col font-sans antialiased">
+          {/* Header - 60px height, white background, bottom border */}
+          <header className="h-[60px] border-b-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-6 flex items-center justify-between shadow-sm shrink-0">
           <div className="flex items-center space-x-3">
             <div className="p-1.5 bg-[#58CC02] border-2 border-[#3D8B00] text-white rounded-xl shadow-[0_2px_0_#3D8B00]">
               <LayoutDashboard className="h-5 w-5" />
@@ -2215,8 +2322,10 @@ export default function App() {
               </div>
             </div>
           </div>
-        </main>
-      </div>
+          </main>
+        </div>
+        {directoryPickerOverlay}
+      </>
     );
   }
 
@@ -2534,111 +2643,7 @@ export default function App() {
           </div>
         )}
 
-        {pickerOpen && (
-          <div className="fixed inset-0 z-45 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="dir-picker-title"
-              className="w-full max-w-2xl bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_8px_0_#D1D1D1] dark:shadow-[0_8px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
-            >
-              {/* Header */}
-              <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex items-start justify-between gap-4 shrink-0">
-                <div>
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Directory Browser</p>
-                  <h3 id="dir-picker-title" className="font-mono text-xs font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1">
-                    Selecting {pickerTarget === 'docs' ? 'Docs' : pickerTarget === 'backend' ? 'Backend' : 'Frontend'} Directory
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setPickerOpen(false)}
-                  className="bg-white dark:bg-zinc-850 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics cursor-pointer"
-                  aria-label="Close directory browser"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* Navigation Bar / Breadcrumb */}
-              <div className="px-5 py-3 bg-[#F9F9F9] dark:bg-zinc-900/40 border-b border-[#E5E5E5] dark:border-zinc-800 flex items-center gap-3 shrink-0">
-                <button
-                  type="button"
-                  disabled={pickerParent === null || pickerLoading}
-                  onClick={() => fetchDirectory(pickerParent)}
-                  className="flex items-center gap-1 bg-white dark:bg-zinc-850 border-2 border-[#E5E5E5] dark:border-zinc-800 disabled:opacity-50 disabled:pointer-events-none hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-1.5 rounded-xl text-xs transition-all duo-button-physics cursor-pointer shrink-0"
-                >
-                  <ArrowUp className="h-3 w-3" /> Up
-                </button>
-                <div className="flex-grow font-mono text-[10px] text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 rounded-xl overflow-x-auto whitespace-nowrap scrollbar-thin select-all">
-                  {pickerPath || '/'}
-                </div>
-              </div>
-
-              {/* Body */}
-              <div className="p-5 overflow-y-auto flex-grow min-h-0 bg-white dark:bg-zinc-950">
-                {pickerLoading ? (
-                  <div className="flex items-center justify-center p-10 text-zinc-500 font-bold">
-                    <RefreshCw className="h-5 w-5 animate-spin mr-2 text-[#58CC02]" />
-                    <span>Loading directory...</span>
-                  </div>
-                ) : pickerError ? (
-                  <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-2 border-[#FF9600]/30 p-4 rounded-2xl text-[#B36B00] dark:text-amber-300 text-xs font-bold flex items-center space-x-2">
-                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                    <div className="flex-grow">
-                      <p className="font-bold">Error loading folder</p>
-                      <p className="font-normal font-mono text-[10px] mt-0.5">{pickerError}</p>
-                    </div>
-                  </div>
-                ) : pickerEntries.length === 0 ? (
-                  <div className="text-center py-10 text-zinc-400 dark:text-zinc-500 font-bold text-xs">
-                    This directory is empty.
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {pickerEntries.map((entry) => (
-                      <button
-                        key={entry.path}
-                        type="button"
-                        onClick={() => fetchDirectory(entry.path)}
-                        className="w-full flex items-center justify-between text-left px-3 py-2 rounded-xl hover:bg-zinc-50 dark:hover:bg-zinc-900/40 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 transition-colors cursor-pointer group"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Folder className="h-4 w-4 text-[#58CC02] dark:text-[#78D639] group-hover:scale-110 transition-transform shrink-0" />
-                          <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300 truncate select-all">{entry.name}</span>
-                        </div>
-                        {entry.is_git_repo && (
-                          <span className="flex items-center gap-0.5 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-md border border-blue-100 dark:border-blue-900/40 shrink-0">
-                            <GitBranch className="h-3 w-3 inline" /> git
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-t-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center gap-3 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setPickerOpen(false)}
-                  className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-4 py-2 rounded-2xl text-xs transition-all duo-button-physics cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={pickerLoading || !!pickerError}
-                  onClick={handleSelectFolder}
-                  className="bg-[#58CC02] hover:bg-[#4EB302] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-[#FFFFFF] font-bold px-5 py-2 rounded-2xl text-xs disabled:opacity-50 disabled:pointer-events-none transition-all duo-button-physics cursor-pointer"
-                >
-                  Select this folder
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {directoryPickerOverlay}
 
         {/* Main Panel Content Area - padded 32px (#F7F7F7 canvas background) */}
         <main className="flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6">
