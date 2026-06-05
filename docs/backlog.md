@@ -329,6 +329,26 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   prompt body). The dispatched worker prompt template carries a literal "Use model gpt-5.3-codex"
   line regardless of the actual adapter/model (agy still honored its real `--model` flag, so harmless
   here). Make that line reflect the resolved adapter+model, or drop it. Low.
+- **Workflow Graph never highlights the current GATE node + ignores non-approved decisions**
+  (founder, 2026-06-06; "新项目 Workflow Graph 数据感觉被污染" → NOT pollution, verified). The run
+  overlay is correctly project-scoped (VPSSSH showed its own run_id/current_node/approvals; fetch
+  has a `graphRequestSeq` race guard). The real bugs: (1) **node-id naming mismatch** — `state
+  .current_node` uses `"<gate>_review_gate"` ids (e.g. `prd_review_gate`), but `build_workflow_graph`
+  names gate nodes by the short gate key (`prd`/`rfc`/`staging`/`takeover`, kind=gate). So the FE's
+  `graphData.run.current_node === node.name` NEVER matches at a gate position → the current node is
+  not highlighted (it only highlights when current_node is a stage like `architect`). Node naming is
+  also internally inconsistent (some gate concepts are kind=gate, e.g. `prd`/`staging`; others are
+  stages, e.g. `security` gate=security, `release` gate=staging). (2) The FE only colors a gate green
+  when `run.approvals[node.gate] === 'approved'`; `changes_requested`/`rejected`/`pending` are not
+  reflected, so a real decision (VPSSSH `prd=changes_requested`) is invisible — and the static
+  edge-type pills ("approved"/"rejected"/"blocked"/"changes_requested", which are EDGE TYPES, not the
+  project's state) read as if the project were already approved. Fix: align `build_workflow_graph`
+  node identifiers with the WORKFLOW_NODES/state `current_node` values (BE, web.py — OVERLAPS the
+  in-flight PRD-loop BE track, so sequence AFTER it lands), + FE (App.jsx) reflect ALL approval
+  decisions on gate nodes (approved=green / changes_requested=orange / rejected=red / pending=neutral)
+  and visually distinguish "possible transition" edge labels from actual decisions. Optionally tailor
+  the graph to the project's `delivery_mode` (cli_tool shouldn't show the full multi-service/deploy
+  pipeline). Medium. **Next up after PRD-loop BE lands.**
 - **New-project creation should git-init the repo (+ optional GitHub remote)** (founder, 2026-06-05;
   founder picked options 1 **and** 3). Today `create_local_project_config` (web.py:814) creates the
   project config + auto-mkdir `docs/` but NEVER runs `git init`, so a new project root isn't a git
