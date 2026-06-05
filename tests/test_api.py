@@ -217,6 +217,33 @@ def test_api_fs_list_route_status_codes(tmp_path, monkeypatch):
     assert json.loads(bad_request.wfile.getvalue().decode("utf-8"))["error"]
 
 
+def test_api_fs_mkdir_route_creates_child_directory(tmp_path, monkeypatch):
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post("/api/fs/mkdir", {"parent": str(tmp_path), "name": "docs"})
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload == {"path": str((tmp_path / "docs").resolve())}
+    assert (tmp_path / "docs").is_dir()
+
+
+def test_api_fs_mkdir_route_rejects_invalid_names(tmp_path, monkeypatch):
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    for name in ["", "..", "bad/name", "bad\\name"]:
+        handler = simulate_post("/api/fs/mkdir", {"parent": str(tmp_path), "name": name})
+        assert 400 in handler.responses
+
+
+def test_api_fs_mkdir_route_missing_parent_returns_404(tmp_path, monkeypatch):
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post("/api/fs/mkdir", {"parent": str(tmp_path / "missing"), "name": "docs"})
+
+    assert 404 in handler.responses
+
+
 def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     # 1. Capture the DashboardHandler class
     captured_handler_class = None

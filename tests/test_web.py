@@ -1183,6 +1183,7 @@ def test_create_local_project_config_writes_single_project_root(tmp_path):
     assert "  backend:" not in content
     assert "  frontend:" not in content
     assert payload["repos"] == {"root": str(project_root)}
+    assert (project_root / "docs").is_dir()
 
 
 def test_create_local_project_config_custom_standards_round_trip(tmp_path):

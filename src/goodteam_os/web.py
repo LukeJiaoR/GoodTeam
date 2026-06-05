@@ -21,6 +21,7 @@ from goodteam_os.dispatch import (
 )
 from goodteam_os.graph import (
     advance_approved_workflow,
+    artifact_mirror_root,
     generate_rfc,
     generate_prd,
     render_downstream_artifact_markdown,
@@ -662,6 +663,10 @@ class FsListPermissionError(ValueError):
     pass
 
 
+class FsMkdirConflictError(ValueError):
+    pass
+
+
 def list_directory_for_picker(path_value: str | None) -> dict[str, object]:
     raw_path = "" if path_value is None else path_value.strip()
     if not raw_path:
@@ -705,6 +710,44 @@ def list_directory_for_picker(path_value: str | None) -> dict[str, object]:
         entries.append({"name": child.name, "path": str(child_path), "is_git_repo": is_git_repo})
 
     return {"path": str(resolved), "parent": parent, "entries": entries}
+
+
+def validate_single_path_segment(name_value: object) -> str:
+    name = "" if name_value is None else str(name_value)
+    if not name or name in {".", ".."} or "\x00" in name:
+        raise FsListBadRequestError("name must be a non-empty single path segment.")
+    if "/" in name or "\\" in name or ".." in name or set(name) == {"."}:
+        raise FsListBadRequestError("name must be a non-empty single path segment.")
+    return name
+
+
+def create_subdirectory(parent_value: str | Path | None, name_value: object) -> dict[str, object]:
+    raw_parent = "" if parent_value is None else str(parent_value).strip()
+    if not raw_parent:
+        raise FsListBadRequestError("parent is required.")
+    parent = Path(raw_parent).expanduser()
+    if not parent.is_absolute():
+        raise FsListBadRequestError("parent must be absolute.")
+    name = validate_single_path_segment(name_value)
+    try:
+        resolved_parent = parent.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise FsListNotFoundError("parent not found.") from exc
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise FsListBadRequestError("parent is invalid.") from exc
+    if not resolved_parent.is_dir():
+        raise FsListNotFoundError("parent is not a directory.")
+    target = resolved_parent / name
+    if target.exists():
+        raise FsMkdirConflictError("path already exists.")
+    try:
+        target.mkdir()
+        resolved_target = target.resolve(strict=True)
+    except FileExistsError as exc:
+        raise FsMkdirConflictError("path already exists.") from exc
+    except OSError as exc:
+        raise FsListBadRequestError("directory cannot be created.") from exc
+    return {"path": str(resolved_target)}
 
 
 def _project_directory_base(repos: dict[str, object], fallback: Path) -> Path:
@@ -773,7 +816,17 @@ def create_local_project_config(
 
     repos = []
     if project_root.strip():
-        repos.append(("root", _validate_directory_path("Project root", project_root)))
+        root_path = _validate_directory_path("Project root", project_root)
+        repos.append(("root", root_path))
+        try:
+            if not (root_path / "docs").exists():
+                create_subdirectory(root_path, "docs")
+        except FsMkdirConflictError:
+            pass
+        except Exception as exc:
+            import warnings
+
+            warnings.warn(f"project docs directory creation skipped for {root_path}: {exc}", RuntimeWarning, stacklevel=2)
     else:
         if docs_path.strip():
             repos.append(("docs", _validate_directory_path("Docs", docs_path)))
@@ -1313,7 +1366,7 @@ def regenerate_rfc_review_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    rfc_path = ArtifactStore(root=workspace).write_markdown(
+    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config)).write_markdown(
         state.run_id,
         "rfc",
         "rfc.md",
@@ -1350,7 +1403,7 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
         from goodteam_os.graph import render_staging_report_markdown
         from goodteam_os.artifacts import ArtifactStore
 
-        store = ArtifactStore(root=workspace)
+        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
         staging_path = store.write_markdown(
             state.run_id,
             "staging_report",
@@ -5798,7 +5851,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/open-path", "/debate", "/dispatch-track"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/open-path", "/debate", "/dispatch-track", "/fs/mkdir"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -5811,7 +5864,22 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length)
                 request = json.loads(raw_body.decode("utf-8") or "{}")
-                if normalized_path == "/start":
+                if normalized_path == "/fs/mkdir":
+                    try:
+                        result = create_subdirectory(
+                            parent_value=request.get("parent", ""),
+                            name_value=request.get("name", ""),
+                        )
+                    except FsMkdirConflictError as exc:
+                        self._send_json(409, {"error": str(exc)})
+                        return
+                    except FsListNotFoundError as exc:
+                        self._send_json(404, {"error": str(exc)})
+                        return
+                    except FsListBadRequestError as exc:
+                        self._send_json(400, {"error": str(exc)})
+                        return
+                elif normalized_path == "/start":
                     result = start_workflow(
                         workspace=workspace,
                         idea=str(request.get("idea", "")),
