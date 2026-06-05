@@ -18,9 +18,11 @@ land_provenance_extract() {
   export LAND_PROVENANCE_ROLE=""
 
   if [ -z "$worktree" ] || [ ! -d "$worktree" ]; then
+    rm -rf "$staging" 2>/dev/null || true
     return 0
   fi
   if [ ! -d "$jobs_src" ]; then
+    rm -rf "$staging" 2>/dev/null || true
     land_provenance_warn "extract skipped: no worker jobs at $jobs_src"
     return 0
   fi

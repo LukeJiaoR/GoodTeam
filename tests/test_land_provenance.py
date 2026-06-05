@@ -103,3 +103,41 @@ def test_land_provenance_missing_worktree_still_returns_success_and_writes_event
     assert len(events) == 1
     assert events[0]["source"] == f"land/pr-{pr}"
     assert "PR #98702 landed" in events[0]["text"]
+
+
+def test_land_provenance_missing_worktree_clears_stale_staging_before_airdrop(tmp_path):
+    root = tmp_path / "main"
+    python_shim = _make_fake_main(root)
+    missing_worktree = tmp_path / "missing-worktree"
+    pr = "98703"
+    stale_staging = Path(f"/tmp/land-provenance-{pr}")
+    stale_file = stale_staging / "stale-job" / "result.md"
+
+    try:
+        stale_file.parent.mkdir(parents=True)
+        stale_file.write_text("STALE provenance should not leak\n", encoding="utf-8")
+
+        result = _run_bash(
+            f"""
+            set -euo pipefail
+            . {_q(HELPER)}
+            export PY={_q(python_shim)}
+            land_provenance_extract {pr} {_q(missing_worktree)}
+            land_provenance_airdrop {pr} {_q(root)} fedcba654321
+            """,
+            env={**os.environ, "PATH": os.environ["PATH"]},
+        )
+
+        archive = root / ".goodteam" / "provenance" / f"pr-{pr}"
+        event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
+        events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert not stale_staging.exists()
+        assert not (archive / "stale-job").exists()
+        assert not archive.exists()
+        assert len(events) == 1
+        assert events[0]["source"] == f"land/pr-{pr}"
+        assert "PR #98703 landed" in events[0]["text"]
+    finally:
+        subprocess.run(["rm", "-rf", str(stale_staging)], check=False)
