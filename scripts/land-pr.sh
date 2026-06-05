@@ -21,11 +21,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 PY="$ROOT/.venv/bin/python"
+. "$ROOT/scripts/lib/land-provenance.sh"
 
 PR=""
 WORKTREE=""
 RUN_TEST=1
 FORCE=0
+CI_STATUS="unverified"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --worktree) WORKTREE="$2"; shift 2 ;;
@@ -46,11 +48,15 @@ if [ "$FORCE" != 1 ]; then
     tail -5 /tmp/land-checks-$PR.txt >&2
     exit 1
   fi
+  CI_STATUS="pass"
   echo "[land] CI green."
+else
+  CI_STATUS="forced-unverified"
 fi
 
 # Remove the worktree FIRST: while it's checked out on the PR branch,
 # `gh pr merge --delete-branch` cannot delete that local branch.
+land_provenance_extract "$PR" "$WORKTREE" || true
 if [ -n "$WORKTREE" ] && [ -d "$WORKTREE" ]; then
   echo "[land] removing worktree $WORKTREE ..."
   git worktree remove "$WORKTREE" --force || echo "[land] (worktree remove skipped)"
@@ -99,6 +105,9 @@ if [ "$MAIN_STASH_CREATED" = 1 ]; then
   MAIN_STASH_POPPED=1
   trap - EXIT ERR
 fi
+
+LAND_HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+land_provenance_airdrop "$PR" "$ROOT" "$LAND_HEAD_SHA" "$CI_STATUS" || true
 
 if [ "$RUN_TEST" = 1 ]; then
   echo "[land] post-merge sanity: pytest ..."
