@@ -1724,7 +1724,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => setPickerOpen(false)}
-            className="bg-white dark:bg-zinc-850 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics cursor-pointer"
+            className="bg-white dark:bg-zinc-800 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics cursor-pointer"
             aria-label="Close directory browser"
           >
             <X className="h-4 w-4" />
@@ -1737,7 +1737,7 @@ export default function App() {
             type="button"
             disabled={pickerParent === null || pickerLoading}
             onClick={() => fetchDirectory(pickerParent)}
-            className="flex items-center gap-1 bg-white dark:bg-zinc-850 border-2 border-[#E5E5E5] dark:border-zinc-800 disabled:opacity-50 disabled:pointer-events-none hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-1.5 rounded-xl text-xs transition-all duo-button-physics cursor-pointer shrink-0"
+            className="flex items-center gap-1 bg-white dark:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 disabled:opacity-50 disabled:pointer-events-none hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-1.5 rounded-xl text-xs transition-all duo-button-physics cursor-pointer shrink-0"
           >
             <ArrowUp className="h-3 w-3" /> Up
           </button>
@@ -1768,7 +1768,7 @@ export default function App() {
             <button
               type="submit"
               disabled={pickerLoading || creatingFolder || !newFolderName.trim()}
-              className="bg-white dark:bg-zinc-850 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-2 rounded-xl text-xs transition-all duo-button-physics disabled:opacity-50 disabled:pointer-events-none cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5"
+              className="bg-white dark:bg-zinc-800 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-2 rounded-xl text-xs transition-all duo-button-physics disabled:opacity-50 disabled:pointer-events-none cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5"
             >
               {creatingFolder ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Folder className="h-3.5 w-3.5" />}
               <span>New folder</span>
@@ -1830,7 +1830,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => setPickerOpen(false)}
-            className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-4 py-2 rounded-2xl text-xs transition-all duo-button-physics cursor-pointer"
+            className="bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-4 py-2 rounded-2xl text-xs transition-all duo-button-physics cursor-pointer"
           >
             Cancel
           </button>
@@ -1854,7 +1854,7 @@ export default function App() {
 
     return (
       <>
-        <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-150 transition-colors flex flex-col font-sans antialiased">
+        <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 transition-colors flex flex-col font-sans antialiased">
           {/* Header - 60px height, white background, bottom border */}
           <header className="h-[60px] border-b-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-6 flex items-center justify-between shadow-sm shrink-0">
           <div className="flex items-center space-x-3">
@@ -1870,7 +1870,7 @@ export default function App() {
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setDarkMode(!darkMode)}
-              className="bg-white dark:bg-zinc-850 p-2 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-650 dark:text-zinc-350 rounded-2xl transition-all duo-button-physics"
+              className="bg-white dark:bg-zinc-800 p-2 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-650 dark:text-zinc-350 rounded-2xl transition-all duo-button-physics"
               aria-label="Toggle theme"
             >
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -1918,7 +1918,7 @@ export default function App() {
                 <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] p-12 text-center rounded-2xl text-zinc-500 max-w-2xl mx-auto">
                   <Folder className="h-12 w-12 mx-auto mb-4 text-[#AFAFAF]" />
                   <p className="font-bold text-zinc-700 dark:text-zinc-300 mb-1">No local project configs found</p>
-                  <p className="text-xs">Create a project config with the form below or drop yaml file into <code className="bg-[#F1F1F1] dark:bg-zinc-900 px-1.5 py-0.5 rounded border border-[#E5E5E5] dark:border-zinc-850 text-xs">projects/*.local.yaml</code></p>
+                  <p className="text-xs">Create a project config with the form below or drop yaml file into <code className="bg-[#F1F1F1] dark:bg-zinc-900 px-1.5 py-0.5 rounded border border-[#E5E5E5] dark:border-zinc-800 text-xs">projects/*.local.yaml</code></p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2027,13 +2027,13 @@ export default function App() {
                 <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit">
                   <button
                     onClick={() => setStartMode('existing_project')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
                   >
                     Adopt Existing Project
                   </button>
                   <button
                     onClick={() => setStartMode('new_project')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
                   >
                     Start New Project
                   </button>
@@ -2125,7 +2125,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => openDirectoryPicker('root', projectRoot)}
-                          className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
+                          className="bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
                         >
                           Browse…
                         </button>
@@ -2182,23 +2182,23 @@ export default function App() {
                             <div className="col-span-2 font-extrabold text-[9px] text-[#AFAFAF] uppercase tracking-wider">Plane Credentials</div>
                             <div className="col-span-2">
                               <label className="block text-[9px] text-zinc-500 mb-1">API Host</label>
-                              <input type="text" value={planeApiHost} onChange={(e) => setPlaneApiHost(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-205 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                              <input type="text" value={planeApiHost} onChange={(e) => setPlaneApiHost(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-205 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">Workspace Slug</label>
-                              <input type="text" value={planeWorkspaceSlug} onChange={(e) => setPlaneWorkspaceSlug(e.target.value)} placeholder="e.g. leader_kanban" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                              <input type="text" value={planeWorkspaceSlug} onChange={(e) => setPlaneWorkspaceSlug(e.target.value)} placeholder="e.g. leader_kanban" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">Project ID</label>
-                              <input type="text" value={planeProjectId} onChange={(e) => setPlaneProjectId(e.target.value)} placeholder="uuid" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                              <input type="text" value={planeProjectId} onChange={(e) => setPlaneProjectId(e.target.value)} placeholder="uuid" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">API Key Env</label>
-                              <input type="text" value={planeApiKeyEnv} onChange={(e) => setPlaneApiKeyEnv(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                              <input type="text" value={planeApiKeyEnv} onChange={(e) => setPlaneApiKeyEnv(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">MCP Server</label>
-                              <input type="text" value={planeMcpServer} onChange={(e) => setPlaneMcpServer(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                              <input type="text" value={planeMcpServer} onChange={(e) => setPlaneMcpServer(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
                             </div>
                           </div>
                         )}
@@ -2223,31 +2223,31 @@ export default function App() {
                             <div className="col-span-2 font-extrabold text-[9px] text-[#AFAFAF] uppercase tracking-wider">SSH Deploy Configuration</div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">Staging SSH Target</label>
-                              <input type="text" value={stagingSshTarget} onChange={(e) => setStagingSshTarget(e.target.value)} placeholder="user@host" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                              <input type="text" value={stagingSshTarget} onChange={(e) => setStagingSshTarget(e.target.value)} placeholder="user@host" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">Staging Remote Dir</label>
-                              <input type="text" value={stagingRemoteDir} onChange={(e) => setStagingRemoteDir(e.target.value)} placeholder="/srv/app" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                              <input type="text" value={stagingRemoteDir} onChange={(e) => setStagingRemoteDir(e.target.value)} placeholder="/srv/app" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">Staging Git Ref</label>
-                              <input type="text" value={stagingGitRef} onChange={(e) => setStagingGitRef(e.target.value)} placeholder="main" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                              <input type="text" value={stagingGitRef} onChange={(e) => setStagingGitRef(e.target.value)} placeholder="main" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">Staging Public URL</label>
-                              <input type="text" value={stagingPublicUrl} onChange={(e) => setStagingPublicUrl(e.target.value)} placeholder="http://url:port" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                              <input type="text" value={stagingPublicUrl} onChange={(e) => setStagingPublicUrl(e.target.value)} placeholder="http://url:port" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
                             </div>
                             <div className="col-span-2">
                               <label className="block text-[9px] text-zinc-500 mb-1">Deploy Command</label>
-                              <input type="text" value={stagingDeployCommand} onChange={(e) => setStagingDeployCommand(e.target.value)} placeholder="docker compose up -d" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                              <input type="text" value={stagingDeployCommand} onChange={(e) => setStagingDeployCommand(e.target.value)} placeholder="docker compose up -d" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">Healthcheck Command</label>
-                              <input type="text" value={stagingHealthcheckCommand} onChange={(e) => setStagingHealthcheckCommand(e.target.value)} placeholder="curl -f /health" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                              <input type="text" value={stagingHealthcheckCommand} onChange={(e) => setStagingHealthcheckCommand(e.target.value)} placeholder="curl -f /health" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
                             </div>
                             <div>
                               <label className="block text-[9px] text-zinc-500 mb-1">Smoke Command</label>
-                              <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                              <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
                             </div>
 
                             <div className="col-span-2 border-t-2 border-[#F1F1F1] dark:border-zinc-900 my-1" />
@@ -2258,18 +2258,18 @@ export default function App() {
                             </div>
                             <div className="col-span-2">
                               <label className="block text-[9px] text-zinc-500 mb-1">Minimum Evidence Gate</label>
-                              <select value={deliveryContractMinEvidence} onChange={(e) => setDeliveryContractMinEvidence(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs">
+                              <select value={deliveryContractMinEvidence} onChange={(e) => setDeliveryContractMinEvidence(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs">
                                 <option value="infrastructure">Infrastructure Layer</option>
                                 <option value="functional">Functional Application Layer</option>
                               </select>
                             </div>
                             <div className="col-span-2">
                               <label className="block text-[9px] text-zinc-500 mb-1">Fatal Output Log Patterns (line separate)</label>
-                              <textarea value={deliveryContractFatalPatterns} onChange={(e) => setDeliveryContractFatalPatterns(e.target.value)} placeholder="e.g. migrate: executable file not found" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
+                              <textarea value={deliveryContractFatalPatterns} onChange={(e) => setDeliveryContractFatalPatterns(e.target.value)} placeholder="e.g. migrate: executable file not found" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
                             </div>
                             <div className="col-span-2">
                               <label className="block text-[9px] text-zinc-500 mb-1">Staging Acceptance Tests (id|type|command per line)</label>
-                              <textarea value={deliveryContractAcceptance} onChange={(e) => setDeliveryContractAcceptance(e.target.value)} placeholder="critical-path|ssh_command|docker compose exec -T backend ./migrate status" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
+                              <textarea value={deliveryContractAcceptance} onChange={(e) => setDeliveryContractAcceptance(e.target.value)} placeholder="critical-path|ssh_command|docker compose exec -T backend ./migrate status" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
                             </div>
                           </div>
                         )}
@@ -2305,19 +2305,19 @@ export default function App() {
                 <div>
                   <h4 className="font-extrabold text-[10px] uppercase tracking-wider text-[#AFAFAF] mb-4">Launch Check</h4>
                   <div className="space-y-3.5 text-xs font-semibold">
-                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-850 pb-2">
+                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
                       <span className="text-zinc-550">Project Target</span>
                       <span className="font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[150px] font-bold">{startProjectKey || 'GTO'}</span>
                     </div>
-                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-850 pb-2">
+                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
                       <span className="text-zinc-550">Source Mode</span>
                       <span className="font-bold text-[#3D8B00]">{startMode === 'existing_project' ? 'Adoption' : 'New Project'}</span>
                     </div>
-                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-850 pb-2">
+                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
                       <span className="text-zinc-550">Model Profile</span>
                       <span className="font-bold capitalize">{modelProfile}</span>
                     </div>
-                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-850 pb-2">
+                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
                       <span className="text-zinc-550">Delivery Mode</span>
                       <span className="font-mono font-bold text-[#58CC02]">{deliveryMode}</span>
                     </div>
@@ -2328,7 +2328,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="border-t-2 border-[#E5E5E5] dark:border-zinc-850 pt-4 space-y-4">
+                <div className="border-t-2 border-[#E5E5E5] dark:border-zinc-800 pt-4 space-y-4">
                   <div className="flex items-center space-x-2">
                     <input
                       type="checkbox"
@@ -2353,7 +2353,7 @@ export default function App() {
                       type="button"
                       onClick={handleCreateConfig}
                       disabled={actionLoading}
-                      className="w-full bg-white dark:bg-zinc-850 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold py-2 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics shrink-0"
+                      className="w-full bg-white dark:bg-zinc-800 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold py-2 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics shrink-0"
                     >
                       Create Local Config
                     </button>
@@ -2471,7 +2471,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-150 transition-colors flex flex-col lg:flex-row font-sans antialiased">
+    <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 transition-colors flex flex-col lg:flex-row font-sans antialiased">
 
       {/* Sidebar - fixed desktop 220px wide, white, right border */}
       <aside className={`w-full lg:w-[220px] shrink-0 bg-white dark:bg-zinc-950 text-zinc-700 dark:text-zinc-400 flex flex-col border-r-2 border-[#E5E5E5] dark:border-zinc-800 lg:min-h-screen ${mobileMenuOpen ? 'block' : 'hidden lg:flex'}`}>
@@ -2567,7 +2567,7 @@ export default function App() {
       <div className="flex-grow flex flex-col min-w-0 min-h-screen">
 
         {/* Top Header Bar on Desktop - 60px high, white background, bottom border */}
-        <header className="hidden lg:flex h-[60px] shrink-0 border-b-2 border-[#E5E5E5] dark:border-zinc-850 bg-white dark:bg-zinc-950 items-center justify-between px-6 shadow-sm">
+        <header className="hidden lg:flex h-[60px] shrink-0 border-b-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 items-center justify-between px-6 shadow-sm">
           <div className="flex items-center space-x-3">
             <div
               onClick={() => updateUrl('')}
@@ -2625,7 +2625,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setMemoryEventDetail(null)}
-                  className="bg-white dark:bg-zinc-850 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics"
+                  className="bg-white dark:bg-zinc-800 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics"
                   aria-label="Close memory event detail"
                 >
                   <X className="h-4 w-4" />
@@ -2743,7 +2743,7 @@ export default function App() {
                         <div className="mb-6 bg-zinc-50 dark:bg-zinc-900/50 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-4 text-xs font-bold">
                           <div className="flex items-center space-x-2">
                             <span className="text-[#AFAFAF] uppercase tracking-wider">Active Run:</span>
-                            <span className="font-mono text-zinc-850 dark:text-zinc-200">{graphData.run.run_id}</span>
+                            <span className="font-mono text-zinc-800 dark:text-zinc-200">{graphData.run.run_id}</span>
                           </div>
                           <div className="flex flex-wrap gap-4">
                             {graphData.run.current_node && (
@@ -2912,7 +2912,7 @@ export default function App() {
                                 >
                                   <div className="flex justify-between items-start gap-1">
                                     <span
-                                      className="font-mono text-xs font-extrabold text-zinc-850 dark:text-zinc-200 truncate select-all"
+                                      className="font-mono text-xs font-extrabold text-zinc-800 dark:text-zinc-200 truncate select-all"
                                       title={node.name}
                                     >
                                       {node.name}
@@ -2980,7 +2980,7 @@ export default function App() {
                               {getStatusLabel(sig.val)}
                             </span>
                           ) : (
-                            <span className="text-3xl font-extrabold text-zinc-850 dark:text-zinc-150 leading-none">{sig.val}</span>
+                            <span className="text-3xl font-extrabold text-zinc-800 dark:text-zinc-100 leading-none">{sig.val}</span>
                           )}
                         </div>
                       );
@@ -3042,7 +3042,7 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => setActiveTab('approvals')}
-                      className="bg-white dark:bg-zinc-850 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] text-zinc-700 dark:text-zinc-350 rounded-2xl font-bold uppercase tracking-wider text-xs px-5 py-3 transition-all duo-button-physics"
+                      className="bg-white dark:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] text-zinc-700 dark:text-zinc-350 rounded-2xl font-bold uppercase tracking-wider text-xs px-5 py-3 transition-all duo-button-physics"
                     >
                       Review Release Notes
                     </button>
@@ -3094,17 +3094,17 @@ export default function App() {
                       </summary>
                       <div className="p-6 border-t-2 border-[#E5E5E5] dark:border-zinc-800 space-y-6">
                         <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit text-xs mb-4">
-                          <button onClick={() => setStartMode('existing_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-800'}`}>Adopt Existing Project</button>
-                          <button onClick={() => setStartMode('new_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-850'}`}>Start New Project</button>
+                          <button onClick={() => setStartMode('existing_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-800'}`}>Adopt Existing Project</button>
+                          <button onClick={() => setStartMode('new_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-800'}`}>Start New Project</button>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold">
                           <div className="col-span-2">
                             <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Goal / Idea</label>
-                            <textarea value={idea} onChange={(e) => setIdea(e.target.value)} placeholder="Explain the workflow target..." className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed" />
+                            <textarea value={idea} onChange={(e) => setIdea(e.target.value)} placeholder="Explain the workflow target..." className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Model Profile</label>
-                            <select value={modelProfile} onChange={(e) => setModelProfile(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-3 py-2">
+                            <select value={modelProfile} onChange={(e) => setModelProfile(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-3 py-2">
                               <option value="balanced">Balanced</option>
                               <option value="cheap">Cheap</option>
                               <option value="max_quality">Max Quality</option>
@@ -3112,7 +3112,7 @@ export default function App() {
                           </div>
                           <div>
                             <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Delivery Mode</label>
-                            <select value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-3 py-2">
+                            <select value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-3 py-2">
                               {DELIVERY_MODE_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>{option.label}</option>
                               ))}
@@ -3130,7 +3130,7 @@ export default function App() {
                             </div>
                           )}
 
-                          <div className="col-span-2 border-t-2 border-[#E5E5E5] dark:border-zinc-850 my-2" />
+                          <div className="col-span-2 border-t-2 border-[#E5E5E5] dark:border-zinc-800 my-2" />
 
                            <div className="col-span-2 flex items-center justify-between">
                             <div className="flex items-center space-x-2">
@@ -3375,7 +3375,7 @@ export default function App() {
                                 </div>
 
                                 <div>
-                                  <h4 className="font-bold text-xs text-zinc-850 dark:text-zinc-200 leading-snug">{task.title}</h4>
+                                  <h4 className="font-bold text-xs text-zinc-800 dark:text-zinc-200 leading-snug">{task.title}</h4>
                                   <p className="text-[10px] font-semibold text-zinc-500 mt-1 leading-relaxed">{task.description}</p>
                                 </div>
 
@@ -4212,7 +4212,7 @@ export default function App() {
                                       {selectedReview.content}
                                     </div>
                                   ) : (
-                                    <div className="text-center py-12 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-xs">
+                                    <div className="text-center py-12 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-xs">
                                       No artifact preview content available.
                                     </div>
                                   )}
@@ -4356,7 +4356,7 @@ export default function App() {
                       </div>
 
                       {/* Optional Advanced Settings (Scope, Limit) */}
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-dashed border-[#F1F1F1] dark:border-zinc-850">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-dashed border-[#F1F1F1] dark:border-zinc-800">
                         {/* Scope */}
                         <div className="md:col-span-3">
                           <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
@@ -4396,7 +4396,7 @@ export default function App() {
                         </h4>
 
                         {crossLoading && (
-                          <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl">
+                          <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl">
                             <RefreshCw className="h-4 w-4 animate-spin mr-2 text-[#58CC02]" />
                             <span>Retrieving memories across projects...</span>
                           </div>
@@ -4410,7 +4410,7 @@ export default function App() {
                         )}
 
                         {!crossLoading && !crossError && crossResults && crossResults.length === 0 && (
-                          <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-xs font-semibold">
+                          <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-xs font-semibold">
                             no cross-project matches
                           </div>
                         )}
@@ -4420,7 +4420,7 @@ export default function App() {
                             {crossResults.map((item) => (
                               <div
                                 key={item.id}
-                                className="w-full text-left border border-zinc-250 dark:border-zinc-850 p-4 rounded-xl space-y-2 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm"
+                                className="w-full text-left border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm"
                               >
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <span className="font-mono text-[10px] font-bold text-[#3D8B00] dark:text-emerald-400">
@@ -4517,7 +4517,7 @@ export default function App() {
                           {/* Card Body */}
                           <div className="p-6 space-y-6">
                             {role.event_count === 0 ? (
-                              <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-xs font-semibold">
+                              <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-xs font-semibold">
                                 no events yet
                               </div>
                             ) : (
@@ -4574,7 +4574,7 @@ export default function App() {
                                     </div>
 
                                     {eventBrowser.loading ? (
-                                      <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl">
+                                      <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl">
                                         <RefreshCw className="h-4 w-4 animate-spin mr-2 text-[#58CC02]" />
                                         <span>Loading events...</span>
                                       </div>
@@ -4584,7 +4584,7 @@ export default function App() {
                                         <span>{eventBrowser.error}</span>
                                       </div>
                                     ) : browseEvents.length === 0 ? (
-                                      <div className="text-center py-6 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-[11px] font-semibold">
+                                      <div className="text-center py-6 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-[11px] font-semibold">
                                         No memory events match this search.
                                       </div>
                                     ) : (
@@ -4594,13 +4594,13 @@ export default function App() {
                                             type="button"
                                             key={event.id}
                                             onClick={() => handleOpenMemoryEvent(event.id)}
-                                            className="w-full text-left border border-zinc-250 dark:border-zinc-850 p-4 rounded-xl space-y-2 bg-[#FDFDFD] hover:bg-zinc-50 dark:bg-zinc-900/20 dark:hover:bg-zinc-900/40 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[#58CC02]/30"
+                                            className="w-full text-left border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2 bg-[#FDFDFD] hover:bg-zinc-50 dark:bg-zinc-900/20 dark:hover:bg-zinc-900/40 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[#58CC02]/30"
                                           >
                                             <div className="flex flex-wrap items-center justify-between gap-2">
                                               <span className="font-mono text-[10px] font-bold text-[#3D8B00] dark:text-emerald-400">{event.id}</span>
                                               <span className="flex flex-wrap items-center gap-2">
                                                 {event.is_superseded && (
-                                                  <span className="bg-zinc-100 dark:bg-zinc-850 text-zinc-550 dark:text-zinc-400 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-zinc-200 dark:border-zinc-800">
+                                                  <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-550 dark:text-zinc-400 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-zinc-200 dark:border-zinc-800">
                                                     Superseded
                                                   </span>
                                                 )}
@@ -4641,7 +4641,7 @@ export default function App() {
                                   {role.latest_retrieval?.relevant_events && role.latest_retrieval.relevant_events.length > 0 ? (
                                     <div className="space-y-3">
                                       {role.latest_retrieval.relevant_events.map((event, idx) => (
-                                        <div key={event.id || idx} className="border border-zinc-250 dark:border-zinc-850 p-4 rounded-xl space-y-2.5 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm">
+                                        <div key={event.id || idx} className="border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2.5 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm">
                                           <p className="text-xs font-mono leading-relaxed text-zinc-800 dark:text-zinc-200 bg-zinc-50/50 dark:bg-zinc-900/40 p-2.5 rounded-lg border border-dashed border-zinc-200 dark:border-zinc-800 whitespace-pre-wrap select-all select-text font-medium">
                                             {event.text}
                                           </p>
@@ -4675,7 +4675,7 @@ export default function App() {
                                       ))}
                                     </div>
                                   ) : (
-                                    <div className="text-center py-6 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-850 rounded-xl text-zinc-400 italic text-[11px] font-semibold">
+                                    <div className="text-center py-6 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-[11px] font-semibold">
                                       No relevant facts retrieved in the latest job.
                                     </div>
                                   )}
@@ -4833,7 +4833,7 @@ export default function App() {
                                             ? 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30 hover:bg-[#E8F9D9]'
                                             : copyFailedText === pr.land_command
                                               ? 'bg-[#FFECEC] text-[#D22F2F] border-[#FF4B4B]/30 hover:bg-[#FFECEC]'
-                                            : 'bg-white dark:bg-zinc-850 hover:bg-[#D0F0FF] hover:text-[#0A7BAF] border-[#E5E5E5] dark:border-zinc-800 text-zinc-700 dark:text-zinc-300'
+                                            : 'bg-white dark:bg-zinc-800 hover:bg-[#D0F0FF] hover:text-[#0A7BAF] border-[#E5E5E5] dark:border-zinc-800 text-zinc-700 dark:text-zinc-300'
                                         }`}
                                         title={`Copy land command: ${pr.land_command}`}
                                       >
@@ -4862,7 +4862,7 @@ export default function App() {
                                         href={pr.url}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="bg-white dark:bg-zinc-850 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer"
+                                        className="bg-white dark:bg-zinc-800 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer"
                                         title="View Pull Request on GitHub"
                                       >
                                         <ExternalLink className="h-3.5 w-3.5" />
@@ -4874,7 +4874,7 @@ export default function App() {
                             })}
                           </div>
                         ) : (
-                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-850 p-6 rounded-2xl text-center text-zinc-400 italic text-xs font-semibold">
+                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-800 p-6 rounded-2xl text-center text-zinc-400 italic text-xs font-semibold">
                             No open pull requests.
                           </div>
                         )}
@@ -4919,7 +4919,7 @@ export default function App() {
                             </div>
                           </div>
                         ) : (
-                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-850 p-6 rounded-2xl text-center text-zinc-400 italic text-xs font-semibold">
+                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-800 p-6 rounded-2xl text-center text-zinc-400 italic text-xs font-semibold">
                             No active git worktrees.
                           </div>
                         )}
@@ -5104,7 +5104,7 @@ export default function App() {
                     {/* STATE Card */}
                     <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 space-y-4">
                       <div className="border-b border-[#F1F1F1] pb-2 flex justify-between items-center">
-                        <h3 className="font-extrabold text-sm text-zinc-850 dark:text-zinc-200">Active Workflow State</h3>
+                        <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">Active Workflow State</h3>
                         <span className="text-[10px] text-[#AFAFAF] uppercase tracking-wider">state/current.json</span>
                       </div>
 
@@ -5136,7 +5136,7 @@ export default function App() {
                     {/* PROJECT TARGET Card */}
                     <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 space-y-4">
                       <div className="border-b border-[#F1F1F1] pb-2 flex justify-between items-center">
-                        <h3 className="font-extrabold text-sm text-zinc-850 dark:text-zinc-200">Project Target Config</h3>
+                        <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">Project Target Config</h3>
                         <span className="text-[10px] text-[#AFAFAF] uppercase tracking-wider">Projects environment</span>
                       </div>
 
