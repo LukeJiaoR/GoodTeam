@@ -362,9 +362,6 @@ export default function App() {
   const [deliveryStandards, setDeliveryStandards] = useState('');
   const [roleModelOverrides, setRoleModelOverrides] = useState('');
   const [projectRoot, setProjectRoot] = useState('');
-  const [docsPath, setDocsPath] = useState('');
-  const [backendPath, setBackendPath] = useState('');
-  const [frontendPath, setFrontendPath] = useState('');
   const [projectConfig, setProjectConfig] = useState('');
   const [taskSync, setTaskSync] = useState('');
   const [workerBackendMode, setWorkerBackendMode] = useState('codex');
@@ -455,12 +452,15 @@ export default function App() {
 
   // Directory picker states
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerTarget, setPickerTarget] = useState(null); // 'root' | 'docs' | 'backend' | 'frontend'
+  const [pickerTarget, setPickerTarget] = useState(null); // 'root'
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState(null);
   const [pickerEntries, setPickerEntries] = useState([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerError, setPickerError] = useState(null);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderError, setNewFolderError] = useState('');
+  const [creatingFolder, setCreatingFolder] = useState(false);
 
   const fetchDirectory = async (path) => {
     setPickerLoading(true);
@@ -485,18 +485,47 @@ export default function App() {
   const openDirectoryPicker = (target, currentPath) => {
     setPickerTarget(target);
     setPickerOpen(true);
+    setNewFolderName('');
+    setNewFolderError('');
     fetchDirectory(currentPath || '');
+  };
+
+  const handleCreateFolder = async (e) => {
+    if (e?.preventDefault) {
+      e.preventDefault();
+    }
+
+    const name = newFolderName.trim();
+    if (!name) {
+      setNewFolderError('Folder name is required.');
+      return;
+    }
+
+    setCreatingFolder(true);
+    setNewFolderError('');
+    try {
+      const response = await fetch('/api/fs/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent: pickerPath, name }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || `Failed to create folder (HTTP ${response.status})`);
+      }
+
+      setNewFolderName('');
+      await fetchDirectory(payload.path || pickerPath);
+    } catch (err) {
+      setNewFolderError(err.message || 'Failed to create folder.');
+    } finally {
+      setCreatingFolder(false);
+    }
   };
 
   const handleSelectFolder = () => {
     if (pickerTarget === 'root') {
       setProjectRoot(pickerPath);
-    } else if (pickerTarget === 'docs') {
-      setDocsPath(pickerPath);
-    } else if (pickerTarget === 'backend') {
-      setBackendPath(pickerPath);
-    } else if (pickerTarget === 'frontend') {
-      setFrontendPath(pickerPath);
     }
     setPickerOpen(false);
   };
@@ -625,12 +654,8 @@ export default function App() {
         setProjectConfig(sc.project_config || '');
         setWorkerBackendMode(sc.worker_backend?.mode || 'codex');
 
-        // Repos paths
-        const target = sc.project_report?.project || {};
-        const repos = target.repos || {};
-        setDocsPath(repos.docs || '');
-        setBackendPath(repos.backend || '');
-        setFrontendPath(repos.frontend || '');
+        const repos = sc.project_report?.repos || {};
+        setProjectRoot(repos.root?.path || repos.docs?.path || repos.backend?.path || repos.frontend?.path || Object.values(repos)[0]?.path || '');
 
         // Task backend
         const tb = sc.task_backend || {};
@@ -1219,13 +1244,6 @@ export default function App() {
           .map((line) => line.split('=', 2))
           .filter((parts) => parts.length === 2 && parts[0] && parts[1])
       );
-      const pathPayload = isNewProjectMode
-        ? { project_root: projectRoot }
-        : {
-            docs_path: docsPath,
-            backend_path: backendPath,
-            frontend_path: frontendPath,
-          };
       const customDeliveryPayload = deliveryMode === 'custom'
         ? { delivery_standards: deliveryStandards }
         : {};
@@ -1236,7 +1254,7 @@ export default function App() {
         body: JSON.stringify({
           project_name: projectName,
           project_key: startProjectKey || projectKey,
-          ...pathPayload,
+          project_root: projectRoot,
           task_sync: taskSync ? [taskSync] : [],
           plane_api_host_url: planeApiHost,
           plane_workspace_slug: planeWorkspaceSlug,
@@ -1700,7 +1718,7 @@ export default function App() {
           <div>
             <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Directory Browser</p>
             <h3 id="dir-picker-title" className="font-mono text-xs font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1">
-              Selecting {pickerTarget === 'root' ? 'Project Root' : pickerTarget === 'docs' ? 'Docs' : pickerTarget === 'backend' ? 'Backend' : 'Frontend'} Directory
+              Selecting Project Root Directory
             </h3>
           </div>
           <button
@@ -1727,6 +1745,42 @@ export default function App() {
             {pickerPath || '/'}
           </div>
         </div>
+
+        {/* New Folder */}
+        <form
+          onSubmit={handleCreateFolder}
+          className="px-5 py-3 bg-white dark:bg-zinc-950 border-b border-[#E5E5E5] dark:border-zinc-800 shrink-0"
+        >
+          <div className="flex flex-col sm:flex-row gap-2">
+            <label className="sr-only" htmlFor="new-folder-name">New folder name</label>
+            <input
+              id="new-folder-name"
+              type="text"
+              value={newFolderName}
+              onChange={(e) => {
+                setNewFolderName(e.target.value);
+                if (newFolderError) setNewFolderError('');
+              }}
+              placeholder="New folder name"
+              disabled={pickerLoading || creatingFolder}
+              className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#58CC02] disabled:opacity-60"
+            />
+            <button
+              type="submit"
+              disabled={pickerLoading || creatingFolder || !newFolderName.trim()}
+              className="bg-white dark:bg-zinc-850 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-2 rounded-xl text-xs transition-all duo-button-physics disabled:opacity-50 disabled:pointer-events-none cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5"
+            >
+              {creatingFolder ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Folder className="h-3.5 w-3.5" />}
+              <span>New folder</span>
+            </button>
+          </div>
+          {newFolderError && (
+            <div className="mt-2 bg-[#FFF0D4] dark:bg-amber-950/20 border border-[#FF9600]/40 px-3 py-2 rounded-xl text-[#B36B00] dark:text-amber-300 text-[10px] font-bold flex items-center gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>{newFolderError}</span>
+            </div>
+          )}
+        </form>
 
         {/* Body */}
         <div className="p-5 overflow-y-auto flex-grow min-h-0 bg-white dark:bg-zinc-950">
@@ -2056,89 +2110,27 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
-                    <div className="col-span-1 md:col-span-3 font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Repository Paths</div>
-                    {isNewProjectMode ? (
-                      <div className="md:col-span-3">
-                        <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Project Root</label>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={projectRoot}
-                            onChange={(e) => setProjectRoot(e.target.value)}
-                            placeholder="Absolute path to project root"
-                            className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => openDirectoryPicker('root', projectRoot)}
-                            className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
-                          >
-                            Browse…
-                          </button>
-                        </div>
+                  <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
+                    <div className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Project Location</div>
+                    <div>
+                      <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Project Root</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={projectRoot}
+                          onChange={(e) => setProjectRoot(e.target.value)}
+                          placeholder="Absolute path to project root"
+                          className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => openDirectoryPicker('root', projectRoot)}
+                          className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
+                        >
+                          Browse…
+                        </button>
                       </div>
-                    ) : (
-                      <>
-                        <div>
-                          <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Docs Dir</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={docsPath}
-                              onChange={(e) => setDocsPath(e.target.value)}
-                              placeholder="Absolute path to docs repo"
-                              className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => openDirectoryPicker('docs', docsPath)}
-                              className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
-                            >
-                              Browse…
-                            </button>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Backend Dir</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={backendPath}
-                              onChange={(e) => setBackendPath(e.target.value)}
-                              placeholder="Absolute path to backend repo"
-                              className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => openDirectoryPicker('backend', backendPath)}
-                              className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
-                            >
-                              Browse…
-                            </button>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Frontend Dir</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={frontendPath}
-                              onChange={(e) => setFrontendPath(e.target.value)}
-                              placeholder="Absolute path to frontend repo"
-                              className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => openDirectoryPicker('frontend', frontendPath)}
-                              className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
-                            >
-                              Browse…
-                            </button>
-                          </div>
-                        </div>
-                      </>
-                    )}
+                    </div>
                   </div>
 
                   <div className="col-span-2 border-t border-zinc-100 dark:border-zinc-900 my-4" />
