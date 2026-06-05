@@ -185,6 +185,38 @@ def test_api_devloop_route_returns_contract_shape(tmp_path, monkeypatch):
     assert payload["generated_at"]
 
 
+def test_api_fs_list_route_returns_directory_listing(tmp_path, monkeypatch):
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "repo" / ".git").mkdir()
+    (tmp_path / "file.txt").write_text("nope", encoding="utf-8")
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+
+    handler = simulate_get(f"/api/fs/list?path={tmp_path}")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload == {
+        "path": str(tmp_path.resolve()),
+        "parent": str(tmp_path.resolve().parent),
+        "entries": [{"name": "repo", "path": str((tmp_path / "repo").resolve()), "is_git_repo": True}],
+    }
+
+
+def test_api_fs_list_route_status_codes(tmp_path, monkeypatch):
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+
+    bad_request = simulate_get("/api/fs/list?path=relative")
+    missing = simulate_get(f"/api/fs/list?path={tmp_path / 'missing'}")
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("nope", encoding="utf-8")
+    not_directory = simulate_get(f"/api/fs/list?path={file_path}")
+
+    assert 400 in bad_request.responses
+    assert 404 in missing.responses
+    assert 404 in not_directory.responses
+    assert json.loads(bad_request.wfile.getvalue().decode("utf-8"))["error"]
+
+
 def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     # 1. Capture the DashboardHandler class
     captured_handler_class = None
