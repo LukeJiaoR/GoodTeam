@@ -1763,7 +1763,7 @@ export default function App() {
               }}
               placeholder="New folder name"
               disabled={pickerLoading || creatingFolder}
-              className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#58CC02] disabled:opacity-60"
+              className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#58CC02] disabled:opacity-60"
             />
             <button
               type="submit"
@@ -2046,7 +2046,7 @@ export default function App() {
                       value={idea}
                       onChange={(e) => setIdea(e.target.value)}
                       placeholder={startMode === 'existing_project' ? "Enter takeover goal (e.g. audit frontend files)..." : "Describe the new project and desired features..."}
-                      className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                      className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
                     />
                   </div>
 
@@ -2057,7 +2057,7 @@ export default function App() {
                       value={projectName}
                       onChange={(e) => setProjectName(e.target.value)}
                       placeholder="e.g. ContentOps Studio"
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
+                      className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
                     />
                   </div>
 
@@ -2068,7 +2068,7 @@ export default function App() {
                       value={startProjectKey}
                       onChange={(e) => setStartProjectKey(e.target.value)}
                       placeholder="e.g. CONTENTOPS"
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono uppercase transition-colors"
+                      className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono uppercase transition-colors"
                     />
                   </div>
 
@@ -2077,7 +2077,7 @@ export default function App() {
                     <select
                       value={modelProfile}
                       onChange={(e) => setModelProfile(e.target.value)}
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
+                      className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
                     >
                       <option value="balanced">Balanced</option>
                       <option value="cheap">Cheap</option>
@@ -2090,7 +2090,7 @@ export default function App() {
                     <select
                       value={deliveryMode}
                       onChange={(e) => setDeliveryMode(e.target.value)}
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
+                      className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
                     >
                       {DELIVERY_MODE_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
@@ -2105,7 +2105,7 @@ export default function App() {
                         value={deliveryStandards}
                         onChange={(e) => setDeliveryStandards(e.target.value)}
                         placeholder="每行一条交付标准"
-                        className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                        className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
                       />
                     </div>
                   )}
@@ -2120,7 +2120,7 @@ export default function App() {
                           value={projectRoot}
                           onChange={(e) => setProjectRoot(e.target.value)}
                           placeholder="Absolute path to project root"
-                          className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
+                          className="flex-1 min-w-0 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
                         />
                         <button
                           type="button"
@@ -2156,7 +2156,7 @@ export default function App() {
                           <select
                             value={taskSync}
                             onChange={(e) => setTaskSync(e.target.value)}
-                            className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
+                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
                           >
                             <option value="">Local only</option>
                             <option value="plane">Plane Workspace</option>
@@ -2169,7 +2169,7 @@ export default function App() {
                           <select
                             value={workerBackendMode}
                             onChange={(e) => setWorkerBackendMode(e.target.value)}
-                            className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
+                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
                           >
                             <option value="codex">Codex CLI / Autopilot</option>
                             <option value="manual">Human Interactive</option>
@@ -2211,7 +2211,7 @@ export default function App() {
                           <select
                             value={deploymentBackendMode}
                             onChange={(e) => setDeploymentBackendMode(e.target.value)}
-                            className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-semibold"
+                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-semibold"
                           >
                             <option value="">None (skip automated deployments)</option>
                             <option value="ssh_compose">Docker Compose via SSH</option>
@@ -2281,7 +2281,7 @@ export default function App() {
                           value={roleModelOverrides}
                           onChange={(e) => setRoleModelOverrides(e.target.value)}
                           placeholder="architect=codex:gpt-5.5&#10;implementation=codex:gpt-5.3-codex"
-                          className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed transition-colors resize-none"
+                          className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed transition-colors resize-none"
                         />
                       </div>
 
@@ -2292,7 +2292,7 @@ export default function App() {
                           value={projectConfig}
                           onChange={(e) => setProjectConfig(e.target.value)}
                           placeholder="projects/project-key.local.yaml"
-                          className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                          className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
                         />
                       </div>
                     </>
@@ -3125,7 +3125,7 @@ export default function App() {
                                 value={deliveryStandards}
                                 onChange={(e) => setDeliveryStandards(e.target.value)}
                                 placeholder="每行一条交付标准"
-                                className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed resize-none"
+                                className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed resize-none"
                               />
                             </div>
                           )}
@@ -3497,7 +3497,7 @@ export default function App() {
                             value={panelGlobalMode}
                             onChange={(e) => setPanelGlobalMode(e.target.value)}
                             disabled={savingBackends || actionLoading}
-                            className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
                           >
                             {backendOptions.map((opt) => (
                               <option key={opt} value={opt}>
@@ -3590,7 +3590,7 @@ export default function App() {
                                         value={selectedBackend}
                                         onChange={(e) => handleAgentChange(role, e.target.value)}
                                         disabled={savingBackends || actionLoading}
-                                        className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                        className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
                                       >
                                         <option value="">Use default</option>
                                         {roleBackendOptions.map((opt) => (
@@ -3636,7 +3636,7 @@ export default function App() {
                                                       value={dropdownVal}
                                                       onChange={(e) => handleModelDropdownChange(role, e.target.value)}
                                                       disabled={savingBackends || actionLoading}
-                                                      className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                                      className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
                                                     >
                                                       {modelsList.map((m) => (
                                                         <option key={m} value={m}>
@@ -3657,7 +3657,7 @@ export default function App() {
                                                           value={selectedModel}
                                                           onChange={(e) => handleCustomModelChange(role, e.target.value)}
                                                           disabled={savingBackends || actionLoading}
-                                                          className="w-full bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold font-mono focus:outline-none focus:border-[#58CC02] transition-colors"
+                                                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold font-mono focus:outline-none focus:border-[#58CC02] transition-colors"
                                                         />
                                                       </div>
                                                     )}
@@ -4000,7 +4000,7 @@ export default function App() {
                               value={editorContent}
                               onChange={(e) => setEditorContent(e.target.value)}
                               spellCheck="false"
-                              className="w-full flex-grow h-96 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:border-[#58CC02] transition-colors leading-relaxed"
+                              className="w-full flex-grow h-96 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:border-[#58CC02] transition-colors leading-relaxed"
                             />
                             <code className="text-[10px] text-[#AFAFAF] font-bold leading-normal">Unsaved edits stay in this browser until saved.</code>
                           </div>
@@ -4966,7 +4966,7 @@ export default function App() {
                               onChange={(e) => setDispatchName(e.target.value)}
                               placeholder="e.g. feat-login-page"
                               disabled={dispatchLoading}
-                              className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                              className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
                             />
                           </div>
 
@@ -4977,7 +4977,7 @@ export default function App() {
                                 value={dispatchRole}
                                 onChange={(e) => setDispatchRole(e.target.value)}
                                 disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#58CC02] transition-colors"
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#58CC02] transition-colors"
                               >
                                 {['backend', 'frontend', ...workerRoles.filter(r => r !== 'backend' && r !== 'frontend')].map((role) => (
                                   <option key={role} value={role}>{role}</option>
@@ -4992,7 +4992,7 @@ export default function App() {
                                 value={dispatchAdapter}
                                 onChange={(e) => setDispatchAdapter(e.target.value)}
                                 disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#58CC02] transition-colors"
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#58CC02] transition-colors"
                               >
                                 {roleBackendOptions.map((opt) => (
                                   <option key={opt} value={opt}>
@@ -5013,7 +5013,7 @@ export default function App() {
                                 onChange={(e) => setDispatchCustomRole(e.target.value)}
                                 placeholder="e.g. backend_audit"
                                 disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
                               />
                             </div>
                           )}
@@ -5027,7 +5027,7 @@ export default function App() {
                                 onChange={(e) => setDispatchCustomAdapter(e.target.value)}
                                 placeholder="e.g. openai"
                                 disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
                               />
                             </div>
                           )}
@@ -5039,7 +5039,7 @@ export default function App() {
                               onChange={(e) => setDispatchTask(e.target.value)}
                               placeholder="Describe the task for this worker..."
                               disabled={dispatchLoading}
-                              className="w-full h-24 bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                              className="w-full h-24 bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
                             />
                           </div>
 
@@ -5050,7 +5050,7 @@ export default function App() {
                               onChange={(e) => setDispatchConstraints(e.target.value)}
                               placeholder="Optional constraints to restrict the worker..."
                               disabled={dispatchLoading}
-                              className="w-full h-16 bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                              className="w-full h-16 bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
                             />
                           </div>
 
@@ -5062,7 +5062,7 @@ export default function App() {
                               onChange={(e) => setDispatchVerify(e.target.value)}
                               placeholder="e.g. npm run test"
                               disabled={dispatchLoading}
-                              className="w-full bg-zinc-55 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                              className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
                             />
                           </div>
 
