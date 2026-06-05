@@ -776,6 +776,64 @@ def test_custom_delivery_standard_is_injected_into_prd(tmp_path):
     assert "- Treat this as a real internet product starter" not in prd
 
 
+def test_transient_custom_delivery_standards_override_config_in_prompts(tmp_path):
+    project = tmp_path / "product"
+    project.mkdir()
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: Custom Product",
+                "key: CUSTOM",
+                "delivery_mode: custom",
+                "delivery_standards:",
+                "  standard_0001: Config checklist.",
+                "repos:",
+                f"  root: {project}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CUSTOM", "Build custom delivery")
+    state.delivery_mode = "custom"
+    state.delivery_standards = ["Temporary PRD standard.", "Temporary implementation standard."]
+
+    prd = render_prd_markdown(state, config)
+    rfc = render_downstream_artifact_markdown("rfc", state, config)
+    implementation = render_downstream_artifact_markdown("implementation_handoff", state, config)
+
+    for prompt in [prd, rfc, implementation]:
+        assert "- Temporary PRD standard." in prompt
+        assert "- Temporary implementation standard." in prompt
+        assert "- Config checklist." not in prompt
+
+
+def test_custom_delivery_standards_fall_back_to_config_without_transient_state(tmp_path):
+    project = tmp_path / "product"
+    project.mkdir()
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: Custom Product",
+                "key: CUSTOM",
+                "delivery_mode: custom",
+                "delivery_standards:",
+                "  standard_0001: Config checklist.",
+                "repos:",
+                f"  root: {project}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CUSTOM", "Build custom delivery")
+    state.delivery_mode = "custom"
+
+    implementation = render_downstream_artifact_markdown("implementation_handoff", state, config)
+
+    assert "- Config checklist." in implementation
+
+
 def test_preset_delivery_standard_is_injected_into_prd(tmp_path):
     project = tmp_path / "product"
     project.mkdir()

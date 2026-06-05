@@ -11,6 +11,7 @@ def test_create_initial_state_has_pending_approvals():
     assert state.run_id == "run-1"
     assert state.project_key == "GTO"
     assert state.delivery_mode == "init_project"
+    assert state.delivery_standards == []
     assert state.approvals["prd"] == ApprovalDecision.PENDING
     assert state.next_node == "product_requirement"
 
@@ -46,6 +47,23 @@ def test_state_store_writes_project_scoped_current_and_checkpoint(tmp_path):
     assert store.latest_project_checkpoint_path("CONTENTOPS", "run-1", "start") == checkpoint
     assert store.read_project_current("CONTENTOPS").run_id == "run-1"
     assert not (tmp_path / "state" / "current.json").exists()
+
+
+def test_state_store_reads_legacy_state_without_delivery_standards(tmp_path):
+    path = tmp_path / "state" / "current.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        (
+            '{"run_id": "run-1", "project_key": "GTO", "idea": "Build AI Team OS", '
+            '"approvals": {"prd": "pending"}}'
+        ),
+        encoding="utf-8",
+    )
+
+    state = StateStore(root=tmp_path).read_current()
+
+    assert state.delivery_mode == "init_project"
+    assert state.delivery_standards == []
 
 
 def test_state_store_disambiguates_revisited_checkpoint_nodes(tmp_path):

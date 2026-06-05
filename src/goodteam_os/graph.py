@@ -89,6 +89,16 @@ def delivery_standards_for_mode(mode: str, target: dict[str, object]) -> list[st
     return DELIVERY_MODE_STANDARDS.get(normalized, DELIVERY_MODE_STANDARDS["init_project"])
 
 
+def delivery_standards_for_state(
+    state: AgileDevState,
+    mode: str,
+    target: dict[str, object],
+) -> list[str]:
+    if mode == "custom" and state.delivery_standards:
+        return state.delivery_standards
+    return delivery_standards_for_mode(mode, target)
+
+
 def collect_project_context(project_config: Path | None = None) -> list[dict[str, str]]:
     if project_config is None:
         return []
@@ -210,7 +220,7 @@ def render_prd_markdown(
     project_name = str(target.get("name", "") or state.project_key or "Configured Project")
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
-    delivery_standards = delivery_standards_for_mode(delivery_mode, target)
+    delivery_standards = delivery_standards_for_state(state, delivery_mode, target)
     context = collect_project_context(project_config)
     context_sources = format_context_sources(context)
     decision = (
@@ -327,7 +337,7 @@ def render_artifact_markdown(
     project_name = str(target.get("name", "") or state.project_key or "Configured Project")
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
-    delivery_standards = delivery_standards_for_mode(delivery_mode, target)
+    delivery_standards = delivery_standards_for_state(state, delivery_mode, target)
     context = collect_project_context(project_config)
     context_sources = format_context_sources(context)
 
@@ -409,7 +419,7 @@ def render_rfc_markdown(
     project_name = str(target.get("name", "") or state.project_key or "Configured Project")
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
-    delivery_standards = delivery_standards_for_mode(delivery_mode, target)
+    delivery_standards = delivery_standards_for_state(state, delivery_mode, target)
     context = collect_project_context(project_config)
     architecture = (
         f"Build the approved {project_name} v1 slice inside the configured `{delivery_mode}` delivery mode, "
