@@ -1,5 +1,6 @@
 import json
 import inspect
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,16 +40,35 @@ from goodteam_os.web import (
 )
 
 
+def _init_git_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+
+
+def test_build_dev_loop_without_project_returns_empty_note():
+    dev_loop = build_dev_loop(None)
+
+    assert dev_loop["worktrees"] == []
+    assert dev_loop["pull_requests"] == []
+    assert dev_loop["pre_reviews"] == []
+    assert dev_loop["warnings"] == ["no project selected"]
+
+
+def test_build_dev_loop_non_git_directory_does_not_use_parent_repo(tmp_path):
+    parent_repo = tmp_path / "parent"
+    project_root = parent_repo / "scaffold"
+    project_root.mkdir(parents=True)
+    _init_git_repo(parent_repo)
+
+    dev_loop = build_dev_loop(project_root)
+
+    assert dev_loop["worktrees"] == []
+    assert dev_loop["pull_requests"] == []
+    assert dev_loop["pre_reviews"] == []
+    assert dev_loop["warnings"] == ["project repo has no git history yet"]
+
+
 def test_build_dev_loop_parses_git_worktrees(tmp_path, monkeypatch):
-    git_output = """worktree /repo/main
-HEAD abc1234567890
-branch refs/heads/main
-
-worktree /repo/feature
-HEAD def4567890123
-branch refs/heads/feat/x
-
-"""
+    _init_git_repo(tmp_path)
 
     def fake_run(command, **kwargs):
         assert kwargs["cwd"] == tmp_path
@@ -56,25 +76,36 @@ branch refs/heads/feat/x
         assert kwargs["text"] is True
         assert kwargs["timeout"] == web.DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS
         assert kwargs["check"] is False
-        if command[:3] == ["git", "worktree", "list"]:
-            return SimpleNamespace(returncode=0, stdout=git_output, stderr="")
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+        if command[-3:] == ["worktree", "list", "--porcelain"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=f"""worktree {tmp_path}
+HEAD abc1234567890
+branch refs/heads/main
+
+""",
+                stderr="",
+            )
         return SimpleNamespace(returncode=0, stdout="[]", stderr="")
 
     monkeypatch.setattr(web.subprocess, "run", fake_run)
 
     dev_loop = build_dev_loop(tmp_path)
 
-    assert dev_loop["worktrees"] == [
-        {"path": "/repo/main", "branch": "main", "head": "abc1234"},
-        {"path": "/repo/feature", "branch": "feat/x", "head": "def4567"},
-    ]
+    assert dev_loop["worktrees"] == [{"path": str(tmp_path), "branch": "main", "head": "abc1234"}]
     assert dev_loop["pull_requests"] == []
     assert dev_loop["warnings"] == []
 
 
 def test_build_dev_loop_gh_nonzero_degrades_to_warning(tmp_path, monkeypatch):
+    _init_git_repo(tmp_path)
+
     def fake_run(command, **kwargs):
-        if command[:3] == ["git", "worktree", "list"]:
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+        if command[-3:] == ["worktree", "list", "--porcelain"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=1, stdout="", stderr="not authenticated")
 
@@ -87,6 +118,7 @@ def test_build_dev_loop_gh_nonzero_degrades_to_warning(tmp_path, monkeypatch):
 
 
 def test_build_dev_loop_pre_reviews_reflect_report_presence(tmp_path, monkeypatch):
+    _init_git_repo(tmp_path)
     report_dir = tmp_path / "reports"
     report_dir.mkdir()
     (report_dir / "pre-review-57-report.md").write_text("ok", encoding="utf-8")
@@ -124,7 +156,9 @@ branch refs/heads/feat/ready
     )
 
     def fake_run(command, **kwargs):
-        if command[:3] == ["git", "worktree", "list"]:
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+        if command[-3:] == ["worktree", "list", "--porcelain"]:
             return SimpleNamespace(returncode=0, stdout=git_output, stderr="")
         return SimpleNamespace(returncode=0, stdout=gh_output, stderr="")
 

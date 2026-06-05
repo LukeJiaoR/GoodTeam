@@ -153,10 +153,12 @@ def test_api_workflow_graph_route_returns_static_graph_and_project_run(tmp_path,
 
 
 def test_api_devloop_route_returns_contract_shape(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "goodteam_os.web.build_dev_loop",
-        lambda workspace: {
-            "worktrees": [{"path": str(workspace), "branch": "main", "head": "abc1234"}],
+    received_roots = []
+
+    def fake_build_dev_loop(root):
+        received_roots.append(root)
+        return {
+            "worktrees": [],
             "pull_requests": [
                 {
                     "number": 57,
@@ -167,9 +169,13 @@ def test_api_devloop_route_returns_contract_shape(tmp_path, monkeypatch):
                 }
             ],
             "pre_reviews": [{"pr": 57, "present": True, "report_path": "/tmp/pre-review-57-report.md"}],
-            "warnings": [],
+            "warnings": ["no project selected"],
             "generated_at": "2026-06-04T00:00:00+00:00",
-        },
+        }
+
+    monkeypatch.setattr(
+        "goodteam_os.web.build_dev_loop",
+        fake_build_dev_loop,
     )
     simulate_get = capture_get_handler(tmp_path, monkeypatch)
 
@@ -178,7 +184,8 @@ def test_api_devloop_route_returns_contract_shape(tmp_path, monkeypatch):
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert set(payload) == {"worktrees", "pull_requests", "pre_reviews", "warnings", "generated_at"}
-    assert payload["worktrees"][0] == {"path": str(tmp_path), "branch": "main", "head": "abc1234"}
+    assert received_roots == [None]
+    assert payload["worktrees"] == []
     assert payload["pull_requests"][0]["head_branch"] == "feat/devloop"
     assert payload["pull_requests"][0]["ci"] == "pending"
     assert payload["pre_reviews"][0]["pr"] == 57
