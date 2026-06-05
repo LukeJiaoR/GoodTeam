@@ -1,4 +1,5 @@
 import json
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,6 +34,7 @@ from goodteam_os.web import (
     resolve_dashboard_state,
     save_artifact,
     is_active_run,
+    list_directory_for_picker,
     start_workflow,
 )
 
@@ -995,6 +997,78 @@ def test_discover_project_directories_lists_nested_project_repos(tmp_path):
     assert str(docs) in paths
     assert str(api) in paths
     assert str(ignored) not in paths
+
+
+def test_discover_project_directories_defaults_to_home_without_personal_path(tmp_path, monkeypatch):
+    (tmp_path / "api").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    dirs = discover_project_directories()
+
+    assert dirs == [{"name": "api", "path": str(tmp_path / "api")}]
+    assert "/Users/luke/WorkSpace/codeAi" not in inspect.getsource(discover_project_directories)
+
+
+def test_list_directory_for_picker_returns_dirs_only_filtered_sorted_and_git_flag(tmp_path):
+    names = ["zeta", "Alpha", ".config", "beta"]
+    for name in names:
+        (tmp_path / name).mkdir()
+    (tmp_path / "Alpha" / ".git").mkdir()
+    for name in web.FS_LIST_IGNORED_NAMES:
+        (tmp_path / name).mkdir()
+    (tmp_path / "file.txt").write_text("nope", encoding="utf-8")
+
+    payload = list_directory_for_picker(str(tmp_path))
+
+    assert payload["path"] == str(tmp_path.resolve())
+    assert payload["parent"] == str(tmp_path.resolve().parent)
+    assert payload["entries"] == [
+        {"name": ".config", "path": str((tmp_path / ".config").resolve()), "is_git_repo": False},
+        {"name": "Alpha", "path": str((tmp_path / "Alpha").resolve()), "is_git_repo": True},
+        {"name": "beta", "path": str((tmp_path / "beta").resolve()), "is_git_repo": False},
+        {"name": "zeta", "path": str((tmp_path / "zeta").resolve()), "is_git_repo": False},
+    ]
+
+
+def test_list_directory_for_picker_defaults_to_home_and_has_null_parent_at_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    home_payload = list_directory_for_picker("")
+    root_payload = list_directory_for_picker(str(Path("/").resolve()))
+
+    assert home_payload["path"] == str(tmp_path.resolve())
+    assert root_payload["parent"] is None
+
+
+def test_list_directory_for_picker_rejects_invalid_paths(tmp_path):
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("nope", encoding="utf-8")
+
+    for bad_path in ["relative/path", "\x00"]:
+        try:
+            list_directory_for_picker(bad_path)
+        except web.FsListBadRequestError:
+            pass
+        else:
+            raise AssertionError(f"expected bad request for {bad_path!r}")
+
+    for missing_path in [tmp_path / "missing", file_path]:
+        try:
+            list_directory_for_picker(str(missing_path))
+        except web.FsListNotFoundError:
+            pass
+        else:
+            raise AssertionError(f"expected not found for {missing_path}")
+
+
+def test_list_directory_for_picker_caps_entries(tmp_path, monkeypatch):
+    monkeypatch.setattr(web, "FS_LIST_MAX_ENTRIES", 3)
+    for name in ["delta", "bravo", "charlie", "alpha"]:
+        (tmp_path / name).mkdir()
+
+    payload = list_directory_for_picker(str(tmp_path))
+
+    assert [entry["name"] for entry in payload["entries"]] == ["alpha", "bravo", "charlie"]
 
 
 def test_create_local_project_config_writes_selected_directories(tmp_path):

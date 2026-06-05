@@ -78,6 +78,8 @@ WORKER_ROLES = [
 ]
 PRE_REVIEW_REPORT_DIR = Path("/tmp")
 DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS = 10
+FS_LIST_MAX_ENTRIES = 500
+FS_LIST_IGNORED_NAMES = {".git", ".github", ".venv", "__pycache__", "node_modules", ".next", "dist", "build"}
 DISPATCH_TRACK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
@@ -622,7 +624,8 @@ def maybe_send_favicon_response(handler: object, path: str) -> bool:
     return True
 
 
-def discover_project_directories(base_dir: Path = Path("/Users/luke/WorkSpace/codeAi")) -> list[dict[str, str]]:
+def discover_project_directories(base_dir: Path | None = None) -> list[dict[str, str]]:
+    base_dir = Path.home() if base_dir is None else base_dir
     if not base_dir.is_dir():
         return []
     ignored_names = {".git", ".github", ".venv", "__pycache__", "node_modules", ".data", ".next", "dist", "build"}
@@ -645,6 +648,63 @@ def discover_project_directories(base_dir: Path = Path("/Users/luke/WorkSpace/co
         seen.add(item["path"])
         unique.append(item)
     return unique
+
+
+class FsListBadRequestError(ValueError):
+    pass
+
+
+class FsListNotFoundError(ValueError):
+    pass
+
+
+class FsListPermissionError(ValueError):
+    pass
+
+
+def list_directory_for_picker(path_value: str | None) -> dict[str, object]:
+    raw_path = "" if path_value is None else path_value.strip()
+    if not raw_path:
+        requested = Path.home()
+    else:
+        requested = Path(raw_path)
+        if not requested.is_absolute():
+            raise FsListBadRequestError("path must be absolute.")
+
+    try:
+        resolved = requested.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise FsListNotFoundError("path not found.") from exc
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise FsListBadRequestError("path is invalid.") from exc
+
+    if not resolved.is_dir():
+        raise FsListNotFoundError("path is not a directory.")
+
+    parent = None if resolved.parent == resolved else str(resolved.parent)
+    entries: list[dict[str, object]] = []
+    try:
+        children = sorted(resolved.iterdir(), key=lambda item: item.name.lower())
+    except PermissionError as exc:
+        raise FsListPermissionError("path is not readable.") from exc
+    except OSError as exc:
+        raise FsListBadRequestError("path cannot be read.") from exc
+
+    for child in children:
+        if len(entries) >= FS_LIST_MAX_ENTRIES:
+            break
+        if child.name in FS_LIST_IGNORED_NAMES:
+            continue
+        try:
+            if not child.is_dir():
+                continue
+            child_path = child.resolve(strict=True)
+            is_git_repo = (child / ".git").exists()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        entries.append({"name": child.name, "path": str(child_path), "is_git_repo": is_git_repo})
+
+    return {"path": str(resolved), "parent": parent, "entries": entries}
 
 
 def _project_directory_base(repos: dict[str, object], fallback: Path) -> Path:
@@ -1744,8 +1804,9 @@ def build_start_console_context(
     workspace: Path,
     model_config: Path = Path("models.yaml"),
     project_config: Path | None = None,
-    project_base: Path = Path("/Users/luke/WorkSpace/codeAi"),
+    project_base: Path | None = None,
 ) -> dict[str, object]:
+    project_base = Path.home() if project_base is None else project_base
     profiles = list_model_profiles(model_config) if model_config.is_file() else ["balanced"]
     project_report: dict[str, object] = {}
     if project_config is not None and project_config.is_file():
@@ -5545,6 +5606,16 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 return
             if parsed.path == "/api/devloop":
                 self._send_json(200, build_dev_loop(workspace))
+                return
+            if parsed.path == "/api/fs/list":
+                try:
+                    self._send_json(200, list_directory_for_picker(query.get("path", [""])[0]))
+                except FsListBadRequestError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                except FsListNotFoundError as exc:
+                    self._send_json(404, {"error": str(exc)})
+                except FsListPermissionError as exc:
+                    self._send_json(403, {"error": str(exc)})
                 return
             if parsed.path == "/api/memory":
                 try:
