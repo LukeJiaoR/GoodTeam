@@ -10,7 +10,18 @@ from goodteam_os.workers import worker_backend_doctor
 ProjectTarget = dict[str, object]
 
 WORKER_MODES = ("fake", "codex", "anthropic", "gemini", "noop", "human")
-DELIVERY_MODES = ("mvp", "init_project", "multi_service")
+DELIVERY_MODES = (
+    "mvp",
+    "init_project",
+    "multi_service",
+    "static_site",
+    "cli_tool",
+    "library",
+    "data_pipeline",
+    "mobile_app",
+    "feature_increment",
+    "custom",
+)
 
 
 def load_project_target(config_path: Path) -> ProjectTarget:

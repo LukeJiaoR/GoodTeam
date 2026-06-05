@@ -38,7 +38,55 @@ DELIVERY_MODE_STANDARDS = {
         "Define API or event contracts, gateway/router responsibilities, database ownership, async/queue needs, and cross-service failure modes.",
         "Include observability, container orchestration or compose/k8s shape, service-level QA, release coordination, and rollback strategy.",
     ],
+    "static_site": [
+        "Deliver a static site or landing page with a buildable artifact and local preview path.",
+        "Define content structure, routes or sections, responsive behavior, and basic accessibility expectations.",
+        "Include deployment notes, README verification commands, and any asset or SEO assumptions.",
+    ],
+    "cli_tool": [
+        "Deliver a command-line tool with explicit argument and flag contracts, help text, and documented exit codes.",
+        "Include deterministic tests for command behavior, errors, and edge cases.",
+        "Document installation, local run commands, and example invocations in the README.",
+    ],
+    "library": [
+        "Deliver a library or SDK with a clear public API, semantic versioning expectations, and usage documentation.",
+        "Include unit tests for exported behavior and examples that do not assume a host application.",
+        "Document packaging, compatibility assumptions, and extension points.",
+    ],
+    "data_pipeline": [
+        "Deliver an idempotent data pipeline with explicit stage boundaries and input/output schemas or contracts.",
+        "Include sample data that can run locally, reproducible backfill guidance, and deterministic tests.",
+        "Document retry behavior, failure handling, and operational verification commands.",
+    ],
+    "mobile_app": [
+        "Deliver a mobile app for the target platform with documented build, run, and test commands.",
+        "Define navigation, state management, offline or error states, and platform assumptions.",
+        "Include basic automated or manual verification evidence for core user flows.",
+    ],
+    "feature_increment": [
+        "Deliver an incremental feature that integrates with existing contracts, data, and user flows.",
+        "Preserve existing behavior, add focused regression tests, and document any compatibility risks.",
+        "Include rollout, rollback, or feature-flag notes when the change affects production paths.",
+    ],
 }
+
+
+def delivery_standards_for_mode(mode: str, target: dict[str, object]) -> list[str]:
+    normalized = normalize_delivery_mode(mode)
+    if normalized == "custom":
+        configured = target.get("delivery_standards", {})
+        if isinstance(configured, dict):
+            return [
+                str(value).strip()
+                for _, value in sorted(configured.items())
+                if str(value).strip()
+            ]
+        if isinstance(configured, list):
+            return [str(value).strip() for value in configured if str(value).strip()]
+        if isinstance(configured, str):
+            return [line.strip() for line in configured.splitlines() if line.strip()]
+        return []
+    return DELIVERY_MODE_STANDARDS.get(normalized, DELIVERY_MODE_STANDARDS["init_project"])
 
 
 def collect_project_context(project_config: Path | None = None) -> list[dict[str, str]]:
@@ -162,6 +210,7 @@ def render_prd_markdown(
     project_name = str(target.get("name", "") or state.project_key or "Configured Project")
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
+    delivery_standards = delivery_standards_for_mode(delivery_mode, target)
     context = collect_project_context(project_config)
     context_sources = format_context_sources(context)
     decision = (
@@ -220,7 +269,7 @@ def render_prd_markdown(
         "",
         "## Delivery Mode Standard",
         "",
-        *[f"- {item}" for item in DELIVERY_MODE_STANDARDS[delivery_mode]],
+        *[f"- {item}" for item in delivery_standards],
         "",
         "## Users And Value",
         "",
@@ -278,6 +327,7 @@ def render_artifact_markdown(
     project_name = str(target.get("name", "") or state.project_key or "Configured Project")
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
+    delivery_standards = delivery_standards_for_mode(delivery_mode, target)
     context = collect_project_context(project_config)
     context_sources = format_context_sources(context)
 
@@ -308,7 +358,7 @@ def render_artifact_markdown(
         "",
         "## Delivery Mode Standard",
         "",
-        *[f"- {item}" for item in DELIVERY_MODE_STANDARDS[delivery_mode]],
+        *[f"- {item}" for item in delivery_standards],
     ]
     if artifact_key == "prd":
         lines.extend(
@@ -359,6 +409,7 @@ def render_rfc_markdown(
     project_name = str(target.get("name", "") or state.project_key or "Configured Project")
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
+    delivery_standards = delivery_standards_for_mode(delivery_mode, target)
     context = collect_project_context(project_config)
     architecture = (
         f"Build the approved {project_name} v1 slice inside the configured `{delivery_mode}` delivery mode, "
@@ -414,7 +465,7 @@ def render_rfc_markdown(
         "",
         "## Delivery Mode Standard",
         "",
-        *[f"- {item}" for item in DELIVERY_MODE_STANDARDS[delivery_mode]],
+        *[f"- {item}" for item in delivery_standards],
         "",
         "## Data Model",
         "",
@@ -1225,6 +1276,8 @@ def worker_blocker_message(result: dict[str, object]) -> str:
 
 def normalize_delivery_mode(value: str) -> str:
     mode = (value or "init_project").strip()
+    if mode == "custom":
+        return mode
     if mode not in DELIVERY_MODE_STANDARDS:
         return "init_project"
     return mode
