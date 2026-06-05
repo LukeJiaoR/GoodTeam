@@ -654,8 +654,8 @@ export default function App() {
         setProjectConfig(sc.project_config || '');
         setWorkerBackendMode(sc.worker_backend?.mode || 'codex');
 
-        const target = sc.project_report?.project || {};
-        setProjectRoot(sc.project_root || target.project_root || '');
+        const repos = sc.project_report?.repos || {};
+        setProjectRoot(repos.root?.path || repos.docs?.path || repos.backend?.path || repos.frontend?.path || Object.values(repos)[0]?.path || '');
 
         // Task backend
         const tb = sc.task_backend || {};
