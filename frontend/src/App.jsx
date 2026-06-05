@@ -42,6 +42,18 @@ import MessageFeed from './components/MessageFeed';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
+const DELIVERY_MODE_OPTIONS = [
+  { value: 'mvp', label: 'MVP / validation slice' },
+  { value: 'init_project', label: 'Web product starter' },
+  { value: 'multi_service', label: 'Multi-service product' },
+  { value: 'static_site', label: 'Static site / landing' },
+  { value: 'cli_tool', label: 'CLI tool' },
+  { value: 'library', label: 'Library / SDK' },
+  { value: 'data_pipeline', label: 'Data pipeline / ETL' },
+  { value: 'mobile_app', label: 'Mobile app' },
+  { value: 'feature_increment', label: 'Feature on existing system' },
+  { value: 'custom', label: 'Custom…' },
+];
 
 // Build graph layout and compute ranks for DAG columns
 function computeGraphLayout(rawNodes, rawEdges) {
@@ -347,7 +359,9 @@ export default function App() {
   const [startProjectKey, setStartProjectKey] = useState('');
   const [modelProfile, setModelProfile] = useState('balanced');
   const [deliveryMode, setDeliveryMode] = useState('init_project');
+  const [deliveryStandards, setDeliveryStandards] = useState('');
   const [roleModelOverrides, setRoleModelOverrides] = useState('');
+  const [projectRoot, setProjectRoot] = useState('');
   const [docsPath, setDocsPath] = useState('');
   const [backendPath, setBackendPath] = useState('');
   const [frontendPath, setFrontendPath] = useState('');
@@ -357,6 +371,7 @@ export default function App() {
   const [deploymentBackendMode, setDeploymentBackendMode] = useState('');
   const [startMode, setStartMode] = useState('existing_project'); // existing_project or new_project
   const [dryRun, setDryRun] = useState(true);
+  const isNewProjectMode = startMode === 'new_project' || startMode === 'new';
 
   // Dispatch track form states
   const [dispatchName, setDispatchName] = useState('');
@@ -440,7 +455,7 @@ export default function App() {
 
   // Directory picker states
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerTarget, setPickerTarget] = useState(null); // 'docs' | 'backend' | 'frontend'
+  const [pickerTarget, setPickerTarget] = useState(null); // 'root' | 'docs' | 'backend' | 'frontend'
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState(null);
   const [pickerEntries, setPickerEntries] = useState([]);
@@ -474,7 +489,9 @@ export default function App() {
   };
 
   const handleSelectFolder = () => {
-    if (pickerTarget === 'docs') {
+    if (pickerTarget === 'root') {
+      setProjectRoot(pickerPath);
+    } else if (pickerTarget === 'docs') {
       setDocsPath(pickerPath);
     } else if (pickerTarget === 'backend') {
       setBackendPath(pickerPath);
@@ -1202,6 +1219,16 @@ export default function App() {
           .map((line) => line.split('=', 2))
           .filter((parts) => parts.length === 2 && parts[0] && parts[1])
       );
+      const pathPayload = isNewProjectMode
+        ? { project_root: projectRoot }
+        : {
+            docs_path: docsPath,
+            backend_path: backendPath,
+            frontend_path: frontendPath,
+          };
+      const customDeliveryPayload = deliveryMode === 'custom'
+        ? { delivery_standards: deliveryStandards }
+        : {};
 
       const response = await fetch('/api/project-config', {
         method: 'POST',
@@ -1209,9 +1236,7 @@ export default function App() {
         body: JSON.stringify({
           project_name: projectName,
           project_key: startProjectKey || projectKey,
-          docs_path: docsPath,
-          backend_path: backendPath,
-          frontend_path: frontendPath,
+          ...pathPayload,
           task_sync: taskSync ? [taskSync] : [],
           plane_api_host_url: planeApiHost,
           plane_workspace_slug: planeWorkspaceSlug,
@@ -1233,6 +1258,7 @@ export default function App() {
           delivery_contract_acceptance: deliveryContractAcceptance,
           model_profile: modelProfile,
           delivery_mode: deliveryMode,
+          ...customDeliveryPayload,
           role_model_overrides: parsedOverrides,
         }),
       });
@@ -1670,7 +1696,7 @@ export default function App() {
           <div>
             <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Directory Browser</p>
             <h3 id="dir-picker-title" className="font-mono text-xs font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1">
-              Selecting {pickerTarget === 'docs' ? 'Docs' : pickerTarget === 'backend' ? 'Backend' : 'Frontend'} Directory
+              Selecting {pickerTarget === 'root' ? 'Project Root' : pickerTarget === 'docs' ? 'Docs' : pickerTarget === 'backend' ? 'Backend' : 'Frontend'} Directory
             </h3>
           </div>
           <button
@@ -1949,7 +1975,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setStartMode('new_project')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${startMode === 'new_project' ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
                   >
                     Start New Project
                   </button>
@@ -2008,71 +2034,107 @@ export default function App() {
                       onChange={(e) => setDeliveryMode(e.target.value)}
                       className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
                     >
-                      <option value="init_project">Init project / production starter</option>
-                      <option value="mvp">MVP / validation slice</option>
-                      <option value="multi_service">Multi-service product</option>
+                      {DELIVERY_MODE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
                   </div>
 
+                  {deliveryMode === 'custom' && (
+                    <div className="col-span-2">
+                      <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Delivery Standards</label>
+                      <textarea
+                        value={deliveryStandards}
+                        onChange={(e) => setDeliveryStandards(e.target.value)}
+                        placeholder="每行一条交付标准"
+                        className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                      />
+                    </div>
+                  )}
+
                   <div className="col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
                     <div className="col-span-1 md:col-span-3 font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Repository Paths</div>
-                    <div>
-                      <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Docs Dir</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={docsPath}
-                          onChange={(e) => setDocsPath(e.target.value)}
-                          placeholder="Absolute path to docs repo"
-                          className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => openDirectoryPicker('docs', docsPath)}
-                          className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
-                        >
-                          Browse…
-                        </button>
+                    {isNewProjectMode ? (
+                      <div className="md:col-span-3">
+                        <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Project Root</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={projectRoot}
+                            onChange={(e) => setProjectRoot(e.target.value)}
+                            placeholder="Absolute path to project root"
+                            className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => openDirectoryPicker('root', projectRoot)}
+                            className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
+                          >
+                            Browse…
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Backend Dir</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={backendPath}
-                          onChange={(e) => setBackendPath(e.target.value)}
-                          placeholder="Absolute path to backend repo"
-                          className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => openDirectoryPicker('backend', backendPath)}
-                          className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
-                        >
-                          Browse…
-                        </button>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Frontend Dir</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={frontendPath}
-                          onChange={(e) => setFrontendPath(e.target.value)}
-                          placeholder="Absolute path to frontend repo"
-                          className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => openDirectoryPicker('frontend', frontendPath)}
-                          className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
-                        >
-                          Browse…
-                        </button>
-                      </div>
-                    </div>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Docs Dir</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={docsPath}
+                              onChange={(e) => setDocsPath(e.target.value)}
+                              placeholder="Absolute path to docs repo"
+                              className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => openDirectoryPicker('docs', docsPath)}
+                              className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
+                            >
+                              Browse…
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Backend Dir</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={backendPath}
+                              onChange={(e) => setBackendPath(e.target.value)}
+                              placeholder="Absolute path to backend repo"
+                              className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => openDirectoryPicker('backend', backendPath)}
+                              className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
+                            >
+                              Browse…
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Frontend Dir</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={frontendPath}
+                              onChange={(e) => setFrontendPath(e.target.value)}
+                              placeholder="Absolute path to frontend repo"
+                              className="flex-1 min-w-0 bg-white dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => openDirectoryPicker('frontend', frontendPath)}
+                              className="bg-white dark:bg-zinc-850 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
+                            >
+                              Browse…
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div className="col-span-2 border-t border-zinc-100 dark:border-zinc-900 my-4" />
@@ -3037,7 +3099,7 @@ export default function App() {
                       <div className="p-6 border-t-2 border-[#E5E5E5] dark:border-zinc-800 space-y-6">
                         <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit text-xs mb-4">
                           <button onClick={() => setStartMode('existing_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-800'}`}>Adopt Existing Project</button>
-                          <button onClick={() => setStartMode('new_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${startMode === 'new_project' ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-850'}`}>Start New Project</button>
+                          <button onClick={() => setStartMode('new_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-850 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-850'}`}>Start New Project</button>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold">
                           <div className="col-span-2">
@@ -3055,11 +3117,22 @@ export default function App() {
                           <div>
                             <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Delivery Mode</label>
                             <select value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-3 py-2">
-                              <option value="init_project">Init project / production starter</option>
-                              <option value="mvp">MVP / validation slice</option>
-                              <option value="multi_service">Multi-service product</option>
+                              {DELIVERY_MODE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
                             </select>
                           </div>
+                          {deliveryMode === 'custom' && (
+                            <div className="col-span-2">
+                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Delivery Standards</label>
+                              <textarea
+                                value={deliveryStandards}
+                                onChange={(e) => setDeliveryStandards(e.target.value)}
+                                placeholder="每行一条交付标准"
+                                className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed resize-none"
+                              />
+                            </div>
+                          )}
 
                           <div className="col-span-2 border-t-2 border-[#E5E5E5] dark:border-zinc-850 my-2" />
 
