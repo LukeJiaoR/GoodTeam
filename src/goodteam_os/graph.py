@@ -1297,14 +1297,22 @@ def implementation_expected_artifacts(delivery_mode: str) -> list[str]:
             "tests",
             "deployment notes",
         ]
+    if mode == "init_project":
+        return [
+            "README.md",
+            "frontend app",
+            "backend API",
+            "data layer schema or migrations",
+            "router configuration",
+            "tests",
+            "DevOps/local startup docs",
+        ]
     return [
         "README.md",
-        "frontend app",
-        "backend API",
-        "data layer schema or migrations",
-        "router configuration",
+        "runnable entry point / local run command",
         "tests",
-        "DevOps/local startup docs",
+        "config/env example (no secrets)",
+        "delivery-mode-appropriate docs",
     ]
 
 
@@ -1314,7 +1322,9 @@ def qa_expected_artifacts(delivery_mode: str) -> list[str]:
         return ["QA notes in worker result", "local test command"]
     if mode == "multi_service":
         return ["service-level QA notes", "contract smoke checks", "compose or orchestration smoke command"]
-    return ["API/UI QA notes", "visual acceptance notes", "data-layer verification", "local startup and test commands"]
+    if mode == "init_project":
+        return ["API/UI QA notes", "visual acceptance notes", "data-layer verification", "local startup and test commands"]
+    return ["QA notes in worker result", "local test command", "acceptance notes"]
 
 
 def ui_delivery_expected_artifacts(delivery_mode: str) -> list[str]:
@@ -1323,7 +1333,9 @@ def ui_delivery_expected_artifacts(delivery_mode: str) -> list[str]:
         return ["frontend files", "visual acceptance notes"]
     if mode == "multi_service":
         return ["web service frontend files", "design system or component updates", "browser screenshot evidence"]
-    return ["frontend files", "design system or CSS updates", "browser screenshot evidence", "visual acceptance notes"]
+    if mode == "init_project":
+        return ["frontend files", "design system or CSS updates", "browser screenshot evidence", "visual acceptance notes"]
+    return ["UI files / acceptance notes if the product has a UI"]
 
 
 def ui_delivery_task(state: AgileDevState, delivery_mode: str = "init_project") -> str:
@@ -1333,7 +1345,17 @@ def ui_delivery_task(state: AgileDevState, delivery_mode: str = "init_project") 
         "multi_service": "a production-grade multi-service UI scope",
         "init_project": "a production-starter UI scope",
     }
-    scope = scope_by_mode.get(mode, scope_by_mode["init_project"])
+    scope = scope_by_mode.get(mode, "a runnable product scope appropriate to the delivery mode")
+    if mode not in scope_by_mode:
+        return (
+            f"Directly implement the UI surface for {state.idea} as {scope} per the approved PRD and RFC "
+            "(see the artifacts in the context) if the product has a UI; otherwise record acceptance notes for why no UI files "
+            "are required. Do not stop at documentation when UI work is part of the delivery mode. "
+            "Use the existing stack and mature installed components or project-local helpers before adding dependencies. "
+            "Include responsive layout, clear empty/loading/error states, accessible controls, professional typography/spacing/color, "
+            "and delivery-mode-appropriate acceptance notes. Record changed UI files when applicable, verification commands, "
+            "acceptance evidence, and unresolved UI risks."
+        )
     return (
         f"Directly implement a polished UI for {state.idea} as {scope} per the approved PRD and RFC "
         "(see the artifacts in the context); do not stop at documentation. "
@@ -1361,11 +1383,18 @@ def implementation_task(state: AgileDevState, delivery_mode: str = "init_project
             "service routing, API/contract documentation, environment examples without secrets, local orchestration, "
             "DevOps notes, tests, and README verification commands."
         )
+    if mode == "init_project":
+        return (
+            f"Implement {idea} as a production-starter scaffold per the approved PRD and RFC "
+            "(see the artifacts in the context). Include frontend/backend as the design requires, "
+            "data layer schema or migrations, router/API contract documentation, environment examples without secrets, "
+            "DevOps/local startup notes, tests, and README verification commands."
+        )
     return (
-        f"Implement {idea} as a production-starter scaffold per the approved PRD and RFC "
-        "(see the artifacts in the context). Include frontend/backend as the design requires, "
-        "data layer schema or migrations, router/API contract documentation, environment examples without secrets, "
-        "DevOps/local startup notes, tests, and README verification commands."
+        f"Implement {idea} as a runnable product appropriate to the {mode} delivery mode per the approved PRD and RFC "
+        "(see the artifacts in the context). Follow that delivery mode's standards, include a runnable entry point "
+        "or local run command, config/environment examples without secrets, focused tests, delivery-mode-appropriate docs, "
+        "and README verification commands."
     )
 
 
