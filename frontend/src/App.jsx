@@ -1287,6 +1287,9 @@ export default function App() {
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean);
+      const customDeliveryPayload = deliveryMode === 'custom'
+        ? { delivery_standards: deliveryStandards }
+        : {};
 
       const response = await fetch('/api/start', {
         method: 'POST',
@@ -1296,6 +1299,7 @@ export default function App() {
           project_key: startProjectKey || projectKey,
           model_profile: modelProfile,
           delivery_mode: deliveryMode,
+          ...customDeliveryPayload,
           source_type: startMode,
           project_config: projectConfig,
           role_model_overrides: overrides,
