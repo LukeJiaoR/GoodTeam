@@ -24,6 +24,7 @@ from goodteam_os.graph import (
     advance_approved_workflow,
     artifact_mirror_root,
     discard_refinement,
+    extract_open_questions,
     generate_rfc,
     generate_prd,
     refine_artifact,
@@ -1892,6 +1893,40 @@ def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") 
         "path": str(path),
         "content": path.read_text(encoding="utf-8"),
     }
+
+
+def read_open_questions(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
+    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    return {
+        "artifact": artifact_key,
+        "questions": extract_open_questions(path.read_text(encoding="utf-8")),
+    }
+
+
+def answer_open_questions(
+    *,
+    workspace: Path,
+    project_key: str,
+    artifact_key: str,
+    answers: list[object],
+) -> dict[str, object]:
+    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    guidance_parts: list[str] = []
+    for raw_answer in answers:
+        if not isinstance(raw_answer, dict):
+            continue
+        answer = str(raw_answer.get("answer", "")).strip()
+        if not answer:
+            continue
+        question = str(raw_answer.get("question", "")).strip()
+        guidance_parts.append(f"Q: {question}\nA: {answer}\n\n")
+    return refine_artifact(
+        workspace=workspace,
+        project_key=project_key,
+        artifact_key=artifact_key,
+        content=path.read_text(encoding="utf-8"),
+        guidance="".join(guidance_parts),
+    )
 
 
 def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_key: str = "") -> dict[str, object]:
@@ -5746,6 +5781,13 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return
+            if parsed.path == "/api/open-questions":
+                try:
+                    artifact_key = query.get("artifact", [""])[0]
+                    self._send_json(200, read_open_questions(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
             if parsed.path == "/api/state":
                 try:
                     if not project_key:
@@ -5969,7 +6011,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/fs/mkdir"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/fs/mkdir"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -6079,6 +6121,14 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
                         content=str(request.get("content", "")),
+                    )
+                elif normalized_path == "/answer-open-questions":
+                    raw_answers = request.get("answers", [])
+                    result = answer_open_questions(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        artifact_key=str(request.get("artifact", "")),
+                        answers=raw_answers if isinstance(raw_answers, list) else [],
                     )
                 elif normalized_path == "/accept-refinement":
                     result = accept_refinement(

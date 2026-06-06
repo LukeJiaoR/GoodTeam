@@ -484,6 +484,69 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
     assert payload["artifact"] == "prd"
     assert payload["proposed_path"] == "/tmp/prd.proposed.md"
 
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a content workflow")
+    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    prd.parent.mkdir(parents=True, exist_ok=True)
+    prd.write_text(
+        "# PRD\n\n"
+        "## Risks And Open Questions\n\n"
+        "- Which market launches first?\n"
+        "- What retention period is required?\n",
+        encoding="utf-8",
+    )
+    state.artifacts["prd"] = str(prd)
+    StateStore(tmp_path).write_project_current(state, "CONTENTOPS")
+
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+    handler = simulate_get("/api/open-questions?project=CONTENTOPS&artifact=prd")
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload == {
+        "artifact": "prd",
+        "questions": [
+            "Which market launches first?",
+            "What retention period is required?",
+        ],
+    }
+
+    seen = {}
+
+    def fake_refine_artifact(workspace, project_key, artifact_key, content, guidance=""):
+        seen.update(
+            {
+                "project_key": project_key,
+                "artifact_key": artifact_key,
+                "content": content,
+                "guidance": guidance,
+            }
+        )
+        return {
+            "artifact": artifact_key,
+            "base_path": "/tmp/prd.md",
+            "proposed_path": "/tmp/prd.proposed.md",
+            "diff_summary": {"added_lines": 1, "removed_lines": 1},
+        }
+
+    monkeypatch.setattr("goodteam_os.web.refine_artifact", fake_refine_artifact)
+    handler = simulate_post(
+        "/api/answer-open-questions",
+        {
+            "project_key": "CONTENTOPS",
+            "artifact": "prd",
+            "answers": [
+                {"question": "Which market launches first?", "answer": "Launch in the US first."},
+                {"question": "What retention period is required?", "answer": "   "},
+            ],
+        },
+    )
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["proposed_path"] == "/tmp/prd.proposed.md"
+    assert "Q: Which market launches first?\nA: Launch in the US first.\n\n" in seen["guidance"]
+    assert "What retention period is required?" not in seen["guidance"]
+    assert "Launch in the US first." in seen["guidance"]
+    assert seen["content"] == prd.read_text(encoding="utf-8")
+
     monkeypatch.setattr(
         "goodteam_os.web.accept_refinement",
         lambda workspace, project_key, artifact_key: {"artifact": artifact_key, "accepted": True},

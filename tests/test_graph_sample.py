@@ -9,6 +9,7 @@ from goodteam_os.graph import (
     collect_project_context,
     delivery_standards_for_mode,
     discard_refinement,
+    extract_open_questions,
     generate_rfc,
     generate_prd,
     implementation_expected_artifacts,
@@ -45,6 +46,46 @@ def test_worker_blocker_message_includes_failure_class_and_attempts():
     )
 
     assert message == "implementation worker failed [timeout, 3 attempts]: Process exited 1"
+
+
+def test_extract_open_questions_from_open_questions_section():
+    content = """# PRD
+
+## Open Questions
+
+- Which billing model should v1 use?
+* What admin roles are needed?
+1. Should imports run async?
+
+## Next Section
+
+- Not an open question.
+"""
+
+    assert extract_open_questions(content) == [
+        "Which billing model should v1 use?",
+        "What admin roles are needed?",
+        "Should imports run async?",
+    ]
+
+
+def test_extract_open_questions_from_risks_and_open_questions_section():
+    content = """# PRD
+
+## Risks And Open Questions
+
+- Confirm launch geography.
+2) Decide retention period.
+"""
+
+    assert extract_open_questions(content) == [
+        "Confirm launch geography.",
+        "Decide retention period.",
+    ]
+
+
+def test_extract_open_questions_returns_empty_without_section():
+    assert extract_open_questions("# PRD\n\n## Risks\n\n- Missing vendor decision.\n") == []
 
 
 def test_worker_blocker_message_omits_failure_bracket_when_missing():
@@ -718,6 +759,39 @@ def test_refine_artifact_proposes_without_clobbering_and_accept_promotes(tmp_pat
     # After accept resets the PRD gate to pending and re-approval runs the
     # architect stage, the run advances to the RFC gate awaiting approval.
     assert approved["next_node"] == "await_rfc_approval"
+
+
+def test_refine_artifact_guidance_builds_targeted_revision_task(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    prd.parent.mkdir(parents=True, exist_ok=True)
+    prd.write_text("# Old PRD\n", encoding="utf-8")
+    state.artifacts["prd"] = str(prd)
+    StateStore(tmp_path).write_project_current(state)
+    seen: dict[str, object] = {}
+
+    def fake_worker(**kwargs):
+        seen.update(kwargs)
+        return str(kwargs["task_text"])
+
+    monkeypatch.setattr("goodteam_os.graph.generate_artifact_via_worker", fake_worker)
+
+    result = refine_artifact(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        artifact_key="prd",
+        content="# Edited PRD\n\n## Open Questions\n\n- Which market launches first?\n",
+        guidance="Q: Which market launches first?\nA: Launch in the US first.\n\n",
+    )
+
+    assert "Revise the PRD to incorporate the following answers" in seen["task_text"]
+    assert "RESOLVING the corresponding open questions" in seen["task_text"]
+    assert "Launch in the US first." in seen["task_text"]
+    assert "DEEPEN and refine it" not in seen["task_text"]
+    assert "Launch in the US first." in Path(result["proposed_path"]).read_text(encoding="utf-8")
 
 
 def test_accept_refinement_requires_reapproval_after_prior_approval(tmp_path):
