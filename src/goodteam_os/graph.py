@@ -9,11 +9,18 @@ from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.memory import ProjectMemoryStore, RoleMemoryStore, summarize_markdown
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import load_project_target
-from goodteam_os.roles import artifact_contract, context_file_specs, list_role_definitions, role_definition
+from goodteam_os.roles import (
+    approval_artifact_map,
+    artifact_contract,
+    context_file_specs,
+    list_role_definitions,
+    role_definition,
+)
 from goodteam_os.staging import run_staging_backend, staging_backend_enabled
-from goodteam_os.state import AgileDevState, StateStore, normalize_project_key
+from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, sync_stage_tasks
 from goodteam_os.workflow_table import (
+    approved_next_for_gate,
     blocked_next_for_node,
     disposition_for_failure_class,
     error_next_for_node,
@@ -1918,9 +1925,18 @@ def accept_refinement(
     proposed_path.unlink()
     state.artifacts[artifact_key] = str(base_path)
     state.artifacts.pop(proposed_key, None)
-    if artifact_key == "prd":
-        state.current_node = "prd_review_gate"
-        state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
+    gate = next(
+        (gate for gate, gated_artifact in approval_artifact_map().items() if gated_artifact == artifact_key),
+        "",
+    )
+    if gate:
+        state.approvals[gate] = ApprovalDecision.PENDING
+        state.current_node = f"{gate}_review_gate"
+        state.next_node = gate_next_node(
+            state,
+            gate=gate,
+            approved_next=approved_next_for_gate(gate),
+        )
     sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
@@ -1940,10 +1956,10 @@ def discard_refinement(
     state = state_store.read_project_current(key)
     if state is None:
         raise ValueError(f"No active run for project: {key}")
+    project_config = _resolve_state_project_config(workspace, state, key)
     proposed_ref = str(state.artifacts.pop(f"{artifact_key}_proposed", "") or "")
     if proposed_ref:
         Path(proposed_ref).unlink(missing_ok=True)
-    project_config = _resolve_state_project_config(workspace, state, key)
     sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
