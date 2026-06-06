@@ -252,7 +252,7 @@
 }
 
 /* Minimal Theme - Dark */
-.dark [data-theme="minimal"] {
+.dark[data-theme="minimal"] {
   --surface-base: #141412;
   --surface-raised: #1C1C1A;
   --surface-sunken: #10100F;
