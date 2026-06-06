@@ -301,6 +301,8 @@ def test_build_workflow_graph_includes_active_project_run(tmp_path):
         "run_id": "run-1",
         "current_node": "prd_review_gate",
         "next_node": "await_prd_approval",
+        "current_graph_node": "prd",
+        "next_graph_node": "prd",
         "approvals": {
             "prd": "approved",
             "rfc": "pending",
@@ -309,6 +311,15 @@ def test_build_workflow_graph_includes_active_project_run(tmp_path):
             "release": "pending",
         },
     }
+
+    state.current_node = "architect"
+    state.next_node = "planner"
+    StateStore(tmp_path).write_project_current(state)
+
+    graph = build_workflow_graph(tmp_path, project_key="contentops")
+
+    assert graph["run"]["current_graph_node"] == "architect"
+    assert graph["run"]["next_graph_node"] == "planner"
 
 
 def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_path, monkeypatch):
