@@ -957,6 +957,7 @@ def run_architecture_until_gate(
             artifact_key="rfc",
             task_text=rfc_worker_task(state),
         )
+        state.change_requests.pop("rfc", None)
         if worker_content is not None:
             content = worker_content
     rfc_path = store.write_markdown(
@@ -1665,6 +1666,7 @@ def run_until_next_gate(
             artifact_key="prd",
             task_text=prd_worker_task(state),
         )
+        state.change_requests.pop("prd", None)
         if worker_content is not None:
             content = worker_content
     prd_path = store.write_markdown(
@@ -1705,21 +1707,35 @@ def should_generate_artifact_with_worker(project_config: Path | None, role: str)
 
 
 def prd_worker_task(state: AgileDevState) -> str:
-    return (
+    task = (
         "Write a complete PRD for the following product idea: "
         f"{state.idea}. Cover: intent/why, users & value, V1 scope, non-goals, acceptance criteria, "
         "risks & open questions. Ground it in the project context provided. "
         "Output the PRD as markdown only - no preamble."
     )
+    note = state.change_requests.get("prd", "").strip()
+    if note:
+        task += (
+            "\n\nA reviewer requested changes to the current PRD. Revise it to ADDRESS this feedback, "
+            f"preserving what is fine: {note}"
+        )
+    return task
 
 
 def rfc_worker_task(state: AgileDevState) -> str:
-    return (
+    task = (
         "Write a complete RFC / technical design for: "
         f"{state.idea}, grounded in the approved PRD and project context (see artifacts). "
         "Cover architecture, data model, API contract, migration/rollback, testing strategy, risks. "
         "Output markdown only."
     )
+    note = state.change_requests.get("rfc", "").strip()
+    if note:
+        task += (
+            "\n\nA reviewer requested changes to the current RFC. Revise it to ADDRESS this feedback, "
+            f"preserving what is fine: {note}"
+        )
+    return task
 
 
 def generate_artifact_via_worker(
@@ -1800,6 +1816,7 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
         task_text=prd_worker_task(state),
         failure_status=failure_status,
     )
+    state.change_requests.pop("prd", None)
     if content is None:
         summary = str(failure_status.get("summary", "") or "product_requirement worker failed")
         failure_class = str(failure_status.get("failure_class", "")).strip()
@@ -2024,6 +2041,7 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
         task_text=rfc_worker_task(state),
         failure_status=failure_status,
     )
+    state.change_requests.pop("rfc", None)
     if content is None:
         summary = str(failure_status.get("summary", "") or "architect worker failed")
         failure_class = str(failure_status.get("failure_class", "")).strip()

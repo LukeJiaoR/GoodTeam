@@ -23,6 +23,7 @@ class AgileDevState:
     context_packet_path: str = ""
     artifacts: dict[str, str] = field(default_factory=dict)
     approvals: dict[str, ApprovalDecision] = field(default_factory=dict)
+    change_requests: dict[str, str] = field(default_factory=dict)
     blockers: list[str] = field(default_factory=list)
     model_profile: str = "balanced"
     role_models: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -119,6 +120,7 @@ class StateStore:
         data.setdefault("delivery_standards", [])
         data.setdefault("context_packet_path", "")
         data.setdefault("artifacts", {})
+        data.setdefault("change_requests", {})
         data.setdefault("blockers", [])
         data.setdefault("model_profile", "balanced")
         data.setdefault("role_models", {})

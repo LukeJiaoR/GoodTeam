@@ -538,6 +538,36 @@ def test_api_post_same_origin_guard_rejects_cross_origin_and_allows_trusted_requ
     assert 200 in absent_origin.responses
 
 
+def test_api_approve_accepts_optional_note_without_response_shape_change(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_decide_approval(**kwargs):
+        captured.update(kwargs)
+        return {"run_id": "run-1", "decision": kwargs["decision"], "next_node": "await_prd_approval"}
+
+    monkeypatch.setattr("goodteam_os.web.decide_approval", fake_decide_approval)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/approve",
+        {
+            "project_key": "CONTENTOPS",
+            "approval": "prd",
+            "decision": "changes_requested",
+            "note": "Tighten acceptance criteria.",
+        },
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 200 in handler.responses
+    assert captured["note"] == "Tighten acceptance criteria."
+    assert json.loads(handler.wfile.getvalue().decode("utf-8")) == {
+        "run_id": "run-1",
+        "decision": "changes_requested",
+        "next_node": "await_prd_approval",
+    }
+
+
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
