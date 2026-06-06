@@ -447,6 +447,10 @@ export default function App() {
   const [startingWorkflow, setStartingWorkflow] = useState(false);
   const [approvingAction, setApprovingAction] = useState(null);
 
+  // Changes requested note states
+  const [changesRequestedNote, setChangesRequestedNote] = useState('');
+  const [showChangesRequestedNoteKey, setShowChangesRequestedNoteKey] = useState(null);
+
   // Approval review artifact editor state
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
   const [editorContent, setEditorContent] = useState('');
@@ -1467,7 +1471,7 @@ export default function App() {
     }
   };
 
-  const handleApproveDecision = async (approvalKey, decision, debateRef = '') => {
+  const handleApproveDecision = async (approvalKey, decision, debateRef = '', note = '') => {
     setApprovingAction(`${approvalKey}:${decision}`);
     setActionLoading(true);
     try {
@@ -1479,6 +1483,9 @@ export default function App() {
       if (debateRef) {
         body.debate_ref = debateRef;
       }
+      if (decision === 'changes_requested') {
+        body.note = note;
+      }
       const response = await fetch('/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1487,6 +1494,11 @@ export default function App() {
       const res = await response.json();
       if (!response.ok) throw new Error(res.error || 'Failed to submit decision');
       showToast(`Decision '${decision}' submitted for ${approvalKey.toUpperCase()}`);
+      
+      // Reset note states on success
+      setChangesRequestedNote('');
+      setShowChangesRequestedNoteKey(null);
+      
       fetchState(projectKey);
     } catch (err) {
       showToast(err.message, true);
@@ -4459,6 +4471,12 @@ export default function App() {
                                 )}
 
                                 {/* Markdown artifact preview */}
+                                {selectedReview.note && (
+                                  <div className="bg-[#FFF8E6] dark:bg-amber-950/20 border-2 border-[#FFE2A3] dark:border-amber-900/40 p-4 rounded-2xl space-y-1">
+                                    <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#D07300] dark:text-amber-400 font-sans">Reviewer Feedback Note</div>
+                                    <div className="text-xs text-zinc-900 dark:text-zinc-100 whitespace-pre-wrap font-mono leading-relaxed">{selectedReview.note}</div>
+                                  </div>
+                                )}
                                 <div className="space-y-2">
                                   <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#AFAFAF]">Content Preview</h4>
                                   {selectedReview.content ? (
@@ -4476,45 +4494,94 @@ export default function App() {
                               </div>
 
                               {selectedReview.is_actionable && (
-                                <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex flex-col items-end space-y-2">
-                                  <div className="flex justify-end space-x-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
-                                      disabled={actionLoading}
-                                      className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                    >
-                                      {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
-                                      <span>{isRejectLoading ? 'Rejecting...' : 'Reject'}</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef)}
-                                      disabled={actionLoading}
-                                      className="bg-white hover:bg-[#FFF0D4] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                    >
-                                      {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
-                                      <span>{isRequestChangesLoading ? 'Requesting...' : 'Request Changes'}</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
-                                      disabled={actionLoading}
-                                      className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                    >
-                                      {isApproveLoading ? (
-                                        <RefreshCw className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <Check className="h-4 w-4" />
+                                <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex flex-col items-stretch space-y-4">
+                                  {showChangesRequestedNoteKey === selectedReview.approval && (
+                                    <div className="flex flex-col space-y-2">
+                                      <label className="text-xs font-bold text-zinc-700 dark:text-zinc-350">
+                                        What needs to change? The PRD will be revised to address this.
+                                      </label>
+                                      <textarea
+                                        value={changesRequestedNote}
+                                        onChange={(e) => setChangesRequestedNote(e.target.value)}
+                                        placeholder="Type feedback here..."
+                                        rows={3}
+                                        className="w-full p-3 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-xl text-xs focus:ring-2 focus:ring-[#FF9600] outline-none resize-none font-sans"
+                                      />
+                                      {changesRequestedNote.trim() === '' && (
+                                        <div className="text-amber-600 dark:text-amber-400 text-[10px] font-bold">
+                                          ⚠️ Feedback note is empty. Please provide detail so the model knows what to revise.
+                                        </div>
                                       )}
-                                      <span>{isApproveLoading ? 'Submitting...' : 'Approve Gate'}</span>
-                                    </button>
-                                  </div>
-                                  {isSelectedApprovalLoading && (
-                                    <span className="text-[10px] text-zinc-500 animate-pulse text-right">
-                                      Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
-                                    </span>
+                                    </div>
                                   )}
+                                  <div className="flex flex-col items-end space-y-2">
+                                    <div className="flex justify-end space-x-2">
+                                      {showChangesRequestedNoteKey === selectedReview.approval && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setShowChangesRequestedNoteKey(null);
+                                            setChangesRequestedNote('');
+                                          }}
+                                          disabled={actionLoading}
+                                          className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-[0_3px_0_#1a1a1a]"
+                                        >
+                                          Cancel
+                                        </button>
+                                      )}
+                                      {showChangesRequestedNoteKey !== selectedReview.approval && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
+                                          disabled={actionLoading}
+                                          className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                        >
+                                          {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                          <span>{isRejectLoading ? 'Rejecting...' : 'Reject'}</span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (showChangesRequestedNoteKey === selectedReview.approval) {
+                                            handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef, changesRequestedNote);
+                                          } else {
+                                            setShowChangesRequestedNoteKey(selectedReview.approval);
+                                          }
+                                        }}
+                                        disabled={actionLoading}
+                                        className="bg-white hover:bg-[#FFF0D4] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                      >
+                                        {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                        <span>
+                                          {showChangesRequestedNoteKey === selectedReview.approval
+                                            ? (isRequestChangesLoading ? 'Submitting...' : 'Submit Request')
+                                            : (isRequestChangesLoading ? 'Requesting...' : 'Request Changes')
+                                          }
+                                        </span>
+                                      </button>
+                                      {showChangesRequestedNoteKey !== selectedReview.approval && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
+                                          disabled={actionLoading}
+                                          className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                        >
+                                          {isApproveLoading ? (
+                                            <RefreshCw className="h-4 w-4 animate-spin" />
+                                          ) : (
+                                            <Check className="h-4 w-4" />
+                                          )}
+                                          <span>{isApproveLoading ? 'Submitting...' : 'Approve Gate'}</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                    {isSelectedApprovalLoading && (
+                                      <span className="text-[10px] text-zinc-500 animate-pulse text-right">
+                                        Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </div>
