@@ -790,6 +790,9 @@ def test_refine_artifact_guidance_builds_targeted_revision_task(tmp_path, monkey
     assert "Revise the PRD to incorporate the following answers" in seen["task_text"]
     assert "RESOLVING the corresponding open questions" in seen["task_text"]
     assert "Launch in the US first." in seen["task_text"]
+    # minimal, scoped edit so per-question apply yields a small diff
+    assert "SMALLEST possible edit" in seen["task_text"]
+    assert "VERBATIM" in seen["task_text"]
     assert "DEEPEN and refine it" not in seen["task_text"]
     assert "Launch in the US first." in Path(result["proposed_path"]).read_text(encoding="utf-8")
 
