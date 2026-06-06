@@ -1901,6 +1901,10 @@ def refine_artifact(
             f"Revise the {artifact_key.upper()} to incorporate the following answers, RESOLVING the "
             "corresponding open questions and removing them from the Open Questions section:\n"
             f"{guidance}\n\n"
+            "IMPORTANT: Make the SMALLEST possible edit. Change ONLY the parts of the document "
+            "needed to resolve the answered question(s) and to remove those questions from the "
+            "Open Questions section. Preserve all other content, wording, structure, and formatting "
+            "VERBATIM; do not rewrite or reword unrelated sections.\n\n"
             f"Return the improved {artifact_key.upper()} as markdown only.\n\n"
             f"{content}"
         )
