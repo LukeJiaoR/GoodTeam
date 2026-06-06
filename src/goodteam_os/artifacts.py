@@ -24,6 +24,20 @@ class ArtifactStore:
             self._write_docs_mirror(target_mirror_root, filename, content)
         return path
 
+    def write_proposed_markdown(
+        self,
+        run_id: str,
+        section: str,
+        filename: str,
+        content: str,
+    ) -> Path:
+        source = Path(filename)
+        proposed_filename = f"{source.stem}.proposed{source.suffix or '.md'}"
+        path = self.root / "artifacts" / "runs" / run_id / section / proposed_filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
     def _write_docs_mirror(self, mirror_root: Path, filename: str, content: str) -> None:
         try:
             docs_dir = mirror_root / "docs"

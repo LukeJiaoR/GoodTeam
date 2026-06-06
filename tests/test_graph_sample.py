@@ -4,15 +4,18 @@ from types import MappingProxyType
 
 from goodteam_os.graph import (
     DELIVERY_MODE_STANDARDS,
+    accept_refinement,
     advance_approved_workflow,
     collect_project_context,
     delivery_standards_for_mode,
+    discard_refinement,
     generate_rfc,
     generate_prd,
     implementation_expected_artifacts,
     implementation_task,
     normalize_delivery_mode,
     qa_expected_artifacts,
+    refine_artifact,
     resolve_project_runtime_root,
     resolve_role_adapter,
     render_downstream_artifact_markdown,
@@ -26,7 +29,8 @@ from goodteam_os.graph import (
 )
 from goodteam_os.graph import run_adoption_until_next_gate
 from goodteam_os.memory import RoleMemoryStore
-from goodteam_os.state import create_initial_state
+from goodteam_os.state import StateStore, create_initial_state
+from goodteam_os.web import decide_approval
 from goodteam_os.workflow_table import WorkflowNode
 
 
@@ -452,6 +456,158 @@ def test_generate_prd_keeps_existing_prd_on_worker_failure(tmp_path, monkeypatch
         raise AssertionError("Expected generate_prd failure")
 
     assert prd.read_text(encoding="utf-8") == "# Placeholder PRD\n"
+
+
+def test_refine_artifact_proposes_without_clobbering_and_accept_promotes(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    prd.parent.mkdir(parents=True, exist_ok=True)
+    prd.write_text("# Old PRD\n", encoding="utf-8")
+    state.artifacts["prd"] = str(prd)
+    state.approvals["prd"] = "changes_requested"
+    StateStore(tmp_path).write_project_current(state)
+    seen: dict[str, object] = {}
+
+    def fake_worker(**kwargs):
+        seen.update(kwargs)
+        return "# Edited PRD\n\n- Sharper acceptance criteria\n"
+
+    monkeypatch.setattr("goodteam_os.graph.generate_artifact_via_worker", fake_worker)
+
+    result = refine_artifact(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        artifact_key="prd",
+        content="# Edited PRD\n",
+    )
+
+    assert prd.read_text(encoding="utf-8") == "# Edited PRD\n"
+    proposed = Path(result["proposed_path"])
+    assert proposed.read_text(encoding="utf-8") == "# Edited PRD\n\n- Sharper acceptance criteria\n"
+    assert seen["role"] == "product_requirement"
+    assert "DEEPEN and refine it" in seen["task_text"]
+    assert "# Edited PRD" in seen["task_text"]
+    assert result["diff_summary"]["added_lines"] == 2
+    current = StateStore(tmp_path).read_project_current("CONTENTOPS")
+    assert current is not None
+    assert current.artifacts["prd_proposed"] == str(proposed)
+
+    accepted = accept_refinement(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        artifact_key="prd",
+    )
+
+    assert accepted["accepted"] is True
+    assert prd.read_text(encoding="utf-8") == "# Edited PRD\n\n- Sharper acceptance criteria\n"
+    assert not proposed.exists()
+    current = StateStore(tmp_path).read_project_current("CONTENTOPS")
+    assert current is not None
+    assert "prd_proposed" not in current.artifacts
+    assert current.approvals["prd"] == "pending"
+    assert current.current_node == "prd_review_gate"
+    assert current.next_node == "await_prd_approval"
+
+    approved = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="prd",
+        decision="approved",
+    )
+
+    assert approved["approvals"]["prd"] == "approved"
+    # After accept resets the PRD gate to pending and re-approval runs the
+    # architect stage, the run advances to the RFC gate awaiting approval.
+    assert approved["next_node"] == "await_rfc_approval"
+
+
+def test_accept_refinement_requires_reapproval_after_prior_approval(tmp_path):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals["prd"] = "approved"
+    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    proposed = prd.with_name("prd.proposed.md")
+    prd.parent.mkdir(parents=True, exist_ok=True)
+    prd.write_text("# Approved PRD\n", encoding="utf-8")
+    proposed.write_text("# Refined PRD\n", encoding="utf-8")
+    state.artifacts.update({"prd": str(prd), "prd_proposed": str(proposed)})
+    StateStore(tmp_path).write_project_current(state)
+
+    accepted = accept_refinement(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        artifact_key="prd",
+    )
+
+    assert accepted["approvals"]["prd"] == "pending"
+    assert accepted["next_node"] == "await_prd_approval"
+
+
+def test_discard_refinement_preserves_proposal_when_project_config_is_unresolvable(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    state.source_type = "existing_project"
+    state.source_ref = str(tmp_path / "missing-project.local.yaml")
+    proposed = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.proposed.md"
+    proposed.parent.mkdir(parents=True, exist_ok=True)
+    proposed.write_text("# Proposed PRD\n", encoding="utf-8")
+    state.artifacts["prd_proposed"] = str(proposed)
+    StateStore(tmp_path).write_project_current(state)
+
+    try:
+        discard_refinement(
+            workspace=tmp_path,
+            project_key="CONTENTOPS",
+            artifact_key="prd",
+        )
+    except ValueError as exc:
+        assert str(exc) == "Project config not found for project: CONTENTOPS"
+    else:
+        raise AssertionError("Expected project config resolution to fail")
+
+    current = StateStore(tmp_path).read_project_current("CONTENTOPS")
+    assert current is not None
+    assert current.artifacts["prd_proposed"] == str(proposed)
+    assert proposed.read_text(encoding="utf-8") == "# Proposed PRD\n"
+
+
+def test_refine_artifact_keeps_human_edit_when_worker_fails(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    prd.parent.mkdir(parents=True, exist_ok=True)
+    prd.write_text("# Old PRD\n", encoding="utf-8")
+    state.artifacts["prd"] = str(prd)
+    StateStore(tmp_path).write_project_current(state)
+
+    def fail_worker(**kwargs):
+        kwargs["failure_status"].update({"summary": "worker timed out", "failure_class": "timeout"})
+        return None
+
+    monkeypatch.setattr("goodteam_os.graph.generate_artifact_via_worker", fail_worker)
+
+    try:
+        refine_artifact(
+            workspace=tmp_path,
+            project_key="CONTENTOPS",
+            artifact_key="prd",
+            content="# Human Edit\n",
+        )
+    except RuntimeError as exc:
+        assert "[timeout]" in str(exc)
+    else:
+        raise AssertionError("Expected refine_artifact failure")
+
+    assert prd.read_text(encoding="utf-8") == "# Human Edit\n"
+    current = StateStore(tmp_path).read_project_current("CONTENTOPS")
+    assert current is not None
+    assert "prd_proposed" not in current.artifacts
 
 
 def test_generate_rfc_dispatches_architect_worker_and_overwrites_rfc(tmp_path, monkeypatch):
