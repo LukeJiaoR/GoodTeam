@@ -278,6 +278,41 @@ def test_prd_changes_requested_revises_with_feedback_and_returns_to_gate(tmp_pat
     assert any(action["action"] == "prd_revised" for action in actions)
 
 
+def test_prd_changes_requested_preserves_feedback_when_worker_fails(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    prd.parent.mkdir(parents=True, exist_ok=True)
+    prd.write_text("# Old PRD\n", encoding="utf-8")
+    state.artifacts["prd"] = str(prd)
+    StateStore(tmp_path).write_project_current(state)
+    seen: dict[str, object] = {}
+
+    def fail_worker(**kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr("goodteam_os.graph.generate_artifact_via_worker", fail_worker)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="prd",
+        decision="changes_requested",
+        note="Keep the export scope narrow.",
+    )
+
+    assert payload["next_node"] == "await_prd_approval"
+    assert payload["approvals"]["prd"] == "pending"
+    assert payload["change_requests"]["prd"] == "Keep the export scope narrow."
+    assert "Keep the export scope narrow." in seen["task_text"]
+    assert "# Product Roadmap PRD" in Path(payload["artifacts"]["prd"]).read_text(encoding="utf-8")
+
+
 def test_normal_prd_falls_back_to_template_when_worker_fails(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
@@ -413,6 +448,57 @@ def test_rfc_changes_requested_revises_with_feedback_and_returns_to_gate(tmp_pat
         for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert any(action["action"] == "rfc_revised" for action in actions)
+
+
+def test_rfc_changes_requested_blank_note_still_dispatches_worker(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "rfc_review_gate"
+    state.next_node = "await_rfc_approval"
+    rfc = tmp_path / "artifacts" / "runs" / "run-1" / "rfc" / "rfc.md"
+    rfc.parent.mkdir(parents=True, exist_ok=True)
+    rfc.write_text("# Old RFC\n", encoding="utf-8")
+    state.artifacts["rfc"] = str(rfc)
+    StateStore(tmp_path).write_project_current(state)
+    seen: dict[str, object] = {}
+
+    def fake_create_job(self, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-1", **kwargs}
+
+    def fake_run_job(self, job_id):
+        job_root = self.root / job_id
+        job_root.mkdir(parents=True, exist_ok=True)
+        result_path = job_root / "result.md"
+        result_path.write_text("# Revised RFC\n\nBlank-note worker revision.\n", encoding="utf-8")
+        return {
+            "job_id": job_id,
+            "run_id": state.run_id,
+            "role": "architect",
+            "status": "completed",
+            "summary": "completed",
+            "result_path": str(result_path),
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fake_create_job)
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="rfc",
+        decision="changes_requested",
+        note="   ",
+    )
+
+    assert seen["role"] == "architect"
+    assert "A reviewer requested changes" not in seen["task"]
+    assert payload["next_node"] == "await_rfc_approval"
+    assert payload["approvals"]["rfc"] == "pending"
+    assert "rfc" not in payload["change_requests"]
+    assert Path(payload["artifacts"]["rfc"]).read_text(encoding="utf-8") == "# Revised RFC\n\nBlank-note worker revision.\n"
 
 
 def test_normal_rfc_falls_back_to_template_when_worker_fails(tmp_path, monkeypatch):

@@ -957,8 +957,8 @@ def run_architecture_until_gate(
             artifact_key="rfc",
             task_text=rfc_worker_task(state),
         )
-        state.change_requests.pop("rfc", None)
         if worker_content is not None:
+            state.change_requests.pop("rfc", None)
             content = worker_content
     rfc_path = store.write_markdown(
         state.run_id,
@@ -1666,8 +1666,8 @@ def run_until_next_gate(
             artifact_key="prd",
             task_text=prd_worker_task(state),
         )
-        state.change_requests.pop("prd", None)
         if worker_content is not None:
+            state.change_requests.pop("prd", None)
             content = worker_content
     prd_path = store.write_markdown(
         state.run_id,
@@ -1816,13 +1816,13 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
         task_text=prd_worker_task(state),
         failure_status=failure_status,
     )
-    state.change_requests.pop("prd", None)
     if content is None:
         summary = str(failure_status.get("summary", "") or "product_requirement worker failed")
         failure_class = str(failure_status.get("failure_class", "")).strip()
         if failure_class:
             raise RuntimeError(f"product_requirement worker failed [{failure_class}]: {summary}")
         raise RuntimeError(f"product_requirement worker failed: {summary}")
+    state.change_requests.pop("prd", None)
 
     artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     prd_path = artifact_store.write_markdown(state.run_id, "prd", "prd.md", content)
@@ -2041,13 +2041,13 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
         task_text=rfc_worker_task(state),
         failure_status=failure_status,
     )
-    state.change_requests.pop("rfc", None)
     if content is None:
         summary = str(failure_status.get("summary", "") or "architect worker failed")
         failure_class = str(failure_status.get("failure_class", "")).strip()
         if failure_class:
             raise RuntimeError(f"architect worker failed [{failure_class}]: {summary}")
         raise RuntimeError(f"architect worker failed: {summary}")
+    state.change_requests.pop("rfc", None)
 
     artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     rfc_path = artifact_store.write_markdown(state.run_id, "rfc", "rfc.md", content)

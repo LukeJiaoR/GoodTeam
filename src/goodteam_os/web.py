@@ -32,6 +32,7 @@ from goodteam_os.graph import (
     run_architecture_until_gate,
     run_adoption_until_next_gate,
     run_until_next_gate,
+    should_generate_artifact_with_worker,
     sync_project_stage_tasks,
 )
 from goodteam_os.artifacts import ArtifactStore
@@ -1406,11 +1407,14 @@ def decide_approval(
                 project_config = _project_config_for_key(workspace, project_key)
             except ValueError:
                 project_config = None
+        revision_role = "product_requirement" if approval == "prd" else "architect"
+        uses_worker_revision = should_generate_artifact_with_worker(project_config, revision_role)
         if approval == "prd":
             state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
         else:
             state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
-        state.change_requests.pop(approval, None)
+        if not uses_worker_revision:
+            state.change_requests.pop(approval, None)
         append_action(
             workspace,
             run_id=state.run_id,
@@ -1457,7 +1461,7 @@ def regenerate_rfc_review_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    if state.change_requests.get("rfc", "").strip():
+    if should_generate_artifact_with_worker(project_config, "architect"):
         return run_architecture_until_gate(state=state, workspace=workspace, project_config=project_config)
     rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config)).write_markdown(
         state.run_id,
