@@ -2877,26 +2877,34 @@ export default function App() {
                     <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 overflow-x-auto relative">
                       {/* Active Run Status Header */}
                       {graphData.run && (
-                        <div className="mb-6 bg-zinc-50 dark:bg-zinc-900/50 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-4 text-xs font-bold">
-                          <div className="flex items-center space-x-2">
-                            <span className="text-[#AFAFAF] uppercase tracking-wider">Active Run:</span>
-                            <span className="font-mono text-zinc-800 dark:text-zinc-200">{graphData.run.run_id}</span>
+                        <div className="mb-6 bg-zinc-50 dark:bg-zinc-900/50 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 flex flex-col gap-3 text-xs font-bold">
+                          <div className="flex flex-wrap items-center justify-between gap-4">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-[#AFAFAF] uppercase tracking-wider">Active Run:</span>
+                              <span className="font-mono text-zinc-800 dark:text-zinc-200">{graphData.run.run_id}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-4">
+                              {(graphData.run.current_graph_node || graphData.run.current_node) && (
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="h-2 w-2 rounded-full bg-[#58CC02] animate-pulse" />
+                                  <span className="text-[#AFAFAF]">Current Node:</span>
+                                  <span className="text-[#3D8B00] font-mono">{graphData.run.current_graph_node || graphData.run.current_node}</span>
+                                </div>
+                              )}
+                              {(graphData.run.next_graph_node || graphData.run.next_node) && (
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="h-2 w-2 rounded-full bg-[#1CB0F6] animate-pulse" />
+                                  <span className="text-[#AFAFAF]">Next Node:</span>
+                                  <span className="text-[#0A7BAF] font-mono">{graphData.run.next_graph_node || graphData.run.next_node}</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex flex-wrap gap-4">
-                            {graphData.run.current_node && (
-                              <div className="flex items-center space-x-1.5">
-                                <span className="h-2 w-2 rounded-full bg-[#58CC02] animate-pulse" />
-                                <span className="text-[#AFAFAF]">Current Node:</span>
-                                <span className="text-[#3D8B00] font-mono">{graphData.run.current_node}</span>
-                              </div>
-                            )}
-                            {graphData.run.next_node && (
-                              <div className="flex items-center space-x-1.5">
-                                <span className="h-2 w-2 rounded-full bg-[#1CB0F6] animate-pulse" />
-                                <span className="text-[#AFAFAF]">Next Node:</span>
-                                <span className="text-[#0A7BAF] font-mono">{graphData.run.next_node}</span>
-                              </div>
-                            )}
+                          <div className="border-t border-zinc-200 dark:border-zinc-800/80 pt-2 flex items-center space-x-1.5 text-[10px] text-zinc-550 font-normal">
+                            <Info className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+                            <span className="text-zinc-900 dark:text-zinc-100">
+                              Note: Colored edge pills represent transition path types, not the project's actual gate decisions.
+                            </span>
                           </div>
                         </div>
                       )}
@@ -3019,9 +3027,9 @@ export default function App() {
 
                             {/* Node Cards */}
                             {Object.values(nodeMap).map((node) => {
-                              const isCurrent = graphData.run && graphData.run.current_node === node.name;
-                              const isNext = graphData.run && graphData.run.next_node === node.name;
-                              const isApproved = graphData.run && graphData.run.approvals && graphData.run.approvals[node.gate] === 'approved';
+                              const isCurrent = graphData.run && (graphData.run.current_graph_node || graphData.run.current_node) === node.name;
+                              const isNext = graphData.run && (graphData.run.next_graph_node || graphData.run.next_node) === node.name;
+                              const approvalStatus = node.gate && graphData.run && graphData.run.approvals ? graphData.run.approvals[node.gate] : null;
 
                               const left = paddingX + node.rank * columnWidth;
                               const top = paddingY + node.index * rowHeight;
@@ -3034,6 +3042,17 @@ export default function App() {
                               } else if (isNext) {
                                 cardBorder = 'border-[#1CB0F6] dark:border-[#1CB0F6]';
                                 shadowStyle = 'shadow-[0_4px_0_#1CB0F6]';
+                              } else if (node.gate) {
+                                if (approvalStatus === 'approved') {
+                                  cardBorder = 'border-[#58CC02] dark:border-[#58CC02]';
+                                  shadowStyle = 'shadow-[0_4px_0_#58CC02]';
+                                } else if (approvalStatus === 'changes_requested') {
+                                  cardBorder = 'border-[#FF9600] dark:border-[#FF9600]';
+                                  shadowStyle = 'shadow-[0_4px_0_#FF9600]';
+                                } else if (approvalStatus === 'rejected') {
+                                  cardBorder = 'border-[#FF4B4B] dark:border-[#FF4B4B]';
+                                  shadowStyle = 'shadow-[0_4px_0_#FF4B4B]';
+                                }
                               }
 
                               return (
@@ -3056,9 +3075,22 @@ export default function App() {
                                     </span>
 
                                     <div className="flex items-center space-x-1 shrink-0">
-                                      {isApproved && (
-                                        <span className="bg-[#E8F9D9] text-[#3D8B00] border border-[#58CC02]/20 rounded-full p-0.5" title="Approved">
-                                          <Check className="h-2.5 w-2.5" />
+                                      {node.gate && approvalStatus === 'approved' && (
+                                        <span className="bg-[#E8F9D9] dark:bg-[#58CC02]/10 border border-[#58CC02]/20 dark:border-[#58CC02]/30 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold uppercase flex items-center gap-0.5 text-zinc-900 dark:text-zinc-100" title="Approved">
+                                          <Check className="h-2.5 w-2.5 text-[#3D8B00] dark:text-[#58CC02]" />
+                                          <span>approved</span>
+                                        </span>
+                                      )}
+                                      {node.gate && approvalStatus === 'changes_requested' && (
+                                        <span className="bg-[#FFE6CC] dark:bg-[#FF9600]/10 border border-[#FF9600]/20 dark:border-[#FF9600]/30 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold uppercase flex items-center gap-0.5 text-zinc-900 dark:text-zinc-100" title="Changes Requested">
+                                          <AlertTriangle className="h-2.5 w-2.5 text-[#D07300] dark:text-[#FF9600]" />
+                                          <span>changes</span>
+                                        </span>
+                                      )}
+                                      {node.gate && approvalStatus === 'rejected' && (
+                                        <span className="bg-[#FFD6D6] dark:bg-[#FF4B4B]/10 border border-[#FF4B4B]/20 dark:border-[#FF4B4B]/30 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold uppercase flex items-center gap-0.5 text-zinc-900 dark:text-zinc-100" title="Rejected">
+                                          <XCircle className="h-2.5 w-2.5 text-[#D03030] dark:text-[#FF4B4B]" />
+                                          <span>rejected</span>
                                         </span>
                                       )}
                                       {isCurrent ? (
