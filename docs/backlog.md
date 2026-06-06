@@ -329,6 +329,7 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   prompt body). The dispatched worker prompt template carries a literal "Use model gpt-5.3-codex"
   line regardless of the actual adapter/model (agy still honored its real `--model` flag, so harmless
   here). Make that line reflect the resolved adapter+model, or drop it. Low.
+- **sync_stage_tasks can leave stale `artifact_refs` on existing stage tasks** (pre-review on #86, 2026-06-06, Low). `sync_stage_tasks` only writes `artifact_refs` when `_stage_artifact_ref(...)` is truthy (tasks.py ~146), so a stage task that previously had an artifact ref is never CLEARED when the state no longer carries that ref. Replace/clear artifact_refs on each sync; add a test asserting ref replacement + clearing (tests/test_tasks.py ~116 covers status only). Low.
 - **Workflow Graph never highlights the current GATE node + ignores non-approved decisions**
   (founder, 2026-06-06; "新项目 Workflow Graph 数据感觉被污染" → NOT pollution, verified). The run
   overlay is correctly project-scoped (VPSSSH showed its own run_id/current_node/approvals; fetch
