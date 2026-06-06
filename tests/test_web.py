@@ -1231,6 +1231,110 @@ def test_create_local_project_config_writes_single_project_root(tmp_path):
     assert (project_root / "docs").is_dir()
 
 
+def test_create_local_project_config_initializes_git_on_fresh_root(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+    )
+
+    commit_count = subprocess.run(
+        ["git", "-C", str(project_root), "rev-list", "--count", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert (project_root / ".git").exists()
+    assert (project_root / "README.md").read_text(encoding="utf-8") == "# AI Content Studio\n"
+    assert (project_root / ".gitignore").is_file()
+    assert commit_count.stdout.strip() == "1"
+    assert payload["git"] == {"initialized": True, "remote_created": False, "warnings": []}
+
+
+def test_create_local_project_config_skips_existing_git_repo(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+    _init_git_repo(project_root)
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+    )
+
+    assert payload["git"]["initialized"] is False
+    assert payload["git"]["remote_created"] is False
+    assert "git init skipped: project root already contains .git" in payload["git"]["warnings"]
+
+
+def test_create_local_project_config_create_remote_without_token_warns(tmp_path, monkeypatch):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+        init_git=False,
+        create_remote=True,
+    )
+
+    assert Path(payload["project_config"]).is_file()
+    assert payload["git"]["initialized"] is False
+    assert payload["git"]["remote_created"] is False
+    assert "create-remote requested but no GITHUB_TOKEN/GH_TOKEN set" in payload["git"]["warnings"]
+
+
+def test_create_local_project_config_create_remote_uses_gh_token(tmp_path, monkeypatch):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+    calls = []
+    monkeypatch.setenv("GITHUB_TOKEN", "token-from-env")
+
+    def fake_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+        init_git=False,
+        create_remote=True,
+        remote_private=False,
+    )
+
+    gh_calls = [call for call in calls if call["command"][:3] == ["gh", "repo", "create"]]
+    assert Path(payload["project_config"]).is_file()
+    assert payload["git"] == {"initialized": False, "remote_created": True, "warnings": []}
+    assert len(gh_calls) == 1
+    assert gh_calls[0]["command"] == [
+        "gh",
+        "repo",
+        "create",
+        "contentops",
+        "--public",
+        "--source",
+        str(project_root),
+        "--remote",
+        "origin",
+        "--push",
+    ]
+    assert gh_calls[0]["env"]["GH_TOKEN"] == "token-from-env"
+    assert gh_calls[0]["cwd"] == project_root
+
+
 def test_create_local_project_config_custom_standards_round_trip(tmp_path):
     project_root = tmp_path / "contentops"
     project_root.mkdir()

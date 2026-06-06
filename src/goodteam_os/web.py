@@ -821,6 +821,148 @@ def _validate_directory_path(label: str, value: str) -> Path:
     return path
 
 
+GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS = 30
+
+
+def _request_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def _run_git_project_command(
+    command: list[str],
+    root_path: Path,
+    warnings: list[str],
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            command,
+            cwd=root_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError:
+        warnings.append(f"{command[0]} not available")
+    except subprocess.TimeoutExpired:
+        warnings.append(f"{command[0]} timed out")
+    except OSError as exc:
+        warnings.append(f"{command[0]} failed: {exc.__class__.__name__}")
+    return None
+
+
+def _git_configured_identity(root_path: Path, warnings: list[str]) -> bool:
+    name = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.name"], root_path, warnings)
+    email = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.email"], root_path, warnings)
+    return bool(
+        name is not None
+        and name.returncode == 0
+        and name.stdout.strip()
+        and email is not None
+        and email.returncode == 0
+        and email.stdout.strip()
+    )
+
+
+def _initialize_project_git(
+    *,
+    root_path: Path,
+    project_name: str,
+    project_key: str,
+    init_git: bool,
+    create_remote: bool,
+    remote_private: bool,
+) -> dict[str, object]:
+    result: dict[str, object] = {"initialized": False, "remote_created": False, "warnings": []}
+    warnings = result["warnings"]
+    assert isinstance(warnings, list)
+    existing_git = (root_path / ".git").exists()
+
+    if existing_git:
+        warnings.append("git init skipped: project root already contains .git")
+    elif init_git:
+        readme = root_path / "README.md"
+        gitignore = root_path / ".gitignore"
+        try:
+            if not readme.exists():
+                readme.write_text(f"# {project_name}\n", encoding="utf-8")
+            if not gitignore.exists():
+                gitignore.write_text(".DS_Store\n.env\n.venv/\n__pycache__/\n", encoding="utf-8")
+        except OSError as exc:
+            warnings.append(f"git scaffold files skipped: {exc.__class__.__name__}")
+
+        init = _run_git_project_command(["git", "-C", str(root_path), "init", "-b", "main"], root_path, warnings)
+        if init is not None and init.returncode != 0:
+            fallback = _run_git_project_command(["git", "-C", str(root_path), "init"], root_path, warnings)
+            if fallback is not None and fallback.returncode == 0:
+                _run_git_project_command(["git", "-C", str(root_path), "branch", "-M", "main"], root_path, warnings)
+                init = fallback
+        if init is None or init.returncode != 0:
+            stderr = "" if init is None else init.stderr.strip()
+            warnings.append(f"git init failed{f': {stderr}' if stderr else ''}")
+        else:
+            add = _run_git_project_command(["git", "-C", str(root_path), "add", "-A"], root_path, warnings)
+            if add is None or add.returncode != 0:
+                stderr = "" if add is None else add.stderr.strip()
+                warnings.append(f"git add failed{f': {stderr}' if stderr else ''}")
+            else:
+                commit_command = ["git", "-C", str(root_path), "commit", "-m", "Initial commit (GoodTeam scaffold)"]
+                if not _git_configured_identity(root_path, warnings):
+                    commit_command[3:3] = ["-c", "user.name=GoodTeam", "-c", "user.email=noreply@goodteam.local"]
+                commit = _run_git_project_command(commit_command, root_path, warnings)
+                if commit is None or commit.returncode != 0:
+                    stderr = "" if commit is None else commit.stderr.strip()
+                    warnings.append(f"git commit failed{f': {stderr}' if stderr else ''}")
+                else:
+                    result["initialized"] = True
+
+    if create_remote:
+        if existing_git:
+            warnings.append("create-remote skipped: project root already contains .git")
+        else:
+            token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+            if not token:
+                warnings.append("create-remote requested but no GITHUB_TOKEN/GH_TOKEN set")
+            else:
+                visibility = "--private" if remote_private else "--public"
+                gh = _run_git_project_command(
+                    [
+                        "gh",
+                        "repo",
+                        "create",
+                        project_key.lower(),
+                        visibility,
+                        "--source",
+                        str(root_path),
+                        "--remote",
+                        "origin",
+                        "--push",
+                    ],
+                    root_path,
+                    warnings,
+                    env={**os.environ, "GH_TOKEN": token},
+                )
+                if gh is not None and gh.returncode == 0:
+                    result["remote_created"] = True
+                else:
+                    stderr = "" if gh is None else gh.stderr.strip()
+                    warnings.append(f"gh repo create failed{f': {stderr}' if stderr else ''}")
+    return result
+
+
 def create_local_project_config(
     *,
     workspace: Path,
@@ -853,6 +995,9 @@ def create_local_project_config(
     delivery_contract_minimum_evidence: str = "infrastructure",
     delivery_contract_fatal_patterns: str = "",
     delivery_contract_acceptance: str = "",
+    init_git: bool = True,
+    create_remote: bool = False,
+    remote_private: bool = True,
 ) -> dict[str, object]:
     name = project_name.strip()
     key = project_key.strip().upper()
@@ -883,6 +1028,20 @@ def create_local_project_config(
             repos.append(("frontend", _validate_directory_path("Frontend", frontend_path)))
     if not repos:
         raise ValueError("Select at least one project directory.")
+
+    git_result: dict[str, object] = {"initialized": False, "remote_created": False, "warnings": []}
+    if project_root.strip():
+        try:
+            git_result = _initialize_project_git(
+                root_path=root_path,
+                project_name=name,
+                project_key=key,
+                init_git=init_git,
+                create_remote=create_remote,
+                remote_private=remote_private,
+            )
+        except Exception as exc:
+            git_result["warnings"].append(f"git setup skipped: {exc.__class__.__name__}")
 
     path = workspace / "projects" / f"{_slug(key)}.local.yaml"
     profile = model_profile.strip() or "balanced"
@@ -977,6 +1136,7 @@ def create_local_project_config(
         "delivery_mode": mode,
         "delivery_standards": custom_standards if mode == "custom" else [],
         "role_model_overrides": overrides,
+        "git": git_result,
     }
 
 
@@ -6196,6 +6356,9 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         delivery_mode=str(request.get("delivery_mode", "init_project")),
                         delivery_standards=str(request.get("delivery_standards", "")),
                         role_model_overrides=dict(request.get("role_model_overrides", {})),
+                        init_git=_request_bool(request.get("init_git"), True),
+                        create_remote=_request_bool(request.get("create_remote"), False),
+                        remote_private=_request_bool(request.get("remote_private"), True),
                     )
                 self._send_json(200, result)
             except Exception as exc:
