@@ -79,6 +79,31 @@ DELIVERY_MODE_STANDARDS = {
 }
 
 
+def extract_open_questions(content: str) -> list[str]:
+    questions: list[str] = []
+    in_section = False
+    heading_re = re.compile(r"^\s{0,3}#{1,6}\s+(?P<text>.+?)\s*#*\s*$")
+    bullet_re = re.compile(r"^\s*(?:[-*]\s+|\d+[.)]\s+)(?P<text>.+?)\s*$")
+
+    for line in content.splitlines():
+        heading = heading_re.match(line)
+        if heading:
+            heading_text = heading.group("text").strip()
+            in_section = "open questions" in heading_text.lower()
+            continue
+        if not in_section:
+            continue
+
+        item = bullet_re.match(line)
+        if not item:
+            continue
+        question = item.group("text").strip()
+        if question:
+            questions.append(question)
+
+    return questions
+
+
 def delivery_standards_for_mode(mode: str, target: dict[str, object]) -> list[str]:
     normalized = normalize_delivery_mode(mode)
     if normalized == "custom":
@@ -1841,6 +1866,7 @@ def refine_artifact(
     project_key: str,
     artifact_key: str,
     content: str,
+    guidance: str = "",
 ) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
@@ -1870,13 +1896,22 @@ def refine_artifact(
     state_store.write_project_checkpoint(state, key)
 
     failure_status: dict[str, object] = {}
-    task_text = (
-        f"Here is the current human-edited {artifact_key.upper()}. DEEPEN and refine it - preserve "
-        "the author's intent, structure, and decisions; do NOT restart from the idea or discard "
-        "their edits. Fill gaps, sharpen acceptance criteria, surface risks/open questions, "
-        f"tighten scope. Return the improved {artifact_key.upper()} as markdown only.\n\n"
-        f"{content}"
-    )
+    if guidance:
+        task_text = (
+            f"Revise the {artifact_key.upper()} to incorporate the following answers, RESOLVING the "
+            "corresponding open questions and removing them from the Open Questions section:\n"
+            f"{guidance}\n\n"
+            f"Return the improved {artifact_key.upper()} as markdown only.\n\n"
+            f"{content}"
+        )
+    else:
+        task_text = (
+            f"Here is the current human-edited {artifact_key.upper()}. DEEPEN and refine it - preserve "
+            "the author's intent, structure, and decisions; do NOT restart from the idea or discard "
+            "their edits. Fill gaps, sharpen acceptance criteria, surface risks/open questions, "
+            f"tighten scope. Return the improved {artifact_key.upper()} as markdown only.\n\n"
+            f"{content}"
+        )
     proposed_content = generate_artifact_via_worker(
         state=state,
         workspace=workspace,
