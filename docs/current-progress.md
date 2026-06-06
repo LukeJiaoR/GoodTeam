@@ -1,5 +1,6 @@
 # Current Progress
 
+- Footprint 2026-06-06 (c) — Open Questions per-question apply (founder: bulk+whole-doc-diff was the friction). FE: each open-question card has its own Apply → sends a single Q&A → reuses the proposed-diff/Accept flow → resolve one at a time (#97). BE: the guidance refine now requests the SMALLEST possible edit (preserve the rest verbatim) so per-question diffs are small (#96). main `9c62242`. Note: codex CLI network-failed twice on the tiny BE prompt-wording change ("stream disconnected"), so it was hand-applied + tested. Other OQ friction the founder did NOT pick this round (still options): surface OQ at the approval gate / Overview; quick-choice buttons for choice-style questions.
 - Footprint 2026-06-06 (b) — product-UX deep round (founder dogfooding → "开做" chain). Landed a long
   chain of user-reported UX/loop improvements to main (`008a234`), each via the standard gate
   (Claude review + codex pre-review + CI + live smoke; pre-review caught real bugs every BE PR):
