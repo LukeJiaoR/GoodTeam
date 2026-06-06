@@ -1,5 +1,32 @@
 # Current Progress
 
+- Footprint 2026-06-06 (b) — product-UX deep round (founder dogfooding → "开做" chain). Landed a long
+  chain of user-reported UX/loop improvements to main (`008a234`), each via the standard gate
+  (Claude review + codex pre-review + CI + live smoke; pre-review caught real bugs every BE PR):
+  **PRD authoring loop** — Refine-with-AI (edit→deepen→proposed+diff→accept) + workflow stages→Agile
+  Board tasks (#86/#87). **Workflow Graph** — current-node highlight + all gate decisions colored;
+  fixed runtime↔graph node-name mismatch (`prd_review_gate`→`prd`) via run.current_graph_node mapping
+  (#88/#89). **changes_requested loop** — was a dead-park; now captures a reviewer note → feedback-aware
+  auto-revise → back to await approval (#90/#91; pre-review fixes: preserve feedback on worker
+  failure, RFC consistent with PRD). **Open Questions** — parse section → answerable list → answers as
+  guidance → reuse refine proposed/diff/accept (#92/#93). **IA restructure** — flat 13-tab nav →
+  grouped WORK/OBSERVE/INSPECT/SYSTEM, Approvals promoted + pending badge + persistent banner,
+  Roles+Memory+Workers merged into "Agents & Memory", home = Projects-primary + "+ Add or Create
+  Project" modal, FilePath tooltip fix (#94). **Theme System v1** — semantic token layer + type scale
+  + Vivid (Duolingo/Wise) & Minimal (Claude-web) + persisted switcher; **founder decision: both themes
+  + switcher are a permanent BASE feature** (not pick-one), Vivid default (#95; pre-review fix:
+  dark+minimal compound selector). Also earlier in-session: #82–#85 (dark-mode input visibility,
+  Start=real-start dry-run-off, Dev Loop scoped to project repo, multi-line dark controls).
+  **OPERATIONAL LESSON (recurred): after landing a backend OR frontend change, REBUILD frontend/dist
+  AND restart serve before the user tests :8788** — twice a "bug" (devloop pollution; dark toggle
+  "broken") was just a stale dev build, not code. **agy FE smoke gotcha:** symlink the worktree dist
+  with an ABSOLUTE path (relative target resolves from /tmp and breaks → serve falls back to the
+  legacy f-string dashboard, which looks like the React app reverted). Deferred to backlog: Worker
+  Routing Simple/Advanced modes; i18n (after UI stabilizes); new-project git-init (opt 1+3); full
+  ~837-hex→token conversion across all screens; sync_stage_tasks stale artifact_refs;
+  changes-requested-revise design doc committed. agy routed to model `Gemini 3.5 Flash (Medium)` via
+  local `GOODTEAM_AGY_MODEL` (uncommitted).
+
 - Footprint 2026-06-06 — round-2 tail (post-land observations, all deferred to backlog). After the
   four fixes landed (#82/#83/#84/#85, main `5d47b87`), founder reported Active Worktrees + Workflow
   Graph still showed other/stale data. ROOT CAUSE was operational, not a bug: the long-running dev
