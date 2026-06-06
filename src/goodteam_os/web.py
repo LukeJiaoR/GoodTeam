@@ -1032,6 +1032,13 @@ def resolve_dashboard_state(workspace: Path, project_key: str = "") -> AgileDevS
 
 
 def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, object]:
+    def _map_to_graph_node(node: str) -> str:
+        if node.endswith("_review_gate"):
+            return node.removesuffix("_review_gate")
+        if node.startswith("await_") and node.endswith("_approval"):
+            return node.removeprefix("await_").removesuffix("_approval")
+        return node
+
     key = ""
     if project_key.strip():
         try:
@@ -1091,6 +1098,8 @@ def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, ob
                 "run_id": state.run_id,
                 "current_node": state.current_node,
                 "next_node": state.next_node,
+                "current_graph_node": _map_to_graph_node(state.current_node),
+                "next_graph_node": _map_to_graph_node(state.next_node),
                 "approvals": {gate: str(decision) for gate, decision in state.approvals.items()},
             }
 
