@@ -416,6 +416,13 @@ export default function App() {
   const [dryRun, setDryRun] = useState(false);
   const isNewProjectMode = startMode === 'new_project' || startMode === 'new';
 
+  const [initGit, setInitGit] = useState(true);
+  const [createRemote, setCreateRemote] = useState(false);
+  const [remotePrivate, setRemotePrivate] = useState(true);
+  const [gitWarnings, setGitWarnings] = useState([]);
+  const [gitRemoteCreated, setGitRemoteCreated] = useState(false);
+  const [showGitNotice, setShowGitNotice] = useState(false);
+
   // Dispatch track form states
   const [dispatchName, setDispatchName] = useState('');
   const [dispatchRole, setDispatchRole] = useState('backend');
@@ -681,6 +688,18 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('gt-theme', theme);
   }, [theme]);
+
+  // Reset Git toggles/notices when the new project modal is opened
+  useEffect(() => {
+    if (newProjectModalOpen) {
+      setInitGit(true);
+      setCreateRemote(false);
+      setRemotePrivate(true);
+      setGitWarnings([]);
+      setGitRemoteCreated(false);
+      setShowGitNotice(false);
+    }
+  }, [newProjectModalOpen]);
 
   const updateUrl = (key) => {
     const newUrl = key ? `${window.location.pathname}?project=${key}` : window.location.pathname;
@@ -1340,12 +1359,39 @@ export default function App() {
           delivery_mode: deliveryMode,
           ...customDeliveryPayload,
           role_model_overrides: parsedOverrides,
+          ...(isNewProjectMode ? {
+            init_git: initGit,
+            create_remote: createRemote,
+            remote_private: remotePrivate
+          } : {})
         }),
       });
       const res = await response.json();
       if (!response.ok) throw new Error(res.error || 'Failed to create config');
       setProjectConfig(res.project_config);
       showToast('Local config created successfully');
+
+      if (res.git) {
+        const warnings = res.git.warnings || [];
+        const remoteCreated = res.git.remote_created;
+        setGitWarnings(warnings);
+        setGitRemoteCreated(!!remoteCreated);
+        if (warnings.length > 0 || remoteCreated) {
+          setShowGitNotice(true);
+        } else {
+          setShowGitNotice(false);
+        }
+        if (warnings.length > 0) {
+          showToast(`Git warnings: ${warnings.join(', ')}`, true);
+        } else if (remoteCreated) {
+          showToast('GitHub remote repository created successfully!');
+        }
+      } else {
+        setShowGitNotice(false);
+        setGitWarnings([]);
+        setGitRemoteCreated(false);
+      }
+
       fetchState(projectKey || res.project_key);
     } catch (err) {
       showToast(err.message, true);
@@ -1384,12 +1430,39 @@ export default function App() {
           project_config: projectConfig,
           role_model_overrides: overrides,
           dry_run: dryRun,
+          ...(isNewProjectMode ? {
+            init_git: initGit,
+            create_remote: createRemote,
+            remote_private: remotePrivate
+          } : {})
         }),
       });
       const res = await response.json();
       if (!response.ok) throw new Error(res.error || 'Failed to start workflow');
 
       showToast(dryRun ? 'Dry run simulation finished' : 'Workflow started!');
+
+      if (res.git) {
+        const warnings = res.git.warnings || [];
+        const remoteCreated = res.git.remote_created;
+        setGitWarnings(warnings);
+        setGitRemoteCreated(!!remoteCreated);
+        if (warnings.length > 0 || remoteCreated) {
+          setShowGitNotice(true);
+        } else {
+          setShowGitNotice(false);
+        }
+        if (warnings.length > 0) {
+          showToast(`Git warnings: ${warnings.join(', ')}`, true);
+        } else if (remoteCreated) {
+          showToast('GitHub remote repository created successfully!');
+        }
+      } else {
+        setShowGitNotice(false);
+        setGitWarnings([]);
+        setGitRemoteCreated(false);
+      }
+
       if (!dryRun) {
         setIdea('');
         const pk = startProjectKey || projectKey || res.project_key;
@@ -2247,6 +2320,81 @@ export default function App() {
                   </div>
                 </div>
 
+                {isNewProjectMode && (
+                  <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                    <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">Git Repository Configuration</div>
+                    <div className="space-y-4">
+                      {/* Initialize Git Checkbox */}
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id="init-git-repo"
+                          checked={initGit}
+                          onChange={(e) => setInitGit(e.target.checked)}
+                          className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer"
+                        />
+                        <label htmlFor="init-git-repo" className="text-xs font-bold text-text-secondary cursor-pointer">
+                          Initialize Git repository
+                        </label>
+                      </div>
+
+                      {/* Create GitHub Repo Checkbox */}
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id="create-github-repo"
+                          checked={createRemote}
+                          onChange={(e) => setCreateRemote(e.target.checked)}
+                          className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer"
+                        />
+                        <label htmlFor="create-github-repo" className="text-xs font-bold text-text-secondary cursor-pointer">
+                          Create GitHub repo & push
+                        </label>
+                      </div>
+
+                      {/* Revealed options when createRemote is checked */}
+                      {createRemote && (
+                        <div className="pl-6 space-y-4 border-l-2 border-accent/30 mt-2">
+                          {/* Private / Public Toggle */}
+                          <div className="flex items-center space-x-3">
+                            <span className="text-xs font-bold text-text-secondary">Repository Visibility:</span>
+                            <div className="flex bg-surface-raised p-1 rounded-lg border border-border-subtle select-none">
+                              <button
+                                type="button"
+                                onClick={() => setRemotePrivate(true)}
+                                className={`px-3 py-1.5 rounded-md text-2xs font-bold transition-all cursor-pointer ${remotePrivate ? 'bg-accent text-text-inverse shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
+                              >
+                                Private
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRemotePrivate(false)}
+                                className={`px-3 py-1.5 rounded-md text-2xs font-bold transition-all cursor-pointer ${!remotePrivate ? 'bg-accent text-text-inverse shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
+                              >
+                                Public
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Helper / Callout Box */}
+                          <div className="bg-surface-raised text-zinc-900 dark:text-zinc-100 p-4 rounded-xl border border-border-subtle text-2xs leading-relaxed space-y-1.5 shadow-sm">
+                            <p className="font-extrabold flex items-center gap-1">
+                              <Info className="h-3.5 w-3.5 text-accent shrink-0" />
+                              GitHub Authentication Requirement
+                            </p>
+                            <p>
+                              Requires a GitHub Personal Access Token in your environment as <strong className="font-bold font-mono">GITHUB_TOKEN</strong> (or <strong className="font-bold font-mono">GH_TOKEN</strong>) before launching GoodTeam.
+                            </p>
+                            <p>
+                              Token scopes — Classic: <strong className="font-bold font-mono">repo</strong>. Fine-grained: <strong className="font-bold font-mono">Administration: Read & write</strong> + <strong className="font-bold font-mono">Contents: Read & write</strong> (on the target account/org).
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="col-span-2 border-t border-border-subtle my-4" />
 
                 {/* Toggle Advanced Button */}
@@ -3018,6 +3166,44 @@ export default function App() {
               className="bg-surface-raised hover:bg-status-warning-bg border-2 border-status-warning/30 shadow-button text-status-warning-text font-bold px-3 py-1 rounded-lg uppercase tracking-wider transition-all duo-button-physics text-2xs cursor-pointer"
             >
               Review
+            </button>
+          </div>
+        )}
+
+        {/* Git Creation Notice */}
+        {showGitNotice && (
+          <div className="bg-surface-raised border-b-2 border-border-subtle px-6 py-4 flex flex-col md:flex-row md:items-start justify-between gap-4 animate-fade-in shrink-0">
+            <div className="flex-grow space-y-1">
+              <div className="flex items-center space-x-2">
+                <span className="p-1 bg-[#E8F9D9] dark:bg-emerald-950/20 text-[#3D8B00] dark:text-emerald-400 rounded-lg">
+                  <CheckCircle className="h-4 w-4" />
+                </span>
+                <span className="font-extrabold text-sm text-text-primary">Git Repository Initialized</span>
+              </div>
+              {gitRemoteCreated && (
+                <p className="text-xs text-text-secondary pl-8">
+                  GitHub remote repository was successfully created and initial commit was pushed!
+                </p>
+              )}
+              {gitWarnings.length > 0 && (
+                <div className="space-y-1 mt-2 pl-8">
+                  <p className="text-xs font-bold text-status-warning-text flex items-center gap-1">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Git Warnings:
+                  </p>
+                  <ul className="list-disc pl-5 text-2xs text-text-muted space-y-0.5">
+                    {gitWarnings.map((warning, i) => (
+                      <li key={i}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setShowGitNotice(false)}
+              className="bg-surface-raised hover:bg-surface-sunken border-2 border-border-subtle shadow-button text-text-secondary font-bold px-3 py-1.5 rounded-xl text-2xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer shrink-0"
+            >
+              Dismiss
             </button>
           </div>
         )}
