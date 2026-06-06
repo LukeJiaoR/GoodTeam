@@ -467,7 +467,7 @@ export default function App() {
   const [openQuestions, setOpenQuestions] = useState([]);
   const [openQuestionsAnswers, setOpenQuestionsAnswers] = useState({});
   const [fetchingOpenQuestions, setFetchingOpenQuestions] = useState(false);
-  const [answeringOpenQuestions, setAnsweringOpenQuestions] = useState(false);
+  const [answeringOpenQuestions, setAnsweringOpenQuestions] = useState(null); // string (question text) or null
   const [gateDebate, setGateDebate] = useState(EMPTY_GATE_DEBATE);
   const [debateRun, setDebateRun] = useState({ key: '', loading: false, error: '' });
   const [messageFeed, setMessageFeed] = useState(EMPTY_MESSAGE_FEED);
@@ -1626,15 +1626,24 @@ export default function App() {
     }
   };
 
-  const handleApplyAnswers = async () => {
+  const handleApplyAnswers = async (singleQuestion) => {
     if (!projectKey || !editingArtifact) return;
-    const answersToSend = Object.entries(openQuestionsAnswers)
-      .filter(([, ans]) => ans && ans.trim())
-      .map(([q, ans]) => ({ question: q, answer: ans }));
+    
+    let answersToSend = [];
+    if (singleQuestion) {
+      const ans = openQuestionsAnswers[singleQuestion];
+      if (ans && ans.trim()) {
+        answersToSend = [{ question: singleQuestion, answer: ans }];
+      }
+    } else {
+      answersToSend = Object.entries(openQuestionsAnswers)
+        .filter(([, ans]) => ans && ans.trim())
+        .map(([q, ans]) => ({ question: q, answer: ans }));
+    }
 
     if (answersToSend.length === 0) return;
 
-    setAnsweringOpenQuestions(true);
+    setAnsweringOpenQuestions(singleQuestion || true);
     try {
       const response = await fetch('/api/answer-open-questions', {
         method: 'POST',
@@ -1667,7 +1676,7 @@ export default function App() {
     } catch (err) {
       showToast(err.message, true);
     } finally {
-      setAnsweringOpenQuestions(false);
+      setAnsweringOpenQuestions(null);
     }
   };
 
@@ -4571,36 +4580,43 @@ export default function App() {
                                   ) : (
                                     <>
                                       <div className="flex-grow overflow-y-auto space-y-3 pr-1 mb-3">
-                                        {openQuestions.map((q, idx) => (
-                                          <div key={idx} className="bg-white dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 space-y-2">
-                                            <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100 leading-relaxed">
-                                              {q}
-                                            </p>
-                                            <textarea
-                                              value={openQuestionsAnswers[q] || ''}
-                                              onChange={(e) => setOpenQuestionsAnswers(prev => ({ ...prev, [q]: e.target.value }))}
-                                              placeholder="Type your answer here..."
-                                              className="w-full bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors resize-y min-h-[60px] leading-relaxed font-sans"
-                                            />
-                                          </div>
-                                        ))}
-                                      </div>
+                                        {openQuestions.map((q, idx) => {
+                                          const answerVal = openQuestionsAnswers[q] || '';
+                                          const isThisApplying = answeringOpenQuestions === q;
+                                          const isAnyApplying = answeringOpenQuestions !== null && answeringOpenQuestions !== false;
+                                          const isApplyDisabled = isAnyApplying || !answerVal.trim();
 
-                                      {openQuestions.length > 0 && (
-                                        <button
-                                          type="button"
-                                          onClick={handleApplyAnswers}
-                                          disabled={answeringOpenQuestions || !Object.values(openQuestionsAnswers).some(val => val && val.trim())}
-                                          className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:pointer-events-none border-2 border-indigo-850 shadow-[0_3px_0_#4338ca] text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-1.5 shrink-0"
-                                        >
-                                          {answeringOpenQuestions ? (
-                                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                          ) : (
-                                            <Sparkles className="h-3.5 w-3.5" />
-                                          )}
-                                          <span>{answeringOpenQuestions ? 'Applying...' : 'Apply Answers with AI'}</span>
-                                        </button>
-                                      )}
+                                          return (
+                                            <div key={idx} className="bg-white dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 space-y-2">
+                                              <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100 leading-relaxed">
+                                                {q}
+                                              </p>
+                                              <textarea
+                                                value={answerVal}
+                                                onChange={(e) => setOpenQuestionsAnswers(prev => ({ ...prev, [q]: e.target.value }))}
+                                                placeholder="Type your answer here..."
+                                                className="w-full bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors resize-y min-h-[60px] leading-relaxed font-sans"
+                                                disabled={isAnyApplying}
+                                              />
+                                              <div className="flex justify-end">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleApplyAnswers(q)}
+                                                  disabled={isApplyDisabled}
+                                                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:pointer-events-none border-2 border-indigo-850 shadow-[0_2px_0_#4338ca] dark:bg-indigo-700 dark:hover:bg-indigo-600 dark:border-indigo-900 dark:shadow-[0_2px_0_#312e81] text-white font-bold py-1 px-3 rounded-lg text-[10px] uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1 cursor-pointer"
+                                                >
+                                                  {isThisApplying ? (
+                                                    <RefreshCw className="h-3 w-3 animate-spin" />
+                                                  ) : (
+                                                    <Sparkles className="h-3 w-3" />
+                                                  )}
+                                                  <span>{isThisApplying ? 'Applying...' : 'Apply'}</span>
+                                                </button>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
                                     </>
                                   )}
                                 </div>
