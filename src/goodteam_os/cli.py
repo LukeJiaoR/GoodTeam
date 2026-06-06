@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--model-config", type=Path, default=Path("models.yaml"))
     start.add_argument("--model-profile", default="")
     start.add_argument("--role-model", action="append", default=[])
-    start.add_argument("--delivery-mode", choices=["mvp", "init_project", "multi_service"], default="")
+    start.add_argument("--delivery-mode", choices=list(DELIVERY_MODES), default="")
     start.add_argument("--source-type", choices=["new_project", "existing_project"], default="new_project")
     start.add_argument("--project-config", type=Path)
     start.add_argument("--dry-run", action="store_true")

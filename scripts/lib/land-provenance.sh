@@ -41,12 +41,29 @@ land_provenance_extract() {
   }
 
   newest_job="$({ find "$jobs_src" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | while IFS= read -r job_dir; do
+    local_role=""
     if [ -f "$job_dir/status.json" ]; then
-      printf '%s\t%s\n' "$(stat -f '%m' "$job_dir/status.json" 2>/dev/null || stat -c '%Y' "$job_dir/status.json" 2>/dev/null || printf '0')" "$job_dir"
+      local_role="$("${PY:-python3}" - "$job_dir/status.json" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    payload = {}
+role = payload.get("role") or payload.get("role_key") or payload.get("roleKey") or ""
+print(role if isinstance(role, str) else "")
+PY
+)"
+      priority=1
+      [ "$local_role" = "code_review" ] && priority=0
+      [ "$local_role" = "review" ] && priority=0
+      printf '%s\t%s\t%s\n' "$priority" "$(stat -f '%m' "$job_dir/status.json" 2>/dev/null || stat -c '%Y' "$job_dir/status.json" 2>/dev/null || printf '0')" "$job_dir"
     else
-      printf '%s\t%s\n' "$(stat -f '%m' "$job_dir" 2>/dev/null || stat -c '%Y' "$job_dir" 2>/dev/null || printf '0')" "$job_dir"
+      printf '0\t%s\t%s\n' "$(stat -f '%m' "$job_dir" 2>/dev/null || stat -c '%Y' "$job_dir" 2>/dev/null || printf '0')" "$job_dir"
     fi
-  done | sort -nr | sed -n '1s/^[^	]*	//p'; } || true)"
+  done | sort -k1,1nr -k2,2nr | sed -n '1s/^[^	]*	[^	]*	//p'; } || true)"
 
   status_json="$newest_job/status.json"
   if [ -n "$newest_job" ] && [ -f "$status_json" ]; then

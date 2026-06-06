@@ -141,3 +141,27 @@ def test_sync_stage_tasks_seeds_future_stages_during_takeover(tmp_path):
     sync_stage_tasks(state, store)
 
     assert {task["status"] for task in store.list_tasks()} == {"todo"}
+
+
+def test_sync_stage_tasks_replaces_and_clears_stage_artifact_refs(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = LocalTaskStore(project_root)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build content workflow")
+    state.approvals["prd"] = "approved"
+    state.artifacts["prd"] = "/tmp/prd-v1.md"
+
+    sync_stage_tasks(state, store)
+    prd_task = next(task for task in store.list_tasks() if "stage:product_requirement" in task["external_refs"])
+
+    assert store.get_task(prd_task["id"])["artifact_refs"] == ["/tmp/prd-v1.md"]
+
+    state.artifacts["prd"] = "/tmp/prd-v2.md"
+    sync_stage_tasks(state, store)
+
+    assert store.get_task(prd_task["id"])["artifact_refs"] == ["/tmp/prd-v2.md"]
+
+    state.artifacts.pop("prd")
+    sync_stage_tasks(state, store)
+
+    assert store.get_task(prd_task["id"])["artifact_refs"] == []

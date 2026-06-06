@@ -62,12 +62,13 @@ PRD_REVIEW_ROLES = [
     "Review / QA",
 ]
 
-_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "anthropic", "claude", "gemini", "agy", "antigravity", "fake", "noop", "human")
+_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "gemini", "agy", "fake", "noop", "human")
 WORKER_BACKEND_OPTIONS = [
     mode
     for mode in _PREFERRED_WORKER_BACKEND_ORDER
     if mode in {*BUILTIN_WORKER_MODES, *CLI_BACKENDS}
 ]
+WORKER_BACKEND_ACCEPTED_OPTIONS = sorted({*WORKER_BACKEND_OPTIONS, *CLI_BACKENDS})
 WORKER_ROLES = [
     "orchestrator",
     "research",
@@ -2323,9 +2324,9 @@ def update_project_worker_backend_settings(workspace: Path, request: dict[str, o
 
 
 def _validate_worker_backend_config(*, mode: str, workers: dict[str, str], role_models: dict[str, str] | None = None) -> None:
-    valid_backends = set(WORKER_BACKEND_OPTIONS)
+    valid_backends = set(WORKER_BACKEND_ACCEPTED_OPTIONS)
     if mode not in valid_backends:
-        raise ValueError(f"Unknown worker backend: {mode}. Use one of: {', '.join(WORKER_BACKEND_OPTIONS)}")
+        raise ValueError(f"Unknown worker backend: {mode}. Use one of: {', '.join(WORKER_BACKEND_ACCEPTED_OPTIONS)}")
     valid_roles = set(WORKER_ROLES)
     for role, backend in workers.items():
         if not role:
@@ -2333,7 +2334,7 @@ def _validate_worker_backend_config(*, mode: str, workers: dict[str, str], role_
         if role not in valid_roles:
             raise ValueError(f"Unknown worker role: {role}. Use one of: {', '.join(WORKER_ROLES)}")
         if backend not in valid_backends:
-            raise ValueError(f"Unknown worker backend for {role}: {backend}. Use one of: {', '.join(WORKER_BACKEND_OPTIONS)}")
+            raise ValueError(f"Unknown worker backend for {role}: {backend}. Use one of: {', '.join(WORKER_BACKEND_ACCEPTED_OPTIONS)}")
     for role, model in (role_models or {}).items():
         if not role:
             raise ValueError("worker role cannot be empty")
@@ -2370,6 +2371,26 @@ def normalize_delivery_mode(value: str) -> str:
     if mode not in DELIVERY_MODES:
         raise ValueError(f"Unknown delivery mode: {mode}")
     return mode
+
+
+def render_delivery_mode_options(selected_delivery_mode: str) -> str:
+    labels = {
+        "mvp": "MVP / validation slice",
+        "init_project": "Init project / production starter",
+        "multi_service": "Multi-service product",
+        "static_site": "Static site / landing",
+        "cli_tool": "CLI tool",
+        "library": "Library / SDK",
+        "data_pipeline": "Data pipeline",
+        "mobile_app": "Mobile app",
+        "feature_increment": "Feature increment",
+        "custom": "Custom",
+    }
+    selected = normalize_delivery_mode(selected_delivery_mode)
+    return "\n".join(
+        f'<option value="{mode}"{" selected" if mode == selected else ""}>{escape(labels.get(mode, mode))}</option>'
+        for mode in DELIVERY_MODES
+    )
 
 
 def render_review_roles(review_roles: list[str]) -> str:
@@ -4667,15 +4688,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         f'<option value="{escape(profile)}"{" selected" if profile == selected_profile else ""}>{escape(profile)}</option>'
         for profile in profiles
     )
-    delivery_mode_options = "\
-".join(
-        f'<option value="{mode}"{" selected" if mode == selected_delivery_mode else ""}>{label}</option>'
-        for mode, label in [
-            ("mvp", "MVP / validation slice"),
-            ("init_project", "Init project / production starter"),
-            ("multi_service", "Multi-service product"),
-        ]
-    )
+    delivery_mode_options = render_delivery_mode_options(selected_delivery_mode)
     worker_model = worker_model_label(state, start_context)
     start_workflow_section = ""
     if state is None:

@@ -168,3 +168,47 @@ def test_land_provenance_airdrop_records_forced_unverified_ci_status(tmp_path):
     assert "PR #98704 landed" in events[0]["text"]
     assert "CI=forced-unverified" in events[0]["text"]
     assert "CI=pass" not in events[0]["text"]
+
+
+def test_land_provenance_extract_prefers_non_review_job_over_newer_code_review(tmp_path):
+    root = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    python_shim = _make_fake_main(root)
+    jobs_root = worktree / ".goodteam" / "workers" / "jobs"
+    implementation = jobs_root / "job-impl"
+    code_review = jobs_root / "job-review"
+    implementation.mkdir(parents=True)
+    code_review.mkdir()
+    (implementation / "result.md").write_text("implementation payload\n", encoding="utf-8")
+    (implementation / "status.json").write_text(
+        json.dumps({"run_id": "run-impl", "job_id": "job-impl", "role": "implementation"}),
+        encoding="utf-8",
+    )
+    (code_review / "result.md").write_text("review payload\n", encoding="utf-8")
+    (code_review / "status.json").write_text(
+        json.dumps({"run_id": "run-review", "job_id": "job-review", "role": "code_review"}),
+        encoding="utf-8",
+    )
+    os.utime(implementation / "status.json", (100, 100))
+    os.utime(code_review / "status.json", (200, 200))
+    pr = "98705"
+
+    result = _run_bash(
+        f"""
+        set -euo pipefail
+        . {_q(HELPER)}
+        export PY={_q(python_shim)}
+        land_provenance_extract {pr} {_q(worktree)}
+        land_provenance_airdrop {pr} {_q(root)} aaaaabbbbb pass
+        """,
+        env={**os.environ, "PATH": os.environ["PATH"]},
+    )
+
+    event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
+    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "run_id=run-impl" in events[0]["text"]
+    assert "job_id=job-impl" in events[0]["text"]
+    assert "dispatch_role=implementation" in events[0]["text"]
+    assert "job-review" not in events[0]["text"]

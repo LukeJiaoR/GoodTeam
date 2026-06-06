@@ -9,6 +9,7 @@ from goodteam_os.workers import (
     WorkerJobStore,
     _claude_summary,
     _codex_summary,
+    _query_agy_models,
     _query_codex_models,
     classify_worker_failure,
     discover_installed_agents,
@@ -1210,6 +1211,59 @@ def test_query_codex_models_returns_none_on_failures(monkeypatch):
     assert _query_codex_models("/fake/bin/codex") is None
 
 
+def test_query_agy_models_parses_line_or_json_catalog(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+
+        class Completed:
+            returncode = 0
+            stdout = "Gemini 3.5 Flash (Medium)\nClaude Sonnet 4.6\n"
+
+        return Completed()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert _query_agy_models("/fake/bin/agy") == ("Gemini 3.5 Flash (Medium)", "Claude Sonnet 4.6")
+    assert calls[0]["command"] == ["/fake/bin/agy", "models"]
+
+    def fake_json_run(command, **kwargs):
+        class Completed:
+            returncode = 0
+            stdout = '{"models":[{"name":"Agy A"},{"label":"Agy B"}]}'
+
+        return Completed()
+
+    monkeypatch.setattr(subprocess, "run", fake_json_run)
+
+    assert _query_agy_models("/fake/bin/agy") == ("Agy A", "Agy B")
+
+
+def test_query_agy_models_returns_none_on_failures(monkeypatch):
+    def set_run(value):
+        def fake_run(command, **kwargs):
+            if isinstance(value, BaseException):
+                raise value
+
+            class Completed:
+                returncode = value[0]
+                stdout = value[1]
+
+            return Completed()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+    set_run((1, ""))
+    assert _query_agy_models("/fake/bin/agy") is None
+
+    set_run(subprocess.TimeoutExpired(["agy", "models"], 10))
+    assert _query_agy_models("/fake/bin/agy") is None
+
+    set_run((0, "\n\n"))
+    assert _query_agy_models("/fake/bin/agy") is None
+
+
 def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(monkeypatch):
     available_commands = {"codex", "claude", "gemini"}
 
@@ -1232,6 +1286,7 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     monkeypatch.delenv("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", raising=False)
     monkeypatch.delenv("AGY_API_KEY", raising=False)
     monkeypatch.setattr("goodteam_os.workers._query_codex_models", lambda command_path: None)
+    monkeypatch.setattr("goodteam_os.workers._query_agy_models", lambda command_path: None)
 
     discovered = discover_installed_agents()
 
@@ -1274,6 +1329,7 @@ def test_discover_installed_agents_uses_live_codex_models(monkeypatch):
         "goodteam_os.workers._query_codex_models",
         lambda command_path: ("gpt-live-a", "gpt-live-b", "gpt-live-a"),
     )
+    monkeypatch.setattr("goodteam_os.workers._query_agy_models", lambda command_path: ("Agy Medium", "Agy Max"))
 
     by_backend = {item["backend"]: item for item in discover_installed_agents()}
 
@@ -1283,14 +1339,15 @@ def test_discover_installed_agents_uses_live_codex_models(monkeypatch):
     assert "claude-sonnet-4-6" in by_backend["claude"]["models"]
     assert by_backend["gemini"]["models_source"] == "static"
     assert "gemini-2.5-pro" in by_backend["gemini"]["models"]
-    assert by_backend["agy"]["models_source"] == "static"
-    assert by_backend["agy"]["models"] == ["auto"]
+    assert by_backend["agy"]["models_source"] == "live"
+    assert by_backend["agy"]["models"] == ["auto", "Agy Medium", "Agy Max"]
 
 
 def test_discover_installed_agents_uses_static_codex_models_when_live_query_fails(monkeypatch):
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
     monkeypatch.setenv("CODEX_API_KEY", "codex-secret")
     monkeypatch.setattr("goodteam_os.workers._query_codex_models", lambda command_path: None)
+    monkeypatch.setattr("goodteam_os.workers._query_agy_models", lambda command_path: None)
 
     by_backend = {item["backend"]: item for item in discover_installed_agents()}
 
@@ -1643,7 +1700,36 @@ def test_codex_adapter_uses_job_model_when_present(tmp_path, monkeypatch):
 
     assert result["model"] == "gpt-5.3-codex"
     assert calls[0]["command"][:4] == ["/fake/bin/codex", "exec", "--model", "gpt-5.3-codex"]
-    assert "Use model gpt-5.3-codex" in calls[0]["input"]
+    assert "Configured worker backend: codex." in calls[0]["input"]
+    assert "Configured model: gpt-5.3-codex." in calls[0]["input"]
+
+
+def test_worker_prompt_uses_adapter_default_model_instead_of_codex_default_for_agy(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    calls = []
+    install_fake_popen(
+        monkeypatch,
+        result_text="Agy implemented the feature.",
+        calls=calls,
+    )
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="ui",
+        adapter="agy",
+        task="Polish the UI.",
+        context="Approved artifacts are available.",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["model"] == "auto"
+    command = calls[0]["command"]
+    prompt = command[command.index("-p") + 1]
+    assert calls[0]["input"] is None
+    assert "Configured worker backend: agy." in prompt
+    assert "Configured model: auto." in prompt
+    assert "gpt-5.3-codex" not in prompt
 
 
 def test_codex_adapter_summarizes_invalid_api_key_failure(tmp_path, monkeypatch):

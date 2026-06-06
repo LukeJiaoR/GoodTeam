@@ -15,6 +15,7 @@
 #   --base <branch>        Base branch to diff against (default: main).
 #   --worktree <path>      Existing dev worktree to run read-only review in.
 #                          Default: create throwaway worktree off PR head.
+#   --adapter <name>       Primary review adapter (default: codex; fallback: claude, agy).
 #   --allow-unsafe         Pass through to dispatch only if needed by root policy.
 #   -h, --help             Show this help.
 #
@@ -30,10 +31,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 PY="$ROOT/.venv/bin/python"
+. "$ROOT/scripts/lib/pre-review.sh"
 
 PR=""
 BASE="main"
 WORKTREE=""
+ADAPTER="codex"
 ALLOW_UNSAFE=0
 THROWAWAY_WORKTREE=""
 
@@ -43,6 +46,8 @@ while [ "$#" -gt 0 ]; do
     --base=*) BASE="${1#*=}"; shift ;;
     --worktree) WORKTREE="$2"; shift 2 ;;
     --worktree=*) WORKTREE="${1#*=}"; shift ;;
+    --adapter) ADAPTER="$2"; shift 2 ;;
+    --adapter=*) ADAPTER="${1#*=}"; shift ;;
     --allow-unsafe) ALLOW_UNSAFE=1; shift ;;
     -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
     --*) echo "[pre-review] unknown arg: $1" >&2; exit 2 ;;
@@ -152,30 +157,42 @@ else
   echo "[pre-review] using existing worktree: $WORKTREE"
 fi
 
-TRACK="code_review:codex:$TASK_FILE"
-CMD=(env PYTHONPATH=src "$PY" -m goodteam_os.cli dispatch
-  --project-root "$WORKTREE"
-  --track "$TRACK")
-if [ "$ALLOW_UNSAFE" = 1 ]; then
-  CMD+=(--allow-unsafe)
+DISPATCH_OK=0
+LAST_STATUS=""
+for candidate_adapter in $(pre_review_fallback_adapters "$ADAPTER"); do
+  TRACK="code_review:$candidate_adapter:$TASK_FILE"
+  CMD=(env PYTHONPATH=src "$PY" -m goodteam_os.cli dispatch
+    --project-root "$WORKTREE"
+    --track "$TRACK")
+  if [ "$ALLOW_UNSAFE" = 1 ]; then
+    CMD+=(--allow-unsafe)
+  fi
+
+  echo "[pre-review] dispatching read-only review track: $TRACK"
+  echo "[pre-review] command: ${CMD[*]}"
+  if "${CMD[@]}"; then
+    DISPATCH_OK=1
+    break
+  fi
+  LAST_STATUS="$(pre_review_latest_status "$WORKTREE" || true)"
+  if [ -n "$LAST_STATUS" ] && pre_review_is_auth_failure "$LAST_STATUS"; then
+    echo "[pre-review] adapter $candidate_adapter hit auth/provider failure; trying fallback if available." >&2
+    continue
+  fi
+  echo "[pre-review] adapter $candidate_adapter failed for a non-auth reason; not falling back." >&2
+  break
+done
+
+if [ "$DISPATCH_OK" != 1 ]; then
+  echo "[pre-review] review dispatch failed." >&2
+  exit 1
 fi
 
-echo "[pre-review] dispatching read-only review track: $TRACK"
-echo "[pre-review] command: ${CMD[*]}"
-"${CMD[@]}"
-
 REPORT_SRC=""
-REPORT_GLOB="$WORKTREE/.goodteam/workers/jobs"/*/result.md
-shopt -s nullglob
-for candidate in $REPORT_GLOB; do
-  if [ -z "$REPORT_SRC" ] || [ "$candidate" -nt "$REPORT_SRC" ]; then
-    REPORT_SRC="$candidate"
-  fi
-done
-shopt -u nullglob
+REPORT_SRC="$(pre_review_select_report "$WORKTREE" || true)"
 
 REPORT_COPY="/tmp/pre-review-$PR-report.md"
-if [ -n "$REPORT_SRC" ] && [ -f "$REPORT_SRC" ]; then
+if [ -n "$REPORT_SRC" ] && [ -s "$REPORT_SRC" ]; then
   cp "$REPORT_SRC" "$REPORT_COPY"
   echo "[pre-review] review report location:"
   echo "[pre-review]   $REPORT_COPY"

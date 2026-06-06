@@ -285,9 +285,15 @@ function formatHumanTime(timestamp) {
   }
 }
 
-const DEFAULT_BACKEND_OPTIONS = ["fake", "codex", "anthropic", "noop", "human"];
+const DEFAULT_BACKEND_OPTIONS = ["fake", "codex", "claude", "noop", "human"];
 const DEFAULT_WORKER_ROLES = ["ui", "implementation", "qa"];
-const MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human", "agy", "antigravity"];
+const MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human"];
+const WORKER_ROUTING_BUCKETS = [
+  { key: 'product', label: 'Product + Architecture', roles: ['product_requirement', 'architect', 'review', 'planner'] },
+  { key: 'implementation', label: 'Implementation', roles: ['ui', 'frontend', 'backend', 'implementation'] },
+  { key: 'quality', label: 'Quality + Release', roles: ['qa', 'code_review', 'release'] },
+  { key: 'ops', label: 'Orchestration + Memory', roles: ['orchestrator', 'research', 'retro_memory'] },
+];
 
 const FALLBACK_AGENT_MODES = {
   codex: {
@@ -315,6 +321,30 @@ const FALLBACK_AGENT_MODES = {
     model_default: "auto"
   }
 };
+
+function canonicalBackendForOption(backend) {
+  if (backend === 'anthropic') return 'claude';
+  if (backend === 'antigravity') return 'agy';
+  return backend;
+}
+
+function suggestedAnswersForQuestion(question) {
+  const text = String(question || '');
+  const choices = [];
+  const optionPattern = /(?:^|[\s([,;])(?:option\s*)?([A-C]|yes|no)\s*[:.)-]\s*([^?;\n]{1,60})/gi;
+  let match;
+  while ((match = optionPattern.exec(text)) !== null) {
+    const label = match[2].trim();
+    const value = match[3].trim().replace(/[),.;:]+$/, '');
+    if (value && !choices.some(choice => choice.value === value)) {
+      choices.push({ label: label.toUpperCase(), value });
+    }
+  }
+  if (/\byes\b/i.test(text) && /\bno\b/i.test(text) && choices.length === 0) {
+    choices.push({ label: 'Yes', value: 'Yes' }, { label: 'No', value: 'No' });
+  }
+  return choices.slice(0, 4);
+}
 
 function computeLineDiff(baseText, newText) {
   const baseLines = (baseText || '').split('\n');
@@ -371,6 +401,8 @@ export default function App() {
   const [panelGlobalMode, setPanelGlobalMode] = useState('codex');
   const [panelRoleOverrides, setPanelRoleOverrides] = useState({});
   const [panelRoleModels, setPanelRoleModels] = useState({});
+  const [workerRoutingMode, setWorkerRoutingMode] = useState('simple');
+  const [simpleRoutingBackends, setSimpleRoutingBackends] = useState({});
   const [customModelSelected, setCustomModelSelected] = useState({});
   const [configuringRoles, setConfiguringRoles] = useState({});
   const [backendsError, setBackendsError] = useState(null);
@@ -1649,6 +1681,13 @@ export default function App() {
     }
   };
 
+  const handleOpenQuestionsFromApproval = async (review) => {
+    await handleEditArtifact(review);
+    if (review?.artifact) {
+      fetchOpenQuestions(projectKey, review.artifact);
+    }
+  };
+
   const handleSaveArtifact = async () => {
     if (!editingArtifact) return;
     setActionLoading(true);
@@ -1892,6 +1931,24 @@ export default function App() {
         [role]: false
       }));
     }
+  };
+
+  const handleApplySimpleRouting = () => {
+    const nextOverrides = { ...panelRoleOverrides };
+    WORKER_ROUTING_BUCKETS.forEach((bucket) => {
+      const backend = simpleRoutingBackends[bucket.key] || '';
+      bucket.roles.forEach((role) => {
+        if (!workerRoles.includes(role)) return;
+        if (backend) {
+          nextOverrides[role] = backend;
+        } else {
+          delete nextOverrides[role];
+        }
+      });
+    });
+    setPanelRoleOverrides(nextOverrides);
+    setWorkerRoutingMode('advanced');
+    setBackendsSuccess('Simple routing applied. Review Advanced roles, then save.');
   };
 
   const handleModelDropdownChange = (role, val) => {
@@ -2895,7 +2952,7 @@ export default function App() {
   const startContext = data?.start_context || {};
   const backendOptions = startContext.worker_backend_options || DEFAULT_BACKEND_OPTIONS;
   const safeDiscoveredAgents = (discoveredAgents || []).reduce((acc, agent) => {
-    const backend = String(agent?.backend || '').trim();
+    const backend = canonicalBackendForOption(String(agent?.backend || '').trim());
     if (!backend || acc.seen.has(backend)) return acc;
     acc.seen.add(backend);
     acc.items.push({ ...agent, backend });
@@ -2906,10 +2963,14 @@ export default function App() {
       .map((agent) => agent?.backend)
       .filter(Boolean)
   ));
-  const roleBackendOptions = Array.from(new Set([
-    ...backendOptions,
-    ...discoveredBackendOptions,
-  ]));
+  const roleBackendOptions = Array.from(
+    [...backendOptions, ...discoveredBackendOptions]
+      .reduce((acc, option) => {
+        const canonical = canonicalBackendForOption(String(option || '').trim());
+        if (canonical) acc.add(canonical);
+        return acc;
+      }, new Set())
+  );
   const workerRoles = startContext.worker_roles || DEFAULT_WORKER_ROLES;
   const discoveredAgentByBackend = {};
   safeDiscoveredAgents.forEach((agent) => {
@@ -2920,6 +2981,7 @@ export default function App() {
       agent.aliases.forEach((alias) => {
         if (alias) {
           discoveredAgentByBackend[alias] = agent;
+          discoveredAgentByBackend[canonicalBackendForOption(alias)] = agent;
         }
       });
     }
@@ -2953,6 +3015,7 @@ export default function App() {
   // Approvals metrics
   const approvedCount = approvalReviews.filter(r => r.decision === 'approved').length;
   const actionableCount = approvalReviews.filter(r => r.is_actionable).length;
+  const openQuestionsGateCount = openQuestions.length;
   const totalApprovalsCount = approvalReviews.length || 6;
   const approvalProgressPercent = Math.min(100, Math.round((approvedCount / totalApprovalsCount) * 100));
   const currentMemoryEvent = memoryEventDetail?.data || {};
@@ -3159,7 +3222,7 @@ export default function App() {
           <div className="bg-status-warning-bg border-b-2 border-status-warning/30 px-6 py-3 flex items-center justify-between text-xs font-bold text-status-warning-text animate-fade-in shrink-0">
             <div className="flex items-center space-x-2">
               <span className="h-2 w-2 rounded-full bg-status-warning animate-pulse shrink-0" />
-              <span>{actionableCount} gate{actionableCount > 1 ? 's' : ''} awaiting your approval</span>
+              <span>{actionableCount} gate{actionableCount > 1 ? 's' : ''} awaiting your approval{openQuestionsGateCount > 0 ? ` · ${openQuestionsGateCount} Questions` : ''}</span>
             </div>
             <button
               onClick={() => setActiveTab('approvals')}
@@ -3707,15 +3770,15 @@ export default function App() {
                           </div>
                           <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
                             <dt className="text-text-muted uppercase text-2xs">Docs Repository</dt>
-                            <dd><FilePath path={startContext.project_report?.project?.repos?.docs} segments={1} /></dd>
+                            <dd><FilePath path={startContext.project_report?.repos?.docs?.path} segments={1} /></dd>
                           </div>
                           <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
                             <dt className="text-text-muted uppercase text-2xs">Backend Repository</dt>
-                            <dd><FilePath path={startContext.project_report?.project?.repos?.backend} segments={1} /></dd>
+                            <dd><FilePath path={startContext.project_report?.repos?.backend?.path} segments={1} /></dd>
                           </div>
                           <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
                             <dt className="text-text-muted uppercase text-2xs">Frontend Repository</dt>
-                            <dd><FilePath path={startContext.project_report?.project?.repos?.frontend} segments={1} /></dd>
+                            <dd><FilePath path={startContext.project_report?.repos?.frontend?.path} segments={1} /></dd>
                           </div>
                           <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
                             <dt className="text-text-muted uppercase text-2xs">Staging SSH Target</dt>
@@ -4171,8 +4234,61 @@ export default function App() {
                           </select>
                         </div>
 
+                        <div className="flex items-center gap-2 rounded-xl bg-zinc-100 dark:bg-zinc-900 p-1 border border-[#E5E5E5] dark:border-zinc-800">
+                          {['simple', 'advanced'].map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => setWorkerRoutingMode(mode)}
+                              className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all ${
+                                workerRoutingMode === mode
+                                  ? 'bg-white dark:bg-zinc-800 text-[#3D8B00] dark:text-emerald-400 shadow-sm'
+                                  : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+                              }`}
+                            >
+                              {mode === 'simple' ? 'Simple' : 'Advanced'}
+                            </button>
+                          ))}
+                        </div>
+
+                        {workerRoutingMode === 'simple' && (
+                          <div className="space-y-3 border border-[#F1F1F1] dark:border-zinc-900 rounded-xl p-4 bg-zinc-50/60 dark:bg-zinc-900/20">
+                            {WORKER_ROUTING_BUCKETS.map((bucket) => (
+                              <div key={bucket.key} className="space-y-1.5">
+                                <label className="block text-[10px] text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
+                                  {bucket.label}
+                                </label>
+                                <select
+                                  value={simpleRoutingBackends[bucket.key] || ''}
+                                  onChange={(e) => setSimpleRoutingBackends(prev => ({ ...prev, [bucket.key]: e.target.value }))}
+                                  disabled={savingBackends || actionLoading}
+                                  className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                >
+                                  <option value="">Inherit global default</option>
+                                  {roleBackendOptions.map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {getBackendOptionLabel(opt)}
+                                    </option>
+                                  ))}
+                                </select>
+                                <p className="text-[10px] text-zinc-500 dark:text-zinc-500 font-medium">
+                                  {bucket.roles.filter(role => workerRoles.includes(role)).join(', ') || 'No matching roles in this project.'}
+                                </p>
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={handleApplySimpleRouting}
+                              disabled={savingBackends || actionLoading}
+                              className="w-full bg-[#58CC02] hover:bg-[#46A302] text-white border-b-4 border-[#3D8B00] active:border-b-0 active:translate-y-1 px-4 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all duo-button-physics"
+                            >
+                              Apply Simple Routing
+                            </button>
+                          </div>
+                        )}
+
                         {/* Role configurations */}
-                        <div className="space-y-3">
+                        <div className={`space-y-3 ${workerRoutingMode === 'simple' ? 'hidden' : ''}`}>
                           <span className="block text-[10px] text-zinc-550 uppercase font-bold tracking-wider">Per-Role Routing Overrides</span>
                           {(activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && loadingDiscoveredAgents && (
                             <p className="text-[10px] text-[#AFAFAF] italic">Loading discovered agents...</p>
@@ -4201,9 +4317,8 @@ export default function App() {
                             const selectedModel = panelRoleModels[role] || '';
 
                             const selectedAgent = effectiveBackend ? discoveredAgentByBackend[effectiveBackend] : null;
-                            const isAgy = effectiveBackend === 'agy' || effectiveBackend === 'antigravity';
                             const isBuiltin = ['fake', 'noop', 'human'].includes(effectiveBackend);
-                            const hasModel = effectiveBackend && !isAgy && !isBuiltin;
+                            const hasModel = effectiveBackend && !isBuiltin;
 
                             return (
                               <div key={role} className="border-b border-[#F1F1F1] dark:border-zinc-900 pb-3.5 pt-1">
@@ -4220,12 +4335,6 @@ export default function App() {
                                           <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
                                             {selectedModel || 'default'}
                                           </span>
-                                        </>
-                                      )}
-                                      {isAgy && (
-                                        <>
-                                          <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                          <span className="italic text-zinc-500 dark:text-zinc-500">model N/A</span>
                                         </>
                                       )}
                                     </div>
@@ -4273,11 +4382,7 @@ export default function App() {
 
                                     {effectiveBackend && (
                                       <div className="border-t border-[#F1F1F1] dark:border-zinc-900/60 pt-3">
-                                        {isAgy ? (
-                                          <div className="text-[11px] text-zinc-550 dark:text-zinc-500 font-medium bg-zinc-100/50 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800 px-3 py-2 rounded-lg italic">
-                                            Model is not applicable for Antigravity (agy) CLI.
-                                          </div>
-                                        ) : isBuiltin ? (
+                                        {isBuiltin ? (
                                           <div className="text-[11px] text-zinc-550 dark:text-zinc-500 font-medium bg-zinc-100/50 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800 px-3 py-2 rounded-lg italic">
                                             Model selection not applicable for built-in backends.
                                           </div>
@@ -4610,6 +4715,19 @@ export default function App() {
                                   <span>Edit</span>
                                 </button>
                               )}
+                              {review.artifact_path && (review.artifact_path.endsWith('.md') || review.artifact_path.endsWith('.markdown')) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenQuestionsFromApproval(review);
+                                  }}
+                                  className="bg-white hover:bg-indigo-50 border-2 border-indigo-100 shadow-[0_3px_0_#C7D2FE] text-indigo-750 font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
+                                >
+                                  <HelpCircle className="h-3 w-3" />
+                                  <span>Questions</span>
+                                </button>
+                              )}
                               {isActionable && (
                                 <div className="flex flex-col items-end">
                                   <button
@@ -4771,12 +4889,28 @@ export default function App() {
                                           const isThisApplying = answeringOpenQuestions === q;
                                           const isAnyApplying = answeringOpenQuestions !== null && answeringOpenQuestions !== false;
                                           const isApplyDisabled = isAnyApplying || !answerVal.trim();
+                                          const suggestions = suggestedAnswersForQuestion(q);
 
                                           return (
                                             <div key={idx} className="bg-white dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 space-y-2">
                                               <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100 leading-relaxed">
                                                 {q}
                                               </p>
+                                              {suggestions.length > 0 && (
+                                                <div className="flex flex-wrap gap-1.5">
+                                                  {suggestions.map((choice) => (
+                                                    <button
+                                                      key={`${q}-${choice.label}-${choice.value}`}
+                                                      type="button"
+                                                      onClick={() => setOpenQuestionsAnswers(prev => ({ ...prev, [q]: choice.value }))}
+                                                      disabled={isAnyApplying}
+                                                      className="bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 border border-indigo-200 text-indigo-750 dark:bg-indigo-950/30 dark:hover:bg-indigo-950/50 dark:border-indigo-800 dark:text-indigo-300 font-bold text-[10px] px-2 py-1 rounded-lg transition-colors"
+                                                    >
+                                                      {choice.label}
+                                                    </button>
+                                                  ))}
+                                                </div>
+                                              )}
                                               <textarea
                                                 value={answerVal}
                                                 onChange={(e) => setOpenQuestionsAnswers(prev => ({ ...prev, [q]: e.target.value }))}

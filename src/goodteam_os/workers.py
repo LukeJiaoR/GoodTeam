@@ -17,7 +17,7 @@ from goodteam_os.roles import role_definition, stable_role_prompt
 
 
 DEFAULT_CODEX_PATH = os.getenv("GOODTEAM_CODEX_PATH", "/opt/homebrew/bin/codex")
-DEFAULT_CODEX_MODEL = "gpt-5.3-codex"
+DEFAULT_CODEX_MODEL = os.getenv("GOODTEAM_CODEX_MODEL", "gpt-5.3-codex")
 CODEX_AUTH_ENV_NAMES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
 DEFAULT_CLAUDE_PATH = os.getenv("GOODTEAM_CLAUDE_PATH", "claude")
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
@@ -25,7 +25,7 @@ CLAUDE_AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 DEFAULT_GEMINI_PATH = os.getenv("GOODTEAM_GEMINI_PATH", "gemini")
 DEFAULT_GEMINI_MODEL = "auto"
 DEFAULT_AGY_PATH = os.getenv("GOODTEAM_AGY_PATH", "agy")
-DEFAULT_AGY_MODEL = "auto"
+DEFAULT_AGY_MODEL = os.getenv("GOODTEAM_AGY_MODEL", "auto")
 AGY_AUTH_ENV_NAMES = ()
 GEMINI_AUTH_ENV_NAMES = (
     "GEMINI_API_KEY",
@@ -262,6 +262,49 @@ def _query_codex_models(command_path: str) -> tuple[str, ...] | None:
     return tuple(slugs) or None
 
 
+def _query_agy_models(command_path: str) -> tuple[str, ...] | None:
+    try:
+        completed = subprocess.run(
+            [command_path, "models"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+
+    output = completed.stdout.strip()
+    if not output:
+        return None
+
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        models = [line.strip() for line in output.splitlines() if line.strip()]
+        return tuple(dict.fromkeys(models)) or None
+
+    candidates = payload.get("models") if isinstance(payload, dict) else payload
+    if not isinstance(candidates, list):
+        return None
+
+    models: list[str] = []
+    for item in candidates:
+        if isinstance(item, str) and item.strip():
+            models.append(item.strip())
+            continue
+        if not isinstance(item, dict):
+            continue
+        for key in ("slug", "name", "label", "id"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                models.append(value.strip())
+                break
+    return tuple(dict.fromkeys(models)) or None
+
+
 def _claude_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
     return [binary, "-p", "--model", model, "--dangerously-skip-permissions"]
 
@@ -277,7 +320,7 @@ def _agy_build_command(binary: str, model: str, project_root: Path, result_path:
     # right after `-p`.
     command = [binary, "-p", "--dangerously-skip-permissions", "--print-timeout", "30m"]
     model = model.strip()
-    if model and model != DEFAULT_AGY_MODEL:
+    if model and model.lower() != "auto":
         command.extend(["--model", model])
     return command
 
@@ -799,7 +842,7 @@ class WorkerJobStore:
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"
-        prompt = self._worker_prompt(job_root, job)
+        prompt = self._worker_prompt(job_root, job, model=model)
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
@@ -901,14 +944,19 @@ class WorkerJobStore:
                 extra={**extra, "heartbeat_at": self._now()},
             )
 
-    def _worker_prompt(self, job_root: Path, job: dict[str, Any]) -> str:
-        model = _codex_model_name(str(job.get("model", "")))
+    def _worker_prompt(self, job_root: Path, job: dict[str, Any], *, model: str | None = None) -> str:
+        configured_model = (model or str(job.get("model", ""))).strip()
+        if not configured_model:
+            adapter = str(job.get("adapter", ""))
+            configured_model = CLI_BACKENDS.get(adapter, CODEX_BACKEND).model_default
         pickup_context = self._render_worker_pickup_context(job_root)
         return "\n\n".join(
             [
                 f"# GoodTeam Worker Job {job['id']}",
                 f"Role: {job['role']}",
-                f"Use model {model}. Operate non-interactively and do not ask for human approval.",
+                f"Configured worker backend: {job['adapter']}.",
+                f"Configured model: {configured_model}.",
+                "Operate non-interactively and do not ask for human approval.",
                 "Read the role prompt, task, context, constraints, and expected artifacts below.",
                 "When modifying files, keep changes inside the current project root.",
                 "Use bounded smoke checks. If you start dev servers, browser sessions, watchers, or other long-running processes, run them in a way you can stop and stop any dev servers, browser sessions, or watchers before exiting.",
@@ -1153,6 +1201,11 @@ def discover_installed_agents() -> list[dict[str, Any]]:
             live_models = _query_codex_models(str(report.get("command_path", "")))
             if live_models:
                 models = live_models
+                models_source = "live"
+        elif spec.which_name == "agy" and report.get("available"):
+            live_models = _query_agy_models(str(report.get("command_path", "")))
+            if live_models:
+                models = tuple(dict.fromkeys((*spec.models, *live_models)))
                 models_source = "live"
         discovered.append(
             {

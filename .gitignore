@@ -11,6 +11,7 @@ projects/*.local.yaml
 .env.*
 .DS_Store
 .antigravitycli/
+.claude/
 dev-workspace/
 demo-workspace/
 

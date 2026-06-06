@@ -224,6 +224,21 @@ def test_api_fs_list_route_status_codes(tmp_path, monkeypatch):
     assert json.loads(bad_request.wfile.getvalue().decode("utf-8"))["error"]
 
 
+def test_api_fs_list_route_maps_permission_error_to_403(tmp_path, monkeypatch):
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+
+    def fake_list_directory(path_value):
+        raise web.FsListPermissionError(f"blocked: {path_value}")
+
+    monkeypatch.setattr(web, "list_directory_for_picker", fake_list_directory)
+
+    handler = simulate_get(f"/api/fs/list?path={tmp_path}")
+
+    assert 403 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["error"] == f"blocked: {tmp_path}"
+
+
 def test_api_fs_mkdir_route_creates_child_directory(tmp_path, monkeypatch):
     simulate_post = capture_post_handler(tmp_path, monkeypatch)
 
@@ -1072,17 +1087,7 @@ def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatc
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     context = payload["start_context"]
-    assert context["worker_backend_options"] == [
-        "codex",
-        "anthropic",
-        "claude",
-        "gemini",
-        "agy",
-        "antigravity",
-        "fake",
-        "noop",
-        "human",
-    ]
+    assert context["worker_backend_options"] == ["codex", "claude", "gemini", "agy", "fake", "noop", "human"]
     assert context["worker_roles"] == [
         "orchestrator",
         "research",

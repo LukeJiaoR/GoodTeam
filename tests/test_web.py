@@ -1375,6 +1375,52 @@ def test_web_normalize_delivery_mode_accepts_new_presets_and_custom():
         assert web.normalize_delivery_mode(mode) == mode
 
 
+def test_render_delivery_mode_options_uses_full_delivery_mode_catalog():
+    html = web.render_delivery_mode_options("cli_tool")
+
+    for mode in web.DELIVERY_MODES:
+        assert f'value="{mode}"' in html
+    assert '<option value="cli_tool" selected>' in html
+    assert "Multi-service product" in html
+    assert "Static site / landing" in html
+    assert "Custom" in html
+
+
+def test_frontend_contract_reads_project_report_repos_from_top_level():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "startContext.project_report?.repos?.docs?.path" in app
+    assert "startContext.project_report?.repos?.backend?.path" in app
+    assert "startContext.project_report?.repos?.frontend?.path" in app
+    assert "startContext.project_report?.project?.repos" not in app
+
+
+def test_frontend_contract_keeps_agy_model_selectable_and_aliases_deduped():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert 'MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human"]' in app
+    assert "Model is not applicable for Antigravity" not in app
+    assert "canonicalBackendForOption" in app
+
+
+def test_frontend_contract_exposes_open_questions_at_approval_gate():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "openQuestionsGateCount" in app
+    assert "Questions" in app
+    assert "handleOpenQuestionsFromApproval" in app
+    assert "suggestedAnswersForQuestion" in app
+
+
+def test_frontend_contract_has_simple_advanced_worker_routing_modes():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "workerRoutingMode" in app
+    assert "WORKER_ROUTING_BUCKETS" in app
+    assert "Apply Simple Routing" in app
+    assert "Advanced" in app
+
+
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):
     docs = tmp_path / "content-research"
     docs.mkdir()

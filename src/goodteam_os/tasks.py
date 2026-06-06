@@ -145,8 +145,7 @@ def sync_stage_tasks(state: Any, store: LocalTaskStore) -> list[dict[str, Any]]:
             existing.append(task)
         updates: dict[str, Any] = {"status": statuses[node]}
         artifact_ref = _stage_artifact_ref(state, node)
-        if artifact_ref:
-            updates["artifact_refs"] = [artifact_ref]
+        updates["artifact_refs"] = [artifact_ref] if artifact_ref else []
         task = store.update_task(str(task["id"]), **updates)
         tasks.append(task)
     return tasks
