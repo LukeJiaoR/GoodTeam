@@ -37,7 +37,8 @@ import {
   GitBranch,
   GitPullRequest,
   Copy,
-  Sparkles
+  Sparkles,
+  HelpCircle
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
 
@@ -456,6 +457,10 @@ export default function App() {
   const [editorContent, setEditorContent] = useState('');
   const [refineLoading, setRefineLoading] = useState(false);
   const [proposedRevision, setProposedRevision] = useState(null); // { proposed_path, content, diff_summary }
+  const [openQuestions, setOpenQuestions] = useState([]);
+  const [openQuestionsAnswers, setOpenQuestionsAnswers] = useState({});
+  const [fetchingOpenQuestions, setFetchingOpenQuestions] = useState(false);
+  const [answeringOpenQuestions, setAnsweringOpenQuestions] = useState(false);
   const [gateDebate, setGateDebate] = useState(EMPTY_GATE_DEBATE);
   const [debateRun, setDebateRun] = useState({ key: '', loading: false, error: '' });
   const [messageFeed, setMessageFeed] = useState(EMPTY_MESSAGE_FEED);
@@ -1582,6 +1587,86 @@ export default function App() {
     }
   };
 
+  const fetchOpenQuestions = async (projKey, artKey) => {
+    if (!projKey || !artKey) return;
+    setFetchingOpenQuestions(true);
+    try {
+      const response = await fetch(`/api/open-questions?project=${encodeURIComponent(projKey)}&artifact=${encodeURIComponent(artKey)}`);
+      const res = await response.json();
+      if (response.ok) {
+        setOpenQuestions(res.questions || []);
+        setOpenQuestionsAnswers(prev => {
+          const next = {};
+          (res.questions || []).forEach(q => {
+            next[q] = prev[q] !== undefined ? prev[q] : '';
+          });
+          return next;
+        });
+      } else {
+        console.error(res.error || 'Failed to fetch open questions');
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setFetchingOpenQuestions(false);
+    }
+  };
+
+  const handleApplyAnswers = async () => {
+    if (!projectKey || !editingArtifact) return;
+    const answersToSend = Object.entries(openQuestionsAnswers)
+      .filter(([, ans]) => ans && ans.trim())
+      .map(([q, ans]) => ({ question: q, answer: ans }));
+
+    if (answersToSend.length === 0) return;
+
+    setAnsweringOpenQuestions(true);
+    try {
+      const response = await fetch('/api/answer-open-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: projectKey,
+          artifact: editingArtifact,
+          answers: answersToSend,
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) {
+        throw new Error(res.error || 'Failed to apply answers with AI');
+      }
+
+      // Fetch the proposed content
+      const proposedPath = res.proposed_path;
+      const contentResponse = await fetch(`/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(proposedPath)}`);
+      const contentRes = await contentResponse.json();
+      if (!contentResponse.ok) {
+        throw new Error(contentRes.error || 'Failed to fetch proposed artifact content');
+      }
+
+      setProposedRevision({
+        proposed_path: proposedPath,
+        content: contentRes.content || '',
+        diff_summary: res.diff_summary || { added_lines: 0, removed_lines: 0 }
+      });
+      showToast('Answers applied with AI. Please review the proposed revision.');
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setAnsweringOpenQuestions(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!editingArtifact || !projectKey) {
+      setOpenQuestions([]);
+      setOpenQuestionsAnswers({});
+      return;
+    }
+    setOpenQuestionsAnswers({});
+    fetchOpenQuestions(projectKey, editingArtifact);
+  }, [editingArtifact, projectKey]);
+
   const handleRefineArtifact = async () => {
     if (!editingArtifact || !editorContent) return;
     setRefineLoading(true);
@@ -1646,6 +1731,9 @@ export default function App() {
 
       // fetchState to update UI
       await fetchState(projectKey);
+
+      // Re-fetch open questions
+      await fetchOpenQuestions(projectKey, editingArtifact);
     } catch (err) {
       showToast(err.message, true);
     } finally {
@@ -4249,14 +4337,74 @@ export default function App() {
                               <span className="text-[10px] font-mono font-bold text-[#3D8B00]">Save changes to disk</span>
                             </div>
 
-                            <div className="flex-grow flex flex-col p-6 space-y-4">
-                              <textarea
-                                value={editorContent}
-                                onChange={(e) => setEditorContent(e.target.value)}
-                                spellCheck="false"
-                                className="w-full flex-grow h-96 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:border-[#58CC02] transition-colors leading-relaxed"
-                              />
-                              <code className="text-[10px] text-[#AFAFAF] font-bold leading-normal">Unsaved edits stay in this browser until saved.</code>
+                            <div className="flex-grow flex flex-col lg:flex-row p-6 gap-6 min-h-0">
+                              <div className="flex-grow flex flex-col space-y-2 lg:w-1/2">
+                                <textarea
+                                  value={editorContent}
+                                  onChange={(e) => setEditorContent(e.target.value)}
+                                  spellCheck="false"
+                                  className="w-full flex-grow h-96 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:border-[#58CC02] transition-colors leading-relaxed"
+                                />
+                                <code className="text-[10px] text-[#AFAFAF] font-bold leading-normal">Unsaved edits stay in this browser until saved.</code>
+                              </div>
+
+                              {(openQuestions.length > 0 || fetchingOpenQuestions) && (
+                                <div className="lg:w-96 flex flex-col border-2 border-indigo-100 dark:border-zinc-800 rounded-2xl bg-indigo-50/20 dark:bg-zinc-900/10 p-4 shrink-0 max-h-[480px]">
+                                  <div className="flex justify-between items-center mb-3">
+                                    <div className="flex items-center space-x-2">
+                                      <HelpCircle className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                                      <span className="font-extrabold text-xs text-indigo-900 dark:text-zinc-100 uppercase tracking-wider">Open Questions</span>
+                                    </div>
+                                    {fetchingOpenQuestions ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin text-indigo-500" />
+                                    ) : (
+                                      <span className="bg-indigo-100 dark:bg-indigo-950/50 text-indigo-750 dark:text-indigo-300 font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full">
+                                        {openQuestions.length} remaining
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {fetchingOpenQuestions && openQuestions.length === 0 ? (
+                                    <div className="flex-grow flex items-center justify-center py-12">
+                                      <RefreshCw className="h-6 w-6 animate-spin text-indigo-500" />
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="flex-grow overflow-y-auto space-y-3 pr-1 mb-3">
+                                        {openQuestions.map((q, idx) => (
+                                          <div key={idx} className="bg-white dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 space-y-2">
+                                            <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100 leading-relaxed">
+                                              {q}
+                                            </p>
+                                            <textarea
+                                              value={openQuestionsAnswers[q] || ''}
+                                              onChange={(e) => setOpenQuestionsAnswers(prev => ({ ...prev, [q]: e.target.value }))}
+                                              placeholder="Type your answer here..."
+                                              className="w-full bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors resize-y min-h-[60px] leading-relaxed font-sans"
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
+
+                                      {openQuestions.length > 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={handleApplyAnswers}
+                                          disabled={answeringOpenQuestions || !Object.values(openQuestionsAnswers).some(val => val && val.trim())}
+                                          className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:pointer-events-none border-2 border-indigo-850 shadow-[0_3px_0_#4338ca] text-white font-bold py-2 px-4 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-1.5 shrink-0"
+                                        >
+                                          {answeringOpenQuestions ? (
+                                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                          ) : (
+                                            <Sparkles className="h-3.5 w-3.5" />
+                                          )}
+                                          <span>{answeringOpenQuestions ? 'Applying...' : 'Apply Answers with AI'}</span>
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-end space-x-2">
