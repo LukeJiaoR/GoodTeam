@@ -958,6 +958,7 @@ def run_architecture_until_gate(
             task_text=rfc_worker_task(state),
         )
         if worker_content is not None:
+            state.change_requests.pop("rfc", None)
             content = worker_content
     rfc_path = store.write_markdown(
         state.run_id,
@@ -1666,6 +1667,7 @@ def run_until_next_gate(
             task_text=prd_worker_task(state),
         )
         if worker_content is not None:
+            state.change_requests.pop("prd", None)
             content = worker_content
     prd_path = store.write_markdown(
         state.run_id,
@@ -1705,21 +1707,35 @@ def should_generate_artifact_with_worker(project_config: Path | None, role: str)
 
 
 def prd_worker_task(state: AgileDevState) -> str:
-    return (
+    task = (
         "Write a complete PRD for the following product idea: "
         f"{state.idea}. Cover: intent/why, users & value, V1 scope, non-goals, acceptance criteria, "
         "risks & open questions. Ground it in the project context provided. "
         "Output the PRD as markdown only - no preamble."
     )
+    note = state.change_requests.get("prd", "").strip()
+    if note:
+        task += (
+            "\n\nA reviewer requested changes to the current PRD. Revise it to ADDRESS this feedback, "
+            f"preserving what is fine: {note}"
+        )
+    return task
 
 
 def rfc_worker_task(state: AgileDevState) -> str:
-    return (
+    task = (
         "Write a complete RFC / technical design for: "
         f"{state.idea}, grounded in the approved PRD and project context (see artifacts). "
         "Cover architecture, data model, API contract, migration/rollback, testing strategy, risks. "
         "Output markdown only."
     )
+    note = state.change_requests.get("rfc", "").strip()
+    if note:
+        task += (
+            "\n\nA reviewer requested changes to the current RFC. Revise it to ADDRESS this feedback, "
+            f"preserving what is fine: {note}"
+        )
+    return task
 
 
 def generate_artifact_via_worker(
@@ -1806,6 +1822,7 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
         if failure_class:
             raise RuntimeError(f"product_requirement worker failed [{failure_class}]: {summary}")
         raise RuntimeError(f"product_requirement worker failed: {summary}")
+    state.change_requests.pop("prd", None)
 
     artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     prd_path = artifact_store.write_markdown(state.run_id, "prd", "prd.md", content)
@@ -2030,6 +2047,7 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
         if failure_class:
             raise RuntimeError(f"architect worker failed [{failure_class}]: {summary}")
         raise RuntimeError(f"architect worker failed: {summary}")
+    state.change_requests.pop("rfc", None)
 
     artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     rfc_path = artifact_store.write_markdown(state.run_id, "rfc", "rfc.md", content)

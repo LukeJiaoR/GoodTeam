@@ -29,8 +29,10 @@ from goodteam_os.graph import (
     refine_artifact,
     render_downstream_artifact_markdown,
     resolve_project_runtime_root,
+    run_architecture_until_gate,
     run_adoption_until_next_gate,
     run_until_next_gate,
+    should_generate_artifact_with_worker,
     sync_project_stage_tasks,
 )
 from goodteam_os.artifacts import ArtifactStore
@@ -102,6 +104,7 @@ def append_action(
     artifact: str = "",
     artifact_path: str = "",
     debate_ref: str = "",
+    note: str = "",
 ) -> None:
     action_log = _action_log_path(workspace, project_key)
     action_log.parent.mkdir(parents=True, exist_ok=True)
@@ -119,6 +122,8 @@ def append_action(
     }
     if debate_ref:
         event["debate_ref"] = debate_ref
+    if note:
+        event["note"] = note
     with action_log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event) + "\n")
 
@@ -1289,6 +1294,7 @@ def decide_approval(
     decision: str,
     project_key: str = "",
     debate_ref: str = "",
+    note: str = "",
 ) -> dict[str, object]:
     approved_next = approved_next_for_gate(approval)
 
@@ -1390,6 +1396,38 @@ def decide_approval(
             artifact=approval_artifact_map().get(approval, approval),
             artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
         )
+    elif approval in {"prd", "rfc"} and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
+        revision_note = note.strip()
+        regenerate_before_node = state.next_node
+        state.change_requests[approval] = revision_note
+        state.approvals[approval] = ApprovalDecision.PENDING
+        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+        if project_config is None and project_key:
+            try:
+                project_config = _project_config_for_key(workspace, project_key)
+            except ValueError:
+                project_config = None
+        revision_role = "product_requirement" if approval == "prd" else "architect"
+        uses_worker_revision = should_generate_artifact_with_worker(project_config, revision_role)
+        if approval == "prd":
+            state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+        else:
+            state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
+        if not uses_worker_revision:
+            state.change_requests.pop(approval, None)
+        append_action(
+            workspace,
+            run_id=state.run_id,
+            actor="system",
+            action=f"{approval}_revised",
+            project_key=key,
+            gate=approval,
+            before_node=regenerate_before_node,
+            after_node=state.next_node,
+            artifact=approval_artifact_map().get(approval, approval),
+            artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
+            note=revision_note,
+        )
     project_config_for_sync = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
     if project_config_for_sync is None or not project_config_for_sync.is_file():
         try:
@@ -1423,6 +1461,8 @@ def regenerate_rfc_review_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    if should_generate_artifact_with_worker(project_config, "architect"):
+        return run_architecture_until_gate(state=state, workspace=workspace, project_config=project_config)
     rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config)).write_markdown(
         state.run_id,
         "rfc",
@@ -5978,6 +6018,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         approval=str(request.get("approval", "")),
                         decision=str(request.get("decision", "")),
                         debate_ref=str(request.get("debate_ref", "")),
+                        note=str(request.get("note", "")),
                     )
                 elif normalized_path == "/debate":
                     project_key = str(request.get("project_key", ""))

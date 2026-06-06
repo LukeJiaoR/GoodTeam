@@ -2205,10 +2205,14 @@ def test_decide_approval_can_request_changes(tmp_path):
         project_key="CONTENTOPS",
         approval="prd",
         decision="changes_requested",
+        note="Tighten the acceptance criteria.",
     )
 
-    assert payload["approvals"]["prd"] == "changes_requested"
-    assert payload["next_node"] == "revise_prd"
+    assert payload["approvals"]["prd"] == "pending"
+    assert payload["current_node"] == "prd_review_gate"
+    assert payload["next_node"] == "await_prd_approval"
+    assert Path(payload["artifacts"]["prd"]).is_file()
+    assert "prd" not in payload["change_requests"]
 
 
 def test_decide_approval_rejects_prd_by_regenerating_for_review(tmp_path):
