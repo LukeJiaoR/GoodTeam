@@ -182,41 +182,41 @@ function getBadgeStyle(status) {
 
   if (['complete', 'approved', 'done', 'pass', 'success', 'active', 'running'].includes(norm)) {
     return {
-      bg: 'bg-[#E8F9D9]',
-      text: 'text-[#3D8B00]',
-      border: 'border-[#58CC02]/30',
+      bg: 'bg-status-success-bg',
+      text: 'text-status-success-text',
+      border: 'border-status-success/30',
       icon: CheckCircle
     };
   }
   if (['artifact ready', 'artifact_ready', 'ready'].includes(norm)) {
     return {
-      bg: 'bg-[#D0F0FF]',
-      text: 'text-[#0A7BAF]',
-      border: 'border-[#1CB0F6]/30',
+      bg: 'bg-status-info-bg',
+      text: 'text-status-info-text',
+      border: 'border-status-info/30',
       icon: RefreshCw
     };
   }
   if (['pending', 'blocked', 'changes_requested', 'changes requested', 'review-needed', 'review needed', 'await_prd_approval', 'await_rfc_approval', 'await_staging_approval', 'await_security_approval', 'await_release_approval', 'await_takeover_approval'].includes(norm)) {
     return {
-      bg: 'bg-[#FFF0D4]',
-      text: 'text-[#B36B00]',
-      border: 'border-[#FF9600]/30',
+      bg: 'bg-status-warning-bg',
+      text: 'text-status-warning-text',
+      border: 'border-status-warning/30',
       icon: Clock
     };
   }
   if (['failed', 'error', 'rejected'].includes(norm)) {
     return {
-      bg: 'bg-[#FFE2E2]',
-      text: 'text-[#EA2B2B]',
-      border: 'border-[#FF4B4B]/30',
+      bg: 'bg-status-danger-bg',
+      text: 'text-status-danger-text',
+      border: 'border-status-danger/30',
       icon: XCircle
     };
   }
   // Default neutral / system / no activity
   return {
-    bg: 'bg-[#F1F1F1]',
-    text: 'text-[#777777]',
-    border: 'border-[#AFAFAF]/30',
+    bg: 'bg-surface-sunken',
+    text: 'text-text-muted',
+    border: 'border-border-subtle/30',
     icon: Info
   };
 }
@@ -387,6 +387,11 @@ export default function App() {
     const saved = localStorage.getItem('color-scheme');
     if (saved) return saved === 'dark';
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  // Persistent Theme state (vivid or minimal)
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem('gt-theme') || 'vivid';
   });
 
   // Mobile navigation drawer toggle
@@ -670,6 +675,12 @@ export default function App() {
       localStorage.setItem('color-scheme', 'light');
     }
   }, [darkMode]);
+
+  // Sync theme changes to data-theme attribute on document element
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('gt-theme', theme);
+  }, [theme]);
 
   const updateUrl = (key) => {
     const newUrl = key ? `${window.location.pathname}?project=${key}` : window.location.pathname;
@@ -2093,20 +2104,20 @@ export default function App() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-project-title"
-        className="w-full max-w-4xl bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_8px_0_#D1D1D1] dark:shadow-[0_8px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-4xl bg-surface-overlay border-2 border-border-subtle shadow-card rounded-xl overflow-hidden flex flex-col max-h-[90vh]"
       >
         {/* Header */}
-        <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex items-start justify-between gap-4 shrink-0">
+        <div className="px-5 py-4 bg-surface-sunken border-b-2 border-border-subtle flex items-start justify-between gap-4 shrink-0">
           <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Start Workflow Console</p>
-            <h3 id="new-project-title" className="text-sm font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1">
+            <p className="text-2xs font-bold uppercase tracking-wider text-text-muted">Start Workflow Console</p>
+            <h3 id="new-project-title" className="text-sm font-bold text-accent-text mt-1">
               Create or Adopt Project
             </h3>
           </div>
           <button
             type="button"
             onClick={() => setNewProjectModalOpen(false)}
-            className="bg-white dark:bg-zinc-800 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics cursor-pointer shrink-0"
+            className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle hover:border-status-danger/30 shadow-button text-text-secondary hover:text-status-danger p-2 rounded-xl transition-all duo-button-physics cursor-pointer shrink-0"
             aria-label="Close start workflow console"
           >
             <X className="h-4 w-4" />
@@ -2118,16 +2129,16 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 text-left">
             {/* Left Config Panel */}
             <div className="lg:col-span-2 space-y-6">
-              <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit">
+              <div className="flex bg-surface-sunken p-1 rounded-lg w-fit">
                 <button
                   onClick={() => setStartMode('existing_project')}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${startMode === 'existing_project' ? 'bg-surface-raised shadow-sm text-accent' : 'text-text-muted hover:text-text-secondary'}`}
                 >
                   Adopt Existing Project
                 </button>
                 <button
                   onClick={() => setStartMode('new_project')}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${isNewProjectMode ? 'bg-surface-raised shadow-sm text-accent' : 'text-text-muted hover:text-text-secondary'}`}
                 >
                   Start New Project
                 </button>
@@ -2135,43 +2146,43 @@ export default function App() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold">
                 <div className="col-span-2">
-                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Workflow Goal</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Workflow Goal</label>
                   <textarea
                     value={idea}
                     onChange={(e) => setIdea(e.target.value)}
                     placeholder={startMode === 'existing_project' ? "Enter takeover goal (e.g. audit frontend files)..." : "Describe the new project and desired features..."}
-                    className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                    className="w-full h-24 bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl p-4 focus:outline-none focus:border-accent font-mono leading-relaxed transition-colors resize-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Project Name</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Project Name</label>
                   <input
                     type="text"
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
                     placeholder="e.g. ContentOps Studio"
-                    className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
+                    className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent transition-colors"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Project Key</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Project Key</label>
                   <input
                     type="text"
                     value={startProjectKey}
                     onChange={(e) => setStartProjectKey(e.target.value)}
                     placeholder="e.g. CONTENTOPS"
-                    className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono uppercase transition-colors"
+                    className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent font-mono uppercase transition-colors"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Model Profile</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Model Profile</label>
                   <select
                     value={modelProfile}
                     onChange={(e) => setModelProfile(e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
+                    className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent transition-colors"
                   >
                     <option value="balanced">Balanced</option>
                     <option value="cheap">Cheap</option>
@@ -2180,11 +2191,11 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Delivery Mode</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Delivery Mode</label>
                   <select
                     value={deliveryMode}
                     onChange={(e) => setDeliveryMode(e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
+                    className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent transition-colors"
                   >
                     {DELIVERY_MODE_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
@@ -2194,32 +2205,32 @@ export default function App() {
 
                 {deliveryMode === 'custom' && (
                   <div className="col-span-2">
-                    <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Delivery Standards</label>
+                    <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Delivery Standards</label>
                     <textarea
                       value={deliveryStandards}
                       onChange={(e) => setDeliveryStandards(e.target.value)}
                       placeholder="每行一条交付标准"
-                      className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                      className="w-full h-24 bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl p-4 focus:outline-none focus:border-accent font-mono leading-relaxed transition-colors resize-none"
                     />
                   </div>
                 )}
 
-                <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
-                  <div className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Project Location</div>
+                <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                  <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">Project Location</div>
                   <div>
-                    <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Project Root</label>
+                    <label className="block text-2xs text-text-secondary mb-1 uppercase">Project Root</label>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={projectRoot}
                         onChange={(e) => setProjectRoot(e.target.value)}
                         placeholder="Absolute path to project root"
-                        className="flex-1 min-w-0 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
+                        className="flex-1 min-w-0 bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-accent"
                       />
                       <button
                         type="button"
                         onClick={() => openDirectoryPicker('root', projectRoot)}
-                        className="bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
+                        className="bg-surface-raised hover:bg-surface-sunken border-2 border-border-subtle shadow-button text-text-primary font-bold px-2.5 py-1.5 rounded-lg text-xs transition-all duo-button-physics cursor-pointer"
                       >
                         Browse…
                       </button>
@@ -2227,14 +2238,14 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="col-span-2 border-t border-zinc-100 dark:border-zinc-900 my-4" />
+                <div className="col-span-2 border-t border-border-subtle my-4" />
 
                 {/* Toggle Advanced Button */}
                 <div className="col-span-2">
                   <button
                     type="button"
                     onClick={() => setShowConfigDrawer(!showConfigDrawer)}
-                    className="text-xs font-bold text-[#3D8B00] hover:text-[#58CC02] transition-colors flex items-center space-x-1"
+                    className="text-xs font-bold text-accent-text hover:text-accent transition-colors flex items-center space-x-1"
                   >
                     <span>{showConfigDrawer ? 'Hide Advanced Config' : 'Show Advanced Config (Task Backend, Deployment)'}</span>
                     <ChevronDown className={`h-4 w-4 transition-transform ${showConfigDrawer ? 'rotate-180' : ''}`} />
@@ -2243,14 +2254,14 @@ export default function App() {
 
                 {showConfigDrawer && (
                   <>
-                    <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
-                      <div className="col-span-2 font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Services Backend</div>
+                    <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                      <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">Services Backend</div>
                       <div>
-                        <label className="block text-[10px] text-zinc-555 mb-1 uppercase">Task Sync</label>
+                        <label className="block text-2xs text-text-secondary mb-1 uppercase">Task Sync</label>
                         <select
                           value={taskSync}
                           onChange={(e) => setTaskSync(e.target.value)}
-                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
+                          className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
                         >
                           <option value="">Local only</option>
                           <option value="plane">Plane Workspace</option>
@@ -2258,12 +2269,13 @@ export default function App() {
                           <option value="github_issues">GitHub Issues</option>
                         </select>
                       </div>
+
                       <div>
-                        <label className="block text-[10px] text-zinc-555 mb-1 uppercase">Worker Execution</label>
+                        <label className="block text-2xs text-text-secondary mb-1 uppercase">Worker Execution</label>
                         <select
                           value={workerBackendMode}
                           onChange={(e) => setWorkerBackendMode(e.target.value)}
-                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
+                          className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
                         >
                           <option value="codex">Codex CLI / Autopilot</option>
                           <option value="manual">Human Interactive</option>
@@ -2272,40 +2284,40 @@ export default function App() {
                       </div>
 
                       {taskSync === 'plane' && (
-                        <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-[#E5E5E5] dark:border-zinc-800 p-4 rounded-xl bg-white dark:bg-zinc-950 mt-2">
-                          <div className="col-span-2 font-extrabold text-[9px] text-[#AFAFAF] uppercase tracking-wider">Plane Credentials</div>
+                        <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-border-subtle p-4 rounded-xl bg-surface-raised mt-2">
+                          <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">Plane Credentials</div>
                           <div className="col-span-2">
-                            <label className="block text-[9px] text-zinc-500 mb-1">API Host</label>
-                            <input type="text" value={planeApiHost} onChange={(e) => setPlaneApiHost(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                            <label className="block text-2xs text-text-muted mb-1">API Host</label>
+                            <input type="text" value={planeApiHost} onChange={(e) => setPlaneApiHost(e.target.value)} className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-500 mb-1">Workspace Slug</label>
-                            <input type="text" value={planeWorkspaceSlug} onChange={(e) => setPlaneWorkspaceSlug(e.target.value)} placeholder="e.g. leader_kanban" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                            <label className="block text-2xs text-text-muted mb-1">Workspace Slug</label>
+                            <input type="text" value={planeWorkspaceSlug} onChange={(e) => setPlaneWorkspaceSlug(e.target.value)} placeholder="e.g. leader_kanban" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-500 mb-1">Project ID</label>
-                            <input type="text" value={planeProjectId} onChange={(e) => setPlaneProjectId(e.target.value)} placeholder="uuid" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                            <label className="block text-2xs text-text-muted mb-1">Project ID</label>
+                            <input type="text" value={planeProjectId} onChange={(e) => setPlaneProjectId(e.target.value)} placeholder="uuid" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-500 mb-1">API Key Env</label>
-                            <input type="text" value={planeApiKeyEnv} onChange={(e) => setPlaneApiKeyEnv(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                            <label className="block text-2xs text-text-muted mb-1">API Key Env</label>
+                            <input type="text" value={planeApiKeyEnv} onChange={(e) => setPlaneApiKeyEnv(e.target.value)} className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-500 mb-1">MCP Server</label>
-                            <input type="text" value={planeMcpServer} onChange={(e) => setPlaneMcpServer(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                            <label className="block text-2xs text-text-muted mb-1">MCP Server</label>
+                            <input type="text" value={planeMcpServer} onChange={(e) => setPlaneMcpServer(e.target.value)} className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                         </div>
                       )}
                     </div>
 
-                    <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
-                      <div className="col-span-2 font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Deployment & Evidence Contract</div>
+                    <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                      <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">Deployment & Evidence Contract</div>
                       <div className="col-span-2">
-                        <label className="block text-[10px] text-zinc-555 mb-1.5 uppercase">Deployment Backend</label>
+                        <label className="block text-2xs text-text-secondary mb-1.5 uppercase">Deployment Backend</label>
                         <select
                           value={deploymentBackendMode}
                           onChange={(e) => setDeploymentBackendMode(e.target.value)}
-                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-semibold"
+                          className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs font-semibold focus:outline-none focus:border-accent"
                         >
                           <option value="">None (skip automated deployments)</option>
                           <option value="ssh_compose">Docker Compose via SSH</option>
@@ -2313,80 +2325,80 @@ export default function App() {
                       </div>
 
                       {deploymentBackendMode === 'ssh_compose' && (
-                        <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-[#E5E5E5] dark:border-zinc-800 p-4 rounded-xl bg-white dark:bg-zinc-950 mt-2 text-xs">
-                          <div className="col-span-2 font-extrabold text-[9px] text-[#AFAFAF] uppercase tracking-wider">SSH Deploy Configuration</div>
+                        <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-border-subtle p-4 rounded-xl bg-surface-raised mt-2 text-xs">
+                          <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">SSH Deploy Configuration</div>
                           <div>
-                            <label className="block text-[9px] text-zinc-550 mb-1">Staging SSH Target</label>
-                            <input type="text" value={stagingSshTarget} onChange={(e) => setStagingSshTarget(e.target.value)} placeholder="user@host" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                            <label className="block text-2xs text-text-secondary mb-1">Staging SSH Target</label>
+                            <input type="text" value={stagingSshTarget} onChange={(e) => setStagingSshTarget(e.target.value)} placeholder="user@host" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-550 mb-1">Staging Remote Dir</label>
-                            <input type="text" value={stagingRemoteDir} onChange={(e) => setStagingRemoteDir(e.target.value)} placeholder="/srv/app" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                            <label className="block text-2xs text-text-secondary mb-1">Staging Remote Dir</label>
+                            <input type="text" value={stagingRemoteDir} onChange={(e) => setStagingRemoteDir(e.target.value)} placeholder="/srv/app" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-555 mb-1">Staging Git Ref</label>
-                            <input type="text" value={stagingGitRef} onChange={(e) => setStagingGitRef(e.target.value)} placeholder="main" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                            <label className="block text-2xs text-text-secondary mb-1">Staging Git Ref</label>
+                            <input type="text" value={stagingGitRef} onChange={(e) => setStagingGitRef(e.target.value)} placeholder="main" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-555 mb-1">Staging Public URL</label>
-                            <input type="text" value={stagingPublicUrl} onChange={(e) => setStagingPublicUrl(e.target.value)} placeholder="http://url:port" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                            <label className="block text-2xs text-text-secondary mb-1">Staging Public URL</label>
+                            <input type="text" value={stagingPublicUrl} onChange={(e) => setStagingPublicUrl(e.target.value)} placeholder="http://url:port" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-[9px] text-zinc-555 mb-1">Deploy Command</label>
-                            <input type="text" value={stagingDeployCommand} onChange={(e) => setStagingDeployCommand(e.target.value)} placeholder="docker compose up -d" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                            <label className="block text-2xs text-text-secondary mb-1">Deploy Command</label>
+                            <input type="text" value={stagingDeployCommand} onChange={(e) => setStagingDeployCommand(e.target.value)} placeholder="docker compose up -d" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-555 mb-1">Healthcheck Command</label>
-                            <input type="text" value={stagingHealthcheckCommand} onChange={(e) => setStagingHealthcheckCommand(e.target.value)} placeholder="curl -f /health" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                            <label className="block text-2xs text-text-secondary mb-1">Healthcheck Command</label>
+                            <input type="text" value={stagingHealthcheckCommand} onChange={(e) => setStagingHealthcheckCommand(e.target.value)} placeholder="curl -f /health" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[9px] text-zinc-555 mb-1">Smoke Command</label>
-                            <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                            <label className="block text-2xs text-text-secondary mb-1">Smoke Command</label>
+                            <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
 
-                          <div className="col-span-2 border-t-2 border-[#F1F1F1] dark:border-zinc-900 my-1" />
+                          <div className="col-span-2 border-t-2 border-border-subtle my-1" />
 
                           <div className="col-span-2 flex items-center space-x-2">
-                            <input type="checkbox" id="contract-req" checked={deliveryContractRequired} onChange={(e) => setDeliveryContractRequired(e.target.checked)} className="rounded text-[#58CC02] focus:ring-[#58CC02] h-4 w-4" />
-                            <label htmlFor="contract-req" className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Require functional delivery evidence</label>
+                            <input type="checkbox" id="contract-req" checked={deliveryContractRequired} onChange={(e) => setDeliveryContractRequired(e.target.checked)} className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer" />
+                            <label htmlFor="contract-req" className="font-bold text-2xs text-text-muted uppercase tracking-wider cursor-pointer">Require functional delivery evidence</label>
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-[9px] text-zinc-500 mb-1">Minimum Evidence Gate</label>
-                            <select value={deliveryContractMinEvidence} onChange={(e) => setDeliveryContractMinEvidence(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs">
+                            <label className="block text-2xs text-text-muted mb-1">Minimum Evidence Gate</label>
+                            <select value={deliveryContractMinEvidence} onChange={(e) => setDeliveryContractMinEvidence(e.target.value)} className="bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs focus:outline-none focus:border-accent">
                               <option value="infrastructure">Infrastructure Layer</option>
                               <option value="functional">Functional Application Layer</option>
                             </select>
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-[9px] text-zinc-500 mb-1">Fatal Output Log Patterns (line separate)</label>
-                            <textarea value={deliveryContractFatalPatterns} onChange={(e) => setDeliveryContractFatalPatterns(e.target.value)} placeholder="e.g. migrate: executable file not found" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
+                            <label className="block text-2xs text-text-muted mb-1">Fatal Output Log Patterns (line separate)</label>
+                            <textarea value={deliveryContractFatalPatterns} onChange={(e) => setDeliveryContractFatalPatterns(e.target.value)} placeholder="e.g. migrate: executable file not found" className="w-full h-16 bg-surface-sunken text-text-primary border border-border-subtle rounded p-2 font-mono text-xs resize-none focus:outline-none focus:border-accent" />
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-[9px] text-zinc-500 mb-1">Staging Acceptance Tests (id|type|command per line)</label>
-                            <textarea value={deliveryContractAcceptance} onChange={(e) => setDeliveryContractAcceptance(e.target.value)} placeholder="critical-path|ssh_command|docker compose exec -T backend ./migrate status" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
+                            <label className="block text-2xs text-text-muted mb-1">Staging Acceptance Tests (id|type|command per line)</label>
+                            <textarea value={deliveryContractAcceptance} onChange={(e) => setDeliveryContractAcceptance(e.target.value)} placeholder="critical-path|ssh_command|docker compose exec -T backend ./migrate status" className="w-full h-16 bg-surface-sunken text-text-primary border border-border-subtle rounded p-2 font-mono text-xs resize-none focus:outline-none focus:border-accent" />
                           </div>
                         </div>
                       )}
                     </div>
 
                     <div className="col-span-2">
-                      <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Role Model Overrides (one per line, role=model)</label>
+                      <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Role Model Overrides (one per line, role=model)</label>
                       <textarea
                         value={roleModelOverrides}
                         onChange={(e) => setRoleModelOverrides(e.target.value)}
                         placeholder="architect=codex:gpt-5.5&#10;implementation=codex:gpt-5.3-codex"
-                        className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed transition-colors resize-none"
+                        className="w-full h-20 bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl p-3 font-mono leading-relaxed transition-colors resize-none focus:outline-none focus:border-accent"
                       />
                     </div>
 
                     <div className="col-span-2">
-                      <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Local Project Config Path</label>
+                      <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Local Project Config Path</label>
                       <input
                         type="text"
                         value={projectConfig}
                         onChange={(e) => setProjectConfig(e.target.value)}
                         placeholder="projects/project-key.local.yaml"
-                        className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                        className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent font-mono transition-colors"
                       />
                     </div>
                   </>
@@ -2394,48 +2406,48 @@ export default function App() {
               </div>
 
               {/* Right Status Panel */}
-              <div className="bg-[#F7F7F7] dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-5 flex flex-col justify-between h-fit self-start space-y-6">
+              <div className="bg-surface-sunken border-2 border-border-subtle shadow-card rounded-xl p-5 flex flex-col justify-between h-fit self-start space-y-6">
                 <div>
-                  <h4 className="font-extrabold text-[10px] uppercase tracking-wider text-[#AFAFAF] mb-4">Launch Check</h4>
+                  <h4 className="font-bold text-2xs uppercase tracking-wider text-text-muted mb-4">Launch Check</h4>
                   <div className="space-y-3.5 text-xs font-semibold">
-                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
-                      <span className="text-zinc-550">Project Target</span>
-                      <span className="font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[150px] font-bold">{startProjectKey || 'GTO'}</span>
+                    <div className="flex justify-between items-center border-b border-border-subtle pb-2">
+                      <span className="text-text-secondary">Project Target</span>
+                      <span className="font-mono text-text-primary truncate max-w-[150px] font-bold">{startProjectKey || 'GTO'}</span>
                     </div>
-                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
-                      <span className="text-zinc-555">Source Mode</span>
-                      <span className="font-bold text-[#3D8B00]">{startMode === 'existing_project' ? 'Adoption' : 'New Project'}</span>
+                    <div className="flex justify-between items-center border-b border-border-subtle pb-2">
+                      <span className="text-text-secondary">Source Mode</span>
+                      <span className="font-bold text-accent-text">{startMode === 'existing_project' ? 'Adoption' : 'New Project'}</span>
                     </div>
-                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
-                      <span className="text-zinc-555">Model Profile</span>
+                    <div className="flex justify-between items-center border-b border-border-subtle pb-2">
+                      <span className="text-text-secondary">Model Profile</span>
                       <span className="font-bold capitalize">{modelProfile}</span>
                     </div>
-                    <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
-                      <span className="text-zinc-555">Delivery Mode</span>
-                      <span className="font-mono font-bold text-[#58CC02]">{deliveryMode}</span>
+                    <div className="flex justify-between items-center border-b border-border-subtle pb-2">
+                      <span className="text-text-secondary">Delivery Mode</span>
+                      <span className="font-mono font-bold text-accent">{deliveryMode}</span>
                     </div>
                     <div className="flex justify-between items-center pb-1">
-                      <span className="text-zinc-555">Worker Backend</span>
-                      <span className="font-bold text-zinc-700 dark:text-zinc-300 capitalize">{workerBackendMode}</span>
+                      <span className="text-text-secondary">Worker Backend</span>
+                      <span className="font-bold text-text-primary capitalize">{workerBackendMode}</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="border-t-2 border-[#E5E5E5] dark:border-zinc-800 pt-4 space-y-4">
+                <div className="border-t-2 border-border-subtle pt-4 space-y-4">
                   <div className="flex items-center space-x-2">
                     <input
                       type="checkbox"
                       id="dry-run"
                       checked={dryRun}
                       onChange={(e) => setDryRun(e.target.checked)}
-                      className="rounded text-[#58CC02] focus:ring-[#58CC02] h-4 w-4 cursor-pointer"
+                      className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer"
                     />
-                    <label htmlFor="dry-run" className="text-xs font-bold text-zinc-650 dark:text-zinc-400 cursor-pointer">
+                    <label htmlFor="dry-run" className="text-xs font-bold text-text-secondary cursor-pointer">
                       Dry run simulation
                     </label>
                   </div>
 
-                  <div className="bg-[#1e231f] text-[11px] text-[#9fbba6] font-mono p-3 rounded-xl border-2 border-[#324538] leading-relaxed select-all">
+                  <div className="bg-surface-sunken text-2xs text-text-secondary font-mono p-3 rounded-lg border-2 border-border-strong leading-relaxed select-all">
                     {startMode === 'existing_project'
                       ? "Adopt mode reads the project config first and generates takeover-context.md before PRD."
                       : "New project mode generates standard prd.md inside target artifacts folder."}
@@ -2446,7 +2458,7 @@ export default function App() {
                       type="button"
                       onClick={handleCreateConfig}
                       disabled={actionLoading}
-                      className="w-full bg-white dark:bg-zinc-800 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold py-2 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics shrink-0"
+                      className="w-full bg-surface-raised hover:bg-accent-bg hover:text-accent-text border-2 border-border-subtle shadow-button text-text-secondary font-bold py-2 rounded-lg text-xs uppercase tracking-wider transition-all duo-button-physics shrink-0 cursor-pointer"
                     >
                       Create Local Config
                     </button>
@@ -2454,7 +2466,7 @@ export default function App() {
                       type="button"
                       onClick={handleStartWorkflow}
                       disabled={actionLoading || startingWorkflow}
-                      className="w-full bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_4px_0_#3D8B00] text-white font-bold py-3 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-2"
+                      className="w-full bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold py-3 rounded-lg text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-2 cursor-pointer hover:opacity-90 hover:shadow-button"
                     >
                       {startingWorkflow ? (
                         <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -2485,16 +2497,16 @@ export default function App() {
 
     return (
       <>
-        <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 transition-colors flex flex-col font-sans antialiased">
+        <div className="min-h-screen bg-surface-base text-text-primary transition-colors flex flex-col font-sans antialiased">
           {/* Header - 60px height, white background, bottom border */}
-          <header className="h-[60px] border-b-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-6 flex items-center justify-between shadow-sm shrink-0">
+          <header className="h-[60px] border-b-2 border-border-subtle bg-surface-raised px-6 flex items-center justify-between shadow-sm shrink-0">
           <div className="flex items-center space-x-3">
-            <div className="p-1.5 bg-[#58CC02] border-2 border-[#3D8B00] text-white rounded-xl shadow-[0_2px_0_#3D8B00]">
+            <div className="p-1.5 bg-accent border-2 border-accent-text text-text-inverse rounded-xl shadow-button">
               <LayoutDashboard className="h-5 w-5" />
             </div>
             <div>
-              <span className="text-[10px] uppercase tracking-wider font-bold text-[#AFAFAF]">Multi-project control room</span>
-              <h1 className="text-base font-extrabold tracking-tight text-zinc-800 dark:text-zinc-200">GoodTeam Projects</h1>
+              <span className="text-2xs uppercase tracking-wider font-bold text-text-muted">Multi-project control room</span>
+              <h1 className="text-base font-bold tracking-tight text-text-primary">GoodTeam Projects</h1>
             </div>
           </div>
 
@@ -2504,13 +2516,29 @@ export default function App() {
                 setStartMode('new_project');
                 setNewProjectModalOpen(true);
               }}
-              className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics hover:bg-[#4EB302] cursor-pointer"
+              className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-4 py-1.5 rounded-xl text-2xs uppercase tracking-wider transition-all duo-button-physics hover:opacity-90 cursor-pointer"
             >
               + New Project
             </button>
+            <div className="flex bg-surface-sunken p-1 rounded-xl border border-border-subtle select-none">
+              <button
+                type="button"
+                onClick={() => setTheme('vivid')}
+                className={`px-3 py-1 rounded-lg text-2xs font-bold transition-all cursor-pointer ${theme === 'vivid' ? 'bg-surface-raised shadow-sm text-accent-text border border-border-subtle' : 'text-text-muted hover:text-text-secondary'}`}
+              >
+                Vivid
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme('minimal')}
+                className={`px-3 py-1 rounded-lg text-2xs font-bold transition-all cursor-pointer ${theme === 'minimal' ? 'bg-surface-raised shadow-sm text-accent-text border border-border-subtle' : 'text-text-muted hover:text-text-secondary'}`}
+              >
+                Minimal
+              </button>
+            </div>
             <button
               onClick={() => setDarkMode(!darkMode)}
-              className="bg-white dark:bg-zinc-800 p-2 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-650 dark:text-zinc-350 rounded-2xl transition-all duo-button-physics"
+              className="bg-surface-raised p-2 border-2 border-border-subtle shadow-button text-text-secondary rounded-xl transition-all duo-button-physics"
               aria-label="Toggle theme"
             >
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -2547,38 +2575,38 @@ export default function App() {
           {loading ? (
             <Spinner />
           ) : error ? (
-            <div className="bg-[#FFE2E2] border-2 border-[#FF4B4B] p-6 rounded-2xl text-[#EA2B2B] flex items-center space-x-3">
+            <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-xl text-status-danger flex items-center space-x-3">
               <AlertTriangle className="h-6 w-6 shrink-0" />
               <span className="font-bold text-sm">{error}</span>
             </div>
           ) : (
             <div className="space-y-6">
-              <div className="flex justify-between items-center border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-4">
-                <h2 className="text-sm font-extrabold uppercase tracking-widest text-[#AFAFAF]">Registered Projects ({projectItems.length})</h2>
+              <div className="flex justify-between items-center border-b-2 border-border-subtle pb-4">
+                <h2 className="text-sm font-bold uppercase tracking-widest text-text-muted">Registered Projects ({projectItems.length})</h2>
                 <button
                   onClick={() => {
                     setStartMode('new_project');
                     setNewProjectModalOpen(true);
                   }}
-                  className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center gap-1.5 hover:bg-[#4EB302] cursor-pointer"
+                  className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center gap-1.5 hover:opacity-90 cursor-pointer"
                 >
                   <span>+ New Project</span>
                 </button>
               </div>
 
               {projectItems.length === 0 ? (
-                <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-12 text-center rounded-2xl max-w-2xl mx-auto flex flex-col items-center">
-                  <Folder className="h-16 w-16 mx-auto mb-4 text-[#AFAFAF]" />
-                  <h3 className="font-extrabold text-lg text-zinc-800 dark:text-zinc-200 mb-2">No Projects Configured</h3>
-                  <p className="text-xs text-[#AFAFAF] max-w-md mb-6 leading-relaxed">
-                    Create a new project config to get started, adopt an existing repository, or drop a yaml config into <code className="bg-[#F1F1F1] dark:bg-zinc-900 px-1.5 py-0.5 rounded border border-[#E5E5E5] dark:border-zinc-800 text-xs font-mono">projects/*.local.yaml</code>.
+                <div className="bg-surface-raised border-2 border-border-subtle shadow-card p-12 text-center rounded-xl max-w-2xl mx-auto flex flex-col items-center">
+                  <Folder className="h-16 w-16 mx-auto mb-4 text-text-muted" />
+                  <h3 className="font-bold text-lg text-text-primary mb-2">No Projects Configured</h3>
+                  <p className="text-xs text-text-secondary max-w-md mb-6 leading-relaxed">
+                    Create a new project config to get started, adopt an existing repository, or drop a yaml config into <code className="bg-surface-sunken px-1.5 py-0.5 rounded border border-border-subtle text-xs font-mono">projects/*.local.yaml</code>.
                   </p>
                   <button
                     onClick={() => {
                       setStartMode('new_project');
                       setNewProjectModalOpen(true);
                     }}
-                    className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_4px_0_#3D8B00] text-white font-bold px-6 py-3 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics hover:bg-[#4EB302] cursor-pointer"
+                    className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics hover:opacity-90 cursor-pointer"
                   >
                     + Create a Project
                   </button>
@@ -2591,38 +2619,38 @@ export default function App() {
                     return (
                       <article
                         key={item.project_key}
-                        className={`bg-white dark:bg-zinc-950 border-2 rounded-2xl shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] overflow-hidden flex flex-col h-full group hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] dark:hover:shadow-[0_6px_0_#1a1a1a] transition-all duration-200 ${isActive ? 'border-[#58CC02]' : 'border-[#E5E5E5] dark:border-zinc-800'}`}
+                        className={`bg-surface-raised border-2 rounded-xl shadow-card overflow-hidden flex flex-col h-full group transition-all duration-200 theme-card-hover ${isActive ? 'border-accent' : 'border-border-subtle'}`}
                       >
                         <div className="p-6 flex-grow">
                           <div className="flex items-start justify-between">
                             <div>
-                              <h3 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200 group-hover:text-[#58CC02] dark:group-hover:text-[#58CC02] transition-colors">
+                              <h3 className="text-base font-bold text-text-primary group-hover:text-accent transition-colors">
                                 {item.project_name}
                               </h3>
-                              <p className="text-[10px] font-mono text-[#AFAFAF] mt-0.5 font-bold uppercase">
+                              <p className="text-2xs font-mono text-text-muted mt-0.5 font-bold uppercase">
                                 {item.project_key}
                               </p>
                             </div>
-                            <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase border ${activeBadge.bg} ${activeBadge.text} ${activeBadge.border}`}>
-                              {isActive && <span className="h-1.5 w-1.5 bg-[#1CB0F6] rounded-full animate-pulse" />}
+                            <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-2xs font-bold uppercase border ${activeBadge.bg} ${activeBadge.text} ${activeBadge.border}`}>
+                              {isActive && <span className="h-1.5 w-1.5 bg-status-info rounded-full animate-pulse" />}
                               <span>{item.status}</span>
                             </span>
                           </div>
 
-                          <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 text-[11px] border-t-2 border-[#F1F1F1] dark:border-zinc-900 pt-4 font-semibold">
+                          <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 text-2xs border-t-2 border-border-subtle pt-4 font-semibold">
                             <div>
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Model Profile</dt>
-                              <dd className="text-zinc-700 dark:text-zinc-300 capitalize font-bold">{item.model_profile}</dd>
+                              <dt className="text-text-muted uppercase tracking-wider text-2xs mb-0.5">Model Profile</dt>
+                              <dd className="text-text-secondary capitalize font-bold">{item.model_profile}</dd>
                             </div>
                             <div>
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Delivery Mode</dt>
-                              <dd className="text-[#58CC02] font-mono font-bold">{item.delivery_mode}</dd>
+                              <dt className="text-text-muted uppercase tracking-wider text-2xs mb-0.5">Delivery Mode</dt>
+                              <dd className="text-accent font-mono font-bold">{item.delivery_mode}</dd>
                             </div>
                             <div>
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Next Action</dt>
-                              <dd className="text-zinc-700 dark:text-zinc-300 font-mono truncate font-bold flex items-center gap-1">
+                              <dt className="text-text-muted uppercase tracking-wider text-2xs mb-0.5">Next Action</dt>
+                              <dd className="text-text-secondary font-mono truncate font-bold flex items-center gap-1">
                                 {item.next_node && (item.next_node.includes('approval') || item.next_node.includes('gate') || item.next_node.startsWith('await_')) ? (
-                                  <span className="inline-flex items-center gap-0.5 bg-[#FFF0D4] text-[#B36B00] border border-[#FF9600]/30 px-1 rounded text-[9px] uppercase font-bold shrink-0">
+                                  <span className="inline-flex items-center gap-0.5 bg-status-warning-bg text-status-warning-text border border-status-warning/30 px-1 rounded text-2xs uppercase font-bold shrink-0">
                                     <Lock className="h-2.5 w-2.5" /> gate
                                   </span>
                                 ) : null}
@@ -2630,23 +2658,23 @@ export default function App() {
                               </dd>
                             </div>
                             <div>
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Last Active</dt>
-                              <dd className="text-zinc-700 dark:text-zinc-300 truncate" title={item.last_action || 'none'}>
+                              <dt className="text-text-muted uppercase tracking-wider text-2xs mb-0.5">Last Active</dt>
+                              <dd className="text-text-secondary truncate" title={item.last_action || 'none'}>
                                 {item.last_action ? formatHumanTime(item.last_action) : 'none'}
                               </dd>
                             </div>
                             <div className="col-span-2">
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Config Path</dt>
-                              <dd className="truncate text-zinc-500 font-mono text-[9px]" title={item.project_config}><FilePath path={item.project_config} segments={2} /></dd>
+                              <dt className="text-text-muted uppercase tracking-wider text-2xs mb-0.5">Config Path</dt>
+                              <dd className="truncate text-text-muted font-mono text-2xs" title={item.project_config}><FilePath path={item.project_config} segments={2} /></dd>
                             </div>
                           </dl>
                         </div>
 
-                        <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-between items-center">
+                        <div className="bg-surface-sunken px-6 py-4 border-t-2 border-border-subtle flex justify-between items-center">
                           <button
                             onClick={() => handleDeleteProject(item.project_key)}
                             disabled={actionLoading}
-                            className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics shrink-0"
+                            className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle hover:border-status-danger/30 shadow-button text-status-danger p-2 rounded-xl transition-all duo-button-physics shrink-0 cursor-pointer"
                             title="Delete project config"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -2657,20 +2685,20 @@ export default function App() {
                               <button
                                 onClick={() => handleTerminate(item.project_key)}
                                 disabled={actionLoading}
-                                className="bg-white hover:bg-amber-50 border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-3 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
+                                className="bg-surface-raised hover:bg-status-warning-bg border-2 border-border-subtle hover:border-status-warning/30 shadow-button text-status-warning font-bold px-3 py-1.5 rounded-xl text-2xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer"
                               >
                                 Terminate
                               </button>
                             )}
                             <button
                               onClick={() => updateUrl(item.project_key)}
-                              className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-750 font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
+                              className="bg-surface-raised border-2 border-border-subtle hover:border-border-strong shadow-button text-text-secondary font-bold px-4 py-1.5 rounded-xl text-2xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer"
                             >
                               {isActive ? 'Resume' : 'Start'}
                             </button>
                             <button
                               onClick={() => updateUrl(item.project_key)}
-                              className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
+                              className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-4 py-1.5 rounded-xl text-2xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer hover:opacity-90"
                             >
                               Open
                             </button>
@@ -2686,12 +2714,12 @@ export default function App() {
                       setStartMode('new_project');
                       setNewProjectModalOpen(true);
                     }}
-                    className="bg-zinc-50/50 dark:bg-zinc-900/10 border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-6 flex flex-col items-center justify-center min-h-[200px] hover:border-[#58CC02] hover:bg-white dark:hover:bg-zinc-950 transition-all duration-200 group cursor-pointer"
+                    className="bg-surface-sunken border-2 border-dashed border-border-subtle rounded-xl p-6 flex flex-col items-center justify-center min-h-[200px] hover:border-accent hover:bg-surface-raised transition-all duration-200 group cursor-pointer theme-card-hover"
                   >
-                    <div className="w-12 h-12 rounded-full border-2 border-dashed border-[#AFAFAF] group-hover:border-[#58CC02] flex items-center justify-center text-[#AFAFAF] group-hover:text-[#58CC02] transition-colors mb-3">
+                    <div className="w-12 h-12 rounded-full border-2 border-dashed border-border-strong group-hover:border-accent flex items-center justify-center text-text-muted group-hover:text-accent transition-colors mb-3">
                       <span className="text-2xl font-bold font-sans">+</span>
                     </div>
-                    <span className="text-xs font-bold text-zinc-550 group-hover:text-[#3D8B00] dark:group-hover:text-emerald-400 uppercase tracking-wider">New Project</span>
+                    <span className="text-xs font-bold text-text-secondary group-hover:text-accent-text uppercase tracking-wider">New Project</span>
                   </button>
                 </div>
               )}
@@ -2782,7 +2810,7 @@ export default function App() {
     <button
       type="button"
       onClick={() => handleOpenMemoryEvent(eventId)}
-      className="bg-[#E8F9D9] hover:bg-[#D7F6BF] dark:bg-emerald-950/30 dark:hover:bg-emerald-900/40 text-[#3D8B00] dark:text-emerald-400 px-2 py-0.5 rounded font-mono border-2 border-[#58CC02]/30 shadow-[0_2px_0_#A7D98A] dark:shadow-[0_2px_0_#12381f] transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-[#58CC02]/40"
+      className="bg-accent-bg hover:opacity-90 text-accent-text px-2 py-0.5 rounded font-mono border border-accent/30 transition-all duo-button-physics focus:outline-none"
       aria-label={`Open full memory event ${eventId}`}
     >
       {eventId}
@@ -2790,27 +2818,27 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 transition-colors flex flex-col lg:flex-row font-sans antialiased">
+    <div className="min-h-screen bg-surface-base text-text-primary transition-colors flex flex-col lg:flex-row font-sans antialiased">
 
       {/* Sidebar - fixed desktop 220px wide, white, right border */}
-      <aside className={`w-full lg:w-[220px] shrink-0 bg-white dark:bg-zinc-950 text-zinc-700 dark:text-zinc-400 flex flex-col border-r-2 border-[#E5E5E5] dark:border-zinc-800 lg:min-h-screen ${mobileMenuOpen ? 'block' : 'hidden lg:flex'}`}>
-        <div className="p-5 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center bg-zinc-50/50 dark:bg-black/30">
+      <aside className={`w-full lg:w-[220px] shrink-0 bg-surface-raised text-text-secondary flex flex-col border-r-2 border-border-subtle lg:min-h-screen ${mobileMenuOpen ? 'block' : 'hidden lg:flex'}`}>
+        <div className="p-5 border-b-2 border-border-subtle flex justify-between items-center bg-surface-sunken">
           <div>
-            <span className="text-[10px] uppercase tracking-widest text-[#3D8B00] dark:text-emerald-500 font-extrabold">GoodTeam OS</span>
-            <h2 className="text-sm font-extrabold tracking-tight text-zinc-800 dark:text-zinc-200 mt-0.5">{state?.project_name || startContext.project_name || 'Dashboard'}</h2>
+            <span className="text-2xs uppercase tracking-widest text-accent-text font-bold">GoodTeam OS</span>
+            <h2 className="text-sm font-bold tracking-tight text-text-primary mt-0.5">{state?.project_name || startContext.project_name || 'Dashboard'}</h2>
           </div>
           <button
             onClick={() => updateUrl('')}
-            className="text-[10px] text-zinc-550 hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 hover:border-[#58CC02] px-2.5 py-0.5 rounded-xl transition-all font-bold uppercase"
+            className="text-2xs text-text-secondary hover:text-accent border-2 border-border-subtle hover:border-accent px-2.5 py-0.5 rounded-lg transition-all font-bold uppercase cursor-pointer"
           >
             Exit
           </button>
         </div>
 
         {/* Project Selector Indicator */}
-        <div className="px-4 py-3 bg-[#F1F1F1] dark:bg-zinc-900 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex items-center space-x-2 text-xs font-bold text-zinc-650">
-          <Folder className="h-4 w-4 text-[#3D8B00] shrink-0" />
-          <span className="font-mono text-zinc-800 dark:text-zinc-200 select-all">{projectKey}</span>
+        <div className="px-4 py-3 bg-surface-sunken border-b-2 border-border-subtle flex items-center space-x-2 text-xs font-bold text-text-secondary">
+          <Folder className="h-4 w-4 text-accent shrink-0" />
+          <span className="font-mono text-text-primary select-all">{projectKey}</span>
         </div>
 
         {/* Tab buttons - grouped by priority */}
@@ -2849,7 +2877,7 @@ export default function App() {
             }
           ].map((group) => (
             <div key={group.title} className="space-y-1">
-              <div className="px-4 py-1 text-[9px] font-extrabold tracking-widest text-zinc-400 dark:text-zinc-550 uppercase">
+              <div className="px-4 py-1 text-2xs font-bold tracking-widest text-text-muted uppercase">
                 {group.title}
               </div>
               {group.items.map((tab) => {
@@ -2866,14 +2894,14 @@ export default function App() {
                       setActiveTab(tab.id);
                       setMobileMenuOpen(false);
                     }}
-                    className={`w-full h-11 flex items-center justify-between px-4 transition-all ${isActive ? 'bg-[#E8F9D9] dark:bg-emerald-950/20 border-l-[4px] border-[#58CC02] text-[#3D8B00] dark:text-emerald-400 font-bold' : 'hover:bg-zinc-50 dark:hover:bg-zinc-900 border-l-[4px] border-transparent font-semibold text-zinc-550'}`}
+                    className={`w-full h-11 flex items-center justify-between px-4 transition-all cursor-pointer ${isActive ? 'bg-accent-bg border-l-[4px] border-accent text-accent-text font-bold' : 'hover:bg-surface-sunken border-l-[4px] border-transparent font-semibold text-text-secondary'}`}
                   >
                     <div className="flex items-center space-x-3 min-w-0">
-                      <Icon className={`h-4.5 w-4.5 shrink-0 ${isActive ? 'text-[#3D8B00] dark:text-emerald-400' : 'text-zinc-400'}`} />
-                      <span className="text-[11px] uppercase tracking-wider truncate">{tab.label}</span>
+                      <Icon className={`h-4.5 w-4.5 shrink-0 ${isActive ? 'text-accent-text' : 'text-text-muted'}`} />
+                      <span className="text-2xs uppercase tracking-wider truncate">{tab.label}</span>
                     </div>
                     {showBadge && (
-                      <span className="bg-[#FFE2E2] text-[#EA2B2B] text-[9px] font-extrabold px-1.5 py-0.5 rounded-full border border-[#FF4B4B]/20 shrink-0">
+                      <span className="bg-status-danger-bg text-status-danger-text text-2xs font-bold px-1.5 py-0.5 rounded-full border border-status-danger/20 shrink-0">
                         {actionableCount}
                       </span>
                     )}
@@ -2885,11 +2913,26 @@ export default function App() {
         </nav>
 
         {/* Sidebar Footer */}
-        <div className="p-4 border-t-2 border-[#E5E5E5] dark:border-zinc-800 flex items-center justify-between text-xs bg-zinc-50/50 dark:bg-black/30 font-bold text-[#AFAFAF]">
-          <span className="font-mono">v0.1.0</span>
+        <div className="p-4 border-t-2 border-border-subtle flex items-center justify-between gap-2 text-xs bg-surface-sunken font-bold text-text-muted">
+          <div className="flex bg-surface-raised p-0.5 rounded-lg border border-border-subtle select-none">
+            <button
+              type="button"
+              onClick={() => setTheme('vivid')}
+              className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'vivid' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+            >
+              Vivid
+            </button>
+            <button
+              type="button"
+              onClick={() => setTheme('minimal')}
+              className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'minimal' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+            >
+              Minimal
+            </button>
+          </div>
           <button
             onClick={() => setDarkMode(!darkMode)}
-            className="p-1.5 rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 hover:bg-[#F1F1F1] dark:hover:bg-zinc-900 transition-colors text-zinc-500 dark:text-zinc-400"
+            className="p-1.5 rounded-lg border-2 border-border-subtle hover:bg-surface-sunken transition-colors text-text-secondary cursor-pointer"
             aria-label="Toggle theme"
           >
             {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -2898,21 +2941,21 @@ export default function App() {
       </aside>
 
       {/* Top Bar for Mobile viewports */}
-      <header className="lg:hidden h-[60px] shrink-0 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-white flex items-center justify-between px-4 border-b-2 border-[#E5E5E5] dark:border-zinc-800 shadow-sm">
+      <header className="lg:hidden h-[60px] shrink-0 bg-surface-raised text-text-primary flex items-center justify-between px-4 border-b-2 border-border-subtle shadow-sm">
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="p-1.5 rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 hover:bg-zinc-50 transition-colors"
+          className="p-1.5 rounded-xl border-2 border-border-subtle hover:bg-surface-sunken transition-colors cursor-pointer"
         >
           {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
-        <span className="font-extrabold text-sm tracking-tight">{state?.project_name || 'Dashboard'}</span>
+        <span className="font-bold text-sm tracking-tight text-text-primary">{state?.project_name || 'Dashboard'}</span>
         {headerStatus.toLowerCase() === 'complete' ? (
-          <div className="bg-[#E8F9D9] text-[#3D8B00] font-[800] text-[12px] px-2.5 py-1 rounded-full border-2 border-[#58CC02]/20 flex items-center space-x-1">
+          <div className="bg-status-success-bg text-status-success-text font-bold text-xs px-2.5 py-1 rounded-full border-2 border-status-success/20 flex items-center space-x-1">
             <span>✅</span>
             <span>COMPLETE</span>
           </div>
         ) : (
-          <div className={`px-2.5 py-0.5 rounded-full text-[9px] uppercase font-extrabold border ${headBadge.bg} ${headBadge.text} ${headBadge.border}`}>
+          <div className={`px-2.5 py-0.5 rounded-full text-2xs uppercase font-bold border ${activeRun ? 'bg-status-info-bg text-status-info-text border-status-info/30' : headBadge.bg + ' ' + headBadge.text + ' ' + headBadge.border}`}>
             {getStatusLabel(headerStatus)}
           </div>
         )}
@@ -2922,32 +2965,32 @@ export default function App() {
       <div className="flex-grow flex flex-col min-w-0 min-h-screen">
 
         {/* Top Header Bar on Desktop - 60px high, white background, bottom border */}
-        <header className="hidden lg:flex h-[60px] shrink-0 border-b-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 items-center justify-between px-6 shadow-sm">
+        <header className="hidden lg:flex h-[60px] shrink-0 border-b-2 border-border-subtle bg-surface-raised items-center justify-between px-6 shadow-sm">
           <div className="flex items-center space-x-3">
             <div
               onClick={() => updateUrl('')}
-              className="w-8 h-8 rounded-xl bg-[#58CC02] border-2 border-[#3D8B00] flex items-center justify-center text-white font-black text-lg shadow-[0_2.5px_0_#3D8B00] shrink-0 cursor-pointer"
+              className="w-8 h-8 rounded-lg bg-accent border-2 border-accent-text flex items-center justify-center text-text-inverse font-bold text-lg shadow-button shrink-0 cursor-pointer hover:opacity-90"
             >
               G
             </div>
-            <span onClick={() => updateUrl('')} className="font-extrabold text-lg tracking-tight text-zinc-900 dark:text-white cursor-pointer hover:text-[#58CC02] transition-colors">GoodTeam</span>
-            <span className="text-zinc-300 dark:text-zinc-700 font-bold text-sm">|</span>
-            <span className="text-zinc-500 dark:text-zinc-400 font-bold text-xs uppercase tracking-wider">
+            <span onClick={() => updateUrl('')} className="font-bold text-lg tracking-tight text-text-primary cursor-pointer hover:text-accent transition-colors">GoodTeam</span>
+            <span className="text-border-strong font-bold text-sm">|</span>
+            <span className="text-text-secondary font-bold text-xs uppercase tracking-wider">
               {state?.project_name || startContext.project_name || 'Dashboard'}
             </span>
           </div>
 
           <div className="flex items-center space-x-4">
-            <span className="text-[10px] font-mono font-bold text-[#AFAFAF] uppercase hidden sm:inline">Run ID: <code className="bg-[#F1F1F1] dark:bg-zinc-900 border border-[#E5E5E5] dark:border-zinc-800 px-2 py-0.5 rounded-lg text-zinc-650 dark:text-zinc-400 select-all font-mono">{state?.run_id || 'none'}</code></span>
+            <span className="text-2xs font-mono font-bold text-text-muted uppercase hidden sm:inline">Run ID: <code className="bg-surface-sunken border border-border-subtle px-2 py-0.5 rounded-lg text-text-secondary select-all font-mono">{state?.run_id || 'none'}</code></span>
 
             {headerStatus.toLowerCase() === 'complete' ? (
-              <div className="bg-[#E8F9D9] text-[#3D8B00] font-[800] text-[16px] px-5 py-2.5 rounded-full border-2 border-[#58CC02]/30 flex items-center space-x-1.5 shadow-[0_2px_0_#3D8B00]/10">
+              <div className="bg-status-success-bg text-status-success-text font-bold text-base px-5 py-2.5 rounded-full border-2 border-status-success/30 flex items-center space-x-1.5 shadow-sm">
                 <span>✅</span>
                 <span>COMPLETE</span>
               </div>
             ) : (
-              <div className={`inline-flex items-center space-x-1.5 px-4 py-2 rounded-full text-xs font-extrabold uppercase border ${headBadge.bg} ${headBadge.text} ${headBadge.border}`}>
-                {activeRun && <span className="h-1.5 w-1.5 bg-[#1CB0F6] rounded-full animate-pulse" />}
+              <div className={`inline-flex items-center space-x-1.5 px-4 py-2 rounded-full text-xs font-semibold uppercase border ${headBadge.bg} ${headBadge.text} ${headBadge.border}`}>
+                {activeRun && <span className="h-1.5 w-1.5 bg-status-info rounded-full animate-pulse" />}
                 <span>{getStatusLabel(headerStatus)}</span>
               </div>
             )}
@@ -2956,14 +2999,14 @@ export default function App() {
 
         {/* Persistent Approvals Banner */}
         {actionableCount > 0 && (
-          <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-b-2 border-[#FF9600]/30 px-6 py-3 flex items-center justify-between text-xs font-bold text-[#B36B00] dark:text-amber-300 animate-fade-in shrink-0">
+          <div className="bg-status-warning-bg border-b-2 border-status-warning/30 px-6 py-3 flex items-center justify-between text-xs font-bold text-status-warning-text animate-fade-in shrink-0">
             <div className="flex items-center space-x-2">
-              <span className="h-2 w-2 rounded-full bg-[#FF9600] animate-pulse shrink-0" />
+              <span className="h-2 w-2 rounded-full bg-status-warning animate-pulse shrink-0" />
               <span>{actionableCount} gate{actionableCount > 1 ? 's' : ''} awaiting your approval</span>
             </div>
             <button
               onClick={() => setActiveTab('approvals')}
-              className="bg-white dark:bg-zinc-800 hover:bg-[#FFF0D4] dark:hover:bg-amber-900/40 border-2 border-[#FF9600]/30 shadow-[0_2px_0_#FF9600]/20 text-[#B36B00] dark:text-amber-300 font-extrabold px-3 py-1 rounded-xl uppercase tracking-wider transition-all duo-button-physics text-[10px]"
+              className="bg-surface-raised hover:bg-status-warning-bg border-2 border-status-warning/30 shadow-button text-status-warning-text font-bold px-3 py-1 rounded-lg uppercase tracking-wider transition-all duo-button-physics text-2xs cursor-pointer"
             >
               Review
             </button>
@@ -3166,10 +3209,10 @@ export default function App() {
 
                         const getEdgeColor = (type) => {
                           const norm = String(type || '').toLowerCase().trim();
-                          if (norm === 'approved') return '#58CC02';
-                          if (norm === 'changes_requested' || norm === 'blocked') return '#FF9600';
-                          if (norm === 'rejected' || norm === 'error') return '#FF4B4B';
-                          return '#AFAFAF';
+                          if (norm === 'approved') return 'var(--success)';
+                          if (norm === 'changes_requested' || norm === 'blocked') return 'var(--warning)';
+                          if (norm === 'rejected' || norm === 'error') return 'var(--danger)';
+                          return 'var(--text-muted)';
                         };
 
                         const getEdgeMarker = (type) => {
@@ -3192,22 +3235,22 @@ export default function App() {
                             >
                               <defs>
                                 <marker id="arrow-approved" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="#58CC02" />
+                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--success)" />
                                 </marker>
                                 <marker id="arrow-changes_requested" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="#FF9600" />
+                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--warning)" />
                                 </marker>
                                 <marker id="arrow-rejected" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="#FF4B4B" />
+                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--danger)" />
                                 </marker>
                                 <marker id="arrow-error" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="#FF4B4B" />
+                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--danger)" />
                                 </marker>
                                 <marker id="arrow-blocked" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="#FF9600" />
+                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--warning)" />
                                 </marker>
                                 <marker id="arrow-default" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="#AFAFAF" />
+                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--text-muted)" />
                                 </marker>
                               </defs>
 
@@ -3246,13 +3289,12 @@ export default function App() {
                               return (
                                 <div
                                   key={idx}
-                                  className="absolute bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-full px-2 py-0.5 text-[9px] font-bold shadow-xs select-none pointer-events-none z-10"
+                                  className="absolute bg-surface-raised border border-border-subtle rounded-full px-2 py-0.5 text-2xs font-bold shadow-xs select-none pointer-events-none z-10"
                                   style={{
                                     left: `${midX}px`,
                                     top: `${midY}px`,
                                     transform: 'translate(-50%, -50%)',
                                     color: color,
-                                    borderColor: `${color}40`,
                                   }}
                                 >
                                   {edge.type}
@@ -3269,31 +3311,31 @@ export default function App() {
                               const left = paddingX + node.rank * columnWidth;
                               const top = paddingY + node.index * rowHeight;
 
-                              let cardBorder = 'border-[#E5E5E5] dark:border-zinc-800';
-                              let shadowStyle = 'shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a]';
+                              let cardBorder = 'border-border-subtle';
+                              let shadowStyle = 'shadow-card';
                               if (isCurrent) {
-                                cardBorder = 'border-[#58CC02] dark:border-[#58CC02]';
-                                shadowStyle = 'shadow-[0_4px_0_#58CC02]';
+                                cardBorder = 'border-status-success';
+                                shadowStyle = 'shadow-[0_4px_0_var(--success)]';
                               } else if (isNext) {
-                                cardBorder = 'border-[#1CB0F6] dark:border-[#1CB0F6]';
-                                shadowStyle = 'shadow-[0_4px_0_#1CB0F6]';
+                                cardBorder = 'border-status-info';
+                                shadowStyle = 'shadow-[0_4px_0_var(--info)]';
                               } else if (node.gate) {
                                 if (approvalStatus === 'approved') {
-                                  cardBorder = 'border-[#58CC02] dark:border-[#58CC02]';
-                                  shadowStyle = 'shadow-[0_4px_0_#58CC02]';
+                                  cardBorder = 'border-status-success';
+                                  shadowStyle = 'shadow-[0_4px_0_var(--success)]';
                                 } else if (approvalStatus === 'changes_requested') {
-                                  cardBorder = 'border-[#FF9600] dark:border-[#FF9600]';
-                                  shadowStyle = 'shadow-[0_4px_0_#FF9600]';
+                                  cardBorder = 'border-status-warning';
+                                  shadowStyle = 'shadow-[0_4px_0_var(--warning)]';
                                 } else if (approvalStatus === 'rejected') {
-                                  cardBorder = 'border-[#FF4B4B] dark:border-[#FF4B4B]';
-                                  shadowStyle = 'shadow-[0_4px_0_#FF4B4B]';
+                                  cardBorder = 'border-status-danger';
+                                  shadowStyle = 'shadow-[0_4px_0_var(--danger)]';
                                 }
                               }
 
                               return (
                                 <div
                                   key={node.name}
-                                  className={`absolute bg-white dark:bg-zinc-950 border-2 rounded-2xl p-4 flex flex-col justify-between z-20 ${cardBorder} ${shadowStyle}`}
+                                  className={`absolute bg-surface-raised border-2 rounded-xl p-4 flex flex-col justify-between z-20 ${cardBorder} ${shadowStyle}`}
                                   style={{
                                     left: `${left}px`,
                                     top: `${top}px`,
@@ -3303,7 +3345,7 @@ export default function App() {
                                 >
                                   <div className="flex justify-between items-start gap-1">
                                     <span
-                                      className="font-mono text-xs font-extrabold text-zinc-800 dark:text-zinc-200 truncate select-all"
+                                      className="font-mono text-2xs font-bold text-text-primary truncate select-all"
                                       title={node.name}
                                     >
                                       {node.name}
@@ -3311,42 +3353,42 @@ export default function App() {
 
                                     <div className="flex items-center space-x-1 shrink-0">
                                       {node.gate && approvalStatus === 'approved' && (
-                                        <span className="bg-[#E8F9D9] dark:bg-[#58CC02]/10 border border-[#58CC02]/20 dark:border-[#58CC02]/30 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold uppercase flex items-center gap-0.5 text-zinc-900 dark:text-zinc-100" title="Approved">
-                                          <Check className="h-2.5 w-2.5 text-[#3D8B00] dark:text-[#58CC02]" />
+                                        <span className="bg-status-success-bg dark:bg-status-success/10 border border-status-success/20 dark:border-status-success/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-success-text" title="Approved">
+                                          <Check className="h-2.5 w-2.5 text-status-success" />
                                           <span>approved</span>
                                         </span>
                                       )}
                                       {node.gate && approvalStatus === 'changes_requested' && (
-                                        <span className="bg-[#FFE6CC] dark:bg-[#FF9600]/10 border border-[#FF9600]/20 dark:border-[#FF9600]/30 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold uppercase flex items-center gap-0.5 text-zinc-900 dark:text-zinc-100" title="Changes Requested">
-                                          <AlertTriangle className="h-2.5 w-2.5 text-[#D07300] dark:text-[#FF9600]" />
+                                        <span className="bg-status-warning-bg dark:bg-status-warning/10 border border-status-warning/20 dark:border-status-warning/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-warning-text" title="Changes Requested">
+                                          <AlertTriangle className="h-2.5 w-2.5 text-status-warning" />
                                           <span>changes</span>
                                         </span>
                                       )}
                                       {node.gate && approvalStatus === 'rejected' && (
-                                        <span className="bg-[#FFD6D6] dark:bg-[#FF4B4B]/10 border border-[#FF4B4B]/20 dark:border-[#FF4B4B]/30 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold uppercase flex items-center gap-0.5 text-zinc-900 dark:text-zinc-100" title="Rejected">
-                                          <XCircle className="h-2.5 w-2.5 text-[#D03030] dark:text-[#FF4B4B]" />
+                                        <span className="bg-status-danger-bg dark:bg-status-danger/10 border border-status-danger/20 dark:border-status-danger/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-danger-text" title="Rejected">
+                                          <XCircle className="h-2.5 w-2.5 text-status-danger" />
                                           <span>rejected</span>
                                         </span>
                                       )}
                                       {isCurrent ? (
-                                        <span className="h-2 w-2 rounded-full bg-[#58CC02] animate-pulse" title="Current Node" />
+                                        <span className="h-2 w-2 rounded-full bg-status-success animate-pulse" title="Current Node" />
                                       ) : isNext ? (
-                                        <span className="h-2 w-2 rounded-full bg-[#1CB0F6] animate-pulse" title="Next Node" />
+                                        <span className="h-2 w-2 rounded-full bg-status-info animate-pulse" title="Next Node" />
                                       ) : null}
                                     </div>
                                   </div>
 
                                   <div className="space-y-1">
                                     {node.gate && (
-                                      <div className="flex items-center text-[10px] text-zinc-550 font-bold">
-                                        <Lock className="h-3 w-3 mr-1 text-[#AFAFAF]" />
+                                      <div className="flex items-center text-2xs text-text-secondary font-bold">
+                                        <Lock className="h-3 w-3 mr-1 text-text-muted" />
                                         <span className="uppercase">{node.gate} Gate</span>
                                       </div>
                                     )}
-                                    <div className="flex justify-between items-center text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">
+                                    <div className="flex justify-between items-center text-2xs font-bold uppercase tracking-wider text-text-muted">
                                       <span>{node.kind}</span>
                                       {node.runner && (
-                                        <span className="font-mono text-[8px] max-w-[100px] truncate" title={node.runner}>
+                                        <span className="font-mono text-2xs max-w-[100px] truncate" title={node.runner}>
                                           {node.runner}
                                         </span>
                                       )}
@@ -3377,14 +3419,14 @@ export default function App() {
                     ].map((sig, idx) => {
                       const statBadge = getBadgeStyle(sig.val);
                       return (
-                        <div key={idx} className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-5 rounded-2xl hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] transition-all duration-200 flex flex-col justify-between h-28">
-                          <span className="text-[10px] font-bold text-[#AFAFAF] uppercase tracking-wider block">{sig.label}</span>
+                        <div key={idx} className="bg-surface-raised border-2 border-border-subtle shadow-card p-5 rounded-xl transition-all duration-200 theme-card-hover flex flex-col justify-between h-28">
+                          <span className="text-2xs font-bold text-text-muted uppercase tracking-wider block">{sig.label}</span>
                           {sig.isBadge ? (
-                            <span className={`inline-block px-3 py-1 rounded-full text-xs font-extrabold uppercase border w-fit ${statBadge.bg} ${statBadge.text} ${statBadge.border}`}>
+                            <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase border w-fit ${statBadge.bg} ${statBadge.text} ${statBadge.border}`}>
                               {getStatusLabel(sig.val)}
                             </span>
                           ) : (
-                            <span className="text-3xl font-extrabold text-zinc-800 dark:text-zinc-100 leading-none">{sig.val}</span>
+                            <span className="text-3xl font-bold text-text-primary leading-none">{sig.val}</span>
                           )}
                         </div>
                       );
@@ -3393,9 +3435,9 @@ export default function App() {
 
                   {/* Mission Card (Second row: CURRENT MISSION with show more/less toggle) */}
                   {state && (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 space-y-4">
-                      <h4 className="text-[10px] font-bold text-[#AFAFAF] uppercase tracking-wider">Current Mission</h4>
-                      <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 leading-relaxed font-mono select-all">
+                    <div className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-xl p-6 space-y-4">
+                      <h4 className="text-2xs font-bold text-text-muted uppercase tracking-wider">Current Mission</h4>
+                      <p className="text-sm font-semibold text-text-secondary leading-relaxed font-mono select-all">
                         {missionExpanded ? state.idea : getMissionSummary(state.idea)}
                       </p>
 
@@ -3403,7 +3445,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => setMissionExpanded(!missionExpanded)}
-                          className="text-xs font-bold text-[#3D8B00] hover:underline flex items-center space-x-1"
+                          className="text-xs font-bold text-accent-text hover:underline flex items-center space-x-1 cursor-pointer"
                         >
                           <span>{missionExpanded ? '收起全文 ▴' : '展开全文 ▾'}</span>
                         </button>
@@ -3413,21 +3455,21 @@ export default function App() {
 
                   {/* Blockers alert */}
                   {state?.blockers && state.blockers.length > 0 && (
-                    <div className="bg-[#FFE2E2] border-2 border-[#FF4B4B] p-5 rounded-2xl shadow-[0_4px_0_#FFD1D1] space-y-4">
+                    <div className="bg-status-danger-bg border-2 border-status-danger p-5 rounded-xl shadow-card space-y-4">
                       <div className="flex items-start space-x-3">
-                        <AlertTriangle className="h-5.5 w-5.5 text-[#FF4B4B] shrink-0 mt-0.5" />
+                        <AlertTriangle className="h-5.5 w-5.5 text-status-danger shrink-0 mt-0.5" />
                         <div>
-                          <h4 className="font-extrabold text-[#EA2B2B] text-sm uppercase tracking-wide">Execution Blocked</h4>
-                          <ul className="list-disc pl-5 mt-2 space-y-1 text-xs text-[#EA2B2B] font-mono leading-relaxed">
+                          <h4 className="font-bold text-status-danger-text text-sm uppercase tracking-wide">Execution Blocked</h4>
+                          <ul className="list-disc pl-5 mt-2 space-y-1 text-xs text-status-danger-text font-mono leading-relaxed">
                             {state.blockers.map((b, idx) => <li key={idx}>{b}</li>)}
                           </ul>
                         </div>
                       </div>
-                      <div className="flex justify-end pt-3 border-t-2 border-[#FF4B4B]/10">
+                      <div className="flex justify-end pt-3 border-t-2 border-status-danger/15">
                         <button
                           onClick={handleRetryBlocked}
                           disabled={actionLoading}
-                          className="bg-[#FF9600] border-2 border-[#B36B00] shadow-[0_3px_0_#B36B00] text-white font-bold text-xs uppercase tracking-wider px-4 py-2 rounded-2xl transition-all duo-button-physics flex items-center space-x-2"
+                          className="bg-status-warning border-2 border-status-warning-text shadow-button text-text-inverse font-bold text-xs uppercase tracking-wider px-4 py-2 rounded-xl transition-all duo-button-physics flex items-center space-x-2 cursor-pointer hover:opacity-90"
                         >
                           <RefreshCw className="h-3.5 w-3.5 animate-pulse" />
                           <span>Retry Blocked Workers</span>
@@ -3440,13 +3482,13 @@ export default function App() {
                   <div className="flex space-x-4">
                     <button
                       onClick={() => updateUrl('')}
-                      className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_4px_0_#3D8B00] text-white rounded-2xl font-bold uppercase tracking-wider text-xs px-5 py-3 transition-all duo-button-physics"
+                      className="bg-accent border-2 border-accent-text shadow-button text-text-inverse rounded-xl font-bold uppercase tracking-wider text-xs px-5 py-3 transition-all duo-button-physics cursor-pointer hover:opacity-90"
                     >
                       Open Project Overview
                     </button>
                     <button
                       onClick={() => setActiveTab('approvals')}
-                      className="bg-white dark:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] text-zinc-700 dark:text-zinc-350 rounded-2xl font-bold uppercase tracking-wider text-xs px-5 py-3 transition-all duo-button-physics"
+                      className="bg-surface-raised border-2 border-border-subtle hover:bg-surface-sunken shadow-card text-text-secondary rounded-xl font-bold uppercase tracking-wider text-xs px-5 py-3 transition-all duo-button-physics cursor-pointer"
                     >
                       Review Release Notes
                     </button>
@@ -3454,35 +3496,35 @@ export default function App() {
 
                   {/* Configuration Details collapsible */}
                   {state && (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden">
-                      <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800">
-                        <h3 className="font-extrabold text-xs text-[#AFAFAF] uppercase tracking-wider">Run Environment Configuration</h3>
+                    <div className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-xl overflow-hidden">
+                      <div className="px-6 py-4 bg-surface-sunken border-b-2 border-border-subtle">
+                        <h3 className="font-bold text-2xs text-text-muted uppercase tracking-wider">Run Environment Configuration</h3>
                       </div>
                       <div className="p-6">
                         <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-xs font-semibold">
-                          <div className="border-b border-zinc-100 dark:border-zinc-900 pb-2 flex justify-between items-center">
-                            <dt className="text-[#AFAFAF] uppercase text-[10px]">State Config Path</dt>
+                          <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
+                            <dt className="text-text-muted uppercase text-2xs">State Config Path</dt>
                             <dd><FilePath path={state.context_packet_path} segments={1} /></dd>
                           </div>
-                          <div className="border-b border-zinc-100 dark:border-zinc-900 pb-2 flex justify-between items-center">
-                            <dt className="text-[#AFAFAF] uppercase text-[10px]">Local Task Ledger</dt>
+                          <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
+                            <dt className="text-text-muted uppercase text-2xs">Local Task Ledger</dt>
                             <dd><FilePath path={state.artifacts?.task_ledger} segments={1} /></dd>
                           </div>
-                          <div className="border-b border-zinc-100 dark:border-zinc-900 pb-2 flex justify-between items-center">
-                            <dt className="text-[#AFAFAF] uppercase text-[10px]">Docs Repository</dt>
+                          <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
+                            <dt className="text-text-muted uppercase text-2xs">Docs Repository</dt>
                             <dd><FilePath path={startContext.project_report?.project?.repos?.docs} segments={1} /></dd>
                           </div>
-                          <div className="border-b border-zinc-100 dark:border-zinc-900 pb-2 flex justify-between items-center">
-                            <dt className="text-[#AFAFAF] uppercase text-[10px]">Backend Repository</dt>
+                          <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
+                            <dt className="text-text-muted uppercase text-2xs">Backend Repository</dt>
                             <dd><FilePath path={startContext.project_report?.project?.repos?.backend} segments={1} /></dd>
                           </div>
-                          <div className="border-b border-zinc-100 dark:border-zinc-900 pb-2 flex justify-between items-center">
-                            <dt className="text-[#AFAFAF] uppercase text-[10px]">Frontend Repository</dt>
+                          <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
+                            <dt className="text-text-muted uppercase text-2xs">Frontend Repository</dt>
                             <dd><FilePath path={startContext.project_report?.project?.repos?.frontend} segments={1} /></dd>
                           </div>
-                          <div className="border-b border-zinc-100 dark:border-zinc-900 pb-2 flex justify-between items-center">
-                            <dt className="text-[#AFAFAF] uppercase text-[10px]">Staging SSH Target</dt>
-                            <dd className="font-mono text-zinc-700 dark:text-zinc-350">{startContext.deployment_backend?.staging_ssh_target || 'not configured'}</dd>
+                          <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
+                            <dt className="text-text-muted uppercase text-2xs">Staging SSH Target</dt>
+                            <dd className="font-mono text-text-secondary">{startContext.deployment_backend?.staging_ssh_target || 'not configured'}</dd>
                           </div>
                         </dl>
                       </div>
@@ -3491,32 +3533,32 @@ export default function App() {
 
                   {/* Start another workflow console (Duo Card style) */}
                   {!activeRun && (
-                    <details className="group border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] rounded-2xl overflow-hidden bg-white dark:bg-zinc-950">
-                      <summary className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[#3D8B00] hover:bg-zinc-55 hover:bg-zinc-50 transition-colors cursor-pointer list-none flex justify-between items-center select-none">
+                    <details className="group border-2 border-border-subtle shadow-card rounded-xl overflow-hidden bg-surface-raised">
+                      <summary className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-accent-text hover:bg-surface-sunken transition-colors cursor-pointer list-none flex justify-between items-center select-none">
                         <span>Start another run for this project</span>
-                        <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180 text-zinc-500" />
+                        <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180 text-text-muted" />
                       </summary>
-                      <div className="p-6 border-t-2 border-[#E5E5E5] dark:border-zinc-800 space-y-6">
-                        <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit text-xs mb-4">
-                          <button onClick={() => setStartMode('existing_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-800'}`}>Adopt Existing Project</button>
-                          <button onClick={() => setStartMode('new_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00]' : 'text-[#AFAFAF] hover:text-zinc-800'}`}>Start New Project</button>
+                      <div className="p-6 border-t-2 border-border-subtle space-y-6">
+                        <div className="flex bg-surface-sunken p-1 rounded-lg w-fit text-xs mb-4">
+                          <button onClick={() => setStartMode('existing_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${startMode === 'existing_project' ? 'bg-surface-raised shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}>Adopt Existing Project</button>
+                          <button onClick={() => setStartMode('new_project')} className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${isNewProjectMode ? 'bg-surface-raised shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}>Start New Project</button>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold">
                           <div className="col-span-2">
-                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Goal / Idea</label>
-                            <textarea value={idea} onChange={(e) => setIdea(e.target.value)} placeholder="Explain the workflow target..." className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed" />
+                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Goal / Idea</label>
+                            <textarea value={idea} onChange={(e) => setIdea(e.target.value)} placeholder="Explain the workflow target..." className="w-full h-20 bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl p-3 font-mono leading-relaxed focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Model Profile</label>
-                            <select value={modelProfile} onChange={(e) => setModelProfile(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-3 py-2">
+                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Model Profile</label>
+                            <select value={modelProfile} onChange={(e) => setModelProfile(e.target.value)} className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-3 py-2 focus:outline-none focus:border-accent">
                               <option value="balanced">Balanced</option>
                               <option value="cheap">Cheap</option>
                               <option value="max_quality">Max Quality</option>
                             </select>
                           </div>
                           <div>
-                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Delivery Mode</label>
-                            <select value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-3 py-2">
+                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Delivery Mode</label>
+                            <select value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value)} className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-3 py-2 focus:outline-none focus:border-accent">
                               {DELIVERY_MODE_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>{option.label}</option>
                               ))}
@@ -3524,28 +3566,28 @@ export default function App() {
                           </div>
                           {deliveryMode === 'custom' && (
                             <div className="col-span-2">
-                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Delivery Standards</label>
+                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Delivery Standards</label>
                               <textarea
                                 value={deliveryStandards}
                                 onChange={(e) => setDeliveryStandards(e.target.value)}
                                 placeholder="每行一条交付标准"
-                                className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed resize-none"
+                                className="w-full h-20 bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl p-3 font-mono leading-relaxed resize-none focus:outline-none focus:border-accent"
                               />
                             </div>
                           )}
 
-                          <div className="col-span-2 border-t-2 border-[#E5E5E5] dark:border-zinc-800 my-2" />
+                          <div className="col-span-2 border-t-2 border-border-subtle my-2" />
 
                            <div className="col-span-2 flex items-center justify-between">
                             <div className="flex items-center space-x-2">
-                              <input type="checkbox" id="run-dry" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="rounded text-[#58CC02] focus:ring-[#58CC02] h-4 w-4 cursor-pointer" />
-                              <label htmlFor="run-dry" className="font-bold text-zinc-500 uppercase tracking-wider text-[10px]">Dry run simulation</label>
+                              <input type="checkbox" id="run-dry" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer" />
+                              <label htmlFor="run-dry" className="font-bold text-text-secondary uppercase tracking-wider text-2xs cursor-pointer">Dry run simulation</label>
                             </div>
                             <div className="flex flex-col items-end">
                               <button
                                 onClick={handleStartWorkflow}
                                 disabled={actionLoading || startingWorkflow}
-                                className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-6 py-2.5 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-2"
+                                className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-2 cursor-pointer hover:opacity-90"
                               >
                                 {startingWorkflow ? (
                                   <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -3555,7 +3597,7 @@ export default function App() {
                                 <span>{startingWorkflow ? 'Starting...' : (dryRun ? 'Preview Workflow' : 'Start Workflow')}</span>
                               </button>
                               {startingWorkflow && (
-                                <span className="text-[10px] text-zinc-500 mt-2 text-right animate-pulse max-w-xs">
+                                <span className="text-2xs text-text-muted mt-2 text-right animate-pulse max-w-xs">
                                   Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
                                 </span>
                               )}
