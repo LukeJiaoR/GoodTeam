@@ -36,7 +36,8 @@ import {
   Search,
   GitBranch,
   GitPullRequest,
-  Copy
+  Copy,
+  Sparkles
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
 
@@ -314,6 +315,43 @@ const FALLBACK_AGENT_MODES = {
   }
 };
 
+function computeLineDiff(baseText, newText) {
+  const baseLines = (baseText || '').split('\n');
+  const newLines = (newText || '').split('\n');
+  
+  const M = baseLines.length;
+  const N = newLines.length;
+  
+  const dp = Array.from({ length: M + 1 }, () => new Int32Array(N + 1));
+  
+  for (let i = 1; i <= M; i++) {
+    for (let j = 1; j <= N; j++) {
+      if (baseLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+  
+  const diff = [];
+  let i = M, j = N;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && baseLines[i - 1] === newLines[j - 1]) {
+      diff.unshift({ type: 'unchanged', text: baseLines[i - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      diff.unshift({ type: 'added', text: newLines[j - 1] });
+      j--;
+    } else {
+      diff.unshift({ type: 'removed', text: baseLines[i - 1] });
+      i--;
+    }
+  }
+  return diff;
+}
+
 export default function App() {
   // Sync project key from URL search query parameter '?project='
   const getUrlProject = () => {
@@ -412,6 +450,8 @@ export default function App() {
   // Approval review artifact editor state
   const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
   const [editorContent, setEditorContent] = useState('');
+  const [refineLoading, setRefineLoading] = useState(false);
+  const [proposedRevision, setProposedRevision] = useState(null); // { proposed_path, content, diff_summary }
   const [gateDebate, setGateDebate] = useState(EMPTY_GATE_DEBATE);
   const [debateRun, setDebateRun] = useState({ key: '', loading: false, error: '' });
   const [messageFeed, setMessageFeed] = useState(EMPTY_MESSAGE_FEED);
@@ -1527,6 +1567,103 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleRefineArtifact = async () => {
+    if (!editingArtifact || !editorContent) return;
+    setRefineLoading(true);
+    try {
+      const response = await fetch('/api/refine-artifact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: projectKey,
+          artifact: editingArtifact,
+          content: editorContent,
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) {
+        throw new Error(res.error || 'Failed to refine artifact');
+      }
+
+      // Fetch the proposed content
+      const proposedPath = res.proposed_path;
+      const contentResponse = await fetch(`/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(proposedPath)}`);
+      const contentRes = await contentResponse.json();
+      if (!contentResponse.ok) {
+        throw new Error(contentRes.error || 'Failed to fetch proposed artifact content');
+      }
+
+      setProposedRevision({
+        proposed_path: proposedPath,
+        content: contentRes.content || '',
+        diff_summary: res.diff_summary || { added_lines: 0, removed_lines: 0 }
+      });
+      showToast('Refinement generated. Please review the proposal.');
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setRefineLoading(false);
+    }
+  };
+
+  const handleAcceptRefinement = async () => {
+    if (!editingArtifact || !proposedRevision) return;
+    setRefineLoading(true);
+    try {
+      const response = await fetch('/api/accept-refinement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: projectKey,
+          artifact: editingArtifact,
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) {
+        throw new Error(res.error || 'Failed to accept refinement');
+      }
+
+      showToast(`Refinement accepted. Saved to ${editingArtifact.toUpperCase()}.`);
+      
+      // Load the now-current artifact into the editor
+      setEditorContent(proposedRevision.content);
+      setProposedRevision(null);
+
+      // fetchState to update UI
+      await fetchState(projectKey);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setRefineLoading(false);
+    }
+  };
+
+  const handleDiscardRefinement = async () => {
+    if (!editingArtifact || !proposedRevision) return;
+    setRefineLoading(true);
+    try {
+      const response = await fetch('/api/discard-refinement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: projectKey,
+          artifact: editingArtifact,
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) {
+        throw new Error(res.error || 'Failed to discard refinement');
+      }
+
+      showToast('Refinement discarded. Keeping your original edits.');
+      setProposedRevision(null);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setRefineLoading(false);
     }
   };
 
@@ -3986,44 +4123,131 @@ export default function App() {
                     {/* Right detail view / markdown editor & preview */}
                     <div className="lg:col-span-2 space-y-4">
                       {editingArtifact ? (
-                        <div className="bg-white dark:bg-zinc-950 border-2 border-[#58CC02] shadow-[0_4px_0_#D1D1D1] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
-                          <div className="px-6 py-4 bg-[#E8F9D9] border-b-2 border-[#58CC02] flex justify-between items-center">
-                            <div>
-                              <span className="text-[10px] font-bold text-[#3D8B00] uppercase tracking-wider">Markdown Editor</span>
-                              <h3 className="font-extrabold text-sm text-[#3D8B00] mt-0.5">{editingArtifact.toUpperCase()}</h3>
+                        proposedRevision ? (
+                          <div className="bg-white dark:bg-zinc-950 border-2 border-indigo-500 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
+                            <div className="px-6 py-4 bg-[#E8F0FE] dark:bg-indigo-950/40 border-b-2 border-indigo-500 flex justify-between items-center">
+                              <div>
+                                <span className="text-[10px] font-bold text-indigo-650 dark:text-indigo-400 uppercase tracking-wider">Refinement Review</span>
+                                <h3 className="font-extrabold text-sm text-indigo-750 dark:text-indigo-350 mt-0.5">{editingArtifact.toUpperCase()}</h3>
+                              </div>
+                              <span className="text-[10px] font-mono font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                                +{proposedRevision.diff_summary?.added_lines || 0} / -{proposedRevision.diff_summary?.removed_lines || 0} lines
+                              </span>
                             </div>
-                            <span className="text-[10px] font-mono font-bold text-[#3D8B00]">Save changes to disk</span>
-                          </div>
 
-                          <div className="flex-grow flex flex-col p-6 space-y-4">
-                            <textarea
-                              value={editorContent}
-                              onChange={(e) => setEditorContent(e.target.value)}
-                              spellCheck="false"
-                              className="w-full flex-grow h-96 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:border-[#58CC02] transition-colors leading-relaxed"
-                            />
-                            <code className="text-[10px] text-[#AFAFAF] font-bold leading-normal">Unsaved edits stay in this browser until saved.</code>
-                          </div>
+                            <div className="p-6 flex-grow grid grid-cols-1 lg:grid-cols-2 gap-6 bg-white dark:bg-zinc-950">
+                              <div className="flex flex-col h-96">
+                                <span className="text-xs font-bold text-zinc-550 dark:text-zinc-400 mb-2">Line-by-line comparison</span>
+                                <div className="flex-grow overflow-auto bg-zinc-50 dark:bg-zinc-900 border-2 border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 font-mono text-[11px] leading-relaxed text-zinc-900 dark:text-zinc-100">
+                                  {(() => {
+                                    const diff = computeLineDiff(editorContent, proposedRevision.content);
+                                    return diff.map((line, idx) => {
+                                      let lineClass = "py-0.5 px-2 flex items-start space-x-2 ";
+                                      let prefix = " ";
+                                      if (line.type === 'added') {
+                                        lineClass += "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-200";
+                                        prefix = "+";
+                                      } else if (line.type === 'removed') {
+                                        lineClass += "bg-rose-50 dark:bg-rose-950/30 text-rose-800 dark:text-rose-200 line-through";
+                                        prefix = "-";
+                                      } else {
+                                        lineClass += "text-zinc-800 dark:text-zinc-200";
+                                      }
+                                      return (
+                                        <div key={idx} className={lineClass}>
+                                          <span className="select-none text-zinc-400 dark:text-zinc-650 w-3 text-right">{prefix}</span>
+                                          <span className="whitespace-pre-wrap flex-grow">{line.text || ' '}</span>
+                                        </div>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                              </div>
 
-                          <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-end space-x-2">
-                            <button
-                              type="button"
-                              onClick={() => setEditingArtifact(null)}
-                              className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleSaveArtifact}
-                              disabled={actionLoading}
-                              className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                            >
-                              <Save className="h-4 w-4" />
-                              <span>Save Markdown</span>
-                            </button>
+                              <div className="flex flex-col h-96">
+                                <span className="text-xs font-bold text-zinc-550 dark:text-zinc-400 mb-2">Full Proposed Text</span>
+                                <textarea
+                                  readOnly
+                                  value={proposedRevision.content}
+                                  className="w-full flex-grow bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 text-[11px] font-mono focus:outline-none leading-relaxed resize-none"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-end space-x-2">
+                              <button
+                                type="button"
+                                onClick={handleDiscardRefinement}
+                                disabled={refineLoading}
+                                className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-[0_3px_0_#1a1a1a]"
+                              >
+                                {refineLoading ? <RefreshCw className="h-4 w-4 animate-spin text-zinc-500" /> : null}
+                                <span>Discard</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleAcceptRefinement}
+                                disabled={refineLoading}
+                                className="bg-indigo-600 hover:bg-indigo-700 border-2 border-indigo-850 shadow-[0_3px_0_#4338ca] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                              >
+                                {refineLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                                <span>Accept Refinement</span>
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          <div className="bg-white dark:bg-zinc-950 border-2 border-[#58CC02] shadow-[0_4px_0_#D1D1D1] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
+                            <div className="px-6 py-4 bg-[#E8F9D9] border-b-2 border-[#58CC02] flex justify-between items-center">
+                              <div>
+                                <span className="text-[10px] font-bold text-[#3D8B00] uppercase tracking-wider">Markdown Editor</span>
+                                <h3 className="font-extrabold text-sm text-[#3D8B00] mt-0.5">{editingArtifact.toUpperCase()}</h3>
+                              </div>
+                              <span className="text-[10px] font-mono font-bold text-[#3D8B00]">Save changes to disk</span>
+                            </div>
+
+                            <div className="flex-grow flex flex-col p-6 space-y-4">
+                              <textarea
+                                value={editorContent}
+                                onChange={(e) => setEditorContent(e.target.value)}
+                                spellCheck="false"
+                                className="w-full flex-grow h-96 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:border-[#58CC02] transition-colors leading-relaxed"
+                              />
+                              <code className="text-[10px] text-[#AFAFAF] font-bold leading-normal">Unsaved edits stay in this browser until saved.</code>
+                            </div>
+
+                            <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-end space-x-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingArtifact(null)}
+                                className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-[0_3px_0_#1a1a1a]"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleRefineArtifact}
+                                disabled={actionLoading || refineLoading}
+                                className="bg-white hover:bg-zinc-50 border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-[0_3px_0_#1a1a1a]"
+                              >
+                                {refineLoading ? (
+                                  <RefreshCw className="h-4 w-4 animate-spin text-zinc-500" />
+                                ) : (
+                                  <Sparkles className="h-4 w-4 text-indigo-500" />
+                                )}
+                                <span>{refineLoading ? 'Refining…' : 'Refine with AI'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSaveArtifact}
+                                disabled={actionLoading || refineLoading}
+                                className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                              >
+                                <Save className="h-4 w-4" />
+                                <span>Save Markdown</span>
+                              </button>
+                            </div>
+                          </div>
+                        )
                       ) : approvalReviews.length > 0 ? (
                         (() => {
                           const selectedReview = approvalReviews.find(r => r.is_actionable) || approvalReviews[0];
