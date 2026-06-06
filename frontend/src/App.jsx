@@ -253,7 +253,7 @@ function FilePath({ path, segments = 1 }) {
       <code className="bg-[#F1F1F1] text-[#777777] border border-[#E5E5E5] px-2 py-0.5 rounded-lg break-all cursor-help hover:bg-zinc-200 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700 transition-colors">
         {displayName}
       </code>
-      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 rounded-xl bg-zinc-950 px-3 py-2 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-black border border-zinc-800 shadow-xl max-w-xs whitespace-normal break-all font-mono leading-relaxed">
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 rounded-xl bg-zinc-950 px-3 py-2 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-black border border-zinc-800 shadow-xl w-max max-w-[28rem] whitespace-normal break-words font-mono leading-relaxed">
         {pathStr}
       </span>
     </span>
@@ -378,6 +378,8 @@ export default function App() {
   const [savingBackends, setSavingBackends] = useState(false);
   const [discoveredAgents, setDiscoveredAgents] = useState(null);
   const [loadingDiscoveredAgents, setLoadingDiscoveredAgents] = useState(false);
+  const [agentsMemorySubTab, setAgentsMemorySubTab] = useState('roles');
+  const [newProjectModalOpen, setNewProjectModalOpen] = useState(false);
 
 
   // Theme state
@@ -1075,10 +1077,10 @@ export default function App() {
 
   // Lazy fetch memory data when the Memory tab is opened
   useEffect(() => {
-    if (activeTab === 'memory' && projectKey) {
+    if ((activeTab === 'memory' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'memory')) && projectKey) {
       fetchMemory(projectKey);
     }
-  }, [activeTab, projectKey]);
+  }, [activeTab, agentsMemorySubTab, projectKey]);
 
   const fetchDevLoop = async (key) => {
     const seq = devLoopRequestSeq.current + 1;
@@ -1117,7 +1119,7 @@ export default function App() {
   }, [activeTab, projectKey]);
 
   useEffect(() => {
-    if (activeTab === 'memory') {
+    if (activeTab === 'memory' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'memory')) {
       fetch('/api/state')
         .then((res) => {
           if (!res.ok) throw new Error('Failed to load project keys');
@@ -1133,7 +1135,7 @@ export default function App() {
           console.error('Error fetching all project keys:', err);
         });
     }
-  }, [activeTab]);
+  }, [activeTab, agentsMemorySubTab]);
 
   const handleCrossSearch = async (e) => {
     if (e) e.preventDefault();
@@ -1381,6 +1383,7 @@ export default function App() {
         setIdea('');
         const pk = startProjectKey || projectKey || res.project_key;
         updateUrl(pk);
+        setNewProjectModalOpen(false);
       } else {
         showToast(`[Dry Run Preview] Next node: ${res.next_node}`);
       }
@@ -1926,13 +1929,13 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (activeTab === 'workers' && discoveredAgents === null && !loadingDiscoveredAgents) {
+    if ((activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && discoveredAgents === null && !loadingDiscoveredAgents) {
       const timer = window.setTimeout(() => {
         fetchDiscoveredAgents();
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [activeTab, discoveredAgents, loadingDiscoveredAgents]);
+  }, [activeTab, agentsMemorySubTab, discoveredAgents, loadingDiscoveredAgents]);
 
   // Returns first two sentences of the idea prompt for default display
   const getMissionSummary = (text) => {
@@ -2084,457 +2087,310 @@ export default function App() {
     </div>
   );
 
-  // Render project overview (Multi-project control room)
-  if (!projectKey) {
-    const projectItems = data?.project_items || [];
-    const legacyState = data?.legacy_state;
-
-    return (
-      <>
-        <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 transition-colors flex flex-col font-sans antialiased">
-          {/* Header - 60px height, white background, bottom border */}
-          <header className="h-[60px] border-b-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-6 flex items-center justify-between shadow-sm shrink-0">
-          <div className="flex items-center space-x-3">
-            <div className="p-1.5 bg-[#58CC02] border-2 border-[#3D8B00] text-white rounded-xl shadow-[0_2px_0_#3D8B00]">
-              <LayoutDashboard className="h-5 w-5" />
-            </div>
-            <div>
-              <span className="text-[10px] uppercase tracking-wider font-bold text-[#AFAFAF]">Multi-project control room</span>
-              <h1 className="text-base font-extrabold tracking-tight text-zinc-800 dark:text-zinc-200">GoodTeam Projects</h1>
-            </div>
+  const newProjectModal = newProjectModalOpen && (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-project-title"
+        className="w-full max-w-4xl bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_8px_0_#D1D1D1] dark:shadow-[0_8px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        {/* Header */}
+        <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex items-start justify-between gap-4 shrink-0">
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Start Workflow Console</p>
+            <h3 id="new-project-title" className="text-sm font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1">
+              Create or Adopt Project
+            </h3>
           </div>
+          <button
+            type="button"
+            onClick={() => setNewProjectModalOpen(false)}
+            className="bg-white dark:bg-zinc-800 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics cursor-pointer shrink-0"
+            aria-label="Close start workflow console"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
 
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setDarkMode(!darkMode)}
-              className="bg-white dark:bg-zinc-800 p-2 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-650 dark:text-zinc-350 rounded-2xl transition-all duo-button-physics"
-              aria-label="Toggle theme"
-            >
-              {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </button>
-          </div>
-        </header>
-
-        {/* Global Toast */}
-        {message && (
-          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border-2 flex items-center space-x-2 animate-fade-in-down ${message.isError ? 'bg-[#FFE2E2] text-[#EA2B2B] border-[#FF4B4B]' : 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]'}`}>
-            {message.isError ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-            <span>{message.text}</span>
-          </div>
-        )}
-
-        <main className="max-w-6xl mx-auto w-full px-6 py-8 flex-grow space-y-8">
-          {/* Legacy notice */}
-          {legacyState && (
-            <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-2 border-[#FF9600]/30 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between text-[#B36B00] dark:text-amber-300 text-xs gap-4 shadow-[0_4px_0_#FFE2BE] dark:shadow-none">
-              <div>
-                <span className="font-extrabold text-sm block mb-1">Legacy Active Run Detected</span>
-                <span>Active path: <code className="bg-white/60 dark:bg-amber-900/40 px-1.5 py-0.5 rounded-lg border border-amber-250 dark:border-amber-900 font-mono">{legacyState.project_key}</code> currently at <code className="bg-white/60 dark:bg-amber-900/40 px-1.5 py-0.5 rounded-lg border border-amber-250 dark:border-amber-900 font-mono">{legacyState.next_node || legacyState.current_node}</code></span>
+        {/* Modal Body */}
+        <div className="p-6 overflow-y-auto space-y-6 flex-grow">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 text-left">
+            {/* Left Config Panel */}
+            <div className="lg:col-span-2 space-y-6">
+              <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit">
+                <button
+                  onClick={() => setStartMode('existing_project')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                >
+                  Adopt Existing Project
+                </button>
+                <button
+                  onClick={() => setStartMode('new_project')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                >
+                  Start New Project
+                </button>
               </div>
-              <button
-                onClick={() => updateUrl(legacyState.project_key)}
-                className="bg-[#FF9600] border-2 border-[#B36B00] shadow-[0_3px_0_#B36B00] text-white font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics shrink-0 self-start md:self-auto"
-              >
-                Resume Run
-              </button>
-            </div>
-          )}
 
-          {/* Project List */}
-          {loading ? (
-            <Spinner />
-          ) : error ? (
-            <div className="bg-[#FFE2E2] border-2 border-[#FF4B4B] p-6 rounded-2xl text-[#EA2B2B] flex items-center space-x-3">
-              <AlertTriangle className="h-6 w-6 shrink-0" />
-              <span className="font-bold text-sm">{error}</span>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <h2 className="text-sm font-extrabold uppercase tracking-widest text-[#AFAFAF]">Registered Projects ({projectItems.length})</h2>
-              {projectItems.length === 0 ? (
-                <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] p-12 text-center rounded-2xl text-zinc-500 max-w-2xl mx-auto">
-                  <Folder className="h-12 w-12 mx-auto mb-4 text-[#AFAFAF]" />
-                  <p className="font-bold text-zinc-700 dark:text-zinc-300 mb-1">No local project configs found</p>
-                  <p className="text-xs">Create a project config with the form below or drop yaml file into <code className="bg-[#F1F1F1] dark:bg-zinc-900 px-1.5 py-0.5 rounded border border-[#E5E5E5] dark:border-zinc-800 text-xs">projects/*.local.yaml</code></p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold">
+                <div className="col-span-2">
+                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Workflow Goal</label>
+                  <textarea
+                    value={idea}
+                    onChange={(e) => setIdea(e.target.value)}
+                    placeholder={startMode === 'existing_project' ? "Enter takeover goal (e.g. audit frontend files)..." : "Describe the new project and desired features..."}
+                    className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                  />
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {projectItems.map((item) => {
-                    const isActive = item.status === 'active';
-                    const activeBadge = getBadgeStyle(item.status);
-                    return (
-                      <article
-                        key={item.project_key}
-                        className={`bg-white dark:bg-zinc-950 border-2 rounded-2xl shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] overflow-hidden flex flex-col h-full group hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] dark:hover:shadow-[0_6px_0_#1a1a1a] transition-all duration-200 ${isActive ? 'border-[#58CC02]' : 'border-[#E5E5E5] dark:border-zinc-800'}`}
-                      >
-                        <div className="p-6 flex-grow">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h3 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200 group-hover:text-[#58CC02] dark:group-hover:text-[#58CC02] transition-colors">
-                                {item.project_name}
-                              </h3>
-                              <p className="text-[10px] font-mono text-[#AFAFAF] mt-0.5 font-bold uppercase">
-                                {item.project_key}
-                              </p>
-                            </div>
-                            <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase border ${activeBadge.bg} ${activeBadge.text} ${activeBadge.border}`}>
-                              {isActive && <span className="h-1.5 w-1.5 bg-[#1CB0F6] rounded-full animate-pulse" />}
-                              <span>{item.status}</span>
-                            </span>
-                          </div>
 
-                          <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 text-[11px] border-t-2 border-[#F1F1F1] dark:border-zinc-900 pt-4 font-semibold">
-                            <div>
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Model Profile</dt>
-                              <dd className="text-zinc-700 dark:text-zinc-300 capitalize font-bold">{item.model_profile}</dd>
-                            </div>
-                            <div>
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Delivery Mode</dt>
-                              <dd className="text-[#58CC02] font-mono font-bold">{item.delivery_mode}</dd>
-                            </div>
-                            <div>
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Next Action</dt>
-                              <dd className="text-zinc-700 dark:text-zinc-300 font-mono truncate font-bold">{item.next_node || 'no active run'}</dd>
-                            </div>
-                            <div>
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Last Active</dt>
-                              <dd className="text-zinc-700 dark:text-zinc-300 truncate" title={item.last_action || 'none'}>
-                                {item.last_action ? formatHumanTime(item.last_action) : 'none'}
-                              </dd>
-                            </div>
-                            <div className="col-span-2">
-                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Config Path</dt>
-                              <dd className="truncate text-zinc-500 font-mono text-[9px]" title={item.project_config}><FilePath path={item.project_config} segments={2} /></dd>
-                            </div>
-                          </dl>
-                        </div>
-
-                        <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-between items-center">
-                          <button
-                            onClick={() => handleDeleteProject(item.project_key)}
-                            disabled={actionLoading}
-                            className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics shrink-0"
-                            title="Delete project config"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-
-                          <div className="flex space-x-2">
-                            {isActive && (
-                              <button
-                                onClick={() => handleTerminate(item.project_key)}
-                                disabled={actionLoading}
-                                className="bg-white hover:bg-amber-50 border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-3 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
-                              >
-                                Terminate
-                              </button>
-                            )}
-                            <button
-                              onClick={() => updateUrl(item.project_key)}
-                              className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-750 font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
-                            >
-                              {isActive ? 'Resume' : 'Start'}
-                            </button>
-                            <button
-                              onClick={() => updateUrl(item.project_key)}
-                              className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
-                            >
-                              Open
-                            </button>
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
+                <div>
+                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Project Name</label>
+                  <input
+                    type="text"
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    placeholder="e.g. ContentOps Studio"
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
+                  />
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Start Workflow Console */}
-          <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] rounded-2xl p-6 space-y-6">
-            <div className="border-b-2 border-[#F1F1F1] dark:border-zinc-900 pb-4">
-              <h2 className="text-lg font-extrabold text-zinc-800 dark:text-zinc-200">Start Workflow Console</h2>
-              <p className="text-xs text-zinc-400 mt-1">Adopt an existing project repo structure or bootstrap a clean workspace scaffold.</p>
-            </div>
+                <div>
+                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Project Key</label>
+                  <input
+                    type="text"
+                    value={startProjectKey}
+                    onChange={(e) => setStartProjectKey(e.target.value)}
+                    placeholder="e.g. CONTENTOPS"
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono uppercase transition-colors"
+                  />
+                </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Left Config Panel */}
-              <div className="lg:col-span-2 space-y-6">
-                <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit">
-                  <button
-                    onClick={() => setStartMode('existing_project')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${startMode === 'existing_project' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                <div>
+                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Model Profile</label>
+                  <select
+                    value={modelProfile}
+                    onChange={(e) => setModelProfile(e.target.value)}
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
                   >
-                    Adopt Existing Project
-                  </button>
-                  <button
-                    onClick={() => setStartMode('new_project')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${isNewProjectMode ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                  >
-                    Start New Project
-                  </button>
+                    <option value="balanced">Balanced</option>
+                    <option value="cheap">Cheap</option>
+                    <option value="max_quality">Max Quality</option>
+                  </select>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold">
+                <div>
+                  <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Delivery Mode</label>
+                  <select
+                    value={deliveryMode}
+                    onChange={(e) => setDeliveryMode(e.target.value)}
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
+                  >
+                    {DELIVERY_MODE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {deliveryMode === 'custom' && (
                   <div className="col-span-2">
-                    <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Workflow Goal</label>
+                    <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Delivery Standards</label>
                     <textarea
-                      value={idea}
-                      onChange={(e) => setIdea(e.target.value)}
-                      placeholder={startMode === 'existing_project' ? "Enter takeover goal (e.g. audit frontend files)..." : "Describe the new project and desired features..."}
+                      value={deliveryStandards}
+                      onChange={(e) => setDeliveryStandards(e.target.value)}
+                      placeholder="每行一条交付标准"
                       className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
                     />
                   </div>
+                )}
 
+                <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
+                  <div className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Project Location</div>
                   <div>
-                    <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Project Name</label>
-                    <input
-                      type="text"
-                      value={projectName}
-                      onChange={(e) => setProjectName(e.target.value)}
-                      placeholder="e.g. ContentOps Studio"
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
-                    />
+                    <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Project Root</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={projectRoot}
+                        onChange={(e) => setProjectRoot(e.target.value)}
+                        placeholder="Absolute path to project root"
+                        className="flex-1 min-w-0 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => openDirectoryPicker('root', projectRoot)}
+                        className="bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
+                      >
+                        Browse…
+                      </button>
+                    </div>
                   </div>
+                </div>
 
-                  <div>
-                    <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Project Key</label>
-                    <input
-                      type="text"
-                      value={startProjectKey}
-                      onChange={(e) => setStartProjectKey(e.target.value)}
-                      placeholder="e.g. CONTENTOPS"
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono uppercase transition-colors"
-                    />
-                  </div>
+                <div className="col-span-2 border-t border-zinc-100 dark:border-zinc-900 my-4" />
 
-                  <div>
-                    <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Model Profile</label>
-                    <select
-                      value={modelProfile}
-                      onChange={(e) => setModelProfile(e.target.value)}
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
-                    >
-                      <option value="balanced">Balanced</option>
-                      <option value="cheap">Cheap</option>
-                      <option value="max_quality">Max Quality</option>
-                    </select>
-                  </div>
+                {/* Toggle Advanced Button */}
+                <div className="col-span-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowConfigDrawer(!showConfigDrawer)}
+                    className="text-xs font-bold text-[#3D8B00] hover:text-[#58CC02] transition-colors flex items-center space-x-1"
+                  >
+                    <span>{showConfigDrawer ? 'Hide Advanced Config' : 'Show Advanced Config (Task Backend, Deployment)'}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${showConfigDrawer ? 'rotate-180' : ''}`} />
+                  </button>
+                </div>
 
-                  <div>
-                    <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Delivery Mode</label>
-                    <select
-                      value={deliveryMode}
-                      onChange={(e) => setDeliveryMode(e.target.value)}
-                      className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] transition-colors"
-                    >
-                      {DELIVERY_MODE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  </div>
+                {showConfigDrawer && (
+                  <>
+                    <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
+                      <div className="col-span-2 font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Services Backend</div>
+                      <div>
+                        <label className="block text-[10px] text-zinc-555 mb-1 uppercase">Task Sync</label>
+                        <select
+                          value={taskSync}
+                          onChange={(e) => setTaskSync(e.target.value)}
+                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
+                        >
+                          <option value="">Local only</option>
+                          <option value="plane">Plane Workspace</option>
+                          <option value="linear">Linear Workspace</option>
+                          <option value="github_issues">GitHub Issues</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-zinc-555 mb-1 uppercase">Worker Execution</label>
+                        <select
+                          value={workerBackendMode}
+                          onChange={(e) => setWorkerBackendMode(e.target.value)}
+                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
+                        >
+                          <option value="codex">Codex CLI / Autopilot</option>
+                          <option value="manual">Human Interactive</option>
+                          <option value="noop">Dry-run only</option>
+                        </select>
+                      </div>
 
-                  {deliveryMode === 'custom' && (
+                      {taskSync === 'plane' && (
+                        <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-[#E5E5E5] dark:border-zinc-800 p-4 rounded-xl bg-white dark:bg-zinc-950 mt-2">
+                          <div className="col-span-2 font-extrabold text-[9px] text-[#AFAFAF] uppercase tracking-wider">Plane Credentials</div>
+                          <div className="col-span-2">
+                            <label className="block text-[9px] text-zinc-500 mb-1">API Host</label>
+                            <input type="text" value={planeApiHost} onChange={(e) => setPlaneApiHost(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-500 mb-1">Workspace Slug</label>
+                            <input type="text" value={planeWorkspaceSlug} onChange={(e) => setPlaneWorkspaceSlug(e.target.value)} placeholder="e.g. leader_kanban" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-500 mb-1">Project ID</label>
+                            <input type="text" value={planeProjectId} onChange={(e) => setPlaneProjectId(e.target.value)} placeholder="uuid" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-500 mb-1">API Key Env</label>
+                            <input type="text" value={planeApiKeyEnv} onChange={(e) => setPlaneApiKeyEnv(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-500 mb-1">MCP Server</label>
+                            <input type="text" value={planeMcpServer} onChange={(e) => setPlaneMcpServer(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
+                      <div className="col-span-2 font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Deployment & Evidence Contract</div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] text-zinc-555 mb-1.5 uppercase">Deployment Backend</label>
+                        <select
+                          value={deploymentBackendMode}
+                          onChange={(e) => setDeploymentBackendMode(e.target.value)}
+                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-semibold"
+                        >
+                          <option value="">None (skip automated deployments)</option>
+                          <option value="ssh_compose">Docker Compose via SSH</option>
+                        </select>
+                      </div>
+
+                      {deploymentBackendMode === 'ssh_compose' && (
+                        <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-[#E5E5E5] dark:border-zinc-800 p-4 rounded-xl bg-white dark:bg-zinc-950 mt-2 text-xs">
+                          <div className="col-span-2 font-extrabold text-[9px] text-[#AFAFAF] uppercase tracking-wider">SSH Deploy Configuration</div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-550 mb-1">Staging SSH Target</label>
+                            <input type="text" value={stagingSshTarget} onChange={(e) => setStagingSshTarget(e.target.value)} placeholder="user@host" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-550 mb-1">Staging Remote Dir</label>
+                            <input type="text" value={stagingRemoteDir} onChange={(e) => setStagingRemoteDir(e.target.value)} placeholder="/srv/app" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-555 mb-1">Staging Git Ref</label>
+                            <input type="text" value={stagingGitRef} onChange={(e) => setStagingGitRef(e.target.value)} placeholder="main" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-555 mb-1">Staging Public URL</label>
+                            <input type="text" value={stagingPublicUrl} onChange={(e) => setStagingPublicUrl(e.target.value)} placeholder="http://url:port" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-[9px] text-zinc-555 mb-1">Deploy Command</label>
+                            <input type="text" value={stagingDeployCommand} onChange={(e) => setStagingDeployCommand(e.target.value)} placeholder="docker compose up -d" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-555 mb-1">Healthcheck Command</label>
+                            <input type="text" value={stagingHealthcheckCommand} onChange={(e) => setStagingHealthcheckCommand(e.target.value)} placeholder="curl -f /health" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-zinc-555 mb-1">Smoke Command</label>
+                            <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
+                          </div>
+
+                          <div className="col-span-2 border-t-2 border-[#F1F1F1] dark:border-zinc-900 my-1" />
+
+                          <div className="col-span-2 flex items-center space-x-2">
+                            <input type="checkbox" id="contract-req" checked={deliveryContractRequired} onChange={(e) => setDeliveryContractRequired(e.target.checked)} className="rounded text-[#58CC02] focus:ring-[#58CC02] h-4 w-4" />
+                            <label htmlFor="contract-req" className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Require functional delivery evidence</label>
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-[9px] text-zinc-500 mb-1">Minimum Evidence Gate</label>
+                            <select value={deliveryContractMinEvidence} onChange={(e) => setDeliveryContractMinEvidence(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs">
+                              <option value="infrastructure">Infrastructure Layer</option>
+                              <option value="functional">Functional Application Layer</option>
+                            </select>
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-[9px] text-zinc-500 mb-1">Fatal Output Log Patterns (line separate)</label>
+                            <textarea value={deliveryContractFatalPatterns} onChange={(e) => setDeliveryContractFatalPatterns(e.target.value)} placeholder="e.g. migrate: executable file not found" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-[9px] text-zinc-500 mb-1">Staging Acceptance Tests (id|type|command per line)</label>
+                            <textarea value={deliveryContractAcceptance} onChange={(e) => setDeliveryContractAcceptance(e.target.value)} placeholder="critical-path|ssh_command|docker compose exec -T backend ./migrate status" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="col-span-2">
-                      <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Delivery Standards</label>
+                      <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Role Model Overrides (one per line, role=model)</label>
                       <textarea
-                        value={deliveryStandards}
-                        onChange={(e) => setDeliveryStandards(e.target.value)}
-                        placeholder="每行一条交付标准"
-                        className="w-full h-24 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                        value={roleModelOverrides}
+                        onChange={(e) => setRoleModelOverrides(e.target.value)}
+                        placeholder="architect=codex:gpt-5.5&#10;implementation=codex:gpt-5.3-codex"
+                        className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed transition-colors resize-none"
                       />
                     </div>
-                  )}
 
-                  <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
-                    <div className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Project Location</div>
-                    <div>
-                      <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Project Root</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={projectRoot}
-                          onChange={(e) => setProjectRoot(e.target.value)}
-                          placeholder="Absolute path to project root"
-                          className="flex-1 min-w-0 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => openDirectoryPicker('root', projectRoot)}
-                          className="bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all duo-button-physics shrink-0 cursor-pointer"
-                        >
-                          Browse…
-                        </button>
-                      </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Local Project Config Path</label>
+                      <input
+                        type="text"
+                        value={projectConfig}
+                        onChange={(e) => setProjectConfig(e.target.value)}
+                        placeholder="projects/project-key.local.yaml"
+                        className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                      />
                     </div>
-                  </div>
-
-                  <div className="col-span-2 border-t border-zinc-100 dark:border-zinc-900 my-4" />
-
-                  {/* Toggle Advanced Button */}
-                  <div className="col-span-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowConfigDrawer(!showConfigDrawer)}
-                      className="text-xs font-bold text-[#3D8B00] hover:text-[#58CC02] transition-colors flex items-center space-x-1"
-                    >
-                      <span>{showConfigDrawer ? 'Hide Advanced Config' : 'Show Advanced Config (Task Backend, Deployment)'}</span>
-                      <ChevronDown className={`h-4 w-4 transition-transform ${showConfigDrawer ? 'rotate-180' : ''}`} />
-                    </button>
-                  </div>
-
-                  {showConfigDrawer && (
-                    <>
-                      <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
-                        <div className="col-span-2 font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Services Backend</div>
-                        <div>
-                          <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Task Sync</label>
-                          <select
-                            value={taskSync}
-                            onChange={(e) => setTaskSync(e.target.value)}
-                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
-                          >
-                            <option value="">Local only</option>
-                            <option value="plane">Plane Workspace</option>
-                            <option value="linear">Linear Workspace</option>
-                            <option value="github_issues">GitHub Issues</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] text-zinc-550 mb-1 uppercase">Worker Execution</label>
-                          <select
-                            value={workerBackendMode}
-                            onChange={(e) => setWorkerBackendMode(e.target.value)}
-                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs"
-                          >
-                            <option value="codex">Codex CLI / Autopilot</option>
-                            <option value="manual">Human Interactive</option>
-                            <option value="noop">Dry-run only</option>
-                          </select>
-                        </div>
-
-                        {taskSync === 'plane' && (
-                          <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-[#E5E5E5] dark:border-zinc-800 p-4 rounded-xl bg-white dark:bg-zinc-950 mt-2">
-                            <div className="col-span-2 font-extrabold text-[9px] text-[#AFAFAF] uppercase tracking-wider">Plane Credentials</div>
-                            <div className="col-span-2">
-                              <label className="block text-[9px] text-zinc-500 mb-1">API Host</label>
-                              <input type="text" value={planeApiHost} onChange={(e) => setPlaneApiHost(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-205 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">Workspace Slug</label>
-                              <input type="text" value={planeWorkspaceSlug} onChange={(e) => setPlaneWorkspaceSlug(e.target.value)} placeholder="e.g. leader_kanban" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">Project ID</label>
-                              <input type="text" value={planeProjectId} onChange={(e) => setPlaneProjectId(e.target.value)} placeholder="uuid" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">API Key Env</label>
-                              <input type="text" value={planeApiKeyEnv} onChange={(e) => setPlaneApiKeyEnv(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">MCP Server</label>
-                              <input type="text" value={planeMcpServer} onChange={(e) => setPlaneMcpServer(e.target.value)} className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs font-mono" />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-[#E5E5E5] dark:border-zinc-800 p-5 rounded-2xl bg-[#F7F7F7] dark:bg-zinc-900/30">
-                        <div className="col-span-2 font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Deployment & Evidence Contract</div>
-                        <div className="col-span-2">
-                          <label className="block text-[10px] text-zinc-555 mb-1.5 uppercase">Deployment Backend</label>
-                          <select
-                            value={deploymentBackendMode}
-                            onChange={(e) => setDeploymentBackendMode(e.target.value)}
-                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-semibold"
-                          >
-                            <option value="">None (skip automated deployments)</option>
-                            <option value="ssh_compose">Docker Compose via SSH</option>
-                          </select>
-                        </div>
-
-                        {deploymentBackendMode === 'ssh_compose' && (
-                          <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-[#E5E5E5] dark:border-zinc-800 p-4 rounded-xl bg-white dark:bg-zinc-950 mt-2 text-xs">
-                            <div className="col-span-2 font-extrabold text-[9px] text-[#AFAFAF] uppercase tracking-wider">SSH Deploy Configuration</div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">Staging SSH Target</label>
-                              <input type="text" value={stagingSshTarget} onChange={(e) => setStagingSshTarget(e.target.value)} placeholder="user@host" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">Staging Remote Dir</label>
-                              <input type="text" value={stagingRemoteDir} onChange={(e) => setStagingRemoteDir(e.target.value)} placeholder="/srv/app" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">Staging Git Ref</label>
-                              <input type="text" value={stagingGitRef} onChange={(e) => setStagingGitRef(e.target.value)} placeholder="main" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">Staging Public URL</label>
-                              <input type="text" value={stagingPublicUrl} onChange={(e) => setStagingPublicUrl(e.target.value)} placeholder="http://url:port" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
-                            </div>
-                            <div className="col-span-2">
-                              <label className="block text-[9px] text-zinc-500 mb-1">Deploy Command</label>
-                              <input type="text" value={stagingDeployCommand} onChange={(e) => setStagingDeployCommand(e.target.value)} placeholder="docker compose up -d" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">Healthcheck Command</label>
-                              <input type="text" value={stagingHealthcheckCommand} onChange={(e) => setStagingHealthcheckCommand(e.target.value)} placeholder="curl -f /health" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-zinc-500 mb-1">Smoke Command</label>
-                              <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 font-mono text-[11px]" />
-                            </div>
-
-                            <div className="col-span-2 border-t-2 border-[#F1F1F1] dark:border-zinc-900 my-1" />
-
-                            <div className="col-span-2 flex items-center space-x-2">
-                              <input type="checkbox" id="contract-req" checked={deliveryContractRequired} onChange={(e) => setDeliveryContractRequired(e.target.checked)} className="rounded text-[#58CC02] focus:ring-[#58CC02] h-4 w-4" />
-                              <label htmlFor="contract-req" className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Require functional delivery evidence</label>
-                            </div>
-                            <div className="col-span-2">
-                              <label className="block text-[9px] text-zinc-500 mb-1">Minimum Evidence Gate</label>
-                              <select value={deliveryContractMinEvidence} onChange={(e) => setDeliveryContractMinEvidence(e.target.value)} className="bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-1 text-xs">
-                                <option value="infrastructure">Infrastructure Layer</option>
-                                <option value="functional">Functional Application Layer</option>
-                              </select>
-                            </div>
-                            <div className="col-span-2">
-                              <label className="block text-[9px] text-zinc-500 mb-1">Fatal Output Log Patterns (line separate)</label>
-                              <textarea value={deliveryContractFatalPatterns} onChange={(e) => setDeliveryContractFatalPatterns(e.target.value)} placeholder="e.g. migrate: executable file not found" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
-                            </div>
-                            <div className="col-span-2">
-                              <label className="block text-[9px] text-zinc-500 mb-1">Staging Acceptance Tests (id|type|command per line)</label>
-                              <textarea value={deliveryContractAcceptance} onChange={(e) => setDeliveryContractAcceptance(e.target.value)} placeholder="critical-path|ssh_command|docker compose exec -T backend ./migrate status" className="w-full h-16 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 rounded p-2 font-mono text-xs resize-none" />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="col-span-2">
-                        <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Role Model Overrides (one per line, role=model)</label>
-                        <textarea
-                          value={roleModelOverrides}
-                          onChange={(e) => setRoleModelOverrides(e.target.value)}
-                          placeholder="architect=codex:gpt-5.5&#10;implementation=codex:gpt-5.3-codex"
-                          className="w-full h-20 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-3 font-mono leading-relaxed transition-colors resize-none"
-                        />
-                      </div>
-
-                      <div className="col-span-2">
-                        <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1.5">Local Project Config Path</label>
-                        <input
-                          type="text"
-                          value={projectConfig}
-                          onChange={(e) => setProjectConfig(e.target.value)}
-                          placeholder="projects/project-key.local.yaml"
-                          className="w-full bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl px-4 py-2.5 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
+                  </>
+                )}
               </div>
 
               {/* Right Status Panel */}
@@ -2547,15 +2403,15 @@ export default function App() {
                       <span className="font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[150px] font-bold">{startProjectKey || 'GTO'}</span>
                     </div>
                     <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
-                      <span className="text-zinc-550">Source Mode</span>
+                      <span className="text-zinc-555">Source Mode</span>
                       <span className="font-bold text-[#3D8B00]">{startMode === 'existing_project' ? 'Adoption' : 'New Project'}</span>
                     </div>
                     <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
-                      <span className="text-zinc-550">Model Profile</span>
+                      <span className="text-zinc-555">Model Profile</span>
                       <span className="font-bold capitalize">{modelProfile}</span>
                     </div>
                     <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-2">
-                      <span className="text-zinc-550">Delivery Mode</span>
+                      <span className="text-zinc-555">Delivery Mode</span>
                       <span className="font-mono font-bold text-[#58CC02]">{deliveryMode}</span>
                     </div>
                     <div className="flex justify-between items-center pb-1">
@@ -2617,8 +2473,233 @@ export default function App() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Render project overview (Multi-project control room)
+  if (!projectKey) {
+    const projectItems = data?.project_items || [];
+    const legacyState = data?.legacy_state;
+
+    return (
+      <>
+        <div className="min-h-screen bg-[#F7F7F7] dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 transition-colors flex flex-col font-sans antialiased">
+          {/* Header - 60px height, white background, bottom border */}
+          <header className="h-[60px] border-b-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-6 flex items-center justify-between shadow-sm shrink-0">
+          <div className="flex items-center space-x-3">
+            <div className="p-1.5 bg-[#58CC02] border-2 border-[#3D8B00] text-white rounded-xl shadow-[0_2px_0_#3D8B00]">
+              <LayoutDashboard className="h-5 w-5" />
+            </div>
+            <div>
+              <span className="text-[10px] uppercase tracking-wider font-bold text-[#AFAFAF]">Multi-project control room</span>
+              <h1 className="text-base font-extrabold tracking-tight text-zinc-800 dark:text-zinc-200">GoodTeam Projects</h1>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => {
+                setStartMode('new_project');
+                setNewProjectModalOpen(true);
+              }}
+              className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics hover:bg-[#4EB302] cursor-pointer"
+            >
+              + New Project
+            </button>
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className="bg-white dark:bg-zinc-800 p-2 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-650 dark:text-zinc-350 rounded-2xl transition-all duo-button-physics"
+              aria-label="Toggle theme"
+            >
+              {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+          </div>
+        </header>
+
+        {/* Global Toast */}
+        {message && (
+          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border-2 flex items-center space-x-2 animate-fade-in-down ${message.isError ? 'bg-[#FFE2E2] text-[#EA2B2B] border-[#FF4B4B]' : 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]'}`}>
+            {message.isError ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+            <span>{message.text}</span>
+          </div>
+        )}
+
+        <main className="max-w-6xl mx-auto w-full px-6 py-8 flex-grow space-y-8">
+          {/* Legacy notice */}
+          {legacyState && (
+            <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-2 border-[#FF9600]/30 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between text-[#B36B00] dark:text-amber-300 text-xs gap-4 shadow-[0_4px_0_#FFE2BE] dark:shadow-none">
+              <div>
+                <span className="font-extrabold text-sm block mb-1">Legacy Active Run Detected</span>
+                <span>Active path: <code className="bg-white/60 dark:bg-amber-900/40 px-1.5 py-0.5 rounded-lg border border-amber-250 dark:border-amber-900 font-mono">{legacyState.project_key}</code> currently at <code className="bg-white/60 dark:bg-amber-900/40 px-1.5 py-0.5 rounded-lg border border-amber-250 dark:border-amber-900 font-mono">{legacyState.next_node || legacyState.current_node}</code></span>
+              </div>
+              <button
+                onClick={() => updateUrl(legacyState.project_key)}
+                className="bg-[#FF9600] border-2 border-[#B36B00] shadow-[0_3px_0_#B36B00] text-white font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics shrink-0 self-start md:self-auto"
+              >
+                Resume Run
+              </button>
+            </div>
+          )}
+
+          {/* Project List */}
+          {loading ? (
+            <Spinner />
+          ) : error ? (
+            <div className="bg-[#FFE2E2] border-2 border-[#FF4B4B] p-6 rounded-2xl text-[#EA2B2B] flex items-center space-x-3">
+              <AlertTriangle className="h-6 w-6 shrink-0" />
+              <span className="font-bold text-sm">{error}</span>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-4">
+                <h2 className="text-sm font-extrabold uppercase tracking-widest text-[#AFAFAF]">Registered Projects ({projectItems.length})</h2>
+                <button
+                  onClick={() => {
+                    setStartMode('new_project');
+                    setNewProjectModalOpen(true);
+                  }}
+                  className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center gap-1.5 hover:bg-[#4EB302] cursor-pointer"
+                >
+                  <span>+ New Project</span>
+                </button>
+              </div>
+
+              {projectItems.length === 0 ? (
+                <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-12 text-center rounded-2xl max-w-2xl mx-auto flex flex-col items-center">
+                  <Folder className="h-16 w-16 mx-auto mb-4 text-[#AFAFAF]" />
+                  <h3 className="font-extrabold text-lg text-zinc-800 dark:text-zinc-200 mb-2">No Projects Configured</h3>
+                  <p className="text-xs text-[#AFAFAF] max-w-md mb-6 leading-relaxed">
+                    Create a new project config to get started, adopt an existing repository, or drop a yaml config into <code className="bg-[#F1F1F1] dark:bg-zinc-900 px-1.5 py-0.5 rounded border border-[#E5E5E5] dark:border-zinc-800 text-xs font-mono">projects/*.local.yaml</code>.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setStartMode('new_project');
+                      setNewProjectModalOpen(true);
+                    }}
+                    className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_4px_0_#3D8B00] text-white font-bold px-6 py-3 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics hover:bg-[#4EB302] cursor-pointer"
+                  >
+                    + Create a Project
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {projectItems.map((item) => {
+                    const isActive = item.status === 'active';
+                    const activeBadge = getBadgeStyle(item.status);
+                    return (
+                      <article
+                        key={item.project_key}
+                        className={`bg-white dark:bg-zinc-950 border-2 rounded-2xl shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] overflow-hidden flex flex-col h-full group hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] dark:hover:shadow-[0_6px_0_#1a1a1a] transition-all duration-200 ${isActive ? 'border-[#58CC02]' : 'border-[#E5E5E5] dark:border-zinc-800'}`}
+                      >
+                        <div className="p-6 flex-grow">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h3 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200 group-hover:text-[#58CC02] dark:group-hover:text-[#58CC02] transition-colors">
+                                {item.project_name}
+                              </h3>
+                              <p className="text-[10px] font-mono text-[#AFAFAF] mt-0.5 font-bold uppercase">
+                                {item.project_key}
+                              </p>
+                            </div>
+                            <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase border ${activeBadge.bg} ${activeBadge.text} ${activeBadge.border}`}>
+                              {isActive && <span className="h-1.5 w-1.5 bg-[#1CB0F6] rounded-full animate-pulse" />}
+                              <span>{item.status}</span>
+                            </span>
+                          </div>
+
+                          <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 text-[11px] border-t-2 border-[#F1F1F1] dark:border-zinc-900 pt-4 font-semibold">
+                            <div>
+                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Model Profile</dt>
+                              <dd className="text-zinc-700 dark:text-zinc-300 capitalize font-bold">{item.model_profile}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Delivery Mode</dt>
+                              <dd className="text-[#58CC02] font-mono font-bold">{item.delivery_mode}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Next Action</dt>
+                              <dd className="text-zinc-700 dark:text-zinc-300 font-mono truncate font-bold flex items-center gap-1">
+                                {item.next_node && (item.next_node.includes('approval') || item.next_node.includes('gate') || item.next_node.startsWith('await_')) ? (
+                                  <span className="inline-flex items-center gap-0.5 bg-[#FFF0D4] text-[#B36B00] border border-[#FF9600]/30 px-1 rounded text-[9px] uppercase font-bold shrink-0">
+                                    <Lock className="h-2.5 w-2.5" /> gate
+                                  </span>
+                                ) : null}
+                                <span className="truncate">{item.next_node || 'no active run'}</span>
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Last Active</dt>
+                              <dd className="text-zinc-700 dark:text-zinc-300 truncate" title={item.last_action || 'none'}>
+                                {item.last_action ? formatHumanTime(item.last_action) : 'none'}
+                              </dd>
+                            </div>
+                            <div className="col-span-2">
+                              <dt className="text-[#AFAFAF] uppercase tracking-wider text-[9px] mb-0.5">Config Path</dt>
+                              <dd className="truncate text-zinc-500 font-mono text-[9px]" title={item.project_config}><FilePath path={item.project_config} segments={2} /></dd>
+                            </div>
+                          </dl>
+                        </div>
+
+                        <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-between items-center">
+                          <button
+                            onClick={() => handleDeleteProject(item.project_key)}
+                            disabled={actionLoading}
+                            className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics shrink-0"
+                            title="Delete project config"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+
+                          <div className="flex space-x-2">
+                            {isActive && (
+                              <button
+                                onClick={() => handleTerminate(item.project_key)}
+                                disabled={actionLoading}
+                                className="bg-white hover:bg-amber-50 border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-3 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
+                              >
+                                Terminate
+                              </button>
+                            )}
+                            <button
+                              onClick={() => updateUrl(item.project_key)}
+                              className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-750 font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
+                            >
+                              {isActive ? 'Resume' : 'Start'}
+                            </button>
+                            <button
+                              onClick={() => updateUrl(item.project_key)}
+                              className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics"
+                            >
+                              Open
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+
+                  {/* "+" Tile Card */}
+                  <button
+                    onClick={() => {
+                      setStartMode('new_project');
+                      setNewProjectModalOpen(true);
+                    }}
+                    className="bg-zinc-50/50 dark:bg-zinc-900/10 border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-6 flex flex-col items-center justify-center min-h-[200px] hover:border-[#58CC02] hover:bg-white dark:hover:bg-zinc-950 transition-all duration-200 group cursor-pointer"
+                  >
+                    <div className="w-12 h-12 rounded-full border-2 border-dashed border-[#AFAFAF] group-hover:border-[#58CC02] flex items-center justify-center text-[#AFAFAF] group-hover:text-[#58CC02] transition-colors mb-3">
+                      <span className="text-2xl font-bold font-sans">+</span>
+                    </div>
+                    <span className="text-xs font-bold text-zinc-550 group-hover:text-[#3D8B00] dark:group-hover:text-emerald-400 uppercase tracking-wider">New Project</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           </main>
         </div>
+        {newProjectModal}
         {directoryPickerOverlay}
       </>
     );
@@ -2686,6 +2767,7 @@ export default function App() {
 
   // Approvals metrics
   const approvedCount = approvalReviews.filter(r => r.decision === 'approved').length;
+  const actionableCount = approvalReviews.filter(r => r.is_actionable).length;
   const totalApprovalsCount = approvalReviews.length || 6;
   const approvalProgressPercent = Math.min(100, Math.round((approvedCount / totalApprovalsCount) * 100));
   const currentMemoryEvent = memoryEventDetail?.data || {};
@@ -2731,39 +2813,75 @@ export default function App() {
           <span className="font-mono text-zinc-800 dark:text-zinc-200 select-all">{projectKey}</span>
         </div>
 
-        {/* Tab buttons - active: bg #E8F9D9, left border 4px #58CC02, text #3D8B00, font-weight 700 */}
-        <nav className="flex-grow py-4 space-y-1 overflow-y-auto">
+        {/* Tab buttons - grouped by priority */}
+        <nav className="flex-grow py-4 space-y-4 overflow-y-auto">
           {[
-            { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-            { id: 'devloop', label: 'Dev Loop', icon: GitPullRequest },
-            { id: 'workflow', label: 'Workflow Graph', icon: GitBranch },
-            { id: 'roles', label: 'Roles', icon: Users },
-            { id: 'artifacts', label: 'Artifacts', icon: FileCode },
-            { id: 'actions', label: 'Actions', icon: Activity },
-            { id: 'board', label: 'Agile Board', icon: Kanban },
-            { id: 'smoke', label: 'Smoke Runs', icon: PlaySquare },
-            { id: 'workers', label: 'Workers', icon: Cpu },
-            { id: 'memory', label: 'Memory', icon: Brain },
-            { id: 'messages', label: 'Messages', icon: MessageSquare },
-            { id: 'approvals', label: 'Approvals', icon: CheckCircle2 },
-            { id: 'system', label: 'System', icon: Settings },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setActiveTab(tab.id);
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full h-14 flex items-center space-x-3 px-4 transition-all ${isActive ? 'bg-[#E8F9D9] dark:bg-emerald-950/20 border-l-[4px] border-[#58CC02] text-[#3D8B00] dark:text-emerald-400 font-bold' : 'hover:bg-zinc-50 dark:hover:bg-zinc-900 border-l-[4px] border-transparent font-semibold text-zinc-550'}`}
-              >
-                <Icon className={`h-4.5 w-4.5 shrink-0 ${isActive ? 'text-[#3D8B00]' : 'text-zinc-400'}`} />
-                <span className="text-xs uppercase tracking-wider tracking-wide">{tab.label}</span>
-              </button>
-            );
-          })}
+            {
+              title: 'WORK',
+              items: [
+                { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+                { id: 'approvals', label: 'Approvals', icon: CheckCircle2 },
+                { id: 'artifacts', label: 'Artifacts', icon: FileCode },
+                { id: 'actions', label: 'Actions', icon: Activity },
+                { id: 'board', label: 'Agile Board', icon: Kanban },
+              ]
+            },
+            {
+              title: 'OBSERVE',
+              items: [
+                { id: 'workflow', label: 'Workflow Graph', icon: GitBranch },
+                { id: 'devloop', label: 'Dev Loop', icon: GitPullRequest },
+                { id: 'messages', label: 'Messages', icon: MessageSquare },
+              ]
+            },
+            {
+              title: 'INSPECT',
+              items: [
+                { id: 'agents_memory', label: 'Agents & Memory', icon: Users },
+                { id: 'smoke', label: 'Smoke Runs', icon: PlaySquare },
+              ]
+            },
+            {
+              title: 'SYSTEM',
+              items: [
+                { id: 'system', label: 'System', icon: Settings },
+              ]
+            }
+          ].map((group) => (
+            <div key={group.title} className="space-y-1">
+              <div className="px-4 py-1 text-[9px] font-extrabold tracking-widest text-zinc-400 dark:text-zinc-550 uppercase">
+                {group.title}
+              </div>
+              {group.items.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                const showBadge = tab.id === 'approvals' && actionableCount > 0;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => {
+                      if (tab.id === 'agents_memory') {
+                        setAgentsMemorySubTab('roles');
+                      }
+                      setActiveTab(tab.id);
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`w-full h-11 flex items-center justify-between px-4 transition-all ${isActive ? 'bg-[#E8F9D9] dark:bg-emerald-950/20 border-l-[4px] border-[#58CC02] text-[#3D8B00] dark:text-emerald-400 font-bold' : 'hover:bg-zinc-50 dark:hover:bg-zinc-900 border-l-[4px] border-transparent font-semibold text-zinc-550'}`}
+                  >
+                    <div className="flex items-center space-x-3 min-w-0">
+                      <Icon className={`h-4.5 w-4.5 shrink-0 ${isActive ? 'text-[#3D8B00] dark:text-emerald-400' : 'text-zinc-400'}`} />
+                      <span className="text-[11px] uppercase tracking-wider truncate">{tab.label}</span>
+                    </div>
+                    {showBadge && (
+                      <span className="bg-[#FFE2E2] text-[#EA2B2B] text-[9px] font-extrabold px-1.5 py-0.5 rounded-full border border-[#FF4B4B]/20 shrink-0">
+                        {actionableCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Sidebar Footer */}
@@ -2835,6 +2953,22 @@ export default function App() {
             )}
           </div>
         </header>
+
+        {/* Persistent Approvals Banner */}
+        {actionableCount > 0 && (
+          <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-b-2 border-[#FF9600]/30 px-6 py-3 flex items-center justify-between text-xs font-bold text-[#B36B00] dark:text-amber-300 animate-fade-in shrink-0">
+            <div className="flex items-center space-x-2">
+              <span className="h-2 w-2 rounded-full bg-[#FF9600] animate-pulse shrink-0" />
+              <span>{actionableCount} gate{actionableCount > 1 ? 's' : ''} awaiting your approval</span>
+            </div>
+            <button
+              onClick={() => setActiveTab('approvals')}
+              className="bg-white dark:bg-zinc-800 hover:bg-[#FFF0D4] dark:hover:bg-amber-900/40 border-2 border-[#FF9600]/30 shadow-[0_2px_0_#FF9600]/20 text-[#B36B00] dark:text-amber-300 font-extrabold px-3 py-1 rounded-xl uppercase tracking-wider transition-all duo-button-physics text-[10px]"
+            >
+              Review
+            </button>
+          </div>
+        )}
 
         {/* Global Toast */}
         {message && (
@@ -2938,6 +3072,7 @@ export default function App() {
           </div>
         )}
 
+        {newProjectModal}
         {directoryPickerOverlay}
 
         {/* Main Panel Content Area - padded 32px (#F7F7F7 canvas background) */}
@@ -3433,8 +3568,31 @@ export default function App() {
                 </div>
               )}
 
+              {activeTab === 'agents_memory' && (
+                <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit space-x-1">
+                  <button
+                    onClick={() => setAgentsMemorySubTab('roles')}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'roles' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                  >
+                    Roles
+                  </button>
+                  <button
+                    onClick={() => setAgentsMemorySubTab('memory')}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'memory' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                  >
+                    Memory
+                  </button>
+                  <button
+                    onClick={() => setAgentsMemorySubTab('workers')}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'workers' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                  >
+                    Jobs
+                  </button>
+                </div>
+              )}
+
               {/* Tab: Roles */}
-              {activeTab === 'roles' && (
+              {(activeTab === 'roles' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'roles')) && (
                 <div className="space-y-6">
                   <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Role Observability</h2>
@@ -3747,7 +3905,7 @@ export default function App() {
               )}
 
               {/* Tab: Workers */}
-              {activeTab === 'workers' && (
+              {(activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && (
                 <div className="space-y-6">
                   {/* Worker Backends config panel */}
                   <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-6 rounded-2xl space-y-6">
@@ -3779,7 +3937,7 @@ export default function App() {
                         {/* Role configurations */}
                         <div className="space-y-3">
                           <span className="block text-[10px] text-zinc-550 uppercase font-bold tracking-wider">Per-Role Routing Overrides</span>
-                          {activeTab === 'workers' && loadingDiscoveredAgents && (
+                          {(activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && loadingDiscoveredAgents && (
                             <p className="text-[10px] text-[#AFAFAF] italic">Loading discovered agents...</p>
                           )}
                           {discoveredAgents !== null && safeDiscoveredAgents.length > 0 && (
@@ -4757,7 +4915,7 @@ export default function App() {
               )}
 
               {/* Tab: Memory */}
-              {activeTab === 'memory' && (
+              {(activeTab === 'memory' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'memory')) && (
                 <div className="space-y-6">
                   <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Compounding Memory Layer</h2>
