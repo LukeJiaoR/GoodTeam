@@ -10,7 +10,7 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | Pattern-hit observability completed 2026-06-07 | Add deterministic global store, record worker failures, and surface best-match signature/hit/disposition evidence during triage without changing routing. | `480 passed`; ruff clean; frontend build passed |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Dry-smoke slice completed 2026-06-07 | Add a web-visible safe Run-Smoke action on top of the existing dev-loop/readiness surface; keep merge/land as a human gate unless a later auth design changes that. | `470 passed`; ruff clean; frontend build passed |
+| 3 | Self-hosting control plane | Release-readiness metadata completed 2026-06-07 | Add web-visible dry-smoke action and read-only release/graduation readiness metadata; keep merge/tag/graduate actions human-invoked. | `482 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
@@ -20,7 +20,7 @@ reference, verification evidence, and follow-up status.
 
 ## Active Increment
 
-Next active increment: choose next real open/gated mainline. Good candidates are self-hosting graduate/tag readiness or more dispatch-audit capture; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
+Next active increment: choose next real open/gated mainline. Good candidates are more dispatch-audit capture or a UI panel for the now-exposed release readiness metadata; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
 
 ## Completed Increments
 
@@ -225,6 +225,58 @@ GoodTeam web surface without adding a dangerous server-side merge/land path.
 - Server-side land/merge execution. Land remains a human-invoked script and readiness
   surface, per the self-driving design.
 - Release graduation controls.
+
+### 2026-06-07 — Self-hosting control plane: release-readiness metadata
+
+**Intent:** make the existing release/graduation scripts visible to the GoodTeam web
+control plane without adding any server-side tag, checkout, install, or serve action.
+
+**Implemented:**
+- `build_dev_loop` now includes a `release_readiness` object for GoodTeam repos.
+- The object reports `release_dir`, whether the release worktree exists, dev HEAD,
+  release HEAD, whether they match, and copyable `release-up` / `graduate-release`
+  commands pinned to the current dev HEAD.
+- The feature is guarded by script presence: repos without
+  `scripts/release-up.sh` and `scripts/graduate-release.sh` return
+  `{available:false, reason:"release scripts unavailable"}`.
+- Only existing read-only subprocess calls are used. No tag, checkout, dependency
+  install, release process start, or release worktree movement happens in the web API.
+
+**Verification evidence:**
+- Red release-readiness test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_build_dev_loop_reports_release_graduation_readiness_without_mutating -q`
+  failed with `KeyError: 'release_readiness'`.
+- Red safety guard test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_build_dev_loop_hides_release_graduation_commands_for_non_goodteam_repo -q`
+  first failed because commands were generated for any git repo.
+- Focused Dev Loop/API checks:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py -q -k 'dev_loop or devloop'`
+  -> `7 passed, 96 deselected`.
+- Route contract:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_api.py::test_api_devloop_route_returns_contract_shape -q`
+  -> `1 passed`.
+- Related API/web regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py tests/test_api.py -q -k 'dev_loop or devloop or smoke_run or dispatch_track'`
+  -> `20 passed, 128 deselected`.
+- Touched-file lint:
+  `.venv/bin/ruff check src/goodteam_os/web.py tests/test_web.py`
+  -> `All checks passed!`.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `482 passed in 136.18s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- A React panel/card for the new `release_readiness` object.
+- Executing graduate/tag/release-up from the web. Those remain human-invoked scripts.
 
 ### 2026-06-07 — Theme token conversion: high-volume palette/type slice
 

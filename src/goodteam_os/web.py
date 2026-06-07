@@ -689,6 +689,50 @@ def _land_command_for_pull_request(number: int, head_branch: str, worktrees: lis
     return f"scripts/land-pr.sh {number} --worktree {matching_worktree['path']}"
 
 
+def _release_dir_for_root(root: Path) -> Path:
+    configured = os.environ.get("GOODTEAM_RELEASE_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return root / "../goodteam-release"
+
+
+def _readonly_head(path: Path, *, cwd: Path, warnings: list[str], warning_label: str) -> str:
+    result = _run_readonly_command(["git", "-C", str(path), "rev-parse", "HEAD"], cwd, warnings)
+    if result is None:
+        return ""
+    if result.returncode != 0:
+        warnings.append(f"{warning_label} HEAD unavailable")
+        return ""
+    return result.stdout.strip()
+
+
+def build_release_readiness(root: Path, warnings: list[str]) -> dict[str, object]:
+    if not (root / "scripts" / "graduate-release.sh").is_file() or not (root / "scripts" / "release-up.sh").is_file():
+        return {
+            "available": False,
+            "reason": "release scripts unavailable",
+        }
+    release_dir = _release_dir_for_root(root)
+    dev_head = _readonly_head(root, cwd=root, warnings=warnings, warning_label="dev")
+    release_exists = release_dir.is_dir()
+    release_head = ""
+    if release_exists:
+        release_head = _readonly_head(release_dir, cwd=root, warnings=warnings, warning_label="release")
+
+    ref = dev_head or "HEAD"
+    command_prefix = f"GOODTEAM_RELEASE_DIR={release_dir} "
+    return {
+        "available": True,
+        "release_dir": str(release_dir),
+        "release_exists": release_exists,
+        "dev_head": dev_head,
+        "release_head": release_head,
+        "up_to_date": bool(dev_head and release_head and dev_head == release_head),
+        "release_up_command": f"{command_prefix}scripts/release-up.sh --ref {ref}",
+        "graduate_command": f"{command_prefix}scripts/graduate-release.sh --ref {ref}",
+    }
+
+
 def build_dev_loop(root: Path | None) -> dict[str, object]:
     warnings: list[str] = []
     worktrees: list[dict[str, str]] = []
@@ -773,6 +817,7 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
         "worktrees": worktrees,
         "pull_requests": pull_requests,
         "pre_reviews": pre_reviews,
+        "release_readiness": build_release_readiness(root, warnings),
         "warnings": warnings,
         "generated_at": datetime.now(UTC).isoformat(),
     }

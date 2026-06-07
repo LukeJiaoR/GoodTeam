@@ -202,6 +202,73 @@ branch refs/heads/feat/ready
     ]
 
 
+def test_build_dev_loop_reports_release_graduation_readiness_without_mutating(tmp_path, monkeypatch):
+    _init_git_repo(tmp_path)
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "graduate-release.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (scripts_dir / "release-up.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    release_dir = tmp_path.parent / "goodteam-release"
+
+    def fake_run(command, **kwargs):
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["check"] is False
+        command_text = " ".join(command)
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+        if command[-3:] == ["worktree", "list", "--porcelain"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:3] == ["gh", "pr", "list"]:
+            return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if command_text.endswith("rev-parse HEAD"):
+            if str(release_dir) in command:
+                return SimpleNamespace(returncode=0, stdout="releasehead987654321\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="devhead123456789\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    original_is_dir = Path.is_dir
+    monkeypatch.setenv("GOODTEAM_RELEASE_DIR", str(release_dir))
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+    monkeypatch.setattr(Path, "is_dir", lambda self: True if self == release_dir else original_is_dir(self))
+
+    dev_loop = build_dev_loop(tmp_path)
+
+    assert dev_loop["release_readiness"] == {
+        "available": True,
+        "release_dir": str(release_dir),
+        "release_exists": True,
+        "dev_head": "devhead123456789",
+        "release_head": "releasehead987654321",
+        "up_to_date": False,
+        "release_up_command": f"GOODTEAM_RELEASE_DIR={release_dir} scripts/release-up.sh --ref devhead123456789",
+        "graduate_command": f"GOODTEAM_RELEASE_DIR={release_dir} scripts/graduate-release.sh --ref devhead123456789",
+    }
+
+
+def test_build_dev_loop_hides_release_graduation_commands_for_non_goodteam_repo(tmp_path, monkeypatch):
+    _init_git_repo(tmp_path)
+
+    def fake_run(command, **kwargs):
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+        if command[-3:] == ["worktree", "list", "--porcelain"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:3] == ["gh", "pr", "list"]:
+            return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if command[-2:] == ["rev-parse", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout="devhead123456789\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+
+    dev_loop = build_dev_loop(tmp_path)
+
+    assert dev_loop["release_readiness"] == {
+        "available": False,
+        "reason": "release scripts unavailable",
+    }
+
+
 def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
     graph = build_workflow_graph(tmp_path)
 
