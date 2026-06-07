@@ -22,6 +22,22 @@ raise SystemExit(1)
 PY
 }
 
+pre_review_mtime() {
+  local path="$1"
+  local value=""
+
+  value="$(stat -c '%Y' "$path" 2>/dev/null || true)"
+  case "$value" in
+    ""|*[!0-9]*)
+      value="$(stat -f '%m' "$path" 2>/dev/null || true)"
+      ;;
+  esac
+  case "$value" in
+    ""|*[!0-9]*) printf '0' ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
 pre_review_latest_status() {
   local worktree="$1"
   local invocation_id="${2:-}"
@@ -32,7 +48,7 @@ pre_review_latest_status() {
       local status_path="$job_dir/status.json"
       [ -f "$status_path" ] || continue
       pre_review_job_matches_invocation "$job_dir" "$invocation_id" || continue
-      printf '%s\t%s\n' "$(stat -f '%m' "$status_path" 2>/dev/null || stat -c '%Y' "$status_path" 2>/dev/null || printf '0')" "$status_path"
+      printf '%s\t%s\n' "$(pre_review_mtime "$status_path")" "$status_path"
     done |
     sort -nr |
     sed -n '1s/^[^	]*	//p'
