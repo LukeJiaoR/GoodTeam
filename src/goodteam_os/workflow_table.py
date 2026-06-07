@@ -135,18 +135,37 @@ def workflow_node(node: str) -> WorkflowNode | None:
     return WORKFLOW_NODES.get(node)
 
 
-def validate_workflow_dag(nodes: Mapping[str, WorkflowNode] | None = None) -> None:
+def validate_workflow_dag(
+    nodes: Mapping[str, WorkflowNode] | None = None,
+    *,
+    gate_transitions: Mapping[str, GateTransition] | None = None,
+) -> None:
     node_table = nodes or WORKFLOW_NODES
-    identifiers = set(node_table) | set(GATE_TRANSITIONS) | {"product_requirement", "staging"}
+    transition_table = gate_transitions or GATE_TRANSITIONS
+    identifiers = set(node_table) | set(transition_table) | {"product_requirement", "staging"}
+    terminal_identifiers = {"blocked", "rejected"}
+    revision_identifiers = {f"revise_{gate}" for gate in transition_table}
     for node in node_table.values():
-        if node.run_guard_gate not in GATE_TRANSITIONS:
+        if node.run_guard_gate not in transition_table:
             raise ValueError(f"Workflow node {node.name!r} has unknown run guard gate {node.run_guard_gate!r}")
         for dependency in node.depends_on:
             if dependency not in identifiers:
                 raise ValueError(f"Workflow node {node.name!r} has unknown dependency {dependency!r}")
         for label, target in [("error", node.on_error), ("blocked", node.on_blocked)]:
-            if target not in identifiers and target not in {"blocked", "rejected"}:
+            if target not in identifiers and target not in terminal_identifiers:
                 raise ValueError(f"Workflow node {node.name!r} has unknown {label} target {target!r}")
+
+    for gate, transition in transition_table.items():
+        for label, target in [
+            ("approved", transition.on_approved_next),
+            ("changes_requested", transition.on_changes_requested),
+            ("rejected", transition.on_rejected),
+        ]:
+            valid_targets = identifiers | terminal_identifiers
+            if label == "changes_requested":
+                valid_targets = valid_targets | revision_identifiers
+            if target not in valid_targets:
+                raise ValueError(f"Gate transition {gate!r} has unknown {label} target {target!r}")
 
     visited: set[str] = set()
     visiting: list[str] = []
