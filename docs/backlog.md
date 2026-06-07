@@ -290,10 +290,12 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   notes that merely start with `FAILURE [...]`. Covered by
   `tests/test_memory.py::test_pickup_packet_preserves_human_failure_heading_short_term_event`.
 - **G3c — global cross-project failure-pattern library (hit-count)** — ✅ **LIBRARY RESOLVED
-  2026-06-07 (`a93a693`)**, routing application deferred. `FailurePatternLibrary` now stores
+  2026-06-07 (`a93a693`)**, routing-readiness measurement added 2026-06-07.
+  `FailurePatternLibrary` now stores
   signature/classifier/disposition hints, hit count, roles/nodes/sources, timestamps, and
-  deterministic lookup; worker failure triage records patterns. Applying pattern matches to alter
-  routing remains a separate measured gate once hit-rate data exists.
+  deterministic lookup; worker failure triage records patterns; `goodteam-os failure-patterns`
+  emits repeated-pattern candidate metrics without changing routing. Applying pattern matches to
+  alter routing remains a separate gate once candidate quality is validated.
 - **G3 LLM triage agent** (deferred from the G3 design). G3a ships a DETERMINISTIC classify→route table covering known classes. Add a model-driven triage agent only for the `unknown`/ambiguous long tail, measured against the §12 hit-rate — don't run a model to route failures a table already handles.
 - ~~**`land-pr.sh` ff-pull fails when a merged PR touches `workers.py`**~~ **RESOLVED 2026-06-04 (#66).**
   `scripts/land-pr.sh` now stashes/restores local tracked edits around `git pull --ff-only`, with

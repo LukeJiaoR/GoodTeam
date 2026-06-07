@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from goodteam_os.dispatch import dispatch_tracks, parse_dispatch_track_spec, parse_dispatch_verify_spec
+from goodteam_os.failure_patterns import FailurePatternLibrary
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.projects import (
     DELIVERY_MODES,
@@ -58,6 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     workers = subparsers.add_parser("workers")
     workers.add_argument("--project-root", type=Path, required=True)
+
+    failure_patterns = subparsers.add_parser("failure-patterns")
+    failure_patterns.add_argument("--project-root", type=Path, required=True)
+    failure_patterns.add_argument("--min-hits", type=int, default=3)
 
     smoke = subparsers.add_parser("smoke")
     smoke.add_argument("--workspace", type=Path, default=Path("."))
@@ -143,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
             "project_root": str(args.project_root),
             "jobs": WorkerJobStore(args.project_root).list_jobs(),
         }
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "failure-patterns":
+        payload = FailurePatternLibrary(args.project_root).routing_readiness_report(min_hits=args.min_hits)
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "smoke":

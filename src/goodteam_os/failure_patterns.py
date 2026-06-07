@@ -100,6 +100,20 @@ class FailurePatternLibrary:
             reverse=True,
         )
 
+    def routing_readiness_report(self, *, min_hits: int = 3) -> dict[str, object]:
+        threshold = max(int(min_hits), 1)
+        patterns = self.list_patterns()
+        candidates = [pattern for pattern in patterns if int(pattern.get("hit_count", 0)) >= threshold]
+        return {
+            "total_patterns": len(patterns),
+            "total_hits": sum(int(pattern.get("hit_count", 0)) for pattern in patterns),
+            "candidate_count": len(candidates),
+            "min_hits": threshold,
+            "routing_application": "deferred",
+            "routing_gate_satisfied": False,
+            "candidate_patterns": candidates,
+        }
+
     def _read_patterns(self) -> dict[str, dict[str, object]]:
         path = self.pattern_path()
         if not path.is_file():

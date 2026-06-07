@@ -103,6 +103,32 @@ def test_cli_workers_outputs_worker_job_status_json(tmp_path, capsys):
     assert payload["jobs"][0]["status"] == "needs_review"
 
 
+def test_cli_failure_patterns_outputs_routing_readiness_json(tmp_path, capsys):
+    from goodteam_os import cli
+    from goodteam_os.failure_patterns import FailurePatternLibrary
+
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    library = FailurePatternLibrary(project_root)
+    for index in range(2):
+        library.record_failure(
+            failure_class="network",
+            summary="503 Service Unavailable from registry.npmmirror.com",
+            disposition="escalate_human",
+            role="implementation",
+            node="implementation",
+            source=f"worker_failure:run-{index}:implementation:implementation",
+        )
+
+    result = cli.main(["failure-patterns", "--project-root", str(project_root), "--min-hits", "2"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert payload["candidate_count"] == 1
+    assert payload["routing_application"] == "deferred"
+    assert payload["candidate_patterns"][0]["classifier_hint"] == "network"
+
+
 def test_cli_memory_append_writes_event_jsonl(tmp_path, capsys):
     from goodteam_os import cli
 

@@ -71,3 +71,34 @@ def test_failure_pattern_library_ignores_empty_query(tmp_path):
     )
 
     assert library.find_matches("") == []
+
+
+def test_failure_pattern_library_reports_routing_readiness_without_applying_patterns(tmp_path):
+    library = FailurePatternLibrary(tmp_path)
+    for index in range(3):
+        library.record_failure(
+            failure_class="network",
+            summary="503 Service Unavailable from registry.npmmirror.com",
+            disposition="escalate_human",
+            role="implementation",
+            node="implementation",
+            source=f"worker_failure:run-{index}:implementation:implementation",
+        )
+    library.record_failure(
+        failure_class="timeout",
+        summary="Codex CLI timed out after 1800 seconds",
+        disposition="escalate_human",
+        role="qa",
+        node="implementation",
+        source="worker_failure:run-timeout:implementation:qa",
+    )
+
+    report = library.routing_readiness_report(min_hits=2)
+
+    assert report["total_patterns"] == 2
+    assert report["total_hits"] == 4
+    assert report["candidate_count"] == 1
+    assert report["routing_application"] == "deferred"
+    assert report["routing_gate_satisfied"] is False
+    assert report["candidate_patterns"][0]["classifier_hint"] == "network"
+    assert report["candidate_patterns"][0]["hit_count"] == 3

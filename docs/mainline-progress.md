@@ -8,7 +8,7 @@ reference, verification evidence, and follow-up status.
 
 | Order | Mainline | Status | Scope For This Pass | Completion Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | G3c global failure-pattern library | Pattern-hit observability completed 2026-06-07 | Add deterministic global store, record worker failures, and surface best-match signature/hit/disposition evidence during triage without changing routing. | `480 passed`; ruff clean; frontend build passed |
+| 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
@@ -20,7 +20,7 @@ reference, verification evidence, and follow-up status.
 
 ## Active Increment
 
-Next active increment: choose next real open/gated mainline. Good candidates are a focused backlog-product-loop slice or measured G3 routing-readiness documentation; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
+Next active increment: continue clearing actionable backlog. Remaining known gates: i18n target market/primary language, D2b topo executor fan-in consumer, server-side land/tag auth/design, theme winner selection, PRD edit/deepen design gate, and external Codex auth recovery.
 
 ## Completed Increments
 
@@ -131,6 +131,46 @@ yet.
 **Deferred from this increment:**
 - Letting historical pattern recommendations alter routing or escalation. That still
   needs measured hit-rate evidence and a separate gate.
+- LLM triage for unknown failures.
+
+### 2026-06-07 — G3c failure-pattern routing-readiness measurement
+
+**Intent:** make the remaining routing-application gate measurable without changing
+current failure routing.
+
+**Implemented:**
+- `FailurePatternLibrary.routing_readiness_report(min_hits=...)` summarizes total
+  patterns, total hits, and repeated-pattern candidates.
+- The report deliberately returns `routing_application=deferred` and
+  `routing_gate_satisfied=false`; it is measurement only, not a routing switch.
+- Added `goodteam-os failure-patterns --project-root <path> --min-hits <n>` to emit
+  the readiness report as JSON from local state.
+- Existing `triage_worker_failure` and `disposition_for_failure_class` behavior is
+  unchanged.
+
+**Verification evidence:**
+- Red library test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_reports_routing_readiness_without_applying_patterns -q`
+  failed with `AttributeError: 'FailurePatternLibrary' object has no attribute 'routing_readiness_report'`.
+- Red CLI test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_cli.py::test_cli_failure_patterns_outputs_routing_readiness_json -q`
+  failed because `failure-patterns` was not a CLI command.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_reports_routing_readiness_without_applying_patterns tests/test_cli.py::test_cli_failure_patterns_outputs_routing_readiness_json -q`
+  -> `2 passed`.
+- Related regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_cli.py tests/test_graph_sample.py -q -k 'failure_pattern or failure_patterns or worker_failure or triage or cli_failure_patterns'`
+  -> `11 passed, 78 deselected`.
+- Touched-file lint:
+  `.venv/bin/ruff check src/goodteam_os/failure_patterns.py src/goodteam_os/cli.py tests/test_failure_patterns.py tests/test_cli.py`
+  -> `All checks passed!`.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- Applying pattern recommendations to routing. The report now gives a local evidence
+  surface, but routing application still needs validated outcome quality.
 - LLM triage for unknown failures.
 
 ### 2026-06-07 — Dispatch provenance depth
