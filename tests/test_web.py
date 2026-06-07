@@ -1635,6 +1635,56 @@ def test_memory_panel_uses_theme_tokens_and_small_type_floor():
         assert semantic_class in memory_panel
 
 
+def test_workflow_graph_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Workflow Graph */}")
+    end = app.index("{/* Tab: Overview */}", start)
+    workflow_mount = app[start:end]
+
+    assert "<WorkflowGraphTab" in workflow_mount
+    assert "computeGraphLayout" not in app
+    assert "drawEdgePath" not in app
+
+    workflow_tab = root / "frontend" / "src" / "components" / "tabs" / "WorkflowGraphTab.jsx"
+    assert workflow_tab.exists()
+    workflow_graph = workflow_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+    ]
+    assert {snippet: workflow_graph.count(snippet) for snippet in disallowed_snippets if snippet in workflow_graph} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+        "bg-status-success-bg",
+        "text-status-success-text",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+        "bg-status-info-bg",
+        "text-status-info-text",
+    ]:
+        assert semantic_class in workflow_graph
+
+
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 
