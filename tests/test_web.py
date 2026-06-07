@@ -1865,6 +1865,53 @@ def test_agile_board_page_is_extracted_and_uses_theme_tokens():
         assert semantic_class in board_page
 
 
+def test_smoke_runs_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Smoke Runs */}")
+    end = app.index("{/* Tab: Workers */}", start)
+    smoke_mount = app[start:end]
+
+    assert "<SmokeRunsTab" in smoke_mount
+    assert "smokeRunItems.map" not in smoke_mount
+
+    smoke_tab = root / "frontend" / "src" / "components" / "tabs" / "SmokeRunsTab.jsx"
+    assert smoke_tab.exists()
+    smoke_page = smoke_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+    ]
+    assert {snippet: smoke_page.count(snippet) for snippet in disallowed_snippets if snippet in smoke_page} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+        "border-status-danger",
+        "bg-status-info-bg",
+        "text-status-info-text",
+        "bg-status-success-bg",
+        "text-status-success-text",
+    ]:
+        assert semantic_class in smoke_page
+
+
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 
