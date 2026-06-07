@@ -13,16 +13,50 @@ reference, verification evidence, and follow-up status.
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
-| 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
+| 6 | i18n | Gated / parked 2026-06-07 | Requires target-market/language decision and stabilized copy; not an actionable local backlog item in this pass. | Documented gate |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
 | 9 | Dispatch artifacts audit/memory | Audit artifact chain completed 2026-06-07 | Persist dispatch task/constraints/research source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `487 passed`; ruff clean; frontend build passed |
+| 10 | Backlog closure / gated parking | Completed 2026-06-07 | Resolve stale PRD refine-loop backlog via existing explicit refine workflow and move true decisions/external gates out of active backlog. | `9 passed` targeted regression; diff check clean |
 
 ## Active Increment
 
-Next active increment: continue clearing actionable backlog. Remaining known gates: i18n target market/primary language, D2b topo executor fan-in consumer, server-side land/tag auth/design, theme winner selection, PRD edit/deepen design gate, and external Codex auth recovery.
+No active backlog increment remains. Remaining work is parked behind explicit gates:
+i18n target market/primary language, theme winner selection, D2b topo executor fan-in
+consumer, server-side land/tag auth/security design, G3 routing outcome quality,
+G3 unknown-failure data for LLM triage, external Codex auth recovery, shared-worktree
+edit-collision need, and optional full research/review memory ingestion.
 
 ## Completed Increments
+
+### 2026-06-07 — Backlog closure / gated parking
+
+**Intent:** finish the backlog sweep without pretending product decisions, external
+auth state, or intentionally human-gated safety boundaries are local implementation
+tasks.
+
+**Implemented:**
+- `docs/backlog.md` now starts from an explicit "no actionable projects remain"
+  state.
+- The remaining non-local work is listed in a gated/external-decision parking lot:
+  i18n target-language choice, Theme System winner selection, D2b topo/parallel
+  executor gate, server-side land/tag/graduate auth and human-gate boundary, G3
+  routing application quality gate, G3 LLM triage data gate, Codex auth recovery,
+  shared-worktree edit-collision detection, and optional full research/review
+  memory ingestion.
+- The stale PRD edit -> LLM deepen -> re-review backlog item is marked resolved by
+  the existing explicit refinement workflow: `Refine with AI`, proposed revision
+  review, accept/discard, open-question answer application, and approval reset on
+  accept.
+- `docs/current-progress.md` was updated with the matching footprint.
+
+**Verification evidence:**
+- Targeted refinement/API/frontend contract regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_graph_sample.py tests/test_api.py tests/test_web.py -q -k 'refine_artifact or refinement or open_questions or frontend_contract_exposes_open_questions'`
+  -> `9 passed, 206 deselected`.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
 
 ### 2026-06-07 — G3c global failure-pattern library
 
@@ -604,6 +638,11 @@ commits.
 - Full research/review document ingestion into role memory, if wanted, as a
   retrieval-budget-aware follow-up. The durable dispatch audit chain itself is now
   complete.
+
+**2026-06-07 follow-up:** the PRD edit/deepen/re-review item was later reconciled in
+the `Backlog closure / gated parking` increment above. It is no longer an open
+backlog item because the explicit `Refine with AI` workflow, proposal review, and
+approval reset path already exist.
 
 **Verification evidence:**
 - Targeted proof command:

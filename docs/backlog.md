@@ -1,7 +1,36 @@
-# Backlog — ideas not yet scheduled
+# Backlog — no actionable projects remain
 
 Durable list of feature ideas / follow-ups that aren't on the active plan yet.
 Promote an item to a PRD under `docs/plans/` when it's picked up. Newest first.
+
+## Status 2026-06-07 — actionable backlog cleared
+
+All items that can be completed safely from local repository context in this pass
+are either implemented or reconciled below. The remaining entries are not active
+backlog projects: they are product decisions, external account state, or safety
+gates that require founder input or validated runtime evidence before
+implementation.
+
+**Gated / external-decision parking lot:**
+- i18n / multi-language support — requires target market and primary-language
+  decision, plus stabilized product copy.
+- Theme System v1 — requires founder Vivid-vs-Minimal selection before the
+  remaining full-screen token conversion and dark-mode pass.
+- D2b topological executor / parallel level execution — requires a real
+  non-linear fan-in or dynamic-plan consumer and live smoke budget.
+- Self-hosting graduate/tag controls and any server-side land/merge execution —
+  intentionally held behind the human land gate and auth/security design.
+- Applying G3 failure-pattern recommendations to routing — requires validated
+  outcome quality from the new read-only readiness metrics before route changes.
+- G3 LLM triage agent — only for unknown/ambiguous long-tail failures after
+  enough data exists to measure it.
+- Codex pre-review account/auth recovery — external Codex account state; local
+  fallback behavior is already implemented.
+- hcom-style edit-collision detection — parked until GoodTeam dispatch uses
+  shared worktrees; current parallel tracks use disjoint worktrees.
+- Full research/review document ingestion into role memory — optional
+  retrieval-budget-aware product decision; durable audit artifacts are already
+  retained.
 
 ## ✅ RESOLVED 2026-06-07 — Dispatch artifacts (task contract / research / review) as first-class audit  (raised 2026-06-02, charter item)
 
@@ -44,7 +73,15 @@ engine (grounded citations + retrieval), not a separate silo. Ties to the
 "sediment the role chain" charter (the orchestrator/release scripts already capture
 the mechanical half; this captures the document/provenance half).
 
-## 🟡 PARTIAL — Real graph engine: replace the hand-rolled "graph" with a true collaboration DAG  (raised 2026-06-02, charter item — co-equal mainline with the memory engine)
+## 🟠 GATED / PARKED — Real graph engine: replace the hand-rolled "graph" with a true collaboration DAG  (raised 2026-06-02, charter item — co-equal mainline with the memory engine)
+
+**STATUS 2026-06-07:** no directly actionable backlog project remains here. D2
+DAG-spec foundation is implemented locally: workflow nodes declare dependencies,
+dependency validation rejects unknown/cyclic graphs, topological ordering exists,
+and `/api/workflow/graph` exposes dependency edges. The remaining D2b/D3 work is
+parked until there is a real fan-in/dynamic-plan consumer and live smoke budget;
+replacing the current linear executor without that consumer would add risk without
+a product-visible scheduling need.
 
 **STATUS 2026-06-04:** LANDED — declarative transition table (#36), D1 declarative failure/blocked
 edges + bounded retry (#48), D2a debate-as-advise-only-committee-at-gate (#51/#52/#53), workflow-graph
@@ -125,7 +162,13 @@ the merge-gate judgement stays Claude (or a model that did NOT write the code AN
 holds the intent). This is the "judgement layer automates LAST, only once
 verification is trustworthy" rule from the role-chain charter.
 
-## 🟡 PARTIAL — Self-host the role chain: sediment Claude's manual orchestration into GoodTeam  (raised 2026-06-02, charter item)
+## 🟠 GATED / PARKED — Self-host the role chain: sediment Claude's manual orchestration into GoodTeam  (raised 2026-06-02, charter item)
+
+**STATUS 2026-06-07:** the safe local slices are implemented: Dev Loop
+observability, web dispatch, land-readiness copy commands, dry-smoke action, and
+read-only release/graduation readiness metadata. No server-side merge, land, tag,
+or graduate action should be added from backlog cleanup; those remain behind the
+human land gate plus auth/security design.
 
 **STATUS 2026-06-04 (founder priority: "以自我驱动为先"):** mechanical layers sedimented —
 `dispatch-track.sh` (orchestrator), `pre-review.sh` (code_review mechanical half), `land-pr.sh`
@@ -230,20 +273,22 @@ readiness/auth hints inline so a user knows before a run whether their pick will
 
 ---
 
-## Other open follow-ups (smaller)
+## Resolved and parked follow-ups (smaller)
 
 - ~~**PRD generation is a deterministic template, doesn't use a real LLM**~~ **RESOLVED 2026-06-04
   (#62/#61).** Default-flow PRD/RFC now generate via the LLM worker when the role's backend is real
   (adapter ∉ BUILTIN_WORKER_MODES), with graceful template fallback (fake/not-ready/worker-failure);
   zero-cred onboarding preserved.
-- **Moat #1 triage / self-correction** — 🟡 **PARTIAL 2026-06-03 (#48 D1, #56 G3a/G3b).** Declarative
-  failure edges + bounded retry (D1) + deterministic classify→route dispositions
-  (escalate_human/block) + failure capture to memory (G3a/G3b) landed. REMAINING (deferred):
-  **G3c** global failure-pattern library (hit-count, §12 north-star) + the **LLM triage agent** for
-  the unknown long tail — both await accumulated failure data + own gates (see items below).
+- **Moat #1 triage / self-correction** — 🟠 **GATED AFTER LOCAL COMPLETION 2026-06-07.**
+  Declarative failure edges + bounded retry (D1), deterministic classify→route
+  dispositions, failure capture to memory, global failure-pattern storage, pattern-hit
+  observability, and read-only routing-readiness metrics are implemented. Applying
+  pattern recommendations to routing and adding an LLM triage agent remain gated on
+  measured outcome quality and enough unknown/ambiguous failures to justify them.
 - **Borrow hcom's edit-collision detection** for dispatch's shared-worktree parallel
-  tracks (see `docs/prior-art-multi-agent-coordination.md`). *(Still open; not needed yet —
-  parallel tracks use disjoint worktrees, not a shared tree.)*
+  tracks (see `docs/prior-art-multi-agent-coordination.md`). 🟠 **PARKED 2026-06-07** —
+  no current shared-worktree dispatch consumer exists; parallel tracks use disjoint
+  worktrees, so there is no local backlog implementation to do.
 - ~~**Cross-project memory + grounded citations**~~ **RESOLVED 2026-06-03 (#45 + #55 + citations).**
   Read-only cross-project fan-out retrieval (`/api/memory/cross`) + the Memory-tab search UI +
   grounded `mem:` citations/supersede landed. (Follow-ons — shared index, fact dedup/promotion,
@@ -277,7 +322,7 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   → resolves to the actual project-key list to satisfy the endpoint's required non-empty scope;
   ranked project-qualified hits, race-guarded.
 - **Web UI is NOT yet a complete control surface for the self-hosting/orchestration loop** —
-  🟡 **PARTIAL 2026-06-07.**
+  🟠 **GATED AFTER SAFE SLICES 2026-06-07.**
   (UI-coverage audit, 2026-06-03). The end-user product loop (idea→PRD→RFC→impl→staging→release→
   retro) is ~90% web-driven; but GoodTeam's own dev/orchestration toolchain
   (`dispatch-track.sh`, `land-pr.sh`, `graduate-release.sh`, `smoke`) was mostly CLI-only — the
@@ -296,7 +341,7 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   deterministic lookup; worker failure triage records patterns; `goodteam-os failure-patterns`
   emits repeated-pattern candidate metrics without changing routing. Applying pattern matches to
   alter routing remains a separate gate once candidate quality is validated.
-- **G3 LLM triage agent** (deferred from the G3 design). G3a ships a DETERMINISTIC classify→route table covering known classes. Add a model-driven triage agent only for the `unknown`/ambiguous long tail, measured against the §12 hit-rate — don't run a model to route failures a table already handles.
+- **G3 LLM triage agent** — 🟠 **GATED 2026-06-07.** G3a ships a DETERMINISTIC classify→route table covering known classes. Add a model-driven triage agent only for the `unknown`/ambiguous long tail, measured against the §12 hit-rate — don't run a model to route failures a table already handles.
 - ~~**`land-pr.sh` ff-pull fails when a merged PR touches `workers.py`**~~ **RESOLVED 2026-06-04 (#66).**
   `scripts/land-pr.sh` now stashes/restores local tracked edits around `git pull --ff-only`, with
   trap-based restore on failure.
@@ -335,24 +380,24 @@ overrides, then switch users into Advanced review before save. Covered by
 `FilePath` tooltip now uses `w-max max-w-[28rem] whitespace-normal break-words`; the visible chip
 can still break long paths while the hover tooltip no longer collapses into a one-character column.
 
-## i18n / multi-language support  (raised 2026-06-06, founder asked; DEFERRED — founder agreed)
+## 🟠 GATED / PARKED — i18n / multi-language support  (raised 2026-06-06, founder asked; DEFERRED — founder agreed)
 
 Founder asked whether to add multi-language support. **Decision: defer.** Current state: the FE has NO i18n setup (no framework/locales/deps); `frontend/src/App.jsx` carries **260+ hardcoded English strings** (~228 JSX text nodes + 31 placeholders, plus toasts/templates), essentially all-English (only ~7 Chinese strings mixed in). Why defer: (1) the UI is mid-redesign (theme v1 pending) and features/copy are changing fast — extracting strings to i18n keys now means re-translating on every copy change (churn); (2) still single-user dogfooding — i18n pays off only with real users in a target locale; (3) it is a cross-cutting refactor of the single-file App.jsx that would conflict with every other FE track; (4) the real prerequisite is an unmade product decision: target market / primary language (Chinese-first? English-first? bilingual? more?). **Do it AFTER** the theme + core UX stabilize, as ONE clean pass: pick the framework (react-i18next or a light context), extract strings → keys, ship `zh`/`en` (or whatever the market needs) locale files + a language switcher placed alongside the theme switcher (same preferences surface). Medium–Large. Gating decision: target market / primary language.
 
 ## Raised 2026-06-05 (b) — product-use round 2 (founder using the dashboard)
 
-- **PRD edit → LLM deepen → re-review loop** (founder, 2026-06-05; MAINLINE, design-first). Today
-  editing a PRD/artifact and saving just persists the file: `handleSaveArtifact` POSTs to
-  `/api/artifact` (content write) + refetches state — there is NO LLM follow-up. Founder wants:
-  on save of a human-edited artifact, the LLM reads the edit, *deepens/refines* the doc, and routes
-  it back for review (a refine-on-edit loop). Needs: a backend trigger on artifact save (or an
-  explicit "Refine with AI" action) → dispatch the owning role with the edited doc + a "deepen,
-  don't restart" instruction → write the refined version as a new artifact revision → surface a
-  review/diff in the approvals UI. Design-first (research → design → founder gate → dispatch).
-  Touches web.py (`/api/artifact`), graph/roles (a refine task), App.jsx (Save→Refine UX + diff).
-  Medium–Large; high product value (closes the human-in-the-loop authoring loop).
-  **Deferred to next round per founder ("等这次完全整理完再做").**
-- **Theme System v1 — pick winner + productionize** (founder, 2026-06-05; DESIGN DONE, prototype
+- ~~**PRD edit → LLM deepen → re-review loop**~~ ✅ **RESOLVED 2026-06-07.** The
+  explicit action path described in the original note now exists. Backend:
+  `refine_artifact`, `accept_refinement`, and `discard_refinement` write the human
+  edit, ask the owning role to deepen/refine without restarting, store a proposed
+  revision, and reset the relevant approval gate to pending when accepted. API:
+  `/api/refine-artifact`, `/api/answer-open-questions`, `/api/accept-refinement`,
+  and `/api/discard-refinement`. Frontend: `Refine with AI`, open-question apply,
+  line-by-line comparison, full proposed text review, and accept/discard controls.
+  Covered by graph/API/frontend contract tests. Save-only behavior remains a
+  deliberate plain persistence action; the AI follow-up is explicit.
+- **Theme System v1 — pick winner + productionize** — 🟠 **GATED 2026-06-07.**
+  (founder, 2026-06-05; DESIGN DONE, prototype
   built, NOT landed). Two switchable light themes (Vivid = refined Duolingo/Wise, Minimal =
   Claude-web) + semantic token layer + type scale + persisted switcher were prototyped on the
   home + project-detail slices and live-smoked (branch **`feat/theme-proto`**, worktree
@@ -367,7 +412,7 @@ Founder asked whether to add multi-language support. **Decision: defer.** Curren
   aliases to canonical backend rows (`claude`, `agy`, etc.) while keeping aliases accepted on input.
   Covered by `tests/test_workers.py::test_discover_installed_agents_dedups_backend_aliases` and
   `/api/agents` tests.
-- **codex pre-review channel was auth-down (403 Forbidden) this session** — 🟡 **PARTIAL
+- **codex pre-review channel was auth-down (403 Forbidden) this session** — 🟠 **EXTERNAL AUTH GATE
   2026-06-07.** `pre-review.sh --adapter` now falls back codex → claude → agy on auth/provider
   failure, detects 403/auth distinctly, ignores empty failed reports, and binds report selection to
   the current invocation marker. Remaining: actual Codex account/auth recovery is external.
