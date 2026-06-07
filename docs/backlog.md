@@ -3,7 +3,19 @@
 Durable list of feature ideas / follow-ups that aren't on the active plan yet.
 Promote an item to a PRD under `docs/plans/` when it's picked up. Newest first.
 
-## Dispatch artifacts (task contract / research / review) as first-class audit + memory  (raised 2026-06-02, charter item)
+## ✅ RESOLVED 2026-06-07 — Dispatch artifacts (task contract / research / review) as first-class audit  (raised 2026-06-02, charter item)
+
+**DONE across 2026-06-04/07 increments.** The durable audit chain now exists:
+dispatch jobs retain `task_source`, `constraints_source`, optional
+`research_report_source`, and an archived `research-report.md`; `land-pr.sh`
+archives pre-review reports and optional `--review-rationale`; and
+`.goodteam/provenance/pr-<PR>/manifest.json` links PR ⇄ jobs ⇄ contract ⇄ research
+⇄ pre-review ⇄ review rationale ⇄ `land/pr-*` and `review/pr-*` memory sources.
+The remaining question is not audit retention; it is whether/when to ingest full
+research/review document text into role memory, which should be a separate
+retrieval-budget-aware product decision.
+
+_Original note (historical):_
 
 **Insight (founder):** the task.md contract Claude writes for each dispatch — plus
 the research report it's based on and the review decision that lets it land — are

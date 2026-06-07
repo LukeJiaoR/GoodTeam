@@ -16,7 +16,7 @@ reference, verification evidence, and follow-up status.
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
-| 9 | Dispatch artifacts audit/memory | Research-report source capture completed 2026-06-07 | Persist dispatch task/constraints/research source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `487 passed`; ruff clean; frontend build passed |
+| 9 | Dispatch artifacts audit/memory | Audit artifact chain completed 2026-06-07 | Persist dispatch task/constraints/research source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `487 passed`; ruff clean; frontend build passed |
 
 ## Active Increment
 
@@ -561,7 +561,9 @@ commits.
 - G3 LLM triage and applying failure-pattern hits to routing.
 - Self-hosting graduate/tag controls and any server-side land/merge decision.
 - PRD edit/deepen/re-review loop as a larger product workflow.
-- Broader dispatch artifacts as first-class memory/audit.
+- Full research/review document ingestion into role memory, if wanted, as a
+  retrieval-budget-aware follow-up. The durable dispatch audit chain itself is now
+  complete.
 
 **Verification evidence:**
 - Targeted proof command:
