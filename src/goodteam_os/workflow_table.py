@@ -145,7 +145,9 @@ def validate_workflow_dag(
     identifiers = set(node_table) | set(transition_table) | {"product_requirement", "staging"}
     terminal_identifiers = {"blocked", "rejected"}
     revision_identifiers = {f"revise_{gate}" for gate in transition_table}
-    for node in node_table.values():
+    for key, node in node_table.items():
+        if node.name != key:
+            raise ValueError(f"Workflow node mapping key {key!r} does not match node name {node.name!r}")
         if node.run_guard_gate not in transition_table:
             raise ValueError(f"Workflow node {node.name!r} has unknown run guard gate {node.run_guard_gate!r}")
         for dependency in node.depends_on:
@@ -156,6 +158,8 @@ def validate_workflow_dag(
                 raise ValueError(f"Workflow node {node.name!r} has unknown {label} target {target!r}")
 
     for gate, transition in transition_table.items():
+        if transition.gate != gate:
+            raise ValueError(f"Gate transition mapping key {gate!r} does not match gate name {transition.gate!r}")
         for label, target in [
             ("approved", transition.on_approved_next),
             ("changes_requested", transition.on_changes_requested),
