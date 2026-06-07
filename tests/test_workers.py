@@ -384,6 +384,27 @@ def test_dispatch_tracks_groups_ok_and_verify_failure(tmp_path):
     assert (project_root / ".goodteam" / "workers" / "jobs" / payload["jobs"][0]["job_id"] / "result.md").is_file()
 
 
+def test_dispatch_tracks_persists_task_and_constraints_sources(tmp_path):
+    task_file = tmp_path / "backend-task.md"
+    task_file.write_text("Implement backend from contract.\n", encoding="utf-8")
+    constraints_file = tmp_path / "constraints.md"
+    constraints_file.write_text("- Stay in backend.\n", encoding="utf-8")
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    track = parse_dispatch_track_spec(f"implementation:fake:{task_file}", base_dir=tmp_path)
+
+    payload = dispatch_tracks(
+        project_root=project_root,
+        tracks=[track],
+        constraints_file=constraints_file,
+    )
+
+    job_id = payload["jobs"][0]["job_id"]
+    job_json = json.loads((project_root / ".goodteam" / "workers" / "jobs" / job_id / "job.json").read_text(encoding="utf-8"))
+    assert job_json["task_source"] == str(task_file)
+    assert job_json["constraints_source"] == str(constraints_file)
+
+
 def test_dispatch_tracks_captures_one_track_exception_without_blocking_other(tmp_path, monkeypatch):
     original_run_job = WorkerJobStore.run_job
 
@@ -774,6 +795,28 @@ def test_completed_job_writes_short_term_provenance_event(tmp_path):
     assert provenance_events[0]["horizon"] == "short-term"
     assert job["id"] in provenance_events[0]["text"]
     assert "for task: Create task proposal with context from approved plan." in provenance_events[0]["text"]
+
+
+def test_completed_job_provenance_records_task_and_constraints_sources(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="planner",
+        adapter="noop",
+        task="Create task proposal with context from approved plan.",
+        context="Context packet",
+        task_source="/tmp/dispatch-task.md",
+        constraints_source="/tmp/dispatch-constraints.md",
+    )
+
+    result = store.run_job(job["id"])
+
+    assert result["memory_provenance"]["status"] == "ok"
+    provenance_event = [
+        event for event in memory_events(tmp_path, "planner") if event["source"] == f"{job['id']}/provenance"
+    ][0]
+    assert "task_source=/tmp/dispatch-task.md" in provenance_event["text"]
+    assert "constraints_source=/tmp/dispatch-constraints.md" in provenance_event["text"]
 
 
 def test_rerunning_completed_job_dedups_short_term_provenance_event(tmp_path):

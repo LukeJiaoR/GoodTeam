@@ -131,7 +131,16 @@ def dispatch_tracks(
     constraints = _constraints_from_file(constraints_file)
     run_id = f"dispatch-{uuid4()}"
     store = WorkerJobStore(project_root)
-    jobs_by_role = [_create_track_job(store, run_id=run_id, track=track, constraints=constraints) for track in tracks]
+    jobs_by_role = [
+        _create_track_job(
+            store,
+            run_id=run_id,
+            track=track,
+            constraints=constraints,
+            constraints_source=str(constraints_file) if constraints_file else "",
+        )
+        for track in tracks
+    ]
     results_by_role: dict[str, dict[str, object]] = {}
     max_workers = max(1, len(jobs_by_role))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -178,6 +187,7 @@ def _create_track_job(
     run_id: str,
     track: dict[str, object],
     constraints: list[str],
+    constraints_source: str = "",
 ) -> dict[str, Any]:
     return store.create_job(
         run_id=run_id,
@@ -186,6 +196,8 @@ def _create_track_job(
         model=str(track.get("model", "")),
         task=str(track["task"]),
         context=str(track.get("context", "")),
+        task_source=str(track.get("task_source", "")),
+        constraints_source=constraints_source,
         constraints=[*constraints, *[str(item) for item in track.get("constraints", [])]],
         expected_artifacts=[str(item) for item in track.get("expected_artifacts", [])],
     )

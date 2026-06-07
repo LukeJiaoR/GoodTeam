@@ -16,10 +16,11 @@ reference, verification evidence, and follow-up status.
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
+| 9 | Dispatch artifacts audit/memory | Source-provenance foundation completed 2026-06-07 | Persist dispatch task/constraints source paths into job metadata and short-term provenance memory. | `478 passed`; ruff clean; frontend build passed |
 
 ## Active Increment
 
-Next active increment: choose next real open/gated mainline after backlog audit; i18n remains gated on target market / primary language.
+Next active increment: continue dispatch artifacts audit/memory or choose another real open/gated mainline; i18n remains gated on target market / primary language.
 
 ## Completed Increments
 
@@ -375,3 +376,50 @@ commits.
 - Whitespace check:
   `git diff --check`
   -> exit 0.
+
+### 2026-06-07 — Dispatch artifacts audit/memory: source-provenance foundation
+
+**Intent:** preserve the contract source path for dispatch jobs so durable job
+archives and memory provenance can explain which task/constraints file produced a
+landed job.
+
+**Implemented:**
+- `WorkerJobStore.create_job` now accepts and stores `task_source` and
+  `constraints_source` in `job.json`.
+- `dispatch_tracks` passes `parse_dispatch_track_spec(...).task_source` and the
+  `constraints_file` path into each created job.
+- The short-term job provenance memory event includes `task_source=...` and
+  `constraints_source=...` when available.
+- Worker prompts, job execution, dispatch grouping, and land behavior are unchanged.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workers.py::test_dispatch_tracks_persists_task_and_constraints_sources -q`
+  failed with `KeyError: 'task_source'`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workers.py -q -k 'task_and_constraints_sources or provenance_records_task_and_constraints_sources or completed_job_writes_short_term_provenance_event or rerunning_completed_job_dedups_short_term_provenance_event'`
+  -> `4 passed, 74 deselected`.
+- Related regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workers.py tests/test_cli.py tests/test_land_provenance.py -q -k 'dispatch or provenance or memory_provenance or cli_dispatch'`
+  -> `21 passed, 80 deselected`.
+- Lint:
+  `.venv/bin/ruff check src/goodteam_os/dispatch.py src/goodteam_os/workers.py tests/test_workers.py`
+  -> `All checks passed!`.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `478 passed in 132.96s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- First-class research report source capture.
+- Human review rationale as structured provenance.
+- A PR-level provenance manifest that links task, constraints, research, review, job,
+  and land memory into one object.

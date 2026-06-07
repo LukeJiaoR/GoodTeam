@@ -496,6 +496,8 @@ class WorkerJobStore:
         model: str = "",
         task: str,
         context: str,
+        task_source: str = "",
+        constraints_source: str = "",
         constraints: list[str] | None = None,
         expected_artifacts: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -512,6 +514,8 @@ class WorkerJobStore:
             "status": "queued",
             "created_at": now,
             "updated_at": now,
+            "task_source": task_source,
+            "constraints_source": constraints_source,
             "expected_artifacts": expected_artifacts or [],
         }
         self._write_json(job_root / "job.json", job)
@@ -714,9 +718,17 @@ class WorkerJobStore:
         status = str(job.get("status", "completed"))
         failure_class = str(job.get("failure_class", "")).strip()
         failure_segment = f", failure_class={failure_class}" if failure_class else ""
+        task_source = str(job.get("task_source", "")).strip()
+        constraints_source = str(job.get("constraints_source", "")).strip()
+        source_segments = []
+        if task_source:
+            source_segments.append(f"task_source={task_source}")
+        if constraints_source:
+            source_segments.append(f"constraints_source={constraints_source}")
+        source_segment = f" Sources: {'; '.join(source_segments)}." if source_segments else ""
         text = (
             f"Dispatched job {job['id']} (run {job['run_id']}, adapter={job['adapter']}, model={job['model']}) "
-            f"for task: {task_excerpt}. Outcome: {status}{failure_segment}."
+            f"for task: {task_excerpt}. Outcome: {status}{failure_segment}.{source_segment}"
         )
 
         role = str(job["role"])
