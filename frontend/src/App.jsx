@@ -51,6 +51,7 @@ import {
 import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
 import RolesTab from './components/tabs/RolesTab';
 import ArtifactsTab from './components/tabs/ArtifactsTab';
+import ActionsTab from './components/tabs/ActionsTab';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -3624,62 +3625,11 @@ export default function App() {
 
               {/* Tab: Actions */}
               {activeTab === 'actions' && (
-                <div className="space-y-6">
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Execution Logs</h2>
-                    <p className="text-xs text-text-muted">Chronological list of all worker dispatches, approvals, and commits.</p>
-                  </div>
-
-                  {/* Timeline layout: 2px vertical line on left */}
-                  <div className="relative border-l-2 border-border-subtle dark:border-zinc-800 ml-4 pl-6 space-y-6">
-                    {actionItems.map((action, idx) => {
-                      // system = blue, human = green, error = red
-                      const isHuman = action.actor === 'human';
-                      const isSystem = action.actor === 'system';
-                      const dotColor = isHuman ? 'bg-accent border-accent-text' : isSystem ? 'bg-status-info border-status-info-text' : 'bg-status-danger border-status-danger-text';
-
-                      return (
-                        <div key={idx} className="relative group">
-                          {/* Dot indicator node */}
-                          <span className={`absolute -left-[31px] top-1.5 h-3.5 w-3.5 rounded-full border-2 ${dotColor}`} />
-
-                          <article className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 space-y-2.5 max-w-3xl">
-                            <div className="flex justify-between items-center gap-2">
-                              <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 leading-tight">{action.title}</h3>
-                              <span className={`inline-block text-2xs px-2 py-0.5 rounded-full font-extrabold border uppercase tracking-wider leading-none ${isHuman ? 'bg-status-success-bg text-accent-text border-accent/30' : 'bg-status-info-bg text-status-info-text border-status-info/30'}`}>
-                                {action.actor}
-                              </span>
-                            </div>
-
-                            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-2xs text-zinc-500 font-semibold uppercase tracking-wider">
-                              <span>Action: <span className="font-bold text-zinc-700 dark:text-zinc-300 font-mono text-2xs">{action.action}</span></span>
-                              {action.gate && <span>Gate: <span className="font-bold text-zinc-700 dark:text-zinc-300">{action.gate}</span></span>}
-                              {action.decision && <span>Decision: <span className="font-bold text-zinc-700 dark:text-zinc-300">{action.decision}</span></span>}
-                              {action.node_transition && <span>Node: <span className="font-bold text-zinc-700 dark:text-zinc-300 font-mono text-2xs">{action.node_transition}</span></span>}
-                            </div>
-
-                            {action.artifact_path && (
-                              <div className="pt-1.5 border-t border-border-subtle dark:border-zinc-900 flex items-center space-x-2 text-2xs font-bold">
-                                <span className="text-text-muted uppercase tracking-wider text-2xs">{action.artifact || 'Artifact'}</span>
-                                <FilePath path={action.artifact_path} segments={1} />
-                              </div>
-                            )}
-
-                            <div className="text-2xs font-mono font-bold text-text-muted text-right">
-                              {action.timestamp ? formatHumanTime(action.timestamp) : ''}
-                            </div>
-                          </article>
-                        </div>
-                      );
-                    })}
-
-                    {actionItems.length === 0 && (
-                      <div className="border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-2xl p-12 text-center text-text-muted italic text-xs max-w-3xl">
-                        No actions logged in this run.
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <ActionsTab
+                  actionItems={actionItems}
+                  formatHumanTime={formatHumanTime}
+                  FilePath={FilePath}
+                />
               )}
 
               {/* Tab: Agile Board */}
