@@ -24,18 +24,32 @@ PY
 
 pre_review_latest_status() {
   local worktree="$1"
+  local invocation_id="${2:-}"
   local jobs_root="$worktree/.goodteam/workers/jobs"
   [ -d "$jobs_root" ] || return 1
-  find "$jobs_root" -mindepth 2 -maxdepth 2 -name status.json -print 2>/dev/null |
-    while IFS= read -r status_path; do
+  find "$jobs_root" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null |
+    while IFS= read -r job_dir; do
+      local status_path="$job_dir/status.json"
+      [ -f "$status_path" ] || continue
+      pre_review_job_matches_invocation "$job_dir" "$invocation_id" || continue
       printf '%s\t%s\n' "$(stat -f '%m' "$status_path" 2>/dev/null || stat -c '%Y' "$status_path" 2>/dev/null || printf '0')" "$status_path"
     done |
     sort -nr |
     sed -n '1s/^[^	]*	//p'
 }
 
+pre_review_job_matches_invocation() {
+  local job_dir="$1"
+  local invocation_id="${2:-}"
+  [ -n "$invocation_id" ] || return 0
+  local task_path="$job_dir/task.md"
+  [ -f "$task_path" ] || return 1
+  grep -Fq "$invocation_id" "$task_path"
+}
+
 pre_review_select_report() {
   local worktree="$1"
+  local invocation_id="${2:-}"
   local jobs_root="$worktree/.goodteam/workers/jobs"
   [ -d "$jobs_root" ] || return 1
 
@@ -45,6 +59,7 @@ pre_review_select_report() {
       local result_path="$job_dir/result.md"
       [ -f "$status_path" ] || continue
       [ -s "$result_path" ] || continue
+      pre_review_job_matches_invocation "$job_dir" "$invocation_id" || continue
       "${PY:-python3}" - "$status_path" "$result_path" <<'PY'
 import json
 import sys

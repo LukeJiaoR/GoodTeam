@@ -113,6 +113,72 @@ def test_pre_review_select_latest_status_prefers_current_review_job(tmp_path):
     assert result.stdout.strip() == str(review_job / "result.md")
 
 
+def test_pre_review_select_report_can_bind_to_current_invocation_marker(tmp_path):
+    jobs_root = tmp_path / ".goodteam" / "workers" / "jobs"
+    current_job = jobs_root / "job-current"
+    other_job = jobs_root / "job-other"
+    current_job.mkdir(parents=True)
+    other_job.mkdir()
+    marker = "pre-review-pr-123-abc"
+    (current_job / "task.md").write_text(f"# Review\n\nInvocation: {marker}\n", encoding="utf-8")
+    (current_job / "status.json").write_text(
+        '{"role":"code_review","status":"completed","updated_at":"2026-06-06T00:01:00+00:00"}',
+        encoding="utf-8",
+    )
+    (current_job / "result.md").write_text("current review report\n", encoding="utf-8")
+    (other_job / "task.md").write_text("Invocation: pre-review-pr-999-other\n", encoding="utf-8")
+    (other_job / "status.json").write_text(
+        '{"role":"code_review","status":"completed","updated_at":"2026-06-06T00:02:00+00:00"}',
+        encoding="utf-8",
+    )
+    (other_job / "result.md").write_text("other newer review report\n", encoding="utf-8")
+    os.utime(current_job / "status.json", (100, 100))
+    os.utime(other_job / "status.json", (200, 200))
+
+    result = _run_bash(
+        f"""
+        set -euo pipefail
+        . {_q(HELPER)}
+        pre_review_select_report {_q(tmp_path)} {shlex.quote(marker)}
+        """
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.strip() == str(current_job / "result.md")
+
+
+def test_pre_review_latest_status_can_bind_to_current_invocation_marker(tmp_path):
+    jobs_root = tmp_path / ".goodteam" / "workers" / "jobs"
+    current_job = jobs_root / "job-current"
+    other_job = jobs_root / "job-other"
+    current_job.mkdir(parents=True)
+    other_job.mkdir()
+    marker = "pre-review-pr-124-def"
+    (current_job / "task.md").write_text(f"# Review\n\nInvocation: {marker}\n", encoding="utf-8")
+    (current_job / "status.json").write_text(
+        '{"role":"code_review","status":"failed","failure_class":"auth","updated_at":"2026-06-06T00:01:00+00:00"}',
+        encoding="utf-8",
+    )
+    (other_job / "task.md").write_text("Invocation: pre-review-pr-999-other\n", encoding="utf-8")
+    (other_job / "status.json").write_text(
+        '{"role":"code_review","status":"completed","updated_at":"2026-06-06T00:02:00+00:00"}',
+        encoding="utf-8",
+    )
+    os.utime(current_job / "status.json", (100, 100))
+    os.utime(other_job / "status.json", (200, 200))
+
+    result = _run_bash(
+        f"""
+        set -euo pipefail
+        . {_q(HELPER)}
+        pre_review_latest_status {_q(tmp_path)} {shlex.quote(marker)}
+        """
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.strip() == str(current_job / "status.json")
+
+
 def test_pre_review_main_script_uses_fallback_and_report_selector():
     script = (REPO_ROOT / "scripts" / "pre-review.sh").read_text(encoding="utf-8")
 
@@ -121,4 +187,4 @@ def test_pre_review_main_script_uses_fallback_and_report_selector():
     assert 'for candidate_adapter in $(pre_review_fallback_adapters "$ADAPTER")' in script
     assert 'TRACK="code_review:$candidate_adapter:$TASK_FILE"' in script
     assert 'pre_review_is_auth_failure "$LAST_STATUS"' in script
-    assert 'REPORT_SRC="$(pre_review_select_report "$WORKTREE" || true)"' in script
+    assert 'REPORT_SRC="$(pre_review_select_report "$WORKTREE" "$PRE_REVIEW_INVOCATION_ID" || true)"' in script

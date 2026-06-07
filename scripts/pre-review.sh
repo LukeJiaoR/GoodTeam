@@ -82,6 +82,7 @@ PATCH="$(git diff "$BASE_REF...$HEAD_REMOTE_REF")"
 
 DIFF_FILE="/tmp/pre-review-$PR.diff"
 TASK_FILE="/tmp/pre-review-$PR-task.md"
+PRE_REVIEW_INVOCATION_ID="pre-review-pr-$PR-$(date +%s)-$$"
 
 {
   echo "PR: #$PR"
@@ -109,6 +110,8 @@ cat > "$TASK_FILE" <<EOF_TASK
 # Mechanical pre-review for PR #$PR (READ-ONLY)
 
 You are the code_review worker. Perform an independent, mechanical pre-review only.
+
+Invocation: $PRE_REVIEW_INVOCATION_ID
 
 Hard constraints:
 - Read-only: do NOT modify any files.
@@ -174,7 +177,7 @@ for candidate_adapter in $(pre_review_fallback_adapters "$ADAPTER"); do
     DISPATCH_OK=1
     break
   fi
-  LAST_STATUS="$(pre_review_latest_status "$WORKTREE" || true)"
+  LAST_STATUS="$(pre_review_latest_status "$WORKTREE" "$PRE_REVIEW_INVOCATION_ID" || true)"
   if [ -n "$LAST_STATUS" ] && pre_review_is_auth_failure "$LAST_STATUS"; then
     echo "[pre-review] adapter $candidate_adapter hit auth/provider failure; trying fallback if available." >&2
     continue
@@ -189,7 +192,7 @@ if [ "$DISPATCH_OK" != 1 ]; then
 fi
 
 REPORT_SRC=""
-REPORT_SRC="$(pre_review_select_report "$WORKTREE" || true)"
+REPORT_SRC="$(pre_review_select_report "$WORKTREE" "$PRE_REVIEW_INVOCATION_ID" || true)"
 
 REPORT_COPY="/tmp/pre-review-$PR-report.md"
 if [ -n "$REPORT_SRC" ] && [ -s "$REPORT_SRC" ]; then

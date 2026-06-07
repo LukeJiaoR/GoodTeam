@@ -14,10 +14,11 @@ reference, verification evidence, and follow-up status.
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
+| 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 
 ## Active Increment
 
-Next active increment: i18n decision gate / remaining low-risk backlog review.
+Next active increment: remaining low-risk backlog review; i18n remains gated on target market / primary language.
 
 ## Completed Increments
 
@@ -281,3 +282,55 @@ topological executor rewrite in this pass.
   real fan-in consumer or dynamic per-run plan, plus live smoke because it changes
   core walk semantics.
 - Parallel level execution.
+
+### 2026-06-07 — Backlog cleanup: pre-review report binding
+
+**Intent:** close the remaining report-selection race in the mechanical pre-review
+script without changing dispatch, worker job storage, or the human land gate.
+
+**Root cause:**
+- The helper already ignored empty `result.md` files and failed `code_review` jobs.
+- In an existing worktree with multiple completed `code_review` jobs, the selectors
+  still chose the newest matching job globally.
+- That meant a concurrent or back-to-back pre-review invocation could copy another
+  run's report, or decide fallback behavior from another run's status.
+
+**Implemented:**
+- `scripts/pre-review.sh` now creates a unique `PRE_REVIEW_INVOCATION_ID` per run.
+- The generated `code_review` task includes that invocation marker.
+- `pre_review_select_report` and `pre_review_latest_status` accept an optional marker
+  and only consider jobs whose `task.md` contains it.
+- Calling helpers without a marker preserves the previous mtime-based behavior for
+  compatibility with existing tests and manual use.
+
+**Verification evidence:**
+- Red tests:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_pre_review_script.py -q`
+  failed because `pre_review_select_report` and `pre_review_latest_status` chose the
+  newer unrelated job, and the main script did not pass `PRE_REVIEW_INVOCATION_ID`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_pre_review_script.py -q`
+  -> `6 passed`.
+- Shell syntax:
+  `bash -n scripts/pre-review.sh scripts/lib/pre-review.sh scripts/lib/land-provenance.sh scripts/land-pr.sh`
+  -> exit 0.
+- Related regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_pre_review_script.py tests/test_land_provenance.py tests/test_cli.py -q`
+  -> `29 passed`.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `476 passed in 133.17s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- A first-class persisted invocation id in worker job metadata. The task marker is
+  enough for this script-level race and avoids widening the worker job schema.
+- Serializing all pre-review runs. Invocation binding keeps parallel runs possible.
