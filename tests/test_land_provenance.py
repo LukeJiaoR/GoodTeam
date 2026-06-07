@@ -35,6 +35,14 @@ def _q(path: Path | str) -> str:
     return shlex.quote(str(path))
 
 
+def _events_by_source(event_path: Path) -> dict[str, list[dict[str, object]]]:
+    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for event in events:
+        grouped.setdefault(str(event.get("source", "")), []).append(event)
+    return grouped
+
+
 def test_land_provenance_extract_archives_jobs_and_appends_land_event(tmp_path):
     root = tmp_path / "main"
     worktree = tmp_path / "worktree"
@@ -62,20 +70,23 @@ def test_land_provenance_extract_archives_jobs_and_appends_land_event(tmp_path):
 
     archive_file = root / ".goodteam" / "provenance" / f"pr-{pr}" / "job-123" / "result.md"
     event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
-    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+    events_by_source = _events_by_source(event_path)
+    land_events = events_by_source[f"land/pr-{pr}"]
+    review_events = events_by_source[f"review/pr-{pr}"]
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert archive_file.read_text(encoding="utf-8") == "recognizable provenance payload\n"
     assert not worktree.exists()
-    assert len(events) == 1
-    assert events[0]["horizon"] == "mid-term"
-    assert events[0]["source"] == f"land/pr-{pr}"
-    assert "PR #98701 landed" in events[0]["text"]
-    assert "CI=pass" in events[0]["text"]
-    assert "run_id=run-abc" in events[0]["text"]
-    assert "job_id=job-123" in events[0]["text"]
-    assert "dispatch_role=implementation" in events[0]["text"]
-    assert f"archive=.goodteam/provenance/pr-{pr}/" in events[0]["text"]
+    assert len(land_events) == 1
+    assert len(review_events) == 1
+    assert land_events[0]["horizon"] == "mid-term"
+    assert "PR #98701 landed" in land_events[0]["text"]
+    assert "CI=pass" in land_events[0]["text"]
+    assert "run_id=run-abc" in land_events[0]["text"]
+    assert "job_id=job-123" in land_events[0]["text"]
+    assert "dispatch_role=implementation" in land_events[0]["text"]
+    assert f"archive=.goodteam/provenance/pr-{pr}/" in land_events[0]["text"]
+    assert "land_review_decision=approved_to_land" in review_events[0]["text"]
 
 
 def test_land_provenance_missing_worktree_still_returns_success_and_writes_event(tmp_path):
@@ -96,14 +107,16 @@ def test_land_provenance_missing_worktree_still_returns_success_and_writes_event
     )
 
     event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
-    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+    events_by_source = _events_by_source(event_path)
+    land_events = events_by_source[f"land/pr-{pr}"]
+    review_events = events_by_source[f"review/pr-{pr}"]
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert not missing_worktree.exists()
     assert not (root / ".goodteam" / "provenance" / f"pr-{pr}").exists()
-    assert len(events) == 1
-    assert events[0]["source"] == f"land/pr-{pr}"
-    assert "PR #98702 landed" in events[0]["text"]
+    assert len(land_events) == 1
+    assert len(review_events) == 1
+    assert "PR #98702 landed" in land_events[0]["text"]
 
 
 def test_land_provenance_missing_worktree_clears_stale_staging_before_airdrop(tmp_path):
@@ -131,15 +144,17 @@ def test_land_provenance_missing_worktree_clears_stale_staging_before_airdrop(tm
 
         archive = root / ".goodteam" / "provenance" / f"pr-{pr}"
         event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
-        events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+        events_by_source = _events_by_source(event_path)
+        land_events = events_by_source[f"land/pr-{pr}"]
+        review_events = events_by_source[f"review/pr-{pr}"]
 
         assert result.returncode == 0, result.stderr + result.stdout
         assert not stale_staging.exists()
         assert not (archive / "stale-job").exists()
         assert not archive.exists()
-        assert len(events) == 1
-        assert events[0]["source"] == f"land/pr-{pr}"
-        assert "PR #98703 landed" in events[0]["text"]
+        assert len(land_events) == 1
+        assert len(review_events) == 1
+        assert "PR #98703 landed" in land_events[0]["text"]
     finally:
         subprocess.run(["rm", "-rf", str(stale_staging)], check=False)
 
@@ -160,14 +175,17 @@ def test_land_provenance_airdrop_records_forced_unverified_ci_status(tmp_path):
     )
 
     event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
-    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+    events_by_source = _events_by_source(event_path)
+    land_events = events_by_source[f"land/pr-{pr}"]
+    review_events = events_by_source[f"review/pr-{pr}"]
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert len(events) == 1
-    assert events[0]["source"] == f"land/pr-{pr}"
-    assert "PR #98704 landed" in events[0]["text"]
-    assert "CI=forced-unverified" in events[0]["text"]
-    assert "CI=pass" not in events[0]["text"]
+    assert len(land_events) == 1
+    assert len(review_events) == 1
+    assert "PR #98704 landed" in land_events[0]["text"]
+    assert "CI=forced-unverified" in land_events[0]["text"]
+    assert "CI=pass" not in land_events[0]["text"]
+    assert "CI=forced-unverified" in review_events[0]["text"]
 
 
 def test_land_provenance_extract_prefers_non_review_job_over_newer_code_review(tmp_path):
@@ -205,10 +223,47 @@ def test_land_provenance_extract_prefers_non_review_job_over_newer_code_review(t
     )
 
     event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
-    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+    events_by_source = _events_by_source(event_path)
+    land_events = events_by_source[f"land/pr-{pr}"]
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "run_id=run-impl" in events[0]["text"]
-    assert "job_id=job-impl" in events[0]["text"]
-    assert "dispatch_role=implementation" in events[0]["text"]
-    assert "job-review" not in events[0]["text"]
+    assert "run_id=run-impl" in land_events[0]["text"]
+    assert "job_id=job-impl" in land_events[0]["text"]
+    assert "dispatch_role=implementation" in land_events[0]["text"]
+    assert "job-review" not in land_events[0]["text"]
+
+
+def test_land_provenance_airdrop_archives_pre_review_report_and_links_review_event(tmp_path):
+    root = tmp_path / "main"
+    python_shim = _make_fake_main(root)
+    pr = "98706"
+    pre_review_report = Path(f"/tmp/pre-review-{pr}-report.md")
+
+    try:
+        pre_review_report.write_text("No mechanical findings\nResidual risk: browser smoke not run.\n", encoding="utf-8")
+
+        result = _run_bash(
+            f"""
+            set -euo pipefail
+            . {_q(HELPER)}
+            export PY={_q(python_shim)}
+            land_provenance_airdrop {pr} {_q(root)} cccccdddddd pass
+            """,
+            env={**os.environ, "PATH": os.environ["PATH"]},
+        )
+
+        archived_report = root / ".goodteam" / "provenance" / f"pr-{pr}" / "pre-review-report.md"
+        event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
+        events_by_source = _events_by_source(event_path)
+        land_events = events_by_source[f"land/pr-{pr}"]
+        review_events = events_by_source[f"review/pr-{pr}"]
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert archived_report.read_text(encoding="utf-8") == pre_review_report.read_text(encoding="utf-8")
+        assert "pre_review_report=y" in land_events[0]["text"]
+        assert f"pre_review_report_path=.goodteam/provenance/pr-{pr}/pre-review-report.md" in land_events[0]["text"]
+        assert len(review_events) == 1
+        assert "land_review_decision=approved_to_land" in review_events[0]["text"]
+        assert f"pre_review_report=.goodteam/provenance/pr-{pr}/pre-review-report.md" in review_events[0]["text"]
+    finally:
+        pre_review_report.unlink(missing_ok=True)

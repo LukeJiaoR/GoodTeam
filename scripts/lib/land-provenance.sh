@@ -109,7 +109,11 @@ land_provenance_airdrop() {
   local archive_rel=".goodteam/provenance/pr-$pr/"
   local branch=""
   local pre_review="n"
+  local pre_review_report="/tmp/pre-review-$pr-report.md"
+  local pre_review_archive="$archive/pre-review-report.md"
+  local pre_review_archive_rel=".goodteam/provenance/pr-$pr/pre-review-report.md"
   local text=""
+  local review_text=""
   local python_bin="${PY:-$root/.venv/bin/python}"
 
   mkdir -p "$(dirname "$archive")" 2>/dev/null || land_provenance_warn "archive parent create failed: $(dirname "$archive")"
@@ -122,9 +126,15 @@ land_provenance_airdrop() {
 
   branch="$(gh pr view "$pr" --json headRefName --jq .headRefName 2>/dev/null || true)"
   [ -n "$branch" ] || branch="unknown"
-  [ -f "/tmp/pre-review-$pr-report.md" ] && pre_review="y"
+  if [ -s "$pre_review_report" ]; then
+    pre_review="y"
+    mkdir -p "$archive" 2>/dev/null && cp "$pre_review_report" "$pre_review_archive" 2>/dev/null || land_provenance_warn "pre-review report archive failed: $pre_review_report -> $pre_review_archive"
+  fi
 
   text="PR #$pr landed; head_branch=$branch; CI=$ci_status; pre_review_report=$pre_review; squash_merge_sha=$head_sha; archive=$archive_rel"
+  if [ "$pre_review" = "y" ] && [ -f "$pre_review_archive" ]; then
+    text="$text; pre_review_report_path=$pre_review_archive_rel"
+  fi
   if [ -n "${LAND_PROVENANCE_RUN_ID:-}" ]; then
     text="$text; run_id=$LAND_PROVENANCE_RUN_ID"
   fi
@@ -146,6 +156,20 @@ land_provenance_airdrop() {
     --source "land/pr-$pr" \
     --text "$text" >/dev/null 2>"/tmp/land-provenance-$pr-memory.err" || {
       land_provenance_warn "memory append failed: $(cat "/tmp/land-provenance-$pr-memory.err" 2>/dev/null)"
+      return 0
+    }
+
+  review_text="PR #$pr land_review_decision=approved_to_land; head_branch=$branch; CI=$ci_status; pre_review_report=$pre_review; squash_merge_sha=$head_sha"
+  if [ "$pre_review" = "y" ] && [ -f "$pre_review_archive" ]; then
+    review_text="$review_text; pre_review_report=$pre_review_archive_rel"
+  fi
+  PYTHONPATH="$root/src" "$python_bin" -m goodteam_os.cli memory-append \
+    --project-root "$root" \
+    --role release \
+    --horizon mid-term \
+    --source "review/pr-$pr" \
+    --text "$review_text" >/dev/null 2>"/tmp/land-provenance-$pr-review-memory.err" || {
+      land_provenance_warn "review memory append failed: $(cat "/tmp/land-provenance-$pr-review-memory.err" 2>/dev/null)"
       return 0
     }
 
