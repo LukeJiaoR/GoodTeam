@@ -22,7 +22,6 @@ import {
   ArrowUp,
   ChevronDown,
   Info,
-  ExternalLink,
   Lock,
   CheckCircle,
   XCircle,
@@ -32,8 +31,7 @@ import {
   MessageSquare,
   Search,
   GitBranch,
-  GitPullRequest,
-  Copy
+  GitPullRequest
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
 import {
@@ -51,6 +49,7 @@ import AgileBoardTab from './components/tabs/AgileBoardTab';
 import SmokeRunsTab from './components/tabs/SmokeRunsTab';
 import WorkersTab from './components/tabs/WorkersTab';
 import ApprovalsTab from './components/tabs/ApprovalsTab';
+import DevLoopTab from './components/tabs/DevLoopTab';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -4155,472 +4154,40 @@ export default function App() {
 
               {/* Tab: Dev Loop */}
               {activeTab === 'devloop' && (
-                <div className="space-y-6">
-                  {/* Header Section */}
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2 flex justify-between items-end flex-wrap gap-2">
-                    <div>
-                      <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Dev Loop</h2>
-                      <p className="text-xs text-text-muted">Observability view of in-flight dev loops, including active worktrees, open PRs, CI statuses, and pre-reviews.</p>
-                    </div>
-                    {devLoopData?.generated_at && (
-                      <span className="text-2xs font-mono font-bold text-text-muted uppercase bg-surface-sunken dark:bg-zinc-900 border border-border-subtle dark:border-zinc-800 px-2 py-0.5 rounded-lg">
-                        Freshness: {formatHumanTime(devLoopData.generated_at)}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                    {/* Left/Main Column: Observability lists (PRs, Worktrees, Warnings) */}
-                    <div className="lg:col-span-2 space-y-6">
-
-                  {loadingDevLoop && <Spinner />}
-
-                  {devLoopError && (
-                    <div className="bg-status-danger-bg dark:bg-zinc-900 border-2 border-status-danger/30 p-4 rounded-xl text-status-danger-text dark:text-status-danger text-xs font-semibold flex items-start gap-2 max-w-2xl">
-                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                      <div>
-                        <h4 className="font-extrabold uppercase tracking-wide text-2xs">Error loading Dev Loop status</h4>
-                        <p className="mt-1">{devLoopError}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {!loadingDevLoop && !devLoopError && (!devLoopData || (
-                    (!Array.isArray(devLoopData.worktrees) || devLoopData.worktrees.length === 0) &&
-                    (!Array.isArray(devLoopData.pull_requests) || devLoopData.pull_requests.length === 0) &&
-                    devLoopData.release_readiness?.available !== true &&
-                    (!Array.isArray(devLoopData.warnings) || devLoopData.warnings.length === 0)
-                  )) && (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 p-12 text-center rounded-2xl text-zinc-550 italic text-xs max-w-2xl">
-                      No active Dev Loop details recorded.
-                    </div>
-                  )}
-
-                  {!loadingDevLoop && !devLoopError && devLoopData && (
-                    <div className="space-y-6 max-w-4xl">
-                      {(() => {
-                        const releaseReadiness = devLoopData.release_readiness;
-                        return releaseReadiness?.available === true ? (
-                          <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-5 space-y-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <h3 className="text-xs font-extrabold text-zinc-550 dark:text-zinc-450 uppercase tracking-wider">Release Readiness</h3>
-                                <p className="text-2xs text-text-muted mt-1">Pinned release metadata only. Commands are copied for manual execution.</p>
-                              </div>
-                              <span className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border ${
-                                releaseReadiness.up_to_date === true
-                                  ? 'bg-status-success-bg text-accent-text border-accent/30'
-                                  : 'bg-status-info-bg text-status-info-text border-status-info/30'
-                              }`}>
-                                {releaseReadiness.up_to_date === true ? <CheckCircle className="h-3 w-3 shrink-0" /> : <Clock className="h-3 w-3 shrink-0" />}
-                                <span>{releaseReadiness.up_to_date === true ? 'release current' : 'ready to graduate'}</span>
-                              </span>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-2xs font-semibold text-zinc-650 dark:text-zinc-350">
-                              <div className="bg-surface-sunken dark:bg-zinc-900/60 border border-border-subtle dark:border-zinc-800 rounded-xl p-3">
-                                <div className="uppercase tracking-wider text-text-muted font-extrabold">Dev HEAD</div>
-                                <code className="block mt-1 font-mono text-zinc-800 dark:text-zinc-200 truncate" title={releaseReadiness.dev_head || ''}>
-                                  {releaseReadiness.dev_head ? releaseReadiness.dev_head.slice(0, 12) : 'unknown'}
-                                </code>
-                              </div>
-                              <div className="bg-surface-sunken dark:bg-zinc-900/60 border border-border-subtle dark:border-zinc-800 rounded-xl p-3">
-                                <div className="uppercase tracking-wider text-text-muted font-extrabold">Release HEAD</div>
-                                <code className="block mt-1 font-mono text-zinc-800 dark:text-zinc-200 truncate" title={releaseReadiness.release_head || ''}>
-                                  {releaseReadiness.release_head ? releaseReadiness.release_head.slice(0, 12) : releaseReadiness.release_exists ? 'unknown' : 'not created'}
-                                </code>
-                              </div>
-                            </div>
-
-                            <div className="space-y-2">
-                              {releaseReadiness.release_up_command && (
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <code className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 px-2 py-1 rounded text-zinc-500 dark:text-zinc-400 font-mono text-2xs truncate" title={releaseReadiness.release_up_command}>
-                                    {releaseReadiness.release_up_command}
-                                  </code>
-                                  <button
-                                    onClick={() => copyLandCommand(releaseReadiness.release_up_command)}
-                                    className="border-2 shadow-button dark:shadow-button font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 bg-white dark:bg-zinc-800 hover:bg-status-info-bg hover:text-status-info-text border-border-subtle dark:border-zinc-800 text-zinc-700 dark:text-zinc-300"
-                                    title={`Copy release-up command: ${releaseReadiness.release_up_command}`}
-                                  >
-                                    <Copy className="h-3.5 w-3.5" />
-                                    <span className="text-2xs font-extrabold uppercase">Copy release-up command</span>
-                                  </button>
-                                </div>
-                              )}
-                              {releaseReadiness.graduate_command && (
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <code className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 px-2 py-1 rounded text-zinc-500 dark:text-zinc-400 font-mono text-2xs truncate" title={releaseReadiness.graduate_command}>
-                                    {releaseReadiness.graduate_command}
-                                  </code>
-                                  <button
-                                    onClick={() => copyLandCommand(releaseReadiness.graduate_command)}
-                                    className="border-2 shadow-button dark:shadow-button font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 bg-white dark:bg-zinc-800 hover:bg-status-info-bg hover:text-status-info-text border-border-subtle dark:border-zinc-800 text-zinc-700 dark:text-zinc-300"
-                                    title={`Copy graduate command: ${releaseReadiness.graduate_command}`}
-                                  >
-                                    <Copy className="h-3.5 w-3.5" />
-                                    <span className="text-2xs font-extrabold uppercase">Copy graduate command</span>
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ) : null;
-                      })()}
-
-                      {/* Warnings notice if any warnings exist */}
-                      {Array.isArray(devLoopData.warnings) && devLoopData.warnings.length > 0 && (
-                        <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900/50 p-4 rounded-xl text-amber-700 dark:text-amber-400 text-xs font-semibold space-y-1">
-                          <div className="flex items-center space-x-1.5 text-amber-800 dark:text-amber-300">
-                            <AlertTriangle className="h-4 w-4 shrink-0" />
-                            <span className="font-extrabold uppercase text-2xs tracking-wider">System Warnings</span>
-                          </div>
-                          <ul className="list-disc pl-5 font-medium space-y-1 mt-1 text-zinc-650 dark:text-zinc-400">
-                            {devLoopData.warnings.map((w, idx) => (
-                              <li key={idx}>{w}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      {/* Section 1: Open PRs */}
-                      <div className="space-y-3">
-                        <h3 className="text-xs font-extrabold text-zinc-550 dark:text-zinc-450 uppercase tracking-wider">Open PRs & CI Status</h3>
-                        {Array.isArray(devLoopData.pull_requests) && devLoopData.pull_requests.length > 0 ? (
-                          <div className="grid grid-cols-1 gap-4">
-                            {devLoopData.pull_requests.map((pr, idx) => {
-                              const prNumber = pr?.number;
-
-                              // Join defensively with pre_reviews on pr number
-                              const isPreReviewed = prNumber !== undefined && Array.isArray(devLoopData.pre_reviews) && devLoopData.pre_reviews.some(
-                                (r) => r && r.pr === prNumber && r.present
-                              );
-
-                              // Normalize status
-                              let ciStatus = String(pr?.ci || 'none').toLowerCase().trim();
-                              if (ciStatus === 'pass') ciStatus = 'complete';
-                              if (ciStatus === 'fail') ciStatus = 'failed';
-                              const ciStyle = getBadgeStyle(ciStatus);
-                              const CIIcon = ciStyle.icon;
-
-                              return (
-                                <article
-                                  key={prNumber !== undefined ? prNumber : idx}
-                                  className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 flex flex-col sm:flex-row justify-between sm:items-center gap-4"
-                                >
-                                  <div className="space-y-1.5">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      {prNumber !== undefined && (
-                                        <span className="font-mono text-xs font-bold text-zinc-400">#{prNumber}</span>
-                                      )}
-                                      <h4 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">
-                                        {pr?.title || 'Untitled Pull Request'}
-                                      </h4>
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-2 text-2xs font-bold text-zinc-500">
-                                      <span className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-650 dark:text-zinc-400 font-mono text-2xs">
-                                        {pr?.head_branch || 'no branch'}
-                                      </span>
-                                      {pr?.land_command && (
-                                        <code className="bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-500 dark:text-zinc-400 font-mono text-2xs truncate max-w-[200px] sm:max-w-xs md:max-w-md lg:max-w-lg" title={pr.land_command}>
-                                          {pr.land_command}
-                                        </code>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                                    {/* CI badge */}
-                                    <span className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border ${ciStyle.bg} ${ciStyle.text} ${ciStyle.border}`}>
-                                      <CIIcon className="h-3 w-3 shrink-0" />
-                                      <span>CI: {pr?.ci || 'none'}</span>
-                                    </span>
-
-                                    {/* Pre-reviewed badge */}
-                                    {isPreReviewed && (
-                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border bg-status-info-bg text-status-info-text border-status-info/30">
-                                        pre-reviewed
-                                      </span>
-                                    )}
-
-                                    {/* Land Readiness badge */}
-                                    {pr?.land_ready === true && (
-                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border bg-status-success-bg text-accent-text border-accent/30">
-                                        <CheckCircle className="h-3 w-3 shrink-0" />
-                                        <span>Ready to land</span>
-                                      </span>
-                                    )}
-                                    {pr?.land_ready === false && (
-                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border bg-surface-sunken text-text-secondary border-border-strong/30">
-                                        <Clock className="h-3 w-3 shrink-0" />
-                                        <span>not ready</span>
-                                      </span>
-                                    )}
-
-                                    {/* Copy land command button */}
-                                    {pr?.land_command && (
-                                      <button
-                                        onClick={() => copyLandCommand(pr.land_command)}
-                                        className={`border-2 shadow-button dark:shadow-button font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 ${
-                                          copiedText === pr.land_command
-                                            ? 'bg-status-success-bg text-accent-text border-accent/30 hover:bg-status-success-bg'
-                                            : copyFailedText === pr.land_command
-                                              ? 'bg-status-danger-bg text-status-danger-text border-status-danger/30 hover:bg-status-danger-bg'
-                                            : 'bg-white dark:bg-zinc-800 hover:bg-status-info-bg hover:text-status-info-text border-border-subtle dark:border-zinc-800 text-zinc-700 dark:text-zinc-300'
-                                        }`}
-                                        title={`Copy land command: ${pr.land_command}`}
-                                      >
-                                        {copiedText === pr.land_command ? (
-                                          <>
-                                            <Check className="h-3.5 w-3.5" />
-                                            <span className="text-2xs font-extrabold uppercase">Copied!</span>
-                                          </>
-                                        ) : copyFailedText === pr.land_command ? (
-                                          <>
-                                            <X className="h-3.5 w-3.5" />
-                                            <span className="text-2xs font-extrabold uppercase">Copy failed</span>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Copy className="h-3.5 w-3.5" />
-                                            <span className="text-2xs font-extrabold uppercase">Copy land command</span>
-                                          </>
-                                        )}
-                                      </button>
-                                    )}
-
-                                    {/* External Link */}
-                                    {pr?.url && (
-                                      <a
-                                        href={pr.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="bg-white dark:bg-zinc-800 hover:bg-status-success-bg hover:text-accent-text border-2 border-border-subtle dark:border-zinc-800 shadow-button dark:shadow-button text-zinc-700 dark:text-zinc-300 font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer"
-                                        title="View Pull Request on GitHub"
-                                      >
-                                        <ExternalLink className="h-3.5 w-3.5" />
-                                      </a>
-                                    )}
-                                  </div>
-                                </article>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-800 p-6 rounded-2xl text-center text-zinc-400 italic text-xs font-semibold">
-                            No open pull requests.
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Section 2: Worktrees */}
-                      <div className="space-y-3">
-                        <h3 className="text-xs font-extrabold text-zinc-550 dark:text-zinc-450 uppercase tracking-wider">Active Worktrees</h3>
-                        {Array.isArray(devLoopData.worktrees) && devLoopData.worktrees.length > 0 ? (
-                          <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden font-semibold text-xs">
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-left border-collapse">
-                                <thead>
-                                  <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-border-subtle dark:border-zinc-800 text-2xs font-extrabold uppercase tracking-wider text-text-muted">
-                                    <th className="px-5 py-3">Path</th>
-                                    <th className="px-5 py-3">Branch</th>
-                                    <th className="px-5 py-3">Commit Head</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-border-subtle dark:divide-zinc-900">
-                                  {devLoopData.worktrees.map((wt, idx) => (
-                                    <tr key={idx} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 text-zinc-700 dark:text-zinc-300">
-                                      <td className="px-5 py-3 font-mono text-[11px] truncate max-w-xs" title={wt?.path}>
-                                        <FilePath path={wt?.path} segments={2} />
-                                      </td>
-                                      <td className="px-5 py-3 font-mono text-[11px] text-zinc-800 dark:text-zinc-200 font-bold">
-                                        {wt?.branch || 'no branch'}
-                                      </td>
-                                      <td className="px-5 py-3 font-mono text-[11px]">
-                                        {wt?.head ? (
-                                          <code className="bg-surface-sunken dark:bg-zinc-900 border border-border-subtle dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-655 dark:text-zinc-400 font-mono text-2xs">
-                                            {wt.head.slice(0, 7)}
-                                          </code>
-                                        ) : (
-                                          <span className="text-text-muted italic">n/a</span>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-800 p-6 rounded-2xl text-center text-zinc-400 italic text-xs font-semibold">
-                            No active git worktrees.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                    </div> {/* closes lg:col-span-2 */}
-
-                    {/* Right Column: Dispatch form card */}
-                    <div className="lg:col-span-1">
-                      <div className="bg-white dark:bg-zinc-955 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card p-5 rounded-2xl space-y-4">
-                        <div className="border-b border-border-subtle dark:border-zinc-900 pb-2">
-                          <h3 className="font-extrabold text-sm text-zinc-855 dark:text-zinc-200">Dispatch a Track</h3>
-                          <p className="text-[11px] text-text-muted mt-0.5">Start a new parallel development track.</p>
-                        </div>
-
-                        {dispatchSuccess && (
-                          <div className="bg-status-success-bg dark:bg-zinc-900 border-2 border-accent/30 p-3 rounded-xl text-accent-text dark:text-accent text-xs font-semibold space-y-1">
-                            <div className="flex items-center gap-1 font-bold">
-                              <CheckCircle className="h-4 w-4 shrink-0" />
-                              <span>Track started asynchronously!</span>
-                            </div>
-                            <ul className="list-disc pl-4 font-mono text-2xs space-y-0.5 mt-1">
-                              <li>Run ID: {dispatchSuccess.run_id}</li>
-                              <li>Branch: {dispatchSuccess.branch}</li>
-                              <li>Worktree: {dispatchSuccess.worktree}</li>
-                            </ul>
-                          </div>
-                        )}
-
-                        {dispatchError && (
-                          <div className="bg-status-danger-bg dark:bg-zinc-900 border-2 border-status-danger/30 p-3 rounded-xl text-status-danger-text dark:text-status-danger text-xs font-semibold flex items-start gap-1.5">
-                            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                            <div className="break-all">{dispatchError}</div>
-                          </div>
-                        )}
-
-                        <form onSubmit={handleDispatchTrack} className="space-y-3.5 text-xs font-semibold">
-                          <div>
-                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Track Name</label>
-                            <input
-                              type="text"
-                              value={dispatchName}
-                              onChange={(e) => setDispatchName(e.target.value)}
-                              placeholder="e.g. feat-login-page"
-                              disabled={dispatchLoading}
-                              className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono transition-colors"
-                            />
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Role</label>
-                              <select
-                                value={dispatchRole}
-                                onChange={(e) => setDispatchRole(e.target.value)}
-                                disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-accent transition-colors"
-                              >
-                                {['backend', 'frontend', ...workerRoles.filter(r => r !== 'backend' && r !== 'frontend')].map((role) => (
-                                  <option key={role} value={role}>{role}</option>
-                                ))}
-                                <option value="custom">Custom...</option>
-                              </select>
-                            </div>
-
-                            <div>
-                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Adapter</label>
-                              <select
-                                value={dispatchAdapter}
-                                onChange={(e) => setDispatchAdapter(e.target.value)}
-                                disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-accent transition-colors"
-                              >
-                                {roleBackendOptions.map((opt) => (
-                                  <option key={opt} value={opt}>
-                                    {opt === 'codex' ? 'Codex CLI' : opt === 'anthropic' || opt === 'claude' ? 'Claude CLI' : opt}
-                                  </option>
-                                ))}
-                                <option value="custom">Custom...</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          {dispatchRole === 'custom' && (
-                            <div>
-                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Custom Role Name</label>
-                              <input
-                                type="text"
-                                value={dispatchCustomRole}
-                                onChange={(e) => setDispatchCustomRole(e.target.value)}
-                                placeholder="e.g. backend_audit"
-                                disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono transition-colors"
-                              />
-                            </div>
-                          )}
-
-                          {dispatchAdapter === 'custom' && (
-                            <div>
-                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Custom Adapter Name</label>
-                              <input
-                                type="text"
-                                value={dispatchCustomAdapter}
-                                onChange={(e) => setDispatchCustomAdapter(e.target.value)}
-                                placeholder="e.g. openai"
-                                disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono transition-colors"
-                              />
-                            </div>
-                          )}
-
-                          <div>
-                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Task Details</label>
-                            <textarea
-                              value={dispatchTask}
-                              onChange={(e) => setDispatchTask(e.target.value)}
-                              placeholder="Describe the task for this worker..."
-                              disabled={dispatchLoading}
-                              className="w-full h-24 bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-accent font-mono leading-relaxed transition-colors resize-none"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Constraints (Optional)</label>
-                            <textarea
-                              value={dispatchConstraints}
-                              onChange={(e) => setDispatchConstraints(e.target.value)}
-                              placeholder="Optional constraints to restrict the worker..."
-                              disabled={dispatchLoading}
-                              className="w-full h-16 bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-accent font-mono leading-relaxed transition-colors resize-none"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Verification Command (Optional)</label>
-                            <input
-                              type="text"
-                              value={dispatchVerify}
-                              onChange={(e) => setDispatchVerify(e.target.value)}
-                              placeholder="e.g. npm run test"
-                              disabled={dispatchLoading}
-                              className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono transition-colors"
-                            />
-                          </div>
-
-                          <button
-                            type="submit"
-                            disabled={dispatchLoading}
-                            className="w-full bg-accent border-2 border-accent-text shadow-button text-white font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {dispatchLoading ? (
-                              <>
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                <span>Dispatching...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Play className="h-3.5 w-3.5 fill-current" />
-                                <span>Dispatch Track</span>
-                              </>
-                            )}
-                          </button>
-                        </form>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <DevLoopTab
+                  devLoopData={devLoopData}
+                  loadingDevLoop={loadingDevLoop}
+                  devLoopError={devLoopError}
+                  formatHumanTime={formatHumanTime}
+                  Spinner={Spinner}
+                  getBadgeStyle={getBadgeStyle}
+                  copyLandCommand={copyLandCommand}
+                  copiedText={copiedText}
+                  copyFailedText={copyFailedText}
+                  FilePath={FilePath}
+                  dispatchSuccess={dispatchSuccess}
+                  dispatchError={dispatchError}
+                  handleDispatchTrack={handleDispatchTrack}
+                  dispatchName={dispatchName}
+                  setDispatchName={setDispatchName}
+                  dispatchRole={dispatchRole}
+                  setDispatchRole={setDispatchRole}
+                  dispatchCustomRole={dispatchCustomRole}
+                  setDispatchCustomRole={setDispatchCustomRole}
+                  dispatchAdapter={dispatchAdapter}
+                  setDispatchAdapter={setDispatchAdapter}
+                  dispatchCustomAdapter={dispatchCustomAdapter}
+                  setDispatchCustomAdapter={setDispatchCustomAdapter}
+                  dispatchTask={dispatchTask}
+                  setDispatchTask={setDispatchTask}
+                  dispatchConstraints={dispatchConstraints}
+                  setDispatchConstraints={setDispatchConstraints}
+                  dispatchVerify={dispatchVerify}
+                  setDispatchVerify={setDispatchVerify}
+                  dispatchLoading={dispatchLoading}
+                  workerRoles={workerRoles}
+                  roleBackendOptions={roleBackendOptions}
+                />
               )}
 
               {/* Tab: System */}

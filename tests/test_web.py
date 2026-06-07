@@ -1497,20 +1497,25 @@ def test_frontend_contract_has_simple_advanced_worker_routing_modes():
 
 
 def test_frontend_contract_exposes_release_readiness_without_execution_controls():
-    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
 
-    assert "devLoopData.release_readiness" in app
-    assert "Release Readiness" in app
-    assert "release_up_command" in app
-    assert "graduate_command" in app
-    assert "Copy release-up command" in app
-    assert "Copy graduate command" in app
-    assert "onClick={() => copyLandCommand(releaseReadiness.release_up_command)}" in app
-    assert "onClick={() => copyLandCommand(releaseReadiness.graduate_command)}" in app
-    assert "devLoopData.release_readiness?.available !== true" in app
-    assert "Release Readiness unavailable" not in app
-    assert "Run release-up" not in app
-    assert "Run graduate" not in app
+    assert "<DevLoopTab" in app
+    assert "copyLandCommand={copyLandCommand}" in app
+    assert "devLoopData.release_readiness" in dev_loop_tab
+    assert "Release Readiness" in dev_loop_tab
+    assert "release_up_command" in dev_loop_tab
+    assert "graduate_command" in dev_loop_tab
+    assert "Copy release-up command" in dev_loop_tab
+    assert "Copy graduate command" in dev_loop_tab
+    assert "copyLandCommand(command)" in dev_loop_tab
+    assert "devLoopData.release_readiness?.available === true" in dev_loop_tab
+    assert "Release Readiness unavailable" not in dev_loop_tab
+    assert "Run release-up" not in dev_loop_tab
+    assert "Run graduate" not in dev_loop_tab
 
 
 def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type():
@@ -2017,6 +2022,59 @@ def test_approvals_page_is_extracted_and_uses_theme_tokens():
         "text-status-info-text",
     ]:
         assert semantic_class in approvals_page
+
+
+def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Dev Loop */}")
+    end = app.index("{/* Tab: System */}", start)
+    dev_loop_mount = app[start:end]
+
+    assert "<DevLoopTab" in dev_loop_mount
+    assert "devLoopData.pull_requests.map" not in dev_loop_mount
+    assert "devLoopData.worktrees.map" not in dev_loop_mount
+
+    dev_loop_tab = root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx"
+    assert dev_loop_tab.exists()
+    dev_loop_page = dev_loop_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+        "bg-[#",
+        "border-[#",
+    ]
+    assert {snippet: dev_loop_page.count(snippet) for snippet in disallowed_snippets if snippet in dev_loop_page} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+        "shadow-button",
+        "bg-status-success-bg",
+        "text-status-success-text",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+        "bg-status-info-bg",
+        "text-status-info-text",
+    ]:
+        assert semantic_class in dev_loop_page
 
 
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
