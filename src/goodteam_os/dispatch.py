@@ -119,6 +119,7 @@ def dispatch_tracks(
     tracks: list[dict[str, object]],
     verify_commands: dict[str, str] | None = None,
     constraints_file: Path | None = None,
+    research_report_file: Path | None = None,
     projects_dir: Path | None = None,
     allow_unsafe: bool = False,
 ) -> dict[str, object]:
@@ -138,6 +139,7 @@ def dispatch_tracks(
             track=track,
             constraints=constraints,
             constraints_source=str(constraints_file) if constraints_file else "",
+            research_report_source=str(research_report_file) if research_report_file else "",
         )
         for track in tracks
     ]
@@ -188,6 +190,7 @@ def _create_track_job(
     track: dict[str, object],
     constraints: list[str],
     constraints_source: str = "",
+    research_report_source: str = "",
 ) -> dict[str, Any]:
     return store.create_job(
         run_id=run_id,
@@ -198,6 +201,7 @@ def _create_track_job(
         context=str(track.get("context", "")),
         task_source=str(track.get("task_source", "")),
         constraints_source=constraints_source,
+        research_report_source=research_report_source,
         constraints=[*constraints, *[str(item) for item in track.get("constraints", [])]],
         expected_artifacts=[str(item) for item in track.get("expected_artifacts", [])],
     )

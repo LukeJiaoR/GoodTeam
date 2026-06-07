@@ -72,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--track", action="append", default=[])
     dispatch.add_argument("--verify", action="append", default=[])
     dispatch.add_argument("--constraints-file", type=Path)
+    dispatch.add_argument("--research-report", type=Path)
     dispatch.add_argument("--allow-unsafe", action="store_true")
 
     memory_append = subparsers.add_parser("memory-append")
@@ -166,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             tracks=tracks,
             verify_commands=verify_commands,
             constraints_file=args.constraints_file,
+            research_report_file=args.research_report,
             allow_unsafe=args.allow_unsafe,
         )
         print(json.dumps(payload, indent=2))

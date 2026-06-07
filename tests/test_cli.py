@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 from goodteam_os.tasks import LocalTaskStore
 
@@ -398,6 +399,8 @@ def test_cli_dispatch_calls_runner_and_returns_zero_for_all_ok(tmp_path, capsys,
     task_file.write_text("Implement backend.", encoding="utf-8")
     constraints_file = tmp_path / "lane.md"
     constraints_file.write_text("- Stay inside backend.\n", encoding="utf-8")
+    research_report = tmp_path / "research.md"
+    research_report.write_text("Research evidence.\n", encoding="utf-8")
     project_root = tmp_path / "target"
     project_root.mkdir()
     calls = []
@@ -424,6 +427,8 @@ def test_cli_dispatch_calls_runner_and_returns_zero_for_all_ok(tmp_path, capsys,
             "backend:echo ok",
             "--constraints-file",
             str(constraints_file),
+            "--research-report",
+            str(research_report),
         ]
     )
     payload = json.loads(capsys.readouterr().out)
@@ -435,6 +440,15 @@ def test_cli_dispatch_calls_runner_and_returns_zero_for_all_ok(tmp_path, capsys,
     assert calls[0]["tracks"][0]["task_source"] == str(task_file)
     assert calls[0]["verify_commands"] == {"backend": "echo ok"}
     assert calls[0]["constraints_file"] == constraints_file
+    assert calls[0]["research_report_file"] == research_report
+
+
+def test_dispatch_track_script_accepts_research_report_option():
+    script = Path("scripts/dispatch-track.sh").read_text(encoding="utf-8")
+
+    assert "--research-report) RESEARCH_REPORT=\"$2\"; shift 2 ;;" in script
+    assert "--research-report=*) RESEARCH_REPORT=\"${1#*=}\"; shift ;;" in script
+    assert 'CMD+=(--research-report "$RESEARCH_REPORT")' in script
 
 
 def test_cli_dispatch_returns_one_when_any_track_needs_human(tmp_path, capsys, monkeypatch):

@@ -15,6 +15,7 @@
 #   --role <role>           Track role (default: implementation).
 #   --adapter <adapter>     Track adapter (default: codex).
 #   --constraints <file>    Optional constraints file for dispatch.
+#   --research-report <file> Optional research report to archive with the job.
 #   --verify <cmd>          Optional verify command (as role-scoped verify).
 #   --branch <name>         Worktree branch (default: feat/<name>).
 #   --worktree <path>       Worktree path (default: ../goodteam-dev-<name> from repo root).
@@ -38,6 +39,7 @@ TASK=""
 ROLE="implementation"
 ADAPTER="codex"
 CONSTRAINTS=""
+RESEARCH_REPORT=""
 VERIFY_CMD=""
 BRANCH=""
 WORKTREE=""
@@ -55,6 +57,8 @@ while [ "$#" -gt 0 ]; do
     --adapter=*) ADAPTER="${1#*=}"; shift ;;
     --constraints) CONSTRAINTS="$2"; shift 2 ;;
     --constraints=*) CONSTRAINTS="${1#*=}"; shift ;;
+    --research-report) RESEARCH_REPORT="$2"; shift 2 ;;
+    --research-report=*) RESEARCH_REPORT="${1#*=}"; shift ;;
     --verify) VERIFY_CMD="$2"; shift 2 ;;
     --verify=*) VERIFY_CMD="${1#*=}"; shift ;;
     --branch) BRANCH="$2"; shift 2 ;;
@@ -100,6 +104,9 @@ CMD=(env PYTHONPATH=src "$PY" -m goodteam_os.cli dispatch
 
 if [ -n "$CONSTRAINTS" ]; then
   CMD+=(--constraints-file "$CONSTRAINTS")
+fi
+if [ -n "$RESEARCH_REPORT" ]; then
+  CMD+=(--research-report "$RESEARCH_REPORT")
 fi
 if [ -n "$VERIFY_CMD" ]; then
   CMD+=(--verify "$VERIFY_ARG")

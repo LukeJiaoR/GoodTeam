@@ -147,6 +147,8 @@ for job_dir in sorted(path for path in archive.iterdir() if path.is_dir()):
             "task_artifact": f"{archive_rel}{job_dir.name}/task.md" if (job_dir / "task.md").is_file() else "",
             "task_source": str(job.get("task_source") or ""),
             "constraints_source": str(job.get("constraints_source") or ""),
+            "research_report_artifact": f"{archive_rel}{job_dir.name}/research-report.md" if (job_dir / "research-report.md").is_file() else "",
+            "research_report_source": str(job.get("research_report_source") or ""),
             "expected_artifacts": job.get("expected_artifacts") if isinstance(job.get("expected_artifacts"), list) else [],
         }
     )

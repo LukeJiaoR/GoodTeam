@@ -16,11 +16,11 @@ reference, verification evidence, and follow-up status.
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
-| 9 | Dispatch artifacts audit/memory | Review-rationale provenance completed 2026-06-07 | Persist dispatch task/constraints source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `485 passed`; ruff clean; frontend build passed |
+| 9 | Dispatch artifacts audit/memory | Research-report source capture completed 2026-06-07 | Persist dispatch task/constraints/research source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `487 passed`; ruff clean; frontend build passed |
 
 ## Active Increment
 
-Next active increment: choose next real open/gated mainline. Good candidates are first-class research report source capture or a focused backlog-product-loop slice; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
+Next active increment: choose next real open/gated mainline. Good candidates are a focused backlog-product-loop slice or measured G3 routing-readiness documentation; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
 
 ## Completed Increments
 
@@ -613,9 +613,74 @@ landed job.
   -> exit 0.
 
 **Deferred from this increment:**
-- First-class research report source capture.
-- Human review rationale as structured provenance.
-- Research and review rationale fields inside the PR-level manifest.
+- First-class research report source capture. Completed later in the
+  `research-report source capture` increment.
+- Human review rationale as structured provenance. Completed later in the
+  `review-rationale provenance` increment.
+- Research and review rationale fields inside the PR-level manifest. Completed later
+  across the `review-rationale provenance` and `research-report source capture`
+  increments.
+
+### 2026-06-07 — Dispatch artifacts audit/memory: research-report source capture
+
+**Intent:** preserve the research basis for a dispatched implementation as a durable
+job artifact and PR-manifest link, without changing worker execution semantics.
+
+**Implemented:**
+- `goodteam-os dispatch` accepts optional `--research-report <path>`.
+- `scripts/dispatch-track.sh` accepts and forwards `--research-report <path>` /
+  `--research-report=<path>`.
+- `dispatch_tracks` accepts `research_report_file` and passes its source path into
+  each created worker job.
+- `WorkerJobStore.create_job` records `research_report_source` in `job.json` and
+  copies an existing file to `research-report.md` inside the job directory.
+- Job short-term provenance memory text includes `research_report_source=...` when
+  available.
+- `land_provenance_airdrop` includes per-job `research_report_source` and archived
+  `research_report_artifact` in `manifest.json` when the job archive contains
+  `research-report.md`.
+
+**Verification evidence:**
+- Red worker test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workers.py::test_dispatch_tracks_archives_research_report_source -q`
+  failed with `TypeError: dispatch_tracks() got an unexpected keyword argument 'research_report_file'`.
+- Red CLI/script test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_cli.py::test_cli_dispatch_calls_runner_and_returns_zero_for_all_ok tests/test_cli.py::test_dispatch_track_script_accepts_research_report_option -q`
+  failed because `--research-report` was unrecognized and the script had no option
+  contract.
+- Red manifest test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_land_provenance.py::test_land_provenance_airdrop_writes_pr_manifest_linking_job_and_review_artifacts -q`
+  failed because job manifest entries lacked `research_report_source` and
+  `research_report_artifact`.
+- Focused green:
+  the worker test -> `1 passed`; CLI/script tests -> `2 passed`; manifest test ->
+  `1 passed`.
+- Related regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workers.py tests/test_cli.py tests/test_land_provenance.py -q -k 'dispatch or provenance or research_report or manifest or cli_dispatch'`
+  -> `26 passed, 80 deselected`.
+- Touched-file lint:
+  `.venv/bin/ruff check src/goodteam_os/dispatch.py src/goodteam_os/workers.py src/goodteam_os/cli.py tests/test_workers.py tests/test_cli.py tests/test_land_provenance.py`
+  -> `All checks passed!`.
+- Shell syntax:
+  `bash -n scripts/dispatch-track.sh scripts/lib/land-provenance.sh scripts/land-pr.sh`
+  -> exit 0.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `487 passed in 137.35s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+
+**Deferred from this increment:**
+- Writing full research report content into role memory. This slice records and
+  links the durable artifact; broader memory ingestion should be a separate,
+  retrieval-budget-aware decision.
 
 ### 2026-06-07 — Dispatch artifacts audit/memory: PR-level provenance manifest
 

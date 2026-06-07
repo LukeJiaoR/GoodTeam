@@ -278,6 +278,7 @@ def test_land_provenance_airdrop_writes_pr_manifest_linking_job_and_review_artif
     job_dir = worktree / ".goodteam" / "workers" / "jobs" / "job-manifest"
     job_dir.mkdir(parents=True)
     (job_dir / "task.md").write_text("Implement manifest-backed provenance.\n", encoding="utf-8")
+    (job_dir / "research-report.md").write_text("Research basis for this implementation.\n", encoding="utf-8")
     (job_dir / "job.json").write_text(
         json.dumps(
             {
@@ -288,6 +289,7 @@ def test_land_provenance_airdrop_writes_pr_manifest_linking_job_and_review_artif
                 "model": "gpt-5-codex",
                 "task_source": "/tmp/contract-task.md",
                 "constraints_source": "/tmp/contract-constraints.md",
+                "research_report_source": "/tmp/research-report.md",
                 "expected_artifacts": ["scripts/lib/land-provenance.sh"],
             }
         ),
@@ -331,6 +333,8 @@ def test_land_provenance_airdrop_writes_pr_manifest_linking_job_and_review_artif
                 "task_artifact": ".goodteam/provenance/pr-98707/job-manifest/task.md",
                 "task_source": "/tmp/contract-task.md",
                 "constraints_source": "/tmp/contract-constraints.md",
+                "research_report_artifact": ".goodteam/provenance/pr-98707/job-manifest/research-report.md",
+                "research_report_source": "/tmp/research-report.md",
                 "expected_artifacts": ["scripts/lib/land-provenance.sh"],
             }
         ]

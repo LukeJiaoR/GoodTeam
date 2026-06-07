@@ -498,6 +498,7 @@ class WorkerJobStore:
         context: str,
         task_source: str = "",
         constraints_source: str = "",
+        research_report_source: str = "",
         constraints: list[str] | None = None,
         expected_artifacts: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -516,6 +517,7 @@ class WorkerJobStore:
             "updated_at": now,
             "task_source": task_source,
             "constraints_source": constraints_source,
+            "research_report_source": research_report_source,
             "expected_artifacts": expected_artifacts or [],
         }
         self._write_json(job_root / "job.json", job)
@@ -535,6 +537,9 @@ class WorkerJobStore:
             role_memory_store.build_pickup_packet(role, query=task),
         )
         (job_root / "task.md").write_text(task, encoding="utf-8")
+        research_report_path = Path(research_report_source) if research_report_source else None
+        if research_report_path and research_report_path.is_file():
+            (job_root / "research-report.md").write_text(research_report_path.read_text(encoding="utf-8"), encoding="utf-8")
         (job_root / "context.md").write_text(context, encoding="utf-8")
         (job_root / "constraints.md").write_text("\n".join(f"- {item}" for item in constraints or []), encoding="utf-8")
         (job_root / "expected_artifacts.json").write_text(json.dumps(expected_artifacts or [], indent=2), encoding="utf-8")
@@ -720,11 +725,14 @@ class WorkerJobStore:
         failure_segment = f", failure_class={failure_class}" if failure_class else ""
         task_source = str(job.get("task_source", "")).strip()
         constraints_source = str(job.get("constraints_source", "")).strip()
+        research_report_source = str(job.get("research_report_source", "")).strip()
         source_segments = []
         if task_source:
             source_segments.append(f"task_source={task_source}")
         if constraints_source:
             source_segments.append(f"constraints_source={constraints_source}")
+        if research_report_source:
+            source_segments.append(f"research_report_source={research_report_source}")
         source_segment = f" Sources: {'; '.join(source_segments)}." if source_segments else ""
         text = (
             f"Dispatched job {job['id']} (run {job['run_id']}, adapter={job['adapter']}, model={job['model']}) "

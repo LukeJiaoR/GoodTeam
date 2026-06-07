@@ -405,6 +405,28 @@ def test_dispatch_tracks_persists_task_and_constraints_sources(tmp_path):
     assert job_json["constraints_source"] == str(constraints_file)
 
 
+def test_dispatch_tracks_archives_research_report_source(tmp_path):
+    task_file = tmp_path / "backend-task.md"
+    task_file.write_text("Implement backend from researched contract.\n", encoding="utf-8")
+    research_report = tmp_path / "research-report.md"
+    research_report.write_text("# Research\n\n- Existing helper already writes manifests.\n", encoding="utf-8")
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    track = parse_dispatch_track_spec(f"implementation:fake:{task_file}", base_dir=tmp_path)
+
+    payload = dispatch_tracks(
+        project_root=project_root,
+        tracks=[track],
+        research_report_file=research_report,
+    )
+
+    job_id = payload["jobs"][0]["job_id"]
+    job_root = project_root / ".goodteam" / "workers" / "jobs" / job_id
+    job_json = json.loads((job_root / "job.json").read_text(encoding="utf-8"))
+    assert job_json["research_report_source"] == str(research_report)
+    assert (job_root / "research-report.md").read_text(encoding="utf-8") == research_report.read_text(encoding="utf-8")
+
+
 def test_dispatch_tracks_captures_one_track_exception_without_blocking_other(tmp_path, monkeypatch):
     original_run_job = WorkerJobStore.run_job
 
