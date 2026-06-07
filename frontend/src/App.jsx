@@ -5771,6 +5771,7 @@ export default function App() {
                   {!loadingDevLoop && !devLoopError && (!devLoopData || (
                     (!Array.isArray(devLoopData.worktrees) || devLoopData.worktrees.length === 0) &&
                     (!Array.isArray(devLoopData.pull_requests) || devLoopData.pull_requests.length === 0) &&
+                    devLoopData.release_readiness?.available !== true &&
                     (!Array.isArray(devLoopData.warnings) || devLoopData.warnings.length === 0)
                   )) && (
                     <div className="bg-white dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 p-12 text-center rounded-2xl text-zinc-550 italic text-xs max-w-2xl">
@@ -5780,6 +5781,80 @@ export default function App() {
 
                   {!loadingDevLoop && !devLoopError && devLoopData && (
                     <div className="space-y-6 max-w-4xl">
+                      {(() => {
+                        const releaseReadiness = devLoopData.release_readiness;
+                        return releaseReadiness?.available === true ? (
+                          <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-5 space-y-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <h3 className="text-xs font-extrabold text-zinc-550 dark:text-zinc-450 uppercase tracking-wider">Release Readiness</h3>
+                                <p className="text-2xs text-text-muted mt-1">Pinned release metadata only. Commands are copied for manual execution.</p>
+                              </div>
+                              <span className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border ${
+                                releaseReadiness.up_to_date === true
+                                  ? 'bg-status-success-bg text-accent-text border-accent/30'
+                                  : 'bg-status-info-bg text-status-info-text border-status-info/30'
+                              }`}>
+                                {releaseReadiness.up_to_date === true ? <CheckCircle className="h-3 w-3 shrink-0" /> : <Clock className="h-3 w-3 shrink-0" />}
+                                <span>{releaseReadiness.up_to_date === true ? 'release current' : 'ready to graduate'}</span>
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-2xs font-semibold text-zinc-650 dark:text-zinc-350">
+                              <div className="bg-surface-sunken dark:bg-zinc-900/60 border border-border-subtle dark:border-zinc-800 rounded-xl p-3">
+                                <div className="uppercase tracking-wider text-text-muted font-extrabold">Dev HEAD</div>
+                                <code className="block mt-1 font-mono text-zinc-800 dark:text-zinc-200 truncate" title={releaseReadiness.dev_head || ''}>
+                                  {releaseReadiness.dev_head ? releaseReadiness.dev_head.slice(0, 12) : 'unknown'}
+                                </code>
+                              </div>
+                              <div className="bg-surface-sunken dark:bg-zinc-900/60 border border-border-subtle dark:border-zinc-800 rounded-xl p-3">
+                                <div className="uppercase tracking-wider text-text-muted font-extrabold">Release HEAD</div>
+                                <code className="block mt-1 font-mono text-zinc-800 dark:text-zinc-200 truncate" title={releaseReadiness.release_head || ''}>
+                                  {releaseReadiness.release_head ? releaseReadiness.release_head.slice(0, 12) : releaseReadiness.release_exists ? 'unknown' : 'not created'}
+                                </code>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              {releaseReadiness.release_up_command && (
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <code className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 px-2 py-1 rounded text-zinc-500 dark:text-zinc-400 font-mono text-2xs truncate" title={releaseReadiness.release_up_command}>
+                                    {releaseReadiness.release_up_command}
+                                  </code>
+                                  <button
+                                    onClick={() => copyLandCommand(releaseReadiness.release_up_command)}
+                                    className="border-2 shadow-button dark:shadow-button font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 bg-white dark:bg-zinc-800 hover:bg-status-info-bg hover:text-status-info-text border-border-subtle dark:border-zinc-800 text-zinc-700 dark:text-zinc-300"
+                                    title={`Copy release-up command: ${releaseReadiness.release_up_command}`}
+                                  >
+                                    <Copy className="h-3.5 w-3.5" />
+                                    <span className="text-2xs font-extrabold uppercase">Copy release-up command</span>
+                                  </button>
+                                </div>
+                              )}
+                              {releaseReadiness.graduate_command && (
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <code className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 px-2 py-1 rounded text-zinc-500 dark:text-zinc-400 font-mono text-2xs truncate" title={releaseReadiness.graduate_command}>
+                                    {releaseReadiness.graduate_command}
+                                  </code>
+                                  <button
+                                    onClick={() => copyLandCommand(releaseReadiness.graduate_command)}
+                                    className="border-2 shadow-button dark:shadow-button font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 bg-white dark:bg-zinc-800 hover:bg-status-info-bg hover:text-status-info-text border-border-subtle dark:border-zinc-800 text-zinc-700 dark:text-zinc-300"
+                                    title={`Copy graduate command: ${releaseReadiness.graduate_command}`}
+                                  >
+                                    <Copy className="h-3.5 w-3.5" />
+                                    <span className="text-2xs font-extrabold uppercase">Copy graduate command</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : releaseReadiness?.available === false ? (
+                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-800 p-4 rounded-2xl text-xs text-text-muted font-semibold">
+                            Release Readiness unavailable: {releaseReadiness.reason || 'release scripts unavailable'}.
+                          </div>
+                        ) : null;
+                      })()}
+
                       {/* Warnings notice if any warnings exist */}
                       {Array.isArray(devLoopData.warnings) && devLoopData.warnings.length > 0 && (
                         <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900/50 p-4 rounded-xl text-amber-700 dark:text-amber-400 text-xs font-semibold space-y-1">

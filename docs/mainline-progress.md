@@ -10,7 +10,7 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | Pattern-hit observability completed 2026-06-07 | Add deterministic global store, record worker failures, and surface best-match signature/hit/disposition evidence during triage without changing routing. | `480 passed`; ruff clean; frontend build passed |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Release-readiness metadata completed 2026-06-07 | Add web-visible dry-smoke action and read-only release/graduation readiness metadata; keep merge/tag/graduate actions human-invoked. | `482 passed`; ruff clean; frontend build passed |
+| 3 | Self-hosting control plane | Release-readiness UI completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
@@ -20,7 +20,7 @@ reference, verification evidence, and follow-up status.
 
 ## Active Increment
 
-Next active increment: choose next real open/gated mainline. Good candidates are more dispatch-audit capture or a UI panel for the now-exposed release readiness metadata; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
+Next active increment: choose next real open/gated mainline. Good candidates are more dispatch-audit capture or a small release-readiness polish/contract slice; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
 
 ## Completed Increments
 
@@ -276,6 +276,51 @@ control plane without adding any server-side tag, checkout, install, or serve ac
 
 **Deferred from this increment:**
 - A React panel/card for the new `release_readiness` object.
+- Executing graduate/tag/release-up from the web. Those remain human-invoked scripts.
+
+### 2026-06-07 — Self-hosting control plane: release-readiness UI panel
+
+**Intent:** surface the existing read-only release-readiness metadata in the Dev Loop
+UI while preserving the manual release-up / graduate boundary.
+
+**Implemented:**
+- The React Dev Loop view now renders a `Release Readiness` panel when
+  `devLoopData.release_readiness.available` is true.
+- The panel shows dev HEAD, release HEAD, and a status badge for current vs ready to
+  graduate.
+- `release_up_command` and `graduate_command` are displayed as copyable command
+  lines using the existing copy-command handler.
+- There are no execute/run controls for release-up or graduate.
+- The Dev Loop empty-state predicate now treats available release readiness as real
+  content, avoiding an empty-state message alongside the panel.
+
+**Verification evidence:**
+- Red frontend contract:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_frontend_contract_exposes_release_readiness_without_execution_controls -q`
+  failed because `App.jsx` did not read `devLoopData.release_readiness`.
+- Follow-up red check:
+  the same contract failed until the empty-state predicate accounted for
+  `devLoopData.release_readiness?.available !== true`.
+- Focused contract/regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py -q -k 'frontend_contract or dev_loop or devloop'`
+  -> `13 passed, 91 deselected`.
+- Touched-test lint:
+  `.venv/bin/ruff check tests/test_web.py`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `483 passed in 138.27s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+
+**Deferred from this increment:**
 - Executing graduate/tag/release-up from the web. Those remain human-invoked scripts.
 
 ### 2026-06-07 — Theme token conversion: high-volume palette/type slice

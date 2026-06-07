@@ -1492,6 +1492,22 @@ def test_frontend_contract_has_simple_advanced_worker_routing_modes():
     assert "Advanced" in app
 
 
+def test_frontend_contract_exposes_release_readiness_without_execution_controls():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "devLoopData.release_readiness" in app
+    assert "Release Readiness" in app
+    assert "release_up_command" in app
+    assert "graduate_command" in app
+    assert "Copy release-up command" in app
+    assert "Copy graduate command" in app
+    assert "onClick={() => copyLandCommand(releaseReadiness.release_up_command)}" in app
+    assert "onClick={() => copyLandCommand(releaseReadiness.graduate_command)}" in app
+    assert "devLoopData.release_readiness?.available !== true" in app
+    assert "Run release-up" not in app
+    assert "Run graduate" not in app
+
+
 def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 
