@@ -179,6 +179,53 @@ def test_pre_review_latest_status_can_bind_to_current_invocation_marker(tmp_path
     assert result.stdout.strip() == str(current_job / "status.json")
 
 
+def test_pre_review_latest_status_ignores_gnu_stat_filesystem_output(tmp_path):
+    jobs_root = tmp_path / ".goodteam" / "workers" / "jobs"
+    fake_bin = tmp_path / "fake-bin"
+    current_job = jobs_root / "job-current"
+    other_job = jobs_root / "job-other"
+    fake_bin.mkdir()
+    (fake_bin / "stat").write_text(
+        """#!/usr/bin/env bash
+if [ "$1" = "-f" ]; then
+  printf '  File: "%s"\\n' "$2"
+  printf '    ID: 123456789 Namelen: 255     Type: ext2/ext3\\n'
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+""",
+        encoding="utf-8",
+    )
+    (fake_bin / "stat").chmod(0o755)
+    current_job.mkdir(parents=True)
+    other_job.mkdir()
+    marker = "pre-review-pr-125-ghi"
+    (current_job / "task.md").write_text(f"# Review\n\nInvocation: {marker}\n", encoding="utf-8")
+    (current_job / "status.json").write_text(
+        '{"role":"code_review","status":"failed","failure_class":"auth"}',
+        encoding="utf-8",
+    )
+    (other_job / "task.md").write_text("Invocation: pre-review-pr-999-other\n", encoding="utf-8")
+    (other_job / "status.json").write_text(
+        '{"role":"code_review","status":"completed"}',
+        encoding="utf-8",
+    )
+    os.utime(current_job / "status.json", (100, 100))
+    os.utime(other_job / "status.json", (200, 200))
+
+    result = _run_bash(
+        f"""
+        set -euo pipefail
+        . {_q(HELPER)}
+        pre_review_latest_status {_q(tmp_path)} {shlex.quote(marker)}
+        """,
+        env={"PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.strip() == str(current_job / "status.json")
+
+
 def test_pre_review_main_script_uses_fallback_and_report_selector():
     script = (REPO_ROOT / "scripts" / "pre-review.sh").read_text(encoding="utf-8")
 

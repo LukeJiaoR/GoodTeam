@@ -4,6 +4,22 @@ land_provenance_warn() {
   echo "[land] (provenance $*)"
 }
 
+land_provenance_mtime() {
+  local path="$1"
+  local value=""
+
+  value="$(stat -c '%Y' "$path" 2>/dev/null || true)"
+  case "$value" in
+    ""|*[!0-9]*)
+      value="$(stat -f '%m' "$path" 2>/dev/null || true)"
+      ;;
+  esac
+  case "$value" in
+    ""|*[!0-9]*) printf '0' ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
 land_provenance_extract() {
   local pr="$1"
   local worktree="$2"
@@ -59,9 +75,9 @@ PY
       priority=1
       [ "$local_role" = "code_review" ] && priority=0
       [ "$local_role" = "review" ] && priority=0
-      printf '%s\t%s\t%s\n' "$priority" "$(stat -f '%m' "$job_dir/status.json" 2>/dev/null || stat -c '%Y' "$job_dir/status.json" 2>/dev/null || printf '0')" "$job_dir"
+      printf '%s\t%s\t%s\n' "$priority" "$(land_provenance_mtime "$job_dir/status.json")" "$job_dir"
     else
-      printf '0\t%s\t%s\n' "$(stat -f '%m' "$job_dir" 2>/dev/null || stat -c '%Y' "$job_dir" 2>/dev/null || printf '0')" "$job_dir"
+      printf '0\t%s\t%s\n' "$(land_provenance_mtime "$job_dir")" "$job_dir"
     fi
   done | sort -k1,1nr -k2,2nr | sed -n '1s/^[^	]*	[^	]*	//p'; } || true)"
 

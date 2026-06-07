@@ -43,6 +43,54 @@ def _events_by_source(event_path: Path) -> dict[str, list[dict[str, object]]]:
     return grouped
 
 
+def test_land_provenance_extract_reads_job_metadata_when_gnu_stat_accepts_f(tmp_path):
+    root = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    fake_bin = tmp_path / "fake-bin"
+    python_shim = _make_fake_main(root)
+    job_dir = worktree / ".goodteam" / "workers" / "jobs" / "job-gnu-stat"
+    fake_bin.mkdir()
+    (fake_bin / "stat").write_text(
+        """#!/usr/bin/env bash
+if [ "$1" = "-f" ]; then
+  printf '  File: "%s"\\n' "$2"
+  printf '    ID: 123456789 Namelen: 255     Type: ext2/ext3\\n'
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+""",
+        encoding="utf-8",
+    )
+    (fake_bin / "stat").chmod(0o755)
+    job_dir.mkdir(parents=True)
+    (job_dir / "result.md").write_text("implementation payload\n", encoding="utf-8")
+    (job_dir / "status.json").write_text(
+        json.dumps({"run_id": "run-gnu", "job_id": "job-gnu-stat", "role": "implementation"}),
+        encoding="utf-8",
+    )
+    pr = "98700"
+
+    result = _run_bash(
+        f"""
+        set -euo pipefail
+        . {_q(HELPER)}
+        export PY={_q(python_shim)}
+        land_provenance_extract {pr} {_q(worktree)}
+        land_provenance_airdrop {pr} {_q(root)} ggggghhhhh pass
+        """,
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+    )
+
+    event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
+    events_by_source = _events_by_source(event_path)
+    land_events = events_by_source[f"land/pr-{pr}"]
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "run_id=run-gnu" in land_events[0]["text"]
+    assert "job_id=job-gnu-stat" in land_events[0]["text"]
+    assert "dispatch_role=implementation" in land_events[0]["text"]
+
+
 def test_land_provenance_extract_archives_jobs_and_appends_land_event(tmp_path):
     root = tmp_path / "main"
     worktree = tmp_path / "worktree"
