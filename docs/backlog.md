@@ -12,8 +12,6 @@ gates that require founder input or validated runtime evidence before
 implementation.
 
 **Gated / external-decision parking lot:**
-- i18n / multi-language support — requires target market and primary-language
-  decision, plus stabilized product copy.
 - Theme System v1 — requires founder Vivid-vs-Minimal selection before the
   remaining full-screen token conversion and dark-mode pass.
 - D2b topological executor / parallel level execution — requires a real
@@ -380,9 +378,21 @@ overrides, then switch users into Advanced review before save. Covered by
 `FilePath` tooltip now uses `w-max max-w-[28rem] whitespace-normal break-words`; the visible chip
 can still break long paths while the hover tooltip no longer collapses into a one-character column.
 
-## 🟠 GATED / PARKED — i18n / multi-language support  (raised 2026-06-06, founder asked; DEFERRED — founder agreed)
+## ✅ RESOLVED 2026-06-07 — i18n / multi-language support foundation  (raised 2026-06-06)
 
-Founder asked whether to add multi-language support. **Decision: defer.** Current state: the FE has NO i18n setup (no framework/locales/deps); `frontend/src/App.jsx` carries **260+ hardcoded English strings** (~228 JSX text nodes + 31 placeholders, plus toasts/templates), essentially all-English (only ~7 Chinese strings mixed in). Why defer: (1) the UI is mid-redesign (theme v1 pending) and features/copy are changing fast — extracting strings to i18n keys now means re-translating on every copy change (churn); (2) still single-user dogfooding — i18n pays off only with real users in a target locale; (3) it is a cross-cutting refactor of the single-file App.jsx that would conflict with every other FE track; (4) the real prerequisite is an unmade product decision: target market / primary language (Chinese-first? English-first? bilingual? more?). **Do it AFTER** the theme + core UX stabilize, as ONE clean pass: pick the framework (react-i18next or a light context), extract strings → keys, ship `zh`/`en` (or whatever the market needs) locale files + a language switcher placed alongside the theme switcher (same preferences surface). Medium–Large. Gating decision: target market / primary language.
+Founder picked browser/system auto mode. GoodTeam now has a lightweight
+frontend-only i18n foundation: `frontend/src/i18n/` ships `en` and `zh-CN`
+locale dictionaries plus language resolution helpers, `gt-language=auto|en|zh-CN`
+persists the user choice in browser storage, `auto` maps `zh-*` browsers to
+Simplified Chinese and falls back to English, and compact language switchers sit
+beside the existing theme controls. The first dashboard chrome slice is extracted:
+root header labels, detailed sidebar groups/tabs, shell dashboard/run/status
+labels, theme labels, approval banner copy, and shell loading label.
+
+Remaining i18n work is no longer blocked on target-market choice; it is ordinary
+incremental copy extraction. Translate deeper feature panels in focused slices:
+new-project/start-run forms, approval panels, Dev Loop, Smoke Runs, Memory,
+Agents, Workflow Graph, and System diagnostics.
 
 ## Raised 2026-06-05 (b) — product-use round 2 (founder using the dashboard)
 

@@ -1541,6 +1541,68 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
         assert semantic_class in app
 
 
+def test_frontend_contract_uses_i18n_for_dashboard_chrome():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "LANGUAGE_STORAGE_KEY" in app
+    assert "normalizeLanguagePreference" in app
+    assert "resolveLanguage" in app
+    assert "translate(language" in app or "translate(resolvedLanguage" in app
+    assert "languagePreference" in app
+    assert "setLanguagePreference" in app
+    assert "navGroups" in app
+    assert "t('nav.groups.work')" in app
+    assert "t('nav.tabs.overview')" in app
+    assert "t('chrome.dashboard')" in app
+    assert "t('approvalBanner.review')" in app
+    assert "t('chrome.loading')" in app
+    assert "language.useAuto" in app
+    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in app
+
+
+def test_frontend_i18n_locale_files_exist_and_define_core_chrome_keys():
+    root = Path(__file__).resolve().parents[1]
+    en = root / "frontend" / "src" / "i18n" / "locales" / "en.js"
+    zh = root / "frontend" / "src" / "i18n" / "locales" / "zh-CN.js"
+
+    assert en.exists()
+    assert zh.exists()
+
+    en_text = en.read_text(encoding="utf-8")
+    zh_text = zh.read_text(encoding="utf-8")
+    for key in [
+        "nav.groups.work",
+        "nav.tabs.overview",
+        "nav.tabs.approvals",
+        "chrome.dashboard",
+        "chrome.exit",
+        "chrome.runId",
+        "language.auto",
+        "language.english",
+        "language.chinese",
+        "theme.toggle",
+        "approvalBanner.review",
+    ]:
+        assert key in en_text
+        assert key in zh_text
+
+
+def test_frontend_i18n_resolves_auto_language_and_falls_back_to_english():
+    i18n_path = Path(__file__).resolve().parents[1] / "frontend" / "src" / "i18n" / "index.js"
+    assert i18n_path.exists()
+    i18n = i18n_path.read_text(encoding="utf-8")
+
+    assert "gt-language" in i18n
+    assert "LANGUAGE_PREFERENCE_AUTO = 'auto'" in i18n
+    assert "SUPPORTED_LANGUAGE_PREFERENCES = ['auto', 'en', 'zh-CN']" in i18n
+    assert "startsWith('zh')" in i18n or 'startsWith("zh")' in i18n
+    assert "return 'zh-CN'" in i18n
+    assert "return 'en'" in i18n
+    assert "normalizeLanguagePreference" in i18n
+    assert "resolveLanguage" in i18n
+    assert "translate" in i18n
+
+
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):
     docs = tmp_path / "content-research"
     docs.mkdir()

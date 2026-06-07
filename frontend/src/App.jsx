@@ -41,6 +41,13 @@ import {
   HelpCircle
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
+import {
+  LANGUAGE_PREFERENCE_AUTO,
+  LANGUAGE_STORAGE_KEY,
+  normalizeLanguagePreference,
+  resolveLanguage,
+  translate,
+} from './i18n';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -221,14 +228,21 @@ function getBadgeStyle(status) {
   };
 }
 
-function getStatusLabel(status) {
+function getStatusLabel(status, t = (key) => ({
+  'status.approved': 'Approved',
+  'status.pending': 'Pending',
+  'status.complete': 'Complete',
+  'status.active': 'Active',
+  'status.artifactReady': 'Artifact Ready',
+  'chrome.noActiveRun': 'No Activity',
+}[key] || key)) {
   const norm = String(status || '').toLowerCase().trim();
-  if (norm === 'approved') return '✓ Approved';
-  if (norm === 'pending') return '⏳ Pending';
-  if (norm === 'complete') return '✓ Complete';
-  if (norm === 'active' || norm === 'running') return 'Active';
-  if (norm === 'artifact ready' || norm === 'artifact_ready') return 'Artifact Ready';
-  if (norm === 'no activity' || norm === 'no_activity' || norm === 'no_active_run') return 'No Activity';
+  if (norm === 'approved') return `✓ ${t('status.approved')}`;
+  if (norm === 'pending') return `⏳ ${t('status.pending')}`;
+  if (norm === 'complete') return `✓ ${t('status.complete')}`;
+  if (norm === 'active' || norm === 'running') return t('status.active');
+  if (norm === 'artifact ready' || norm === 'artifact_ready') return t('status.artifactReady');
+  if (norm === 'no activity' || norm === 'no_activity' || norm === 'no_active_run') return t('chrome.noActiveRun');
   return status.replace(/_/g, ' ');
 }
 
@@ -261,10 +275,11 @@ function FilePath({ path, segments = 1 }) {
 }
 
 // Spinner component
-function Spinner() {
+function Spinner({ label = 'Loading...' }) {
   return (
     <div className="flex justify-center items-center py-16">
       <RefreshCw className="h-10 w-10 text-accent animate-spin" />
+      <span className="sr-only">{label}</span>
     </div>
   );
 }
@@ -425,6 +440,39 @@ export default function App() {
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('gt-theme') || 'vivid';
   });
+
+  const [languagePreference, setLanguagePreferenceState] = useState(() => {
+    return normalizeLanguagePreference(localStorage.getItem(LANGUAGE_STORAGE_KEY));
+  });
+  const language = resolveLanguage(languagePreference);
+  const t = (key, params) => translate(language, key, params);
+  const setLanguagePreference = (preference) => {
+    setLanguagePreferenceState(normalizeLanguagePreference(preference));
+  };
+  const languageOptions = [
+    { value: LANGUAGE_PREFERENCE_AUTO, label: t('language.auto'), ariaLabel: t('language.useAuto') },
+    { value: 'en', label: t('language.english'), ariaLabel: t('language.useEnglish') },
+    { value: 'zh-CN', label: t('language.chinese'), ariaLabel: t('language.useChinese') },
+  ];
+  const renderLanguageSwitcher = (size = 'compact') => {
+    const paddingClass = size === 'wide' ? 'px-3 py-1' : 'px-2 py-0.5';
+    const roundedClass = size === 'wide' ? 'rounded-lg' : 'rounded';
+    return (
+      <div className="flex bg-surface-raised p-0.5 rounded-lg border border-border-subtle select-none" aria-label="Language">
+        {languageOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => setLanguagePreference(option.value)}
+            className={`${paddingClass} ${roundedClass} min-w-10 text-center text-2xs font-bold transition-all cursor-pointer ${languagePreference === option.value ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+            aria-label={option.ariaLabel}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   // Mobile navigation drawer toggle
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -721,6 +769,10 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('gt-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, languagePreference);
+  }, [languagePreference]);
 
   // Reset Git toggles/notices when the new project modal is opened
   useEffect(() => {
@@ -2746,8 +2798,8 @@ export default function App() {
               <LayoutDashboard className="h-5 w-5" />
             </div>
             <div>
-              <span className="text-2xs uppercase tracking-wider font-bold text-text-muted">Multi-project control room</span>
-              <h1 className="text-base font-bold tracking-tight text-text-primary">GoodTeam Projects</h1>
+              <span className="text-2xs uppercase tracking-wider font-bold text-text-muted">{t('chrome.multiProjectEyebrow')}</span>
+              <h1 className="text-base font-bold tracking-tight text-text-primary">{t('chrome.goodteamProjects')}</h1>
             </div>
           </div>
 
@@ -2759,7 +2811,7 @@ export default function App() {
               }}
               className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-4 py-1.5 rounded-xl text-2xs uppercase tracking-wider transition-all duo-button-physics hover:opacity-90 cursor-pointer"
             >
-              + New Project
+              {t('chrome.newProject')}
             </button>
             <div className="flex bg-surface-sunken p-1 rounded-xl border border-border-subtle select-none">
               <button
@@ -2767,20 +2819,21 @@ export default function App() {
                 onClick={() => setTheme('vivid')}
                 className={`px-3 py-1 rounded-lg text-2xs font-bold transition-all cursor-pointer ${theme === 'vivid' ? 'bg-surface-raised shadow-sm text-accent-text border border-border-subtle' : 'text-text-muted hover:text-text-secondary'}`}
               >
-                Vivid
+                {t('theme.vivid')}
               </button>
               <button
                 type="button"
                 onClick={() => setTheme('minimal')}
                 className={`px-3 py-1 rounded-lg text-2xs font-bold transition-all cursor-pointer ${theme === 'minimal' ? 'bg-surface-raised shadow-sm text-accent-text border border-border-subtle' : 'text-text-muted hover:text-text-secondary'}`}
               >
-                Minimal
+                {t('theme.minimal')}
               </button>
             </div>
+            {renderLanguageSwitcher('wide')}
             <button
               onClick={() => setDarkMode(!darkMode)}
               className="bg-surface-raised p-2 border-2 border-border-subtle shadow-button text-text-secondary rounded-xl transition-all duo-button-physics"
-              aria-label="Toggle theme"
+              aria-label={t('theme.toggle')}
             >
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
@@ -2814,7 +2867,7 @@ export default function App() {
 
           {/* Project List */}
           {loading ? (
-            <Spinner />
+            <Spinner label={t('chrome.loading')} />
           ) : error ? (
             <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-xl text-status-danger flex items-center space-x-3">
               <AlertTriangle className="h-6 w-6 shrink-0" />
@@ -2831,7 +2884,7 @@ export default function App() {
                   }}
                   className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center gap-1.5 hover:opacity-90 cursor-pointer"
                 >
-                  <span>+ New Project</span>
+                  <span>{t('chrome.newProject')}</span>
                 </button>
               </div>
 
@@ -3045,6 +3098,45 @@ export default function App() {
   const openQuestionsGateCount = openQuestions.length;
   const totalApprovalsCount = approvalReviews.length || 6;
   const approvalProgressPercent = Math.min(100, Math.round((approvedCount / totalApprovalsCount) * 100));
+  const approvalBannerQuestions = openQuestionsGateCount > 0
+    ? t('approvalBanner.questions', {
+      count: openQuestionsGateCount,
+      plural: openQuestionsGateCount === 1 ? '' : 's',
+    })
+    : '';
+  const navGroups = [
+    {
+      title: t('nav.groups.work'),
+      items: [
+        { id: 'overview', label: t('nav.tabs.overview'), icon: LayoutDashboard },
+        { id: 'approvals', label: t('nav.tabs.approvals'), icon: CheckCircle2 },
+        { id: 'artifacts', label: t('nav.tabs.artifacts'), icon: FileCode },
+        { id: 'actions', label: t('nav.tabs.actions'), icon: Activity },
+        { id: 'board', label: t('nav.tabs.board'), icon: Kanban },
+      ],
+    },
+    {
+      title: t('nav.groups.observe'),
+      items: [
+        { id: 'workflow', label: t('nav.tabs.workflow'), icon: GitBranch },
+        { id: 'devloop', label: t('nav.tabs.devloop'), icon: GitPullRequest },
+        { id: 'messages', label: t('nav.tabs.messages'), icon: MessageSquare },
+      ],
+    },
+    {
+      title: t('nav.groups.inspect'),
+      items: [
+        { id: 'agents_memory', label: t('nav.tabs.agentsMemory'), icon: Users },
+        { id: 'smoke', label: t('nav.tabs.smoke'), icon: PlaySquare },
+      ],
+    },
+    {
+      title: t('nav.groups.system'),
+      items: [
+        { id: 'system', label: t('nav.tabs.system'), icon: Settings },
+      ],
+    },
+  ];
   const currentMemoryEvent = memoryEventDetail?.data || {};
   const memorySupersedes = currentMemoryEvent.supersedes || '';
   const memorySupersededBy = Array.isArray(currentMemoryEvent.superseded_by)
@@ -3072,13 +3164,13 @@ export default function App() {
         <div className="p-5 border-b-2 border-border-subtle flex justify-between items-center bg-surface-sunken">
           <div>
             <span className="text-2xs uppercase tracking-widest text-accent-text font-bold">GoodTeam OS</span>
-            <h2 className="text-sm font-bold tracking-tight text-text-primary mt-0.5">{state?.project_name || startContext.project_name || 'Dashboard'}</h2>
+            <h2 className="text-sm font-bold tracking-tight text-text-primary mt-0.5">{state?.project_name || startContext.project_name || t('chrome.dashboard')}</h2>
           </div>
           <button
             onClick={() => updateUrl('')}
             className="text-2xs text-text-secondary hover:text-accent border-2 border-border-subtle hover:border-accent px-2.5 py-0.5 rounded-lg transition-all font-bold uppercase cursor-pointer"
           >
-            Exit
+            {t('chrome.exit')}
           </button>
         </div>
 
@@ -3090,39 +3182,7 @@ export default function App() {
 
         {/* Tab buttons - grouped by priority */}
         <nav className="flex-grow py-4 space-y-4 overflow-y-auto">
-          {[
-            {
-              title: 'WORK',
-              items: [
-                { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-                { id: 'approvals', label: 'Approvals', icon: CheckCircle2 },
-                { id: 'artifacts', label: 'Artifacts', icon: FileCode },
-                { id: 'actions', label: 'Actions', icon: Activity },
-                { id: 'board', label: 'Agile Board', icon: Kanban },
-              ]
-            },
-            {
-              title: 'OBSERVE',
-              items: [
-                { id: 'workflow', label: 'Workflow Graph', icon: GitBranch },
-                { id: 'devloop', label: 'Dev Loop', icon: GitPullRequest },
-                { id: 'messages', label: 'Messages', icon: MessageSquare },
-              ]
-            },
-            {
-              title: 'INSPECT',
-              items: [
-                { id: 'agents_memory', label: 'Agents & Memory', icon: Users },
-                { id: 'smoke', label: 'Smoke Runs', icon: PlaySquare },
-              ]
-            },
-            {
-              title: 'SYSTEM',
-              items: [
-                { id: 'system', label: 'System', icon: Settings },
-              ]
-            }
-          ].map((group) => (
+          {navGroups.map((group) => (
             <div key={group.title} className="space-y-1">
               <div className="px-4 py-1 text-2xs font-bold tracking-widest text-text-muted uppercase">
                 {group.title}
@@ -3160,30 +3220,33 @@ export default function App() {
         </nav>
 
         {/* Sidebar Footer */}
-        <div className="p-4 border-t-2 border-border-subtle flex items-center justify-between gap-2 text-xs bg-surface-sunken font-bold text-text-muted">
-          <div className="flex bg-surface-raised p-0.5 rounded-lg border border-border-subtle select-none">
+        <div className="p-4 border-t-2 border-border-subtle flex flex-col gap-2 text-xs bg-surface-sunken font-bold text-text-muted">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex bg-surface-raised p-0.5 rounded-lg border border-border-subtle select-none">
+              <button
+                type="button"
+                onClick={() => setTheme('vivid')}
+                className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'vivid' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+              >
+                {t('theme.vivid')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme('minimal')}
+                className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'minimal' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+              >
+                {t('theme.minimal')}
+              </button>
+            </div>
             <button
-              type="button"
-              onClick={() => setTheme('vivid')}
-              className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'vivid' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+              onClick={() => setDarkMode(!darkMode)}
+              className="p-1.5 rounded-lg border-2 border-border-subtle hover:bg-surface-sunken transition-colors text-text-secondary cursor-pointer"
+              aria-label={t('theme.toggle')}
             >
-              Vivid
-            </button>
-            <button
-              type="button"
-              onClick={() => setTheme('minimal')}
-              className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'minimal' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
-            >
-              Minimal
+              {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           </div>
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            className="p-1.5 rounded-lg border-2 border-border-subtle hover:bg-surface-sunken transition-colors text-text-secondary cursor-pointer"
-            aria-label="Toggle theme"
-          >
-            {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
+          {renderLanguageSwitcher()}
         </div>
       </aside>
 
@@ -3195,15 +3258,15 @@ export default function App() {
         >
           {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
-        <span className="font-bold text-sm tracking-tight text-text-primary">{state?.project_name || 'Dashboard'}</span>
+        <span className="font-bold text-sm tracking-tight text-text-primary">{state?.project_name || t('chrome.dashboard')}</span>
         {headerStatus.toLowerCase() === 'complete' ? (
           <div className="bg-status-success-bg text-status-success-text font-bold text-xs px-2.5 py-1 rounded-full border-2 border-status-success/20 flex items-center space-x-1">
             <span>✅</span>
-            <span>COMPLETE</span>
+            <span>{t('status.complete')}</span>
           </div>
         ) : (
           <div className={`px-2.5 py-0.5 rounded-full text-2xs uppercase font-bold border ${activeRun ? 'bg-status-info-bg text-status-info-text border-status-info/30' : headBadge.bg + ' ' + headBadge.text + ' ' + headBadge.border}`}>
-            {getStatusLabel(headerStatus)}
+            {getStatusLabel(headerStatus, t)}
           </div>
         )}
       </header>
@@ -3223,22 +3286,22 @@ export default function App() {
             <span onClick={() => updateUrl('')} className="font-bold text-lg tracking-tight text-text-primary cursor-pointer hover:text-accent transition-colors">GoodTeam</span>
             <span className="text-border-strong font-bold text-sm">|</span>
             <span className="text-text-secondary font-bold text-xs uppercase tracking-wider">
-              {state?.project_name || startContext.project_name || 'Dashboard'}
+              {state?.project_name || startContext.project_name || t('chrome.dashboard')}
             </span>
           </div>
 
           <div className="flex items-center space-x-4">
-            <span className="text-2xs font-mono font-bold text-text-muted uppercase hidden sm:inline">Run ID: <code className="bg-surface-sunken border border-border-subtle px-2 py-0.5 rounded-lg text-text-secondary select-all font-mono">{state?.run_id || 'none'}</code></span>
+            <span className="text-2xs font-mono font-bold text-text-muted uppercase hidden sm:inline">{t('chrome.runId')}: <code className="bg-surface-sunken border border-border-subtle px-2 py-0.5 rounded-lg text-text-secondary select-all font-mono">{state?.run_id || t('chrome.none')}</code></span>
 
             {headerStatus.toLowerCase() === 'complete' ? (
               <div className="bg-status-success-bg text-status-success-text font-bold text-base px-5 py-2.5 rounded-full border-2 border-status-success/30 flex items-center space-x-1.5 shadow-sm">
                 <span>✅</span>
-                <span>COMPLETE</span>
+                <span>{t('status.complete')}</span>
               </div>
             ) : (
               <div className={`inline-flex items-center space-x-1.5 px-4 py-2 rounded-full text-xs font-semibold uppercase border ${headBadge.bg} ${headBadge.text} ${headBadge.border}`}>
                 {activeRun && <span className="h-1.5 w-1.5 bg-status-info rounded-full animate-pulse" />}
-                <span>{getStatusLabel(headerStatus)}</span>
+                <span>{getStatusLabel(headerStatus, t)}</span>
               </div>
             )}
           </div>
@@ -3249,13 +3312,17 @@ export default function App() {
           <div className="bg-status-warning-bg border-b-2 border-status-warning/30 px-6 py-3 flex items-center justify-between text-xs font-bold text-status-warning-text animate-fade-in shrink-0">
             <div className="flex items-center space-x-2">
               <span className="h-2 w-2 rounded-full bg-status-warning animate-pulse shrink-0" />
-              <span>{actionableCount} gate{actionableCount > 1 ? 's' : ''} awaiting your approval{openQuestionsGateCount > 0 ? ` · ${openQuestionsGateCount} Questions` : ''}</span>
+              <span>{t('approvalBanner.message', {
+                count: actionableCount,
+                plural: actionableCount > 1 ? 's' : '',
+                questions: approvalBannerQuestions,
+              })}</span>
             </div>
             <button
               onClick={() => setActiveTab('approvals')}
               className="bg-surface-raised hover:bg-status-warning-bg border-2 border-status-warning/30 shadow-button text-status-warning-text font-bold px-3 py-1 rounded-lg uppercase tracking-wider transition-all duo-button-physics text-2xs cursor-pointer"
             >
-              Review
+              {t('approvalBanner.review')}
             </button>
           </div>
         )}
@@ -3406,7 +3473,7 @@ export default function App() {
         {/* Main Panel Content Area - padded 32px (#F7F7F7 canvas background) */}
         <main className="flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6">
           {loading ? (
-            <Spinner />
+            <Spinner label={t('chrome.loading')} />
           ) : error ? (
             <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl text-status-danger-text flex items-center space-x-3 shadow-xs">
               <AlertTriangle className="h-6 w-6 shrink-0" />

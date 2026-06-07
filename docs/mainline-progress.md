@@ -13,7 +13,7 @@ reference, verification evidence, and follow-up status.
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
-| 6 | i18n | Gated / parked 2026-06-07 | Requires target-market/language decision and stabilized copy; not an actionable local backlog item in this pass. | Documented gate |
+| 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
 | 9 | Dispatch artifacts audit/memory | Audit artifact chain completed 2026-06-07 | Persist dispatch task/constraints/research source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `487 passed`; ruff clean; frontend build passed |
@@ -22,12 +22,63 @@ reference, verification evidence, and follow-up status.
 ## Active Increment
 
 No active backlog increment remains. Remaining work is parked behind explicit gates:
-i18n target market/primary language, theme winner selection, D2b topo executor fan-in
-consumer, server-side land/tag auth/security design, G3 routing outcome quality,
-G3 unknown-failure data for LLM triage, external Codex auth recovery, shared-worktree
-edit-collision need, and optional full research/review memory ingestion.
+theme winner selection, D2b topo executor fan-in consumer, server-side land/tag
+auth/security design, G3 routing outcome quality, G3 unknown-failure data for LLM
+triage, external Codex auth recovery, shared-worktree edit-collision need, and
+optional full research/review memory ingestion.
 
 ## Completed Increments
+
+### 2026-06-07 — i18n lightweight foundation
+
+**Intent:** resolve the i18n target-language gate with the smallest durable
+frontend foundation: browser/system auto mode, explicit user override, and a
+scoped first chrome extraction.
+
+**Implemented:**
+- Added `frontend/src/i18n/` with `en` and `zh-CN` locale dictionaries plus
+  `normalizeLanguagePreference`, `resolveLanguage`, browser-language lookup, and
+  `translate`.
+- Supported `gt-language=auto|en|zh-CN`; `auto` maps `zh-*` browsers to
+  Simplified Chinese and falls back to English otherwise.
+- Added compact language switchers beside existing theme controls in the root
+  overview header and detailed project sidebar footer.
+- Extracted the first high-traffic dashboard chrome slice to locale keys: root
+  header labels, detailed sidebar groups/tabs, shell dashboard/run/status labels,
+  theme labels, approval banner copy, and shell loading label.
+- Kept deeper feature panels, user/project data, backend payloads, artifacts, and
+  worker output untranslated for later focused passes.
+
+**Verification evidence:**
+- Red module tests:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py -q -k 'frontend_i18n'`
+  first failed because `frontend/src/i18n/` files did not exist.
+- Red App chrome contract:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_frontend_contract_uses_i18n_for_dashboard_chrome -q`
+  first failed because `App.jsx` did not import `LANGUAGE_STORAGE_KEY`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py -q -k 'frontend_i18n or frontend_contract'`
+  -> `9 passed, 98 deselected`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Review fixes during implementation:**
+- Stacked sidebar footer controls so the theme buttons, language switcher, and
+  dark-mode icon do not overflow the fixed `220px` sidebar.
+- Preserved English fallback behavior for existing unsliced `getStatusLabel`
+  callers instead of rendering locale keys.
+- Localized the shell `complete` status badge and fixed English singular
+  `Question` handling.
+- Replaced the second root `+ New Project` chrome label that was initially missed.
+
+**Deferred from this increment:**
+- Full `App.jsx` copy extraction.
+- New-project/start-run forms, approval panels, Dev Loop, Smoke Runs, Memory,
+  Agents, Workflow Graph, and System diagnostics panel localization.
 
 ### 2026-06-07 — Backlog closure / gated parking
 
