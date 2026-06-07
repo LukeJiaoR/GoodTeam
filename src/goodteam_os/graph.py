@@ -1305,6 +1305,7 @@ def append_worker_triage_action(
     result: dict[str, object],
     disposition: str,
     next_node: str,
+    pattern_match: dict[str, object] | None = None,
 ) -> None:
     if workspace is None:
         return
@@ -1325,6 +1326,10 @@ def append_worker_triage_action(
         "failure_class": normalized_failure_class(result),
         "status": str(result.get("status", "")),
     }
+    if pattern_match:
+        event["failure_pattern_signature"] = str(pattern_match.get("signature", ""))
+        event["failure_pattern_hits"] = str(pattern_match.get("hit_count", ""))
+        event["failure_pattern_disposition"] = str(pattern_match.get("recommended_disposition", ""))
     with action_log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event) + "\n")
 
@@ -1339,18 +1344,21 @@ def triage_worker_failure(
 ) -> str:
     failure_class = normalized_failure_class(result)
     disposition = disposition_for_failure_class(failure_class)
+    pattern_match = find_worker_failure_pattern_match(workspace=workspace, result=result)
     append_worker_triage_action(
         workspace=workspace,
         state=state,
         result=result,
         disposition=disposition,
         next_node=next_node,
+        pattern_match=pattern_match,
     )
     append_worker_failure_memory_event(
         state=state,
         result=result,
         disposition=disposition,
         project_config=project_config,
+        pattern_match=pattern_match,
     )
     append_worker_failure_pattern(
         workspace=workspace,
@@ -1359,6 +1367,17 @@ def triage_worker_failure(
         source=f"worker_failure:{state.run_id}:implementation:{str(result.get('role', 'worker')).strip() or 'worker'}",
     )
     return disposition
+
+
+def find_worker_failure_pattern_match(
+    *,
+    workspace: Path | None,
+    result: dict[str, object],
+) -> dict[str, object] | None:
+    if workspace is None:
+        return None
+    matches = FailurePatternLibrary(workspace).find_matches(short_failure_summary(result), top_k=1)
+    return matches[0] if matches else None
 
 
 def append_worker_failure_pattern(
@@ -1387,6 +1406,7 @@ def append_worker_failure_memory_event(
     result: dict[str, object],
     disposition: str,
     project_config: Path | None,
+    pattern_match: dict[str, object] | None = None,
 ) -> None:
     memory_root = failure_memory_root(project_config)
     if memory_root is None:
@@ -1399,6 +1419,12 @@ def append_worker_failure_memory_event(
         f"FAILURE [{failure_class}] node=implementation; role={role}; "
         f"summary={summary}; attempts={attempts}; disposition={disposition}"
     )
+    if pattern_match:
+        text = (
+            f"{text}; pattern_match={pattern_match.get('signature', '')}; "
+            f"pattern_hits={pattern_match.get('hit_count', '')}; "
+            f"pattern_disposition={pattern_match.get('recommended_disposition', '')}"
+        )
     source = f"worker_failure:{state.run_id}:implementation:{role}"
     RoleMemoryStore(memory_root).append_memory_event(role, horizon="short-term", text=text, source=source)
 

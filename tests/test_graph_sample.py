@@ -1818,6 +1818,55 @@ def test_escalated_worker_failure_writes_scoped_failure_memory_event(tmp_path, m
     assert patterns[0]["sources"] == ["worker_failure:run-1:implementation:implementation"]
 
 
+def test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    FailurePatternLibrary(tmp_path).record_failure(
+        failure_class="scaffold",
+        summary="Cannot find module better-sqlite3 after npm install",
+        disposition="escalate_human",
+        role="implementation",
+        node="implementation",
+        source="worker_failure:prior:implementation:implementation",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        role = job["role"]
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": role,
+            "adapter": job["adapter"],
+            "status": "failed" if role == "implementation" else "completed",
+            "summary": "native module better-sqlite3 missing after install",
+            "failure_class": "unknown" if role == "implementation" else "",
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.next_node == "blocked"
+    action_log = tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl"
+    actions = [json.loads(line) for line in action_log.read_text(encoding="utf-8").splitlines()]
+    triage = [action for action in actions if action["action"] == "triage_decided"]
+    assert triage[-1]["decision"] == "block"
+    assert triage[-1]["failure_pattern_signature"].startswith("fail:")
+    assert triage[-1]["failure_pattern_hits"] == "1"
+    assert triage[-1]["failure_pattern_disposition"] == "escalate_human"
+    memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation")
+    failure_events = [event for event in memory_events if event["source"] == "worker_failure:run-1:implementation:implementation"]
+    assert "pattern_match=" in failure_events[0]["body"]
+    assert "pattern_hits=1" in failure_events[0]["body"]
+    assert "pattern_disposition=escalate_human" in failure_events[0]["body"]
+
+
 def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")

@@ -8,7 +8,7 @@ reference, verification evidence, and follow-up status.
 
 | Order | Mainline | Status | Scope For This Pass | Completion Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | G3c global failure-pattern library | Completed 2026-06-07 | Add a deterministic global store with signature, classifier hint, recommended disposition, hit count, and query helpers; wire failed worker triage to record patterns. | `466 passed`; ruff clean; frontend build passed |
+| 1 | G3c global failure-pattern library | Pattern-hit observability completed 2026-06-07 | Add deterministic global store, record worker failures, and surface best-match signature/hit/disposition evidence during triage without changing routing. | `480 passed`; ruff clean; frontend build passed |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Dry-smoke slice completed 2026-06-07 | Add a web-visible safe Run-Smoke action on top of the existing dev-loop/readiness surface; keep merge/land as a human gate unless a later auth design changes that. | `470 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
@@ -20,7 +20,7 @@ reference, verification evidence, and follow-up status.
 
 ## Active Increment
 
-Next active increment: choose next real open/gated mainline. Good candidates are G3 failure-pattern hit routing or self-hosting graduate/tag readiness; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
+Next active increment: choose next real open/gated mainline. Good candidates are self-hosting graduate/tag readiness or more dispatch-audit capture; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
 
 ## Completed Increments
 
@@ -82,6 +82,55 @@ hints before any LLM triage agent is introduced.
 **Deferred from this increment:**
 - Applying pattern matches to alter triage routing. This needs its own measured gate
   once hit-rate data exists.
+- LLM triage for unknown failures.
+
+### 2026-06-07 — G3c failure-pattern hit observability
+
+**Intent:** start measuring whether the global failure-pattern library produces useful
+matches during real triage, without letting pattern recommendations change routing
+yet.
+
+**Implemented:**
+- `triage_worker_failure` now asks `FailurePatternLibrary.find_matches` for the best
+  prior match using the current failure summary.
+- `triage_decided` action-log events include `failure_pattern_signature`,
+  `failure_pattern_hits`, and `failure_pattern_disposition` when a match exists.
+- Scoped `worker_failure:*` memory events include the same pattern-match evidence.
+- Existing routing is unchanged: disposition still comes from
+  `disposition_for_failure_class`, not from the historical pattern recommendation.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_graph_sample.py::test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition -q`
+  failed with `KeyError: 'failure_pattern_signature'`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_graph_sample.py::test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition tests/test_graph_sample.py::test_escalated_worker_failure_writes_scoped_failure_memory_event -q`
+  -> `2 passed`.
+- Failure-pattern library regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_failure_patterns.py -q`
+  -> `3 passed`.
+- Related regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_graph_sample.py tests/test_workflow_table.py tests/test_memory.py -q -k 'failure_pattern or worker_failure or triage or failure_class or pickup_packet'`
+  -> `17 passed, 96 deselected`.
+- Touched-file lint:
+  `.venv/bin/ruff check src/goodteam_os/graph.py tests/test_graph_sample.py`
+  -> `All checks passed!`.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `480 passed in 135.83s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- Letting historical pattern recommendations alter routing or escalation. That still
+  needs measured hit-rate evidence and a separate gate.
 - LLM triage for unknown failures.
 
 ### 2026-06-07 — Dispatch provenance depth
