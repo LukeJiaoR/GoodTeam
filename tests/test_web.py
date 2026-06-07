@@ -1421,6 +1421,38 @@ def test_frontend_contract_has_simple_advanced_worker_routing_modes():
     assert "Advanced" in app
 
 
+def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    disallowed_palette_tokens = [
+        "#E5E5E5",
+        "#AFAFAF",
+        "#58CC02",
+        "#D1D1D1",
+        "#3D8B00",
+        "#1a1a1a",
+        "#F1F1F1",
+        "#FF4B4B",
+        "#1CB0F6",
+        "#E8F9D9",
+        "#FF9600",
+    ]
+    assert {token: app.count(token) for token in disallowed_palette_tokens if token in app} == {}
+    assert "text-[10px]" not in app
+    assert "text-[9px]" not in app
+    assert "text-[8px]" not in app
+
+    for semantic_class in [
+        "border-border-subtle",
+        "text-text-muted",
+        "bg-surface-sunken",
+        "text-accent-text",
+        "bg-status-danger-bg",
+        "text-2xs",
+    ]:
+        assert semantic_class in app
+
+
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):
     docs = tmp_path / "content-research"
     docs.mkdir()

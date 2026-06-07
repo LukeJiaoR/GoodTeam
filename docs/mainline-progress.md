@@ -11,13 +11,13 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Completed 2026-06-07 | Add a deterministic global store with signature, classifier hint, recommended disposition, hit count, and query helpers; wire failed worker triage to record patterns. | `466 passed`; ruff clean; frontend build passed |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Dry-smoke slice completed 2026-06-07 | Add a web-visible safe Run-Smoke action on top of the existing dev-loop/readiness surface; keep merge/land as a human gate unless a later auth design changes that. | `470 passed`; ruff clean; frontend build passed |
-| 4 | Theme token conversion | Planned | Convert remaining high-volume hardcoded colors/font-size outliers to semantic tokens after preserving the existing theme switcher. | Pending |
+| 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | Planned, gated | Add node dependency/topological driver foundation only after failure routing and checkpoint/stepper prerequisites stay green. | Pending |
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 
 ## Active Increment
 
-Next active increment: theme token conversion.
+Next active increment: Graph/DAG engine D2 gate review.
 
 ## Completed Increments
 
@@ -173,3 +173,54 @@ GoodTeam web surface without adding a dangerous server-side merge/land path.
 - Server-side land/merge execution. Land remains a human-invoked script and readiness
   surface, per the self-driving design.
 - Release graduation controls.
+
+### 2026-06-07 — Theme token conversion: high-volume palette/type slice
+
+**Intent:** reduce the large App.jsx theme debt without redesigning the UI or
+removing the productized Vivid/Minimal switcher. This slice targets the highest
+volume repeated palette tokens and the 8/9/10px text outliers called out by the
+theme-system plan.
+
+**Implemented:**
+- Converted the repeated Vivid base palette in `frontend/src/App.jsx` to the
+  existing Tailwind v4 semantic token utilities: `bg-surface-*`,
+  `border-border-*`, `text-text-*`, `bg-status-*`, `text-status-*`,
+  `border-status-*`, `bg-accent`, `text-accent-text`, and `shadow-card` /
+  `shadow-button`.
+- Replaced `text-[8px]`, `text-[9px]`, and `text-[10px]` usages in `App.jsx`
+  with the existing `text-2xs` floor from `frontend/src/index.css`.
+- Added a frontend contract test that fails if the high-volume legacy base palette
+  or sub-11px text utilities return to `App.jsx`.
+- Left low-frequency bespoke colors, notably indigo/editor accents and a few
+  one-off warm surfaces, for later visual review instead of blindly flattening
+  all color semantics.
+
+**Verification evidence:**
+- Red contract test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type -q`
+  first failed with counts for 11 legacy palette tokens, including `#E5E5E5`,
+  `#AFAFAF`, `#58CC02`, `#D1D1D1`, and `#3D8B00`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type -q`
+  -> `1 passed`.
+- Related contract regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py -q -k 'frontend_contract or delivery_mode_options'`
+  -> `6 passed, 95 deselected`.
+- Frontend lint:
+  `cd frontend && npm run lint`
+  -> exit 0.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `471 passed in 133.50s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+
+**Deferred from this increment:**
+- Blindly converting every remaining bespoke hex. `App.jsx` is down to 15
+  set of low-frequency one-offs that should be reviewed visually before tokenizing.
+- Componentizing `App.jsx`; this pass stayed mechanical and contract-backed.
+- i18n/copy extraction remains gated separately.

@@ -234,7 +234,7 @@ function getStatusLabel(status) {
 
 // Custom file path component: displays truncated path segments, hover reveals full path tooltip
 function FilePath({ path, segments = 1 }) {
-  if (!path) return <span className="text-[#AFAFAF] dark:text-zinc-550 italic text-xs">not available</span>;
+  if (!path) return <span className="text-text-muted dark:text-zinc-550 italic text-xs">not available</span>;
 
   const pathStr = String(path);
   const parts = pathStr.split(/[/\\]/);
@@ -250,10 +250,10 @@ function FilePath({ path, segments = 1 }) {
 
   return (
     <span className="group relative inline-flex max-w-full font-mono text-[11px] leading-none">
-      <code className="bg-[#F1F1F1] text-[#777777] border border-[#E5E5E5] px-2 py-0.5 rounded-lg break-all cursor-help hover:bg-zinc-200 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700 transition-colors">
+      <code className="bg-surface-sunken text-text-secondary border border-border-subtle px-2 py-0.5 rounded-lg break-all cursor-help hover:bg-zinc-200 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700 transition-colors">
         {displayName}
       </code>
-      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 rounded-xl bg-zinc-950 px-3 py-2 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-black border border-zinc-800 shadow-xl w-max max-w-[28rem] whitespace-normal break-words font-mono leading-relaxed">
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 rounded-xl bg-zinc-950 px-3 py-2 text-2xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-black border border-zinc-800 shadow-xl w-max max-w-[28rem] whitespace-normal break-words font-mono leading-relaxed">
         {pathStr}
       </span>
     </span>
@@ -264,7 +264,7 @@ function FilePath({ path, segments = 1 }) {
 function Spinner() {
   return (
     <div className="flex justify-center items-center py-16">
-      <RefreshCw className="h-10 w-10 text-[#58CC02] animate-spin" />
+      <RefreshCw className="h-10 w-10 text-accent animate-spin" />
     </div>
   );
 }
@@ -2128,20 +2128,20 @@ export default function App() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="dir-picker-title"
-        className="w-full max-w-2xl bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_8px_0_#D1D1D1] dark:shadow-[0_8px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
+        className="w-full max-w-2xl bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden flex flex-col max-h-[85vh]"
       >
         {/* Header */}
-        <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex items-start justify-between gap-4 shrink-0">
+        <div className="px-5 py-4 bg-surface-base dark:bg-zinc-900/80 border-b-2 border-border-subtle dark:border-zinc-800 flex items-start justify-between gap-4 shrink-0">
           <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Directory Browser</p>
-            <h3 id="dir-picker-title" className="font-mono text-xs font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1">
+            <p className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Directory Browser</p>
+            <h3 id="dir-picker-title" className="font-mono text-xs font-extrabold text-accent-text dark:text-emerald-400 mt-1">
               Selecting Project Root Directory
             </h3>
           </div>
           <button
             type="button"
             onClick={() => setPickerOpen(false)}
-            className="bg-white dark:bg-zinc-800 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics cursor-pointer"
+            className="bg-white dark:bg-zinc-800 hover:bg-status-danger-bg border-2 border-border-subtle dark:border-zinc-800 shadow-button dark:shadow-button text-zinc-550 hover:text-status-danger p-2 rounded-2xl transition-all duo-button-physics cursor-pointer"
             aria-label="Close directory browser"
           >
             <X className="h-4 w-4" />
@@ -2149,16 +2149,16 @@ export default function App() {
         </div>
 
         {/* Navigation Bar / Breadcrumb */}
-        <div className="px-5 py-3 bg-[#F9F9F9] dark:bg-zinc-900/40 border-b border-[#E5E5E5] dark:border-zinc-800 flex items-center gap-3 shrink-0">
+        <div className="px-5 py-3 bg-surface-base dark:bg-zinc-900/40 border-b border-border-subtle dark:border-zinc-800 flex items-center gap-3 shrink-0">
           <button
             type="button"
             disabled={pickerParent === null || pickerLoading}
             onClick={() => fetchDirectory(pickerParent)}
-            className="flex items-center gap-1 bg-white dark:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 disabled:opacity-50 disabled:pointer-events-none hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-1.5 rounded-xl text-xs transition-all duo-button-physics cursor-pointer shrink-0"
+            className="flex items-center gap-1 bg-white dark:bg-zinc-800 border-2 border-border-subtle dark:border-zinc-800 disabled:opacity-50 disabled:pointer-events-none hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-button dark:shadow-button text-zinc-700 dark:text-zinc-300 font-bold px-3 py-1.5 rounded-xl text-xs transition-all duo-button-physics cursor-pointer shrink-0"
           >
             <ArrowUp className="h-3 w-3" /> Up
           </button>
-          <div className="flex-grow font-mono text-[10px] text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 rounded-xl overflow-x-auto whitespace-nowrap scrollbar-thin select-all">
+          <div className="flex-grow font-mono text-2xs text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 rounded-xl overflow-x-auto whitespace-nowrap scrollbar-thin select-all">
             {pickerPath || '/'}
           </div>
         </div>
@@ -2166,7 +2166,7 @@ export default function App() {
         {/* New Folder */}
         <form
           onSubmit={handleCreateFolder}
-          className="px-5 py-3 bg-white dark:bg-zinc-950 border-b border-[#E5E5E5] dark:border-zinc-800 shrink-0"
+          className="px-5 py-3 bg-white dark:bg-zinc-950 border-b border-border-subtle dark:border-zinc-800 shrink-0"
         >
           <div className="flex flex-col sm:flex-row gap-2">
             <label className="sr-only" htmlFor="new-folder-name">New folder name</label>
@@ -2180,19 +2180,19 @@ export default function App() {
               }}
               placeholder="New folder name"
               disabled={pickerLoading || creatingFolder}
-              className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#58CC02] disabled:opacity-60"
+              className="flex-1 min-w-0 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-accent disabled:opacity-60"
             />
             <button
               type="submit"
               disabled={pickerLoading || creatingFolder || !newFolderName.trim()}
-              className="bg-white dark:bg-zinc-800 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-3 py-2 rounded-xl text-xs transition-all duo-button-physics disabled:opacity-50 disabled:pointer-events-none cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5"
+              className="bg-white dark:bg-zinc-800 hover:bg-status-success-bg hover:text-accent-text border-2 border-border-subtle dark:border-zinc-800 shadow-button dark:shadow-button text-zinc-700 dark:text-zinc-300 font-bold px-3 py-2 rounded-xl text-xs transition-all duo-button-physics disabled:opacity-50 disabled:pointer-events-none cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5"
             >
               {creatingFolder ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Folder className="h-3.5 w-3.5" />}
               <span>New folder</span>
             </button>
           </div>
           {newFolderError && (
-            <div className="mt-2 bg-[#FFF0D4] dark:bg-amber-950/20 border border-[#FF9600]/40 px-3 py-2 rounded-xl text-[#B36B00] dark:text-amber-300 text-[10px] font-bold flex items-center gap-2">
+            <div className="mt-2 bg-status-warning-bg dark:bg-amber-950/20 border border-status-warning/40 px-3 py-2 rounded-xl text-status-warning-text dark:text-amber-300 text-2xs font-bold flex items-center gap-2">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
               <span>{newFolderError}</span>
             </div>
@@ -2203,15 +2203,15 @@ export default function App() {
         <div className="p-5 overflow-y-auto flex-grow min-h-0 bg-white dark:bg-zinc-950">
           {pickerLoading ? (
             <div className="flex items-center justify-center p-10 text-zinc-500 font-bold">
-              <RefreshCw className="h-5 w-5 animate-spin mr-2 text-[#58CC02]" />
+              <RefreshCw className="h-5 w-5 animate-spin mr-2 text-accent" />
               <span>Loading directory...</span>
             </div>
           ) : pickerError ? (
-            <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-2 border-[#FF9600]/30 p-4 rounded-2xl text-[#B36B00] dark:text-amber-300 text-xs font-bold flex items-center space-x-2">
+            <div className="bg-status-warning-bg dark:bg-amber-950/20 border-2 border-status-warning/30 p-4 rounded-2xl text-status-warning-text dark:text-amber-300 text-xs font-bold flex items-center space-x-2">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <div className="flex-grow">
                 <p className="font-bold">Error loading folder</p>
-                <p className="font-normal font-mono text-[10px] mt-0.5">{pickerError}</p>
+                <p className="font-normal font-mono text-2xs mt-0.5">{pickerError}</p>
               </div>
             </div>
           ) : pickerEntries.length === 0 ? (
@@ -2228,11 +2228,11 @@ export default function App() {
                   className="w-full flex items-center justify-between text-left px-3 py-2 rounded-xl hover:bg-zinc-50 dark:hover:bg-zinc-900/40 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 transition-colors cursor-pointer group"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <Folder className="h-4 w-4 text-[#58CC02] dark:text-[#78D639] group-hover:scale-110 transition-transform shrink-0" />
+                    <Folder className="h-4 w-4 text-accent dark:text-[#78D639] group-hover:scale-110 transition-transform shrink-0" />
                     <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300 truncate select-all">{entry.name}</span>
                   </div>
                   {entry.is_git_repo && (
-                    <span className="flex items-center gap-0.5 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-md border border-blue-100 dark:border-blue-900/40 shrink-0">
+                    <span className="flex items-center gap-0.5 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-2xs font-extrabold uppercase px-1.5 py-0.5 rounded-md border border-blue-100 dark:border-blue-900/40 shrink-0">
                       <GitBranch className="h-3 w-3 inline" /> git
                     </span>
                   )}
@@ -2243,11 +2243,11 @@ export default function App() {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-t-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center gap-3 shrink-0">
+        <div className="px-5 py-4 bg-surface-base dark:bg-zinc-900/80 border-t-2 border-border-subtle dark:border-zinc-800 flex justify-between items-center gap-3 shrink-0">
           <button
             type="button"
             onClick={() => setPickerOpen(false)}
-            className="bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold px-4 py-2 rounded-2xl text-xs transition-all duo-button-physics cursor-pointer"
+            className="bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2 border-border-subtle dark:border-zinc-800 shadow-button dark:shadow-button text-zinc-700 dark:text-zinc-300 font-bold px-4 py-2 rounded-2xl text-xs transition-all duo-button-physics cursor-pointer"
           >
             Cancel
           </button>
@@ -2255,7 +2255,7 @@ export default function App() {
             type="button"
             disabled={pickerLoading || !!pickerError}
             onClick={handleSelectFolder}
-            className="bg-[#58CC02] hover:bg-[#4EB302] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-[#FFFFFF] font-bold px-5 py-2 rounded-2xl text-xs disabled:opacity-50 disabled:pointer-events-none transition-all duo-button-physics cursor-pointer"
+            className="bg-accent hover:bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-5 py-2 rounded-2xl text-xs disabled:opacity-50 disabled:pointer-events-none transition-all duo-button-physics cursor-pointer"
           >
             Select this folder
           </button>
@@ -2717,7 +2717,7 @@ export default function App() {
                       <span>{startingWorkflow ? 'Starting...' : (dryRun ? 'Preview Workflow' : (startMode === 'existing_project' ? 'Start Adoption' : 'Start New Project'))}</span>
                     </button>
                     {startingWorkflow && (
-                      <p className="text-[10px] text-zinc-500 text-center mt-2 animate-pulse">
+                      <p className="text-2xs text-zinc-500 text-center mt-2 animate-pulse">
                         Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
                       </p>
                     )}
@@ -2789,7 +2789,7 @@ export default function App() {
 
         {/* Global Toast */}
         {message && (
-          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border-2 flex items-center space-x-2 animate-fade-in-down ${message.isError ? 'bg-[#FFE2E2] text-[#EA2B2B] border-[#FF4B4B]' : 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]'}`}>
+          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border-2 flex items-center space-x-2 animate-fade-in-down ${message.isError ? 'bg-status-danger-bg text-status-danger-text border-status-danger' : 'bg-status-success-bg text-accent-text border-accent'}`}>
             {message.isError ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
             <span>{message.text}</span>
           </div>
@@ -2798,14 +2798,14 @@ export default function App() {
         <main className="max-w-6xl mx-auto w-full px-6 py-8 flex-grow space-y-8">
           {/* Legacy notice */}
           {legacyState && (
-            <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-2 border-[#FF9600]/30 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between text-[#B36B00] dark:text-amber-300 text-xs gap-4 shadow-[0_4px_0_#FFE2BE] dark:shadow-none">
+            <div className="bg-status-warning-bg dark:bg-amber-950/20 border-2 border-status-warning/30 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between text-status-warning-text dark:text-amber-300 text-xs gap-4 shadow-card dark:shadow-none">
               <div>
                 <span className="font-extrabold text-sm block mb-1">Legacy Active Run Detected</span>
                 <span>Active path: <code className="bg-white/60 dark:bg-amber-900/40 px-1.5 py-0.5 rounded-lg border border-amber-250 dark:border-amber-900 font-mono">{legacyState.project_key}</code> currently at <code className="bg-white/60 dark:bg-amber-900/40 px-1.5 py-0.5 rounded-lg border border-amber-250 dark:border-amber-900 font-mono">{legacyState.next_node || legacyState.current_node}</code></span>
               </div>
               <button
                 onClick={() => updateUrl(legacyState.project_key)}
-                className="bg-[#FF9600] border-2 border-[#B36B00] shadow-[0_3px_0_#B36B00] text-white font-bold px-4 py-1.5 rounded-2xl text-[10px] uppercase tracking-wider transition-all duo-button-physics shrink-0 self-start md:self-auto"
+                className="bg-status-warning border-2 border-status-warning-text shadow-button text-white font-bold px-4 py-1.5 rounded-2xl text-2xs uppercase tracking-wider transition-all duo-button-physics shrink-0 self-start md:self-auto"
               >
                 Resume Run
               </button>
@@ -3265,7 +3265,7 @@ export default function App() {
           <div className="bg-surface-raised border-b-2 border-border-subtle px-6 py-4 flex flex-col md:flex-row md:items-start justify-between gap-4 animate-fade-in shrink-0">
             <div className="flex-grow space-y-1">
               <div className="flex items-center space-x-2">
-                <span className="p-1 bg-[#E8F9D9] dark:bg-emerald-950/20 text-[#3D8B00] dark:text-emerald-400 rounded-lg">
+                <span className="p-1 bg-status-success-bg dark:bg-emerald-950/20 text-accent-text dark:text-emerald-400 rounded-lg">
                   <CheckCircle className="h-4 w-4" />
                 </span>
                 <span className="font-extrabold text-sm text-text-primary">Git Repository Initialized</span>
@@ -3300,7 +3300,7 @@ export default function App() {
 
         {/* Global Toast */}
         {message && (
-          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border-2 flex items-center space-x-2 animate-fade-in-down ${message.isError ? 'bg-[#FFE2E2] text-[#EA2B2B] border-[#FF4B4B]' : 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]'}`}>
+          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border-2 flex items-center space-x-2 animate-fade-in-down ${message.isError ? 'bg-status-danger-bg text-status-danger-text border-status-danger' : 'bg-status-success-bg text-accent-text border-accent'}`}>
             {message.isError ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
             <span>{message.text}</span>
           </div>
@@ -3312,19 +3312,19 @@ export default function App() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="memory-event-detail-title"
-              className="w-full max-w-2xl bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_8px_0_#D1D1D1] dark:shadow-[0_8px_0_#1a1a1a] rounded-2xl overflow-hidden"
+              className="w-full max-w-2xl bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden"
             >
-              <div className="px-5 py-4 bg-[#F7F7F7] dark:bg-zinc-900/80 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex items-start justify-between gap-4">
+              <div className="px-5 py-4 bg-surface-base dark:bg-zinc-900/80 border-b-2 border-border-subtle dark:border-zinc-800 flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Memory Event</p>
-                  <h3 id="memory-event-detail-title" className="font-mono text-sm font-extrabold text-[#3D8B00] dark:text-emerald-400 mt-1 select-all">
+                  <p className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Memory Event</p>
+                  <h3 id="memory-event-detail-title" className="font-mono text-sm font-extrabold text-accent-text dark:text-emerald-400 mt-1 select-all">
                     {memoryEventDetail.id}
                   </h3>
                 </div>
                 <button
                   type="button"
                   onClick={() => setMemoryEventDetail(null)}
-                  className="bg-white dark:bg-zinc-800 hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_3px_0_#D1D1D1] dark:shadow-[0_3px_0_#1a1a1a] text-zinc-550 hover:text-[#FF4B4B] p-2 rounded-2xl transition-all duo-button-physics"
+                  className="bg-white dark:bg-zinc-800 hover:bg-status-danger-bg border-2 border-border-subtle dark:border-zinc-800 shadow-button dark:shadow-button text-zinc-550 hover:text-status-danger p-2 rounded-2xl transition-all duo-button-physics"
                   aria-label="Close memory event detail"
                 >
                   <X className="h-4 w-4" />
@@ -3334,19 +3334,19 @@ export default function App() {
               <div className="p-5 max-h-[70vh] overflow-y-auto">
                 {memoryEventDetail.loading ? (
                   <div className="flex items-center justify-center p-10 text-zinc-500 font-bold">
-                    <RefreshCw className="h-5 w-5 animate-spin mr-2 text-[#58CC02]" />
+                    <RefreshCw className="h-5 w-5 animate-spin mr-2 text-accent" />
                     <span>Loading full memory event...</span>
                   </div>
                 ) : memoryEventDetail.error ? (
-                  <div className="bg-[#FFF0D4] dark:bg-amber-950/20 border-2 border-[#FF9600]/30 p-4 rounded-2xl text-[#B36B00] dark:text-amber-300 text-xs font-bold flex items-center space-x-2">
+                  <div className="bg-status-warning-bg dark:bg-amber-950/20 border-2 border-status-warning/30 p-4 rounded-2xl text-status-warning-text dark:text-amber-300 text-xs font-bold flex items-center space-x-2">
                     <AlertTriangle className="h-4 w-4 shrink-0" />
                     <span>{memoryEventDetail.error}</span>
                   </div>
                 ) : memoryEventDetail.data ? (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[10px] font-bold">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-2xs font-bold">
                       <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-                        <span className="block uppercase tracking-wider text-[#AFAFAF] mb-1">Role</span>
+                        <span className="block uppercase tracking-wider text-text-muted mb-1">Role</span>
                         <span className="text-zinc-800 dark:text-zinc-200 uppercase">{memoryEventDetail.data.role || 'not recorded'}</span>
                       </div>
                       <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 rounded-xl p-3">
@@ -3354,30 +3354,30 @@ export default function App() {
                         <span className="text-blue-700 dark:text-blue-300 uppercase">{memoryEventDetail.data.horizon || 'not recorded'}</span>
                       </div>
                       <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-                        <span className="block uppercase tracking-wider text-[#AFAFAF] mb-1">Timestamp</span>
+                        <span className="block uppercase tracking-wider text-text-muted mb-1">Timestamp</span>
                         <span className="font-mono text-zinc-700 dark:text-zinc-300">{memoryEventDetail.data.timestamp || 'not recorded'}</span>
                       </div>
                       <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 min-w-0">
-                        <span className="block uppercase tracking-wider text-[#AFAFAF] mb-1">Source</span>
+                        <span className="block uppercase tracking-wider text-text-muted mb-1">Source</span>
                         <span className="font-mono text-zinc-700 dark:text-zinc-300 break-all">{memoryEventDetail.data.source || 'not recorded'}</span>
                       </div>
                     </div>
                     {hasMemorySupersedeInfo && (
-                      <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 text-[10px] font-bold space-y-2">
+                      <div className="bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 text-2xs font-bold space-y-2">
                         {memoryEventDetail.data.is_superseded && (
-                          <span className="inline-flex items-center bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded uppercase text-[9px] border border-amber-100 dark:border-amber-900/50">
+                          <span className="inline-flex items-center bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded uppercase text-2xs border border-amber-100 dark:border-amber-900/50">
                             Superseded
                           </span>
                         )}
                         {memorySupersedes && (
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="uppercase tracking-wider text-[#AFAFAF]">Supersedes:</span>
+                            <span className="uppercase tracking-wider text-text-muted">Supersedes:</span>
                             {renderMemoryEventLink(memorySupersedes)}
                           </div>
                         )}
                         {memorySupersededBy.length > 0 && (
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="uppercase tracking-wider text-[#AFAFAF]">Superseded by:</span>
+                            <span className="uppercase tracking-wider text-text-muted">Superseded by:</span>
                             {memorySupersededBy.map((eventId) => (
                               <span key={eventId} className="flex items-center gap-1">
                                 {renderMemoryEventLink(eventId)}
@@ -3388,7 +3388,7 @@ export default function App() {
                       </div>
                     )}
                     <div>
-                      <span className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-2">Full Event Text</span>
+                      <span className="block text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-2">Full Event Text</span>
                       <p className="text-xs font-mono leading-relaxed text-zinc-800 dark:text-zinc-200 bg-zinc-50/70 dark:bg-zinc-900/50 p-4 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 whitespace-pre-wrap select-all">
                         {memoryEventDetail.data.text || 'No event text recorded.'}
                       </p>
@@ -3408,7 +3408,7 @@ export default function App() {
           {loading ? (
             <Spinner />
           ) : error ? (
-            <div className="bg-[#FFE2E2] border-2 border-[#FF4B4B] p-6 rounded-2xl text-[#EA2B2B] flex items-center space-x-3 shadow-xs">
+            <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl text-status-danger-text flex items-center space-x-3 shadow-xs">
               <AlertTriangle className="h-6 w-6 shrink-0" />
               <span className="font-bold text-sm">{error}</span>
             </div>
@@ -3417,15 +3417,15 @@ export default function App() {
               {/* Tab: Workflow Graph */}
               {activeTab === 'workflow' && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Workflow Graph</h2>
-                    <p className="text-xs text-[#AFAFAF]">Visual topology of pipeline nodes, decision gates, transition edges, and active execution run path.</p>
+                    <p className="text-xs text-text-muted">Visual topology of pipeline nodes, decision gates, transition edges, and active execution run path.</p>
                   </div>
 
                   {loadingGraph ? (
                     <Spinner />
                   ) : graphError ? (
-                    <div className="bg-[#FFE2E2] border-2 border-[#FF4B4B] p-6 rounded-2xl text-[#EA2B2B] flex items-center space-x-3 shadow-xs">
+                    <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl text-status-danger-text flex items-center space-x-3 shadow-xs">
                       <AlertTriangle className="h-6 w-6 shrink-0" />
                       <span className="font-bold text-sm">{graphError}</span>
                     </div>
@@ -3433,37 +3433,37 @@ export default function App() {
                     (Array.isArray(graphData.nodes) ? graphData.nodes : []).length === 0 &&
                     (Array.isArray(graphData.edges) ? graphData.edges : []).length === 0
                   ) ? (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs">
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-2xl p-12 text-center text-text-muted italic text-xs">
                       No workflow graph nodes or edges recorded for this project yet.
                     </div>
                   ) : (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 overflow-x-auto relative">
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-6 overflow-x-auto relative">
                       {/* Active Run Status Header */}
                       {graphData.run && (
                         <div className="mb-6 bg-zinc-50 dark:bg-zinc-900/50 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 flex flex-col gap-3 text-xs font-bold">
                           <div className="flex flex-wrap items-center justify-between gap-4">
                             <div className="flex items-center space-x-2">
-                              <span className="text-[#AFAFAF] uppercase tracking-wider">Active Run:</span>
+                              <span className="text-text-muted uppercase tracking-wider">Active Run:</span>
                               <span className="font-mono text-zinc-800 dark:text-zinc-200">{graphData.run.run_id}</span>
                             </div>
                             <div className="flex flex-wrap gap-4">
                               {(graphData.run.current_graph_node || graphData.run.current_node) && (
                                 <div className="flex items-center space-x-1.5">
-                                  <span className="h-2 w-2 rounded-full bg-[#58CC02] animate-pulse" />
-                                  <span className="text-[#AFAFAF]">Current Node:</span>
-                                  <span className="text-[#3D8B00] font-mono">{graphData.run.current_graph_node || graphData.run.current_node}</span>
+                                  <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
+                                  <span className="text-text-muted">Current Node:</span>
+                                  <span className="text-accent-text font-mono">{graphData.run.current_graph_node || graphData.run.current_node}</span>
                                 </div>
                               )}
                               {(graphData.run.next_graph_node || graphData.run.next_node) && (
                                 <div className="flex items-center space-x-1.5">
-                                  <span className="h-2 w-2 rounded-full bg-[#1CB0F6] animate-pulse" />
-                                  <span className="text-[#AFAFAF]">Next Node:</span>
-                                  <span className="text-[#0A7BAF] font-mono">{graphData.run.next_graph_node || graphData.run.next_node}</span>
+                                  <span className="h-2 w-2 rounded-full bg-status-info animate-pulse" />
+                                  <span className="text-text-muted">Next Node:</span>
+                                  <span className="text-status-info-text font-mono">{graphData.run.next_graph_node || graphData.run.next_node}</span>
                                 </div>
                               )}
                             </div>
                           </div>
-                          <div className="border-t border-zinc-200 dark:border-zinc-800/80 pt-2 flex items-center space-x-1.5 text-[10px] text-zinc-550 font-normal">
+                          <div className="border-t border-zinc-200 dark:border-zinc-800/80 pt-2 flex items-center space-x-1.5 text-2xs text-zinc-550 font-normal">
                             <Info className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                             <span className="text-zinc-900 dark:text-zinc-100">
                               Note: Colored edge pills represent transition path types, not the project's actual gate decisions.
@@ -3896,22 +3896,22 @@ export default function App() {
               )}
 
               {activeTab === 'agents_memory' && (
-                <div className="flex bg-[#F1F1F1] dark:bg-zinc-900 p-1 rounded-xl w-fit space-x-1">
+                <div className="flex bg-surface-sunken dark:bg-zinc-900 p-1 rounded-xl w-fit space-x-1">
                   <button
                     onClick={() => setAgentsMemorySubTab('roles')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'roles' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'roles' ? 'bg-white dark:bg-zinc-800 shadow-sm text-accent-text dark:text-emerald-400' : 'text-text-muted hover:text-zinc-800 dark:hover:text-zinc-200'}`}
                   >
                     Roles
                   </button>
                   <button
                     onClick={() => setAgentsMemorySubTab('memory')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'memory' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'memory' ? 'bg-white dark:bg-zinc-800 shadow-sm text-accent-text dark:text-emerald-400' : 'text-text-muted hover:text-zinc-800 dark:hover:text-zinc-200'}`}
                   >
                     Memory
                   </button>
                   <button
                     onClick={() => setAgentsMemorySubTab('workers')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'workers' ? 'bg-white dark:bg-zinc-800 shadow-sm text-[#3D8B00] dark:text-emerald-400' : 'text-[#AFAFAF] hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'workers' ? 'bg-white dark:bg-zinc-800 shadow-sm text-accent-text dark:text-emerald-400' : 'text-text-muted hover:text-zinc-800 dark:hover:text-zinc-200'}`}
                   >
                     Jobs
                   </button>
@@ -3921,9 +3921,9 @@ export default function App() {
               {/* Tab: Roles */}
               {(activeTab === 'roles' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'roles')) && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Role Observability</h2>
-                    <p className="text-xs text-[#AFAFAF]">Overview of AI agents configured for this workflow execution loop.</p>
+                    <p className="text-xs text-text-muted">Overview of AI agents configured for this workflow execution loop.</p>
                   </div>
 
                   {/* Grid layout for 9 roles: 3 cols wide, 2 cols medium, rounded-2xl white cards */}
@@ -3933,26 +3933,26 @@ export default function App() {
                       return (
                         <div
                           key={role.name}
-                          className={`bg-white dark:bg-zinc-950 border-2 rounded-2xl shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-5 space-y-4 hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] transition-all duration-200 flex flex-col justify-between ${role.status === 'Waiting for approval' ? 'border-[#FF9600]' : role.status === 'Ready' ? 'border-[#58CC02]' : 'border-[#E5E5E5] dark:border-zinc-800'}`}
+                          className={`bg-white dark:bg-zinc-950 border-2 rounded-2xl shadow-card dark:shadow-card p-5 space-y-4 hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 flex flex-col justify-between ${role.status === 'Waiting for approval' ? 'border-status-warning' : role.status === 'Ready' ? 'border-accent' : 'border-border-subtle dark:border-zinc-800'}`}
                         >
                           <div className="space-y-3">
                             <div className="flex justify-between items-start gap-2">
                               <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 leading-tight">{role.name}</h3>
-                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border uppercase tracking-wider shrink-0 ${badge.bg} ${badge.text} ${badge.border}`}>
+                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider shrink-0 ${badge.bg} ${badge.text} ${badge.border}`}>
                                 {getStatusLabel(role.status)}
                               </span>
                             </div>
                             <p className="text-xs font-semibold text-zinc-550 leading-relaxed h-12 overflow-y-auto">{role.description}</p>
                           </div>
 
-                          <div className="border-t-2 border-[#F1F1F1] dark:border-zinc-900 pt-3 space-y-2 text-[10px] font-bold">
+                          <div className="border-t-2 border-border-subtle dark:border-zinc-900 pt-3 space-y-2 text-2xs font-bold">
                             <div className="grid grid-cols-2 gap-x-2">
                               <div>
-                                <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px] block mb-0.5">Model</span>
+                                <span className="text-text-muted uppercase tracking-wider text-2xs block mb-0.5">Model</span>
                                 <span className="font-mono text-zinc-700 dark:text-zinc-300 truncate block">{role.model}</span>
                               </div>
                               <div>
-                                <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px] block mb-0.5">Mode</span>
+                                <span className="text-text-muted uppercase tracking-wider text-2xs block mb-0.5">Mode</span>
                                 <span className="text-zinc-700 dark:text-zinc-300 capitalize">{role.mode}</span>
                               </div>
                             </div>
@@ -3960,8 +3960,8 @@ export default function App() {
                             {role.artifact && (
                               <div className="pt-1 flex justify-between items-center gap-2">
                                 <div>
-                                  <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px] block">Target Artifact</span>
-                                  <span className="text-[#58CC02] uppercase font-extrabold text-[10px]">{role.artifact}</span>
+                                  <span className="text-text-muted uppercase tracking-wider text-2xs block">Target Artifact</span>
+                                  <span className="text-accent uppercase font-extrabold text-2xs">{role.artifact}</span>
                                 </div>
                                 <FilePath path={role.artifact_path} segments={1} />
                               </div>
@@ -3977,9 +3977,9 @@ export default function App() {
               {/* Tab: Artifacts */}
               {activeTab === 'artifacts' && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">State Artifacts</h2>
-                    <p className="text-xs text-[#AFAFAF]">Durable ledger file records generated and updated by this run.</p>
+                    <p className="text-xs text-text-muted">Durable ledger file records generated and updated by this run.</p>
                   </div>
 
                   {/* 4-column card grid */}
@@ -3987,18 +3987,18 @@ export default function App() {
                     {state?.artifacts && Object.entries(state.artifacts).map(([name, path]) => (
                       <div
                         key={name}
-                        className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-4 rounded-2xl flex items-center justify-between hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] transition-all duration-200"
+                        className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card p-4 rounded-2xl flex items-center justify-between hover:-translate-y-0.5 hover:shadow-card transition-all duration-200"
                       >
                         <div className="flex items-center space-x-3 overflow-hidden">
-                          <FileText className="h-6 w-6 text-[#1CB0F6] shrink-0" />
+                          <FileText className="h-6 w-6 text-status-info shrink-0" />
                           <div className="overflow-hidden">
-                            <span className="font-extrabold text-[9px] uppercase tracking-widest text-[#AFAFAF] block mb-0.5">{name}</span>
+                            <span className="font-extrabold text-2xs uppercase tracking-widest text-text-muted block mb-0.5">{name}</span>
                             <FilePath path={path} segments={1} />
                           </div>
                         </div>
                         <button
                           onClick={() => handleEditArtifact(name)}
-                          className="bg-zinc-50 hover:bg-[#D0F0FF] border-2 border-[#E5E5E5] hover:border-[#1CB0F6] p-1.5 rounded-xl transition-all duo-button-physics shrink-0 text-zinc-500 hover:text-[#0A7BAF]"
+                          className="bg-zinc-50 hover:bg-status-info-bg border-2 border-border-subtle hover:border-status-info p-1.5 rounded-xl transition-all duo-button-physics shrink-0 text-zinc-500 hover:text-status-info-text"
                           title="Open artifact"
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
@@ -4006,7 +4006,7 @@ export default function App() {
                       </div>
                     ))}
                     {(!state?.artifacts || Object.keys(state.artifacts).length === 0) && (
-                      <div className="col-span-4 border-2 border-dashed border-[#E5E5E5] rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs">
+                      <div className="col-span-4 border-2 border-dashed border-border-subtle rounded-2xl p-12 text-center text-text-muted italic text-xs">
                         No artifacts recorded in this state yet.
                       </div>
                     )}
@@ -4017,47 +4017,47 @@ export default function App() {
               {/* Tab: Actions */}
               {activeTab === 'actions' && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Execution Logs</h2>
-                    <p className="text-xs text-[#AFAFAF]">Chronological list of all worker dispatches, approvals, and commits.</p>
+                    <p className="text-xs text-text-muted">Chronological list of all worker dispatches, approvals, and commits.</p>
                   </div>
 
                   {/* Timeline layout: 2px vertical line on left */}
-                  <div className="relative border-l-2 border-[#E5E5E5] dark:border-zinc-800 ml-4 pl-6 space-y-6">
+                  <div className="relative border-l-2 border-border-subtle dark:border-zinc-800 ml-4 pl-6 space-y-6">
                     {actionItems.map((action, idx) => {
                       // system = blue, human = green, error = red
                       const isHuman = action.actor === 'human';
                       const isSystem = action.actor === 'system';
-                      const dotColor = isHuman ? 'bg-[#58CC02] border-[#3D8B00]' : isSystem ? 'bg-[#1CB0F6] border-[#0A7BAF]' : 'bg-[#FF4B4B] border-[#EA2B2B]';
+                      const dotColor = isHuman ? 'bg-accent border-accent-text' : isSystem ? 'bg-status-info border-status-info-text' : 'bg-status-danger border-status-danger-text';
 
                       return (
                         <div key={idx} className="relative group">
                           {/* Dot indicator node */}
                           <span className={`absolute -left-[31px] top-1.5 h-3.5 w-3.5 rounded-full border-2 ${dotColor}`} />
 
-                          <article className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] transition-all duration-200 space-y-2.5 max-w-3xl">
+                          <article className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 space-y-2.5 max-w-3xl">
                             <div className="flex justify-between items-center gap-2">
                               <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 leading-tight">{action.title}</h3>
-                              <span className={`inline-block text-[9px] px-2 py-0.5 rounded-full font-extrabold border uppercase tracking-wider leading-none ${isHuman ? 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30' : 'bg-[#D0F0FF] text-[#0A7BAF] border-[#1CB0F6]/30'}`}>
+                              <span className={`inline-block text-2xs px-2 py-0.5 rounded-full font-extrabold border uppercase tracking-wider leading-none ${isHuman ? 'bg-status-success-bg text-accent-text border-accent/30' : 'bg-status-info-bg text-status-info-text border-status-info/30'}`}>
                                 {action.actor}
                               </span>
                             </div>
 
-                            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">
-                              <span>Action: <span className="font-bold text-zinc-700 dark:text-zinc-300 font-mono text-[9px]">{action.action}</span></span>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-2xs text-zinc-500 font-semibold uppercase tracking-wider">
+                              <span>Action: <span className="font-bold text-zinc-700 dark:text-zinc-300 font-mono text-2xs">{action.action}</span></span>
                               {action.gate && <span>Gate: <span className="font-bold text-zinc-700 dark:text-zinc-300">{action.gate}</span></span>}
                               {action.decision && <span>Decision: <span className="font-bold text-zinc-700 dark:text-zinc-300">{action.decision}</span></span>}
-                              {action.node_transition && <span>Node: <span className="font-bold text-zinc-700 dark:text-zinc-300 font-mono text-[9px]">{action.node_transition}</span></span>}
+                              {action.node_transition && <span>Node: <span className="font-bold text-zinc-700 dark:text-zinc-300 font-mono text-2xs">{action.node_transition}</span></span>}
                             </div>
 
                             {action.artifact_path && (
-                              <div className="pt-1.5 border-t border-[#F1F1F1] dark:border-zinc-900 flex items-center space-x-2 text-[10px] font-bold">
-                                <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px]">{action.artifact || 'Artifact'}</span>
+                              <div className="pt-1.5 border-t border-border-subtle dark:border-zinc-900 flex items-center space-x-2 text-2xs font-bold">
+                                <span className="text-text-muted uppercase tracking-wider text-2xs">{action.artifact || 'Artifact'}</span>
                                 <FilePath path={action.artifact_path} segments={1} />
                               </div>
                             )}
 
-                            <div className="text-[9px] font-mono font-bold text-[#AFAFAF] text-right">
+                            <div className="text-2xs font-mono font-bold text-text-muted text-right">
                               {action.timestamp ? formatHumanTime(action.timestamp) : ''}
                             </div>
                           </article>
@@ -4066,7 +4066,7 @@ export default function App() {
                     })}
 
                     {actionItems.length === 0 && (
-                      <div className="border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs max-w-3xl">
+                      <div className="border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-2xl p-12 text-center text-text-muted italic text-xs max-w-3xl">
                         No actions logged in this run.
                       </div>
                     )}
@@ -4077,9 +4077,9 @@ export default function App() {
               {/* Tab: Agile Board */}
               {activeTab === 'board' && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Agile Board</h2>
-                    <p className="text-xs text-[#AFAFAF]">Real-time projection of task ledger task items.</p>
+                    <p className="text-xs text-text-muted">Real-time projection of task ledger task items.</p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start font-semibold">
@@ -4097,20 +4097,20 @@ export default function App() {
 
                       // Blocked: Orange, Done: Green, columns heads matching Duo opacity badges
                       const headStyles = {
-                        backlog: 'bg-[#F1F1F1] text-[#777777] border-2 border-[#AFAFAF]/20',
-                        doing: 'bg-[#D0F0FF] text-[#0A7BAF] border-2 border-[#1CB0F6]/20',
-                        blocked: 'bg-[#FFF0D4] text-[#B36B00] border-2 border-[#FF9600]/20',
-                        done: 'bg-[#E8F9D9] text-[#3D8B00] border-2 border-[#58CC02]/20',
+                        backlog: 'bg-surface-sunken text-text-secondary border-2 border-border-strong/20',
+                        doing: 'bg-status-info-bg text-status-info-text border-2 border-status-info/20',
+                        blocked: 'bg-status-warning-bg text-status-warning-text border-2 border-status-warning/20',
+                        done: 'bg-status-success-bg text-accent-text border-2 border-accent/20',
                       }[columnKey];
 
                       return (
                         <section
                           key={columnKey}
-                          className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-4 flex flex-col min-h-[420px]"
+                          className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-4 flex flex-col min-h-[420px]"
                         >
                           <div className={`flex justify-between items-center px-3 py-2 rounded-xl mb-4 font-extrabold text-xs uppercase tracking-wider leading-none ${headStyles}`}>
                             <span>{columnLabel}</span>
-                            <span className="text-[10px] leading-none px-2 py-0.5 rounded-full bg-white/70 dark:bg-black/20 font-extrabold">
+                            <span className="text-2xs leading-none px-2 py-0.5 rounded-full bg-white/70 dark:bg-black/20 font-extrabold">
                               {counts[columnKey] || 0}
                             </span>
                           </div>
@@ -4119,38 +4119,38 @@ export default function App() {
                             {columnTasks.map((task) => (
                               <article
                                 key={task.id}
-                                className="bg-[#F7F7F7] dark:bg-zinc-900 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3.5 shadow-xs space-y-3 hover:-translate-y-0.5 hover:shadow-sm transition-all group"
+                                className="bg-surface-base dark:bg-zinc-900 border-2 border-border-subtle dark:border-zinc-800 rounded-xl p-3.5 shadow-xs space-y-3 hover:-translate-y-0.5 hover:shadow-sm transition-all group"
                               >
                                 <div className="flex justify-between items-start gap-1">
-                                  <span className="font-mono text-[9px] text-[#AFAFAF] uppercase tracking-wide font-extrabold select-all leading-none">{task.id}</span>
-                                  <span className={`inline-block px-1.5 py-0.5 rounded-md text-[8px] font-extrabold uppercase leading-none ${task.priority === 'high' ? 'bg-[#FFE2E2] text-[#EA2B2B]' : 'bg-[#F1F1F1] text-[#777777]'}`}>
+                                  <span className="font-mono text-2xs text-text-muted uppercase tracking-wide font-extrabold select-all leading-none">{task.id}</span>
+                                  <span className={`inline-block px-1.5 py-0.5 rounded-md text-2xs font-extrabold uppercase leading-none ${task.priority === 'high' ? 'bg-status-danger-bg text-status-danger-text' : 'bg-surface-sunken text-text-secondary'}`}>
                                     {task.priority}
                                   </span>
                                 </div>
 
                                 <div>
                                   <h4 className="font-bold text-xs text-zinc-800 dark:text-zinc-200 leading-snug">{task.title}</h4>
-                                  <p className="text-[10px] font-semibold text-zinc-500 mt-1 leading-relaxed">{task.description}</p>
+                                  <p className="text-2xs font-semibold text-zinc-500 mt-1 leading-relaxed">{task.description}</p>
                                 </div>
 
                                 {task.acceptance_criteria && task.acceptance_criteria.length > 0 && (
-                                  <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800 text-[9px] space-y-1">
-                                    <span className="font-bold text-[#AFAFAF] block uppercase tracking-wider">Criteria</span>
+                                  <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800 text-2xs space-y-1">
+                                    <span className="font-bold text-text-muted block uppercase tracking-wider">Criteria</span>
                                     <ul className="list-disc pl-3 text-zinc-500 space-y-0.5 leading-snug">
                                       {task.acceptance_criteria.map((c, cIdx) => <li key={cIdx}>{c}</li>)}
                                     </ul>
                                   </div>
                                 )}
 
-                                <div className="flex justify-between items-center text-[9px] pt-1 leading-none font-bold">
-                                  <span className="text-[#AFAFAF] uppercase">Actor: <span className="text-zinc-700 dark:text-zinc-300 font-extrabold">{task.role}</span></span>
-                                  <span className="text-[#AFAFAF] font-mono">{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : ''}</span>
+                                <div className="flex justify-between items-center text-2xs pt-1 leading-none font-bold">
+                                  <span className="text-text-muted uppercase">Actor: <span className="text-zinc-700 dark:text-zinc-300 font-extrabold">{task.role}</span></span>
+                                  <span className="text-text-muted font-mono">{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : ''}</span>
                                 </div>
                               </article>
                             ))}
 
                             {columnTasks.length === 0 && (
-                              <div className="border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-6 text-center text-[#AFAFAF] text-[10px] flex flex-col items-center justify-center space-y-1 select-none">
+                              <div className="border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-xl p-6 text-center text-text-muted text-2xs flex flex-col items-center justify-center space-y-1 select-none">
                                 <Info className="h-4 w-4 text-zinc-300" />
                                 <span>暂无任务</span>
                               </div>
@@ -4166,16 +4166,16 @@ export default function App() {
               {/* Tab: Smoke Runs */}
               {activeTab === 'smoke' && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-3 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-3 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
                     <div>
                       <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Smoke Test Reports</h2>
-                      <p className="text-xs text-[#AFAFAF]">Verify codebase status and health against configured suites.</p>
+                      <p className="text-xs text-text-muted">Verify codebase status and health against configured suites.</p>
                     </div>
                     <button
                       type="button"
                       onClick={handleSmokeRun}
                       disabled={smokeRunLoading}
-                      className="bg-[#58CC02] hover:bg-[#46A302] disabled:bg-zinc-300 text-white border-b-4 border-[#3D8B00] disabled:border-zinc-400 px-4 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center justify-center gap-2 min-w-[9rem]"
+                      className="bg-accent hover:bg-accent disabled:bg-zinc-300 text-white border-b-4 border-accent-text disabled:border-zinc-400 px-4 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center justify-center gap-2 min-w-[9rem]"
                     >
                       <PlaySquare className="h-4 w-4" />
                       {smokeRunLoading ? 'Starting...' : 'Run Dry Smoke'}
@@ -4186,45 +4186,45 @@ export default function App() {
                     {smokeRunItems.map((item, idx) => {
                       const isPass = item.status === 'pass';
                       const isFail = item.status === 'fail';
-                      const cardBorder = isPass ? 'border-[#58CC02]' : isFail ? 'border-[#FF4B4B]' : 'border-[#E5E5E5]';
+                      const cardBorder = isPass ? 'border-accent' : isFail ? 'border-status-danger' : 'border-border-subtle';
                       const badge = getBadgeStyle(item.status);
 
                       return (
                         <article
                           key={idx}
-                          className={`bg-white dark:bg-zinc-950 border-2 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] transition-all duration-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 ${cardBorder}`}
+                          className={`bg-white dark:bg-zinc-950 border-2 shadow-card dark:shadow-card rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 ${cardBorder}`}
                         >
                           <div className="space-y-2">
                             <div className="flex items-center space-x-2.5">
-                              <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${isPass ? 'bg-[#58CC02]' : isFail ? 'bg-[#FF4B4B] animate-pulse' : 'bg-zinc-400'}`} />
+                              <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${isPass ? 'bg-accent' : isFail ? 'bg-status-danger animate-pulse' : 'bg-zinc-400'}`} />
                               <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">Cycle {item.cycle} - {item.project_key}</h3>
-                              <span className={`inline-block text-[9px] px-2 py-0.5 rounded-full font-extrabold border uppercase tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>
+                              <span className={`inline-block text-2xs px-2 py-0.5 rounded-full font-extrabold border uppercase tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>
                                 {getStatusLabel(item.status)}
                               </span>
                             </div>
 
-                            <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 text-[10px] text-zinc-550 font-bold uppercase tracking-wider pt-1.5">
+                            <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 text-2xs text-zinc-550 font-bold uppercase tracking-wider pt-1.5">
                               <div>
-                                <dt className="text-[#AFAFAF] mb-0.5">Test Suite</dt>
-                                <dd className="font-mono text-zinc-700 dark:text-zinc-300 font-extrabold text-[9px]">{item.suite}</dd>
+                                <dt className="text-text-muted mb-0.5">Test Suite</dt>
+                                <dd className="font-mono text-zinc-700 dark:text-zinc-300 font-extrabold text-2xs">{item.suite}</dd>
                               </div>
                               {item.classification && (
                                 <div>
-                                  <dt className="text-[#AFAFAF] mb-0.5">Classification</dt>
-                                  <dd className="font-mono text-[#EA2B2B] dark:text-red-400 font-extrabold">{item.classification}</dd>
+                                  <dt className="text-text-muted mb-0.5">Classification</dt>
+                                  <dd className="font-mono text-status-danger-text dark:text-red-400 font-extrabold">{item.classification}</dd>
                                 </div>
                               )}
                               {item.next_task && (
                                 <div className="col-span-2">
-                                  <dt className="text-[#AFAFAF] mb-0.5">Recovery Task</dt>
+                                  <dt className="text-text-muted mb-0.5">Recovery Task</dt>
                                   <dd className="text-zinc-700 dark:text-zinc-300 truncate max-w-xs font-sans normal-case text-xs font-semibold" title={item.next_task}>{item.next_task}</dd>
                                 </div>
                               )}
                             </dl>
 
                             {item.report_path && (
-                              <div className="pt-2 flex items-center space-x-2 text-[9px] font-bold">
-                                <span className="text-[#AFAFAF] uppercase tracking-wider">Report:</span>
+                              <div className="pt-2 flex items-center space-x-2 text-2xs font-bold">
+                                <span className="text-text-muted uppercase tracking-wider">Report:</span>
                                 <FilePath path={item.report_path} segments={1} />
                               </div>
                             )}
@@ -4246,10 +4246,10 @@ export default function App() {
               {(activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && (
                 <div className="space-y-6">
                   {/* Worker Backends config panel */}
-                  <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-6 rounded-2xl space-y-6">
-                    <div className="border-b border-[#F1F1F1] dark:border-zinc-900 pb-3">
+                  <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card p-6 rounded-2xl space-y-6">
+                    <div className="border-b border-border-subtle dark:border-zinc-900 pb-3">
                       <h3 className="text-sm font-extrabold text-zinc-800 dark:text-zinc-200">Worker Routing Configuration</h3>
-                      <p className="text-xs text-[#AFAFAF] mt-0.5">Configure which agent CLI execution backends are used for each project role.</p>
+                      <p className="text-xs text-text-muted mt-0.5">Configure which agent CLI execution backends are used for each project role.</p>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -4257,12 +4257,12 @@ export default function App() {
                       <div className="space-y-4">
                         {/* Global default selection */}
                         <div>
-                          <label className="block text-[10px] text-zinc-550 mb-1.5 uppercase font-bold tracking-wider">Global Default Mode</label>
+                          <label className="block text-2xs text-zinc-550 mb-1.5 uppercase font-bold tracking-wider">Global Default Mode</label>
                           <select
                             value={panelGlobalMode}
                             onChange={(e) => setPanelGlobalMode(e.target.value)}
                             disabled={savingBackends || actionLoading}
-                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-accent transition-colors"
                           >
                             {backendOptions.map((opt) => (
                               <option key={opt} value={opt}>
@@ -4272,15 +4272,15 @@ export default function App() {
                           </select>
                         </div>
 
-                        <div className="flex items-center gap-2 rounded-xl bg-zinc-100 dark:bg-zinc-900 p-1 border border-[#E5E5E5] dark:border-zinc-800">
+                        <div className="flex items-center gap-2 rounded-xl bg-zinc-100 dark:bg-zinc-900 p-1 border border-border-subtle dark:border-zinc-800">
                           {['simple', 'advanced'].map((mode) => (
                             <button
                               key={mode}
                               type="button"
                               onClick={() => setWorkerRoutingMode(mode)}
-                              className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all ${
+                              className={`flex-1 px-3 py-1.5 rounded-lg text-2xs font-extrabold uppercase tracking-wider transition-all ${
                                 workerRoutingMode === mode
-                                  ? 'bg-white dark:bg-zinc-800 text-[#3D8B00] dark:text-emerald-400 shadow-sm'
+                                  ? 'bg-white dark:bg-zinc-800 text-accent-text dark:text-emerald-400 shadow-sm'
                                   : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
                               }`}
                             >
@@ -4290,17 +4290,17 @@ export default function App() {
                         </div>
 
                         {workerRoutingMode === 'simple' && (
-                          <div className="space-y-3 border border-[#F1F1F1] dark:border-zinc-900 rounded-xl p-4 bg-zinc-50/60 dark:bg-zinc-900/20">
+                          <div className="space-y-3 border border-border-subtle dark:border-zinc-900 rounded-xl p-4 bg-zinc-50/60 dark:bg-zinc-900/20">
                             {WORKER_ROUTING_BUCKETS.map((bucket) => (
                               <div key={bucket.key} className="space-y-1.5">
-                                <label className="block text-[10px] text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
+                                <label className="block text-2xs text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
                                   {bucket.label}
                                 </label>
                                 <select
                                   value={simpleRoutingBackends[bucket.key] || ''}
                                   onChange={(e) => setSimpleRoutingBackends(prev => ({ ...prev, [bucket.key]: e.target.value }))}
                                   disabled={savingBackends || actionLoading}
-                                  className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                  className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-accent transition-colors"
                                 >
                                   <option value="">Inherit global default</option>
                                   {roleBackendOptions.map((opt) => (
@@ -4309,7 +4309,7 @@ export default function App() {
                                     </option>
                                   ))}
                                 </select>
-                                <p className="text-[10px] text-zinc-500 dark:text-zinc-500 font-medium">
+                                <p className="text-2xs text-zinc-500 dark:text-zinc-500 font-medium">
                                   {bucket.roles.filter(role => workerRoles.includes(role)).join(', ') || 'No matching roles in this project.'}
                                 </p>
                               </div>
@@ -4318,7 +4318,7 @@ export default function App() {
                               type="button"
                               onClick={handleApplySimpleRouting}
                               disabled={savingBackends || actionLoading}
-                              className="w-full bg-[#58CC02] hover:bg-[#46A302] text-white border-b-4 border-[#3D8B00] active:border-b-0 active:translate-y-1 px-4 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all duo-button-physics"
+                              className="w-full bg-accent hover:bg-accent text-white border-b-4 border-accent-text active:border-b-0 active:translate-y-1 px-4 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all duo-button-physics"
                             >
                               Apply Simple Routing
                             </button>
@@ -4327,19 +4327,19 @@ export default function App() {
 
                         {/* Role configurations */}
                         <div className={`space-y-3 ${workerRoutingMode === 'simple' ? 'hidden' : ''}`}>
-                          <span className="block text-[10px] text-zinc-550 uppercase font-bold tracking-wider">Per-Role Routing Overrides</span>
+                          <span className="block text-2xs text-zinc-550 uppercase font-bold tracking-wider">Per-Role Routing Overrides</span>
                           {(activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && loadingDiscoveredAgents && (
-                            <p className="text-[10px] text-[#AFAFAF] italic">Loading discovered agents...</p>
+                            <p className="text-2xs text-text-muted italic">Loading discovered agents...</p>
                           )}
                           {discoveredAgents !== null && safeDiscoveredAgents.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
                               {safeDiscoveredAgents.map((agent) => (
                                 <span
                                   key={agent.backend}
-                                  className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[9px] font-extrabold uppercase tracking-wider ${
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-full border text-2xs font-extrabold uppercase tracking-wider ${
                                     agent.ready
-                                      ? 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30'
-                                      : 'bg-[#FFF0D4] text-[#B36B00] border-[#FF9600]/30'
+                                      ? 'bg-status-success-bg text-accent-text border-accent/30'
+                                      : 'bg-status-warning-bg text-status-warning-text border-status-warning/30'
                                   }`}
                                   title={agent.hint || ''}
                                 >
@@ -4359,18 +4359,18 @@ export default function App() {
                             const hasModel = effectiveBackend && !isBuiltin;
 
                             return (
-                              <div key={role} className="border-b border-[#F1F1F1] dark:border-zinc-900 pb-3.5 pt-1">
+                              <div key={role} className="border-b border-border-subtle dark:border-zinc-900 pb-3.5 pt-1">
                                 <div className="flex items-center justify-between space-x-4">
                                   <div className="space-y-1">
                                     <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 capitalize">{role} Role</span>
-                                    <div className="text-[11px] text-[#AFAFAF] dark:text-zinc-550 flex items-center space-x-1.5 flex-wrap">
+                                    <div className="text-[11px] text-text-muted dark:text-zinc-550 flex items-center space-x-1.5 flex-wrap">
                                       <span className="font-semibold text-zinc-600 dark:text-zinc-400">
                                         {selectedBackend ? getBackendOptionLabel(selectedBackend) : `Inherit default (${getBackendOptionLabel(panelGlobalMode)})`}
                                       </span>
                                       {hasModel && (
                                         <>
                                           <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                          <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                                          <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded font-mono text-2xs">
                                             {selectedModel || 'default'}
                                           </span>
                                         </>
@@ -4384,7 +4384,7 @@ export default function App() {
                                     className={`px-3 py-1.5 border-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 ${
                                       isConfiguring
                                         ? 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300'
-                                        : 'bg-white dark:bg-zinc-900 border-[#E5E5E5] dark:border-zinc-800 hover:border-[#58CC02] text-zinc-700 dark:text-zinc-300'
+                                        : 'bg-white dark:bg-zinc-900 border-border-subtle dark:border-zinc-800 hover:border-accent text-zinc-700 dark:text-zinc-300'
                                     }`}
                                   >
                                     <span>{isConfiguring ? 'Close' : 'Configure'}</span>
@@ -4392,16 +4392,16 @@ export default function App() {
                                 </div>
 
                                 {isConfiguring && (
-                                  <div className="mt-3 bg-zinc-50/50 dark:bg-zinc-900/10 border border-[#F1F1F1] dark:border-zinc-800/80 rounded-xl p-4 space-y-4">
+                                  <div className="mt-3 bg-zinc-50/50 dark:bg-zinc-900/10 border border-border-subtle dark:border-zinc-800/80 rounded-xl p-4 space-y-4">
                                     <div>
-                                      <label className="block text-[10px] text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
+                                      <label className="block text-2xs text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
                                         Step 1: Select Agent Backend
                                       </label>
                                       <select
                                         value={selectedBackend}
                                         onChange={(e) => handleAgentChange(role, e.target.value)}
                                         disabled={savingBackends || actionLoading}
-                                        className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                        className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-accent transition-colors"
                                       >
                                         <option value="">Use default</option>
                                         {roleBackendOptions.map((opt) => (
@@ -4411,7 +4411,7 @@ export default function App() {
                                         ))}
                                       </select>
                                       {selectedAgent && (
-                                        <p className="mt-1 text-[10px] text-zinc-550 dark:text-zinc-500 font-medium leading-relaxed">
+                                        <p className="mt-1 text-2xs text-zinc-550 dark:text-zinc-500 font-medium leading-relaxed">
                                           {selectedAgent.ready ? '✓ Ready' : '⚠ Not ready'}
                                           {selectedAgent.hint ? ` - ${selectedAgent.hint}` : ''}
                                         </p>
@@ -4419,7 +4419,7 @@ export default function App() {
                                     </div>
 
                                     {effectiveBackend && (
-                                      <div className="border-t border-[#F1F1F1] dark:border-zinc-900/60 pt-3">
+                                      <div className="border-t border-border-subtle dark:border-zinc-900/60 pt-3">
                                         {isBuiltin ? (
                                           <div className="text-[11px] text-zinc-550 dark:text-zinc-500 font-medium bg-zinc-100/50 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800 px-3 py-2 rounded-lg italic">
                                             Model selection not applicable for built-in backends.
@@ -4427,7 +4427,7 @@ export default function App() {
                                         ) : (
                                           <div className="space-y-3">
                                             <div>
-                                              <label className="block text-[10px] text-zinc-550 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
+                                              <label className="block text-2xs text-zinc-550 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
                                                 Step 2: Select Model
                                               </label>
                                               {(() => {
@@ -4443,7 +4443,7 @@ export default function App() {
                                                       value={dropdownVal}
                                                       onChange={(e) => handleModelDropdownChange(role, e.target.value)}
                                                       disabled={savingBackends || actionLoading}
-                                                      className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-[#58CC02] transition-colors"
+                                                      className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-accent transition-colors"
                                                     >
                                                       {modelsList.map((m) => (
                                                         <option key={m} value={m}>
@@ -4455,7 +4455,7 @@ export default function App() {
 
                                                     {isCustom && (
                                                       <div className="space-y-1">
-                                                        <label className="block text-[9px] text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
+                                                        <label className="block text-2xs text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
                                                           Custom Model Name
                                                         </label>
                                                         <input
@@ -4464,7 +4464,7 @@ export default function App() {
                                                           value={selectedModel}
                                                           onChange={(e) => handleCustomModelChange(role, e.target.value)}
                                                           disabled={savingBackends || actionLoading}
-                                                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold font-mono focus:outline-none focus:border-[#58CC02] transition-colors"
+                                                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold font-mono focus:outline-none focus:border-accent transition-colors"
                                                         />
                                                       </div>
                                                     )}
@@ -4486,13 +4486,13 @@ export default function App() {
                         {/* Save Button & Messages */}
                         <div className="pt-2 space-y-3">
                           {backendsError && (
-                            <div className="p-3 bg-[#FFE2E2] dark:bg-red-950/20 border border-[#FF4B4B]/30 rounded-xl text-xs font-bold text-[#EA2B2B] dark:text-red-400 flex items-center space-x-2">
+                            <div className="p-3 bg-status-danger-bg dark:bg-red-950/20 border border-status-danger/30 rounded-xl text-xs font-bold text-status-danger-text dark:text-red-400 flex items-center space-x-2">
                               <AlertTriangle className="h-4 w-4 shrink-0" />
                               <span>{backendsError}</span>
                             </div>
                           )}
                           {backendsSuccess && (
-                            <div className="p-3 bg-[#E8F9D9] dark:bg-[#E8F9D9]/10 border border-[#58CC02]/30 rounded-xl text-xs font-bold text-[#3D8B00] dark:text-emerald-400 flex items-center space-x-2">
+                            <div className="p-3 bg-status-success-bg dark:bg-status-success-bg/10 border border-accent/30 rounded-xl text-xs font-bold text-accent-text dark:text-emerald-400 flex items-center space-x-2">
                               <CheckCircle2 className="h-4 w-4 shrink-0" />
                               <span>{backendsSuccess}</span>
                             </div>
@@ -4501,7 +4501,7 @@ export default function App() {
                             <button
                               onClick={handleSaveWorkerBackends}
                               disabled={savingBackends || actionLoading}
-                              className="bg-[#58CC02] hover:bg-[#46A302] text-white border-b-4 border-[#3D8B00] active:border-b-0 active:translate-y-1 px-5 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center space-x-2"
+                              className="bg-accent hover:bg-accent text-white border-b-4 border-accent-text active:border-b-0 active:translate-y-1 px-5 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center space-x-2"
                             >
                               {savingBackends ? (
                                 <>
@@ -4520,8 +4520,8 @@ export default function App() {
                       </div>
 
                       {/* Right Column: Preflight / Readiness Badges */}
-                      <div className="space-y-4 border-t lg:border-t-0 lg:border-l border-[#F1F1F1] dark:border-zinc-900 lg:pl-8 pt-4 lg:pt-0">
-                        <div className="font-extrabold text-[10px] text-[#AFAFAF] uppercase tracking-wider">Backend Readiness Preflight</div>
+                      <div className="space-y-4 border-t lg:border-t-0 lg:border-l border-border-subtle dark:border-zinc-900 lg:pl-8 pt-4 lg:pt-0">
+                        <div className="font-extrabold text-2xs text-text-muted uppercase tracking-wider">Backend Readiness Preflight</div>
 
                         <div className="space-y-3.5">
                           {usedBackends.map((backend) => {
@@ -4531,25 +4531,25 @@ export default function App() {
                             const Icon = badge.icon;
 
                             return (
-                              <div key={backend} className="bg-zinc-50 dark:bg-zinc-900/30 border border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3.5 space-y-2">
+                              <div key={backend} className="bg-zinc-50 dark:bg-zinc-900/30 border border-border-subtle dark:border-zinc-800 rounded-xl p-3.5 space-y-2">
                                 <div className="flex justify-between items-center">
                                   <span className="text-xs font-extrabold text-zinc-800 dark:text-zinc-200 capitalize">
                                     {backend === 'codex' ? 'Codex CLI' : backend === 'anthropic' || backend === 'claude' ? 'Claude CLI' : backend}
-                                    {backend === panelGlobalMode && <span className="text-[9px] text-[#AFAFAF] font-normal ml-1.5 lowercase">(global default)</span>}
+                                    {backend === panelGlobalMode && <span className="text-2xs text-text-muted font-normal ml-1.5 lowercase">(global default)</span>}
                                   </span>
 
-                                  <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold border uppercase tracking-wider ${badge.bg} ${badge.text} ${badge.border}`}>
+                                  <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider ${badge.bg} ${badge.text} ${badge.border}`}>
                                     <Icon className="h-3 w-3" />
                                     <span>{isReady ? 'Ready' : 'Not Ready'}</span>
                                   </span>
                                 </div>
 
                                 {preflight.hint ? (
-                                  <p className="text-[10px] text-zinc-550 dark:text-zinc-400 font-medium leading-relaxed bg-white dark:bg-zinc-950/40 p-2 rounded-lg border border-[#F1F1F1] dark:border-zinc-900 font-mono select-all">
+                                  <p className="text-2xs text-zinc-550 dark:text-zinc-400 font-medium leading-relaxed bg-white dark:bg-zinc-950/40 p-2 rounded-lg border border-border-subtle dark:border-zinc-900 font-mono select-all">
                                     {preflight.hint}
                                   </p>
                                 ) : (
-                                  <p className="text-[10px] text-[#AFAFAF] italic font-medium leading-relaxed">
+                                  <p className="text-2xs text-text-muted italic font-medium leading-relaxed">
                                     No additional hints or warnings available.
                                   </p>
                                 )}
@@ -4557,7 +4557,7 @@ export default function App() {
                             );
                           })}
                           {usedBackends.length === 0 && (
-                            <div className="text-xs text-[#AFAFAF] italic">
+                            <div className="text-xs text-text-muted italic">
                               No backends are currently configured or in use.
                             </div>
                           )}
@@ -4566,9 +4566,9 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Worker Jobs</h2>
-                    <p className="text-xs text-[#AFAFAF]">Live observation of background Codex CLI and agent executors.</p>
+                    <p className="text-xs text-text-muted">Live observation of background Codex CLI and agent executors.</p>
                   </div>
 
                   {/* Worker job list in a card grid */}
@@ -4581,54 +4581,54 @@ export default function App() {
                       return (
                         <div
                           key={job.id}
-                          className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-5 rounded-2xl hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] transition-all duration-200 space-y-3"
+                          className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card p-5 rounded-2xl hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 space-y-3"
                         >
-                          <div className="flex justify-between items-center border-b border-[#F1F1F1] dark:border-zinc-900 pb-2">
+                          <div className="flex justify-between items-center border-b border-border-subtle dark:border-zinc-900 pb-2">
                             <div>
                               <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 leading-snug">{job.role}</h3>
-                              <span className="text-[10px] text-[#AFAFAF] font-bold capitalize tracking-wide">{job.adapter} adapter</span>
+                              <span className="text-2xs text-text-muted font-bold capitalize tracking-wide">{job.adapter} adapter</span>
                             </div>
 
                             <div className="flex items-center space-x-1.5 shrink-0">
                               {isCompleted ? (
-                                <span className="bg-[#E8F9D9] text-[#3D8B00] border border-[#58CC02]/20 font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center space-x-1 select-none">
+                                <span className="bg-status-success-bg text-accent-text border border-accent/20 font-extrabold text-2xs uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center space-x-1 select-none">
                                   <Check className="h-3 w-3" />
                                   <span>Done</span>
                                 </span>
                               ) : isRunning ? (
-                                <span className="bg-[#D0F0FF] text-[#0A7BAF] border border-[#1CB0F6]/20 font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center space-x-1 animate-pulse select-none">
+                                <span className="bg-status-info-bg text-status-info-text border border-status-info/20 font-extrabold text-2xs uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center space-x-1 animate-pulse select-none">
                                   <RefreshCw className="h-2.5 w-2.5 animate-spin" />
                                   <span>Running</span>
                                 </span>
                               ) : (
-                                <span className="bg-[#FFF0D4] text-[#B36B00] border border-[#FF9600]/20 font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full select-none">
+                                <span className="bg-status-warning-bg text-status-warning-text border border-status-warning/20 font-extrabold text-2xs uppercase tracking-wider px-2 py-0.5 rounded-full select-none">
                                   {job.status}
                                 </span>
                               )}
                             </div>
                           </div>
 
-                          <div className="font-mono text-[10px] font-bold text-zinc-500 space-y-1.5">
+                          <div className="font-mono text-2xs font-bold text-zinc-500 space-y-1.5">
                             <div className="flex justify-between items-center">
-                              <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px]">Job ID</span>
+                              <span className="text-text-muted uppercase tracking-wider text-2xs">Job ID</span>
                               <span className="select-all text-zinc-700 dark:text-zinc-300">{job.id.substring(0, 12)}...{job.id.slice(-6)}</span>
                             </div>
                             <div className="flex justify-between items-center">
-                              <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px]">PID</span>
+                              <span className="text-text-muted uppercase tracking-wider text-2xs">PID</span>
                               <span className="text-zinc-700 dark:text-zinc-300 font-bold">{job.pid || 'n/a'}</span>
                             </div>
                             <div className="flex justify-between items-center">
-                              <span className="text-[#AFAFAF] uppercase tracking-wider text-[8px]">Heartbeat</span>
+                              <span className="text-text-muted uppercase tracking-wider text-2xs">Heartbeat</span>
                               <span className="text-zinc-750 dark:text-zinc-300">{job.heartbeat_at ? new Date(job.heartbeat_at).toLocaleTimeString() : 'none'}</span>
                             </div>
 
-                            <div className="border-t border-[#F1F1F1] dark:border-zinc-900 pt-2 font-sans normal-case text-xs font-semibold leading-relaxed flex items-start space-x-2 text-zinc-700 dark:text-zinc-300">
+                            <div className="border-t border-border-subtle dark:border-zinc-900 pt-2 font-sans normal-case text-xs font-semibold leading-relaxed flex items-start space-x-2 text-zinc-700 dark:text-zinc-300">
                               {isCompleted && isZeroExit ? (
-                                <CheckCircle className="h-4 w-4 text-[#58CC02] shrink-0 mt-0.5" />
+                                <CheckCircle className="h-4 w-4 text-accent shrink-0 mt-0.5" />
                               ) : isCompleted ? (
-                                <XCircle className="h-4 w-4 text-[#FF4B4B] shrink-0 mt-0.5" />
+                                <XCircle className="h-4 w-4 text-status-danger shrink-0 mt-0.5" />
                               ) : (
-                                <Info className="h-4 w-4 text-[#1CB0F6] shrink-0 mt-0.5" />
+                                <Info className="h-4 w-4 text-status-info shrink-0 mt-0.5" />
                               )}
                               <span className="truncate" title={job.summary}>{job.summary || 'Executing task...'}</span>
                             </div>
@@ -4637,7 +4637,7 @@ export default function App() {
                       );
                     })}
                     {workerJobs.length === 0 && (
-                      <div className="col-span-3 border-2 border-dashed border-[#E5E5E5] rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs">
+                      <div className="col-span-3 border-2 border-dashed border-border-subtle rounded-2xl p-12 text-center text-text-muted italic text-xs">
                         No background worker tasks active or completed.
                       </div>
                     )}
@@ -4648,19 +4648,19 @@ export default function App() {
               {/* Tab: Approvals */}
               {activeTab === 'approvals' && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Approval Workflows</h2>
-                    <p className="text-xs text-[#AFAFAF]">Review generated artifacts and confirm project transitions.</p>
+                    <p className="text-xs text-text-muted">Review generated artifacts and confirm project transitions.</p>
                   </div>
 
                   {/* Approvals top progress bar - height: 12px, border-radius: 6px, green bar */}
-                  <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-5 space-y-3 max-w-2xl">
-                    <div className="flex justify-between items-center text-xs font-extrabold text-[#AFAFAF] uppercase tracking-wider">
+                  <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-5 space-y-3 max-w-2xl">
+                    <div className="flex justify-between items-center text-xs font-extrabold text-text-muted uppercase tracking-wider">
                       <span>Approval Pipeline Progress</span>
-                      <span className="text-[#3D8B00] font-extrabold">{approvedCount} of {totalApprovalsCount} Gates</span>
+                      <span className="text-accent-text font-extrabold">{approvedCount} of {totalApprovalsCount} Gates</span>
                     </div>
-                    <div className="w-full bg-[#E5E5E5] dark:bg-zinc-800 h-3 rounded-full overflow-hidden">
-                      <div className="bg-[#58CC02] h-full rounded-full transition-all duration-500" style={{ width: `${approvalProgressPercent}%` }} />
+                    <div className="w-full bg-surface-sunken dark:bg-zinc-800 h-3 rounded-full overflow-hidden">
+                      <div className="bg-accent h-full rounded-full transition-all duration-500" style={{ width: `${approvalProgressPercent}%` }} />
                     </div>
                   </div>
 
@@ -4678,15 +4678,15 @@ export default function App() {
                           ? 'bg-[#FFFBF4] dark:bg-amber-950/10'
                           : 'bg-white dark:bg-zinc-950';
                         const cardBorder = isPending
-                          ? 'border-[#FF9600]'
+                          ? 'border-status-warning'
                           : isApproved
-                            ? 'border-[#58CC02]'
-                            : 'border-[#E5E5E5] dark:border-zinc-800';
+                            ? 'border-accent'
+                            : 'border-border-subtle dark:border-zinc-800';
                         const cardShadow = isPending
-                          ? 'shadow-[0_4px_0_#FF9600] hover:shadow-[0_6px_0_#FF9600]'
+                          ? 'shadow-card hover:shadow-card'
                           : isApproved
-                            ? 'shadow-[0_4px_0_#58CC02] hover:shadow-[0_6px_0_#58CC02]'
-                            : 'shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] hover:shadow-[0_6px_0_#D1D1D1] dark:hover:shadow-[0_6px_0_#1a1a1a]';
+                            ? 'shadow-card hover:shadow-card'
+                            : 'shadow-card dark:shadow-card hover:shadow-card dark:hover:shadow-card';
 
                         return (
                           <article
@@ -4697,30 +4697,30 @@ export default function App() {
                             <div className="flex justify-between items-center">
                               <div className="flex items-center space-x-2">
                                 {isApproved ? (
-                                  <Unlock className="h-4 w-4 text-[#58CC02] shrink-0" />
+                                  <Unlock className="h-4 w-4 text-accent shrink-0" />
                                 ) : (
-                                  <Lock className="h-4 w-4 text-[#AFAFAF] shrink-0" />
+                                  <Lock className="h-4 w-4 text-text-muted shrink-0" />
                                 )}
                                 <h3 className="font-extrabold text-xs uppercase tracking-wider text-zinc-700 dark:text-zinc-350">{review.approval} Review</h3>
                               </div>
-                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border capitalize tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>
+                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border capitalize tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>
                                 {getStatusLabel(review.decision)}
                               </span>
                             </div>
 
-                            <dl className="grid grid-cols-2 gap-x-2 text-[10px] text-zinc-550 pt-2 border-t border-[#F1F1F1] dark:border-zinc-900 font-bold">
+                            <dl className="grid grid-cols-2 gap-x-2 text-2xs text-zinc-550 pt-2 border-t border-border-subtle dark:border-zinc-900 font-bold">
                               <div>
-                                <dt className="text-[#AFAFAF] uppercase text-[8px] mb-0.5">Artifact</dt>
+                                <dt className="text-text-muted uppercase text-2xs mb-0.5">Artifact</dt>
                                 <dd className="text-zinc-800 dark:text-zinc-200 uppercase">{review.artifact}</dd>
                               </div>
                               <div>
-                                <dt className="text-[#AFAFAF] uppercase text-[8px] mb-0.5">File Path</dt>
+                                <dt className="text-text-muted uppercase text-2xs mb-0.5">File Path</dt>
                                 <dd><FilePath path={review.artifact_path} segments={1} /></dd>
                               </div>
                             </dl>
 
                             {isActionable && (
-                              <div className="bg-[#E8F9D9] text-[#3D8B00] border-2 border-[#58CC02]/20 text-[9px] font-extrabold p-2 rounded-xl text-center uppercase tracking-wider">
+                              <div className="bg-status-success-bg text-accent-text border-2 border-accent/20 text-2xs font-extrabold p-2 rounded-xl text-center uppercase tracking-wider">
                                 Action Required
                               </div>
                             )}
@@ -4734,7 +4734,7 @@ export default function App() {
                                     handleGeneratePrd();
                                   }}
                                   disabled={generatingPrd}
-                                  className="bg-white hover:bg-zinc-50 border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
+                                  className="bg-white hover:bg-zinc-50 border-2 border-border-subtle shadow-button text-zinc-700 font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
                                 >
                                   <RefreshCw className={`h-3 w-3 ${generatingPrd ? 'animate-spin' : ''}`} />
                                   <span>{generatingPrd ? 'Generating...' : 'Generate PRD'}</span>
@@ -4747,7 +4747,7 @@ export default function App() {
                                     e.stopPropagation();
                                     handleEditArtifact(review);
                                   }}
-                                  className="bg-white hover:bg-zinc-50 border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
+                                  className="bg-white hover:bg-zinc-50 border-2 border-border-subtle shadow-button text-zinc-700 font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
                                 >
                                   <Edit className="h-3 w-3" />
                                   <span>Edit</span>
@@ -4760,7 +4760,7 @@ export default function App() {
                                     e.stopPropagation();
                                     handleOpenQuestionsFromApproval(review);
                                   }}
-                                  className="bg-white hover:bg-indigo-50 border-2 border-indigo-100 shadow-[0_3px_0_#C7D2FE] text-indigo-750 font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
+                                  className="bg-white hover:bg-indigo-50 border-2 border-indigo-100 shadow-[0_3px_0_#C7D2FE] text-indigo-750 font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
                                 >
                                   <HelpCircle className="h-3 w-3" />
                                   <span>Questions</span>
@@ -4775,7 +4775,7 @@ export default function App() {
                                       handleApproveDecision(review.approval, 'approved', getResolvingDebateRef(review.approval));
                                     }}
                                     disabled={actionLoading}
-                                    className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
+                                    className="bg-accent border-2 border-accent-text shadow-button text-white font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
                                   >
                                     {isApproveLoading ? (
                                       <RefreshCw className="h-3 w-3 animate-spin" />
@@ -4785,7 +4785,7 @@ export default function App() {
                                     <span>{isApproveLoading ? 'Approving...' : 'Approve'}</span>
                                   </button>
                                   {isApproveLoading && (
-                                    <span className="text-[8px] text-zinc-500 mt-1 text-right animate-pulse max-w-[150px] leading-tight">
+                                    <span className="text-2xs text-zinc-500 mt-1 text-right animate-pulse max-w-[150px] leading-tight">
                                       Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
                                     </span>
                                   )}
@@ -4807,13 +4807,13 @@ export default function App() {
                     <div className="lg:col-span-2 space-y-4">
                       {editingArtifact ? (
                         proposedRevision ? (
-                          <div className="bg-white dark:bg-zinc-950 border-2 border-indigo-500 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
+                          <div className="bg-white dark:bg-zinc-950 border-2 border-indigo-500 shadow-card dark:shadow-card rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
                             <div className="px-6 py-4 bg-[#E8F0FE] dark:bg-indigo-950/40 border-b-2 border-indigo-500 flex justify-between items-center">
                               <div>
-                                <span className="text-[10px] font-bold text-indigo-650 dark:text-indigo-400 uppercase tracking-wider">Refinement Review</span>
+                                <span className="text-2xs font-bold text-indigo-650 dark:text-indigo-400 uppercase tracking-wider">Refinement Review</span>
                                 <h3 className="font-extrabold text-sm text-indigo-750 dark:text-indigo-350 mt-0.5">{editingArtifact.toUpperCase()}</h3>
                               </div>
-                              <span className="text-[10px] font-mono font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                              <span className="text-2xs font-mono font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
                                 +{proposedRevision.diff_summary?.added_lines || 0} / -{proposedRevision.diff_summary?.removed_lines || 0} lines
                               </span>
                             </div>
@@ -4857,12 +4857,12 @@ export default function App() {
                               </div>
                             </div>
 
-                            <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-end space-x-2">
+                            <div className="bg-surface-base dark:bg-zinc-950 px-6 py-4 border-t-2 border-border-subtle dark:border-zinc-900 flex justify-end space-x-2">
                               <button
                                 type="button"
                                 onClick={handleDiscardRefinement}
                                 disabled={refineLoading}
-                                className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-[0_3px_0_#1a1a1a]"
+                                className="bg-white border-2 border-border-subtle shadow-button text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-button"
                               >
                                 {refineLoading ? <RefreshCw className="h-4 w-4 animate-spin text-zinc-500" /> : null}
                                 <span>Discard</span>
@@ -4879,13 +4879,13 @@ export default function App() {
                             </div>
                           </div>
                         ) : (
-                          <div className="bg-white dark:bg-zinc-950 border-2 border-[#58CC02] shadow-[0_4px_0_#D1D1D1] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
-                            <div className="px-6 py-4 bg-[#E8F9D9] border-b-2 border-[#58CC02] flex justify-between items-center">
+                          <div className="bg-white dark:bg-zinc-950 border-2 border-accent shadow-card rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
+                            <div className="px-6 py-4 bg-status-success-bg border-b-2 border-accent flex justify-between items-center">
                               <div>
-                                <span className="text-[10px] font-bold text-[#3D8B00] uppercase tracking-wider">Markdown Editor</span>
-                                <h3 className="font-extrabold text-sm text-[#3D8B00] mt-0.5">{editingArtifact.toUpperCase()}</h3>
+                                <span className="text-2xs font-bold text-accent-text uppercase tracking-wider">Markdown Editor</span>
+                                <h3 className="font-extrabold text-sm text-accent-text mt-0.5">{editingArtifact.toUpperCase()}</h3>
                               </div>
-                              <span className="text-[10px] font-mono font-bold text-[#3D8B00]">Save changes to disk</span>
+                              <span className="text-2xs font-mono font-bold text-accent-text">Save changes to disk</span>
                             </div>
 
                             <div className="flex-grow flex flex-col lg:flex-row p-6 gap-6 min-h-0">
@@ -4894,9 +4894,9 @@ export default function App() {
                                   value={editorContent}
                                   onChange={(e) => setEditorContent(e.target.value)}
                                   spellCheck="false"
-                                  className="w-full flex-grow h-96 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:border-[#58CC02] transition-colors leading-relaxed"
+                                  className="w-full flex-grow h-96 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:border-accent transition-colors leading-relaxed"
                                 />
-                                <code className="text-[10px] text-[#AFAFAF] font-bold leading-normal">Unsaved edits stay in this browser until saved.</code>
+                                <code className="text-2xs text-text-muted font-bold leading-normal">Unsaved edits stay in this browser until saved.</code>
                               </div>
 
                               {(openQuestions.length > 0 || fetchingOpenQuestions) && (
@@ -4909,7 +4909,7 @@ export default function App() {
                                     {fetchingOpenQuestions ? (
                                       <RefreshCw className="h-3 w-3 animate-spin text-indigo-500" />
                                     ) : (
-                                      <span className="bg-indigo-100 dark:bg-indigo-950/50 text-indigo-750 dark:text-indigo-300 font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full">
+                                      <span className="bg-indigo-100 dark:bg-indigo-950/50 text-indigo-750 dark:text-indigo-300 font-extrabold text-2xs uppercase tracking-wider px-2 py-0.5 rounded-full">
                                         {openQuestions.length} remaining
                                       </span>
                                     )}
@@ -4942,7 +4942,7 @@ export default function App() {
                                                       type="button"
                                                       onClick={() => setOpenQuestionsAnswers(prev => ({ ...prev, [q]: choice.value }))}
                                                       disabled={isAnyApplying}
-                                                      className="bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 border border-indigo-200 text-indigo-750 dark:bg-indigo-950/30 dark:hover:bg-indigo-950/50 dark:border-indigo-800 dark:text-indigo-300 font-bold text-[10px] px-2 py-1 rounded-lg transition-colors"
+                                                      className="bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 border border-indigo-200 text-indigo-750 dark:bg-indigo-950/30 dark:hover:bg-indigo-950/50 dark:border-indigo-800 dark:text-indigo-300 font-bold text-2xs px-2 py-1 rounded-lg transition-colors"
                                                     >
                                                       {choice.label}
                                                     </button>
@@ -4961,7 +4961,7 @@ export default function App() {
                                                   type="button"
                                                   onClick={() => handleApplyAnswers(q)}
                                                   disabled={isApplyDisabled}
-                                                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:pointer-events-none border-2 border-indigo-850 shadow-[0_2px_0_#4338ca] dark:bg-indigo-700 dark:hover:bg-indigo-600 dark:border-indigo-900 dark:shadow-[0_2px_0_#312e81] text-white font-bold py-1 px-3 rounded-lg text-[10px] uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1 cursor-pointer"
+                                                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:pointer-events-none border-2 border-indigo-850 shadow-[0_2px_0_#4338ca] dark:bg-indigo-700 dark:hover:bg-indigo-600 dark:border-indigo-900 dark:shadow-[0_2px_0_#312e81] text-white font-bold py-1 px-3 rounded-lg text-2xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1 cursor-pointer"
                                                 >
                                                   {isThisApplying ? (
                                                     <RefreshCw className="h-3 w-3 animate-spin" />
@@ -4981,11 +4981,11 @@ export default function App() {
                               )}
                             </div>
 
-                            <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex justify-end space-x-2">
+                            <div className="bg-surface-base dark:bg-zinc-950 px-6 py-4 border-t-2 border-border-subtle dark:border-zinc-900 flex justify-end space-x-2">
                               <button
                                 type="button"
                                 onClick={() => setEditingArtifact(null)}
-                                className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-[0_3px_0_#1a1a1a]"
+                                className="bg-white border-2 border-border-subtle shadow-button text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-button"
                               >
                                 Cancel
                               </button>
@@ -4993,7 +4993,7 @@ export default function App() {
                                 type="button"
                                 onClick={handleRefineArtifact}
                                 disabled={actionLoading || refineLoading}
-                                className="bg-white hover:bg-zinc-50 border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-[0_3px_0_#1a1a1a]"
+                                className="bg-white hover:bg-zinc-50 border-2 border-border-subtle shadow-button text-zinc-700 font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-button"
                               >
                                 {refineLoading ? (
                                   <RefreshCw className="h-4 w-4 animate-spin text-zinc-500" />
@@ -5006,7 +5006,7 @@ export default function App() {
                                 type="button"
                                 onClick={handleSaveArtifact}
                                 disabled={actionLoading || refineLoading}
-                                className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                className="bg-accent border-2 border-accent-text shadow-button text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
                               >
                                 <Save className="h-4 w-4" />
                                 <span>Save Markdown</span>
@@ -5033,22 +5033,22 @@ export default function App() {
                             ['assert', 'propose'].includes(item.kind) && !item.in_reply_to
                           ));
                           const debateAccent = (kind) => {
-                            if (kind === 'ask') return 'border-l-[#FF9600]';
-                            if (kind === 'reject') return 'border-l-[#FF4B4B]';
-                            if (kind === 'challenge') return 'border-l-[#FF9600]';
-                            if (kind === 'rebuttal') return 'border-l-[#1CB0F6]';
-                            if (kind === 'assert') return 'border-l-[#1CB0F6]';
-                            if (kind === 'propose') return 'border-l-[#58CC02]';
-                            return 'border-l-[#AFAFAF]';
+                            if (kind === 'ask') return 'border-l-status-warning';
+                            if (kind === 'reject') return 'border-l-status-danger';
+                            if (kind === 'challenge') return 'border-l-status-warning';
+                            if (kind === 'rebuttal') return 'border-l-status-info';
+                            if (kind === 'assert') return 'border-l-status-info';
+                            if (kind === 'propose') return 'border-l-accent';
+                            return 'border-l-border-strong';
                           };
                           const renderDebateMessage = (item, extraClass = '') => (
-                            <div key={item.id || `${item.from_role || 'unknown'}:${item.kind || 'message'}:${item.body || ''}`} className={`bg-white dark:bg-zinc-950 border border-[#E5E5E5] dark:border-zinc-800 border-l-4 ${debateAccent(item.kind)} rounded-xl p-3 ${extraClass}`}>
+                            <div key={item.id || `${item.from_role || 'unknown'}:${item.kind || 'message'}:${item.body || ''}`} className={`bg-white dark:bg-zinc-950 border border-border-subtle dark:border-zinc-800 border-l-4 ${debateAccent(item.kind)} rounded-xl p-3 ${extraClass}`}>
                               <div className="flex items-center gap-2 mb-1">
-                                <span className="text-[9px] font-extrabold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">{item.from_role || 'unknown'}</span>
+                                <span className="text-2xs font-extrabold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">{item.from_role || 'unknown'}</span>
                                 {item.to && (
-                                  <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">to {item.to}</span>
+                                  <span className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">to {item.to}</span>
                                 )}
-                                <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">{item.kind}</span>
+                                <span className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">{item.kind}</span>
                               </div>
                               <p className="text-[11px] leading-relaxed text-zinc-650 dark:text-zinc-350 whitespace-pre-wrap">{item.body}</p>
                             </div>
@@ -5073,47 +5073,47 @@ export default function App() {
                           const isApproveLoading = approvingAction === `${selectedReview.approval}:approved`;
                           const isSelectedApprovalLoading = isRejectLoading || isRequestChangesLoading || isApproveLoading;
                           return (
-                            <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
-                              <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
+                            <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
+                              <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-border-subtle dark:border-zinc-800 flex justify-between items-center">
                                 <div>
-                                  <span className="text-[10px] font-bold text-[#AFAFAF] uppercase tracking-wider">Preview Panel</span>
+                                  <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">Preview Panel</span>
                                   <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 mt-0.5">{selectedReview.artifact.toUpperCase()} Review Details</h3>
                                 </div>
-                                <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border uppercase tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>{selectedReview.decision.replace('_', ' ')}</span>
+                                <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>{selectedReview.decision.replace('_', ' ')}</span>
                               </div>
 
                               <div className="p-6 flex-grow space-y-6">
                                 {/* Role reviewers info list */}
                                 {selectedReview.review_roles && selectedReview.review_roles.length > 0 && (
-                                  <div className="border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-[#F7F7F7] dark:bg-zinc-900/10 font-bold">
-                                    <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-2.5">Assigned Review Roles</h4>
+                                  <div className="border-2 border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-surface-base dark:bg-zinc-900/10 font-bold">
+                                    <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-2.5">Assigned Review Roles</h4>
                                     <div className="flex flex-wrap gap-2">
                                       {selectedReview.review_roles.map((role) => (
-                                        <span key={role} className="bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-[10px] px-2.5 py-1 rounded-lg border border-[#E5E5E5] dark:border-zinc-800">{role}</span>
+                                        <span key={role} className="bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-2xs px-2.5 py-1 rounded-lg border border-border-subtle dark:border-zinc-800">{role}</span>
                                       ))}
                                     </div>
                                   </div>
                                 )}
 
                                 {selectedReview.is_actionable && committee && (
-                                  <div className="border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-[#FFFBF4] dark:bg-zinc-900/10 space-y-3">
+                                  <div className="border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-[#FFFBF4] dark:bg-zinc-900/10 space-y-3">
                                     <div className="flex items-center justify-between gap-3">
                                       <div>
-                                        <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Committee</h4>
+                                        <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Committee</h4>
                                         {needsCommitteeDebate && (
-                                          <p className="text-[10px] font-bold text-[#AFAFAF] mt-1">Committee declared. Run debate to convene it.</p>
+                                          <p className="text-2xs font-bold text-text-muted mt-1">Committee declared. Run debate to convene it.</p>
                                         )}
                                       </div>
                                       <div className="flex items-center gap-2">
                                         {committee.convened && (
-                                          <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#3D8B00]">Convened</span>
+                                          <span className="text-2xs font-extrabold uppercase tracking-wider text-accent-text">Convened</span>
                                         )}
                                         {needsCommitteeDebate && (
                                           <button
                                             type="button"
                                             onClick={() => handleRunDebate(selectedReview.approval)}
                                             disabled={isRunningDebate}
-                                            className="bg-white hover:bg-[#F7F7F7] disabled:opacity-60 disabled:cursor-not-allowed border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold text-[9px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
+                                            className="bg-white hover:bg-surface-base disabled:opacity-60 disabled:cursor-not-allowed border-2 border-border-subtle shadow-button text-zinc-700 font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
                                           >
                                             <RefreshCw className={`h-3 w-3 ${isRunningDebate ? 'animate-spin' : ''}`} />
                                             <span>{isRunningDebate ? 'Running debate...' : 'Run debate'}</span>
@@ -5122,12 +5122,12 @@ export default function App() {
                                       </div>
                                     </div>
                                     {runDebateError && (
-                                      <div className="text-[10px] font-bold text-[#FF4B4B]">Debate run failed: {runDebateError}</div>
+                                      <div className="text-2xs font-bold text-status-danger">Debate run failed: {runDebateError}</div>
                                     )}
                                     {committeeAdvisors.length > 0 && (
                                       <div className="flex flex-wrap gap-2">
                                         {committeeAdvisors.map((role) => (
-                                          <span key={role} className="bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-[10px] px-2.5 py-1 rounded-lg border border-[#E5E5E5] dark:border-zinc-800">{role}</span>
+                                          <span key={role} className="bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-2xs px-2.5 py-1 rounded-lg border border-border-subtle dark:border-zinc-800">{role}</span>
                                         ))}
                                       </div>
                                     )}
@@ -5151,18 +5151,18 @@ export default function App() {
                                 )}
 
                                 {selectedReview.is_actionable && !committee && (
-                                  <div className="border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-[#FFFBF4] dark:bg-zinc-900/10 space-y-3">
+                                  <div className="border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-[#FFFBF4] dark:bg-zinc-900/10 space-y-3">
                                     <div className="flex items-center justify-between gap-3">
-                                      <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">Gate Debate & Consensus</h4>
+                                      <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Gate Debate & Consensus</h4>
                                       <div className="flex items-center gap-2">
                                         {challengerMessages.length > 0 && (
-                                          <span className="text-[8px] font-extrabold uppercase tracking-wider text-[#B36B00]">{challengerMessages.length} Objections</span>
+                                          <span className="text-2xs font-extrabold uppercase tracking-wider text-status-warning-text">{challengerMessages.length} Objections</span>
                                         )}
                                         <button
                                           type="button"
                                           onClick={() => handleRunDebate(selectedReview.approval)}
                                           disabled={isRunningDebate}
-                                          className="bg-white hover:bg-[#F7F7F7] disabled:opacity-60 disabled:cursor-not-allowed border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold text-[9px] uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
+                                          className="bg-white hover:bg-surface-base disabled:opacity-60 disabled:cursor-not-allowed border-2 border-border-subtle shadow-button text-zinc-700 font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
                                         >
                                           <RefreshCw className={`h-3 w-3 ${isRunningDebate ? 'animate-spin' : ''}`} />
                                           <span>{isRunningDebate ? 'Running debate...' : 'Run debate'}</span>
@@ -5170,14 +5170,14 @@ export default function App() {
                                       </div>
                                     </div>
                                     {runDebateError && (
-                                      <div className="text-[10px] font-bold text-[#FF4B4B]">Debate run failed: {runDebateError}</div>
+                                      <div className="text-2xs font-bold text-status-danger">Debate run failed: {runDebateError}</div>
                                     )}
                                     {visibleGateDebate.loading && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
-                                      <div className="text-[10px] font-bold text-[#AFAFAF]">Loading debate...</div>
+                                      <div className="text-2xs font-bold text-text-muted">Loading debate...</div>
                                     ) : visibleGateDebate.error && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
-                                      <div className="text-[10px] font-bold text-[#FF4B4B]">Debate unavailable.</div>
+                                      <div className="text-2xs font-bold text-status-danger">Debate unavailable.</div>
                                     ) : debateMessages.length === 0 ? (
-                                      <div className="text-[10px] font-bold text-[#AFAFAF]">No debate recorded for this gate.</div>
+                                      <div className="text-2xs font-bold text-text-muted">No debate recorded for this gate.</div>
                                     ) : (
                                       <div className="space-y-2">
                                         {challengerMessages.map((message) => (
@@ -5195,15 +5195,15 @@ export default function App() {
                                 {/* Markdown artifact preview */}
                                 {selectedReview.note && (
                                   <div className="bg-[#FFF8E6] dark:bg-amber-950/20 border-2 border-[#FFE2A3] dark:border-amber-900/40 p-4 rounded-2xl space-y-1">
-                                    <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#D07300] dark:text-amber-400 font-sans">Reviewer Feedback Note</div>
+                                    <div className="text-2xs font-extrabold uppercase tracking-wider text-status-warning-text dark:text-amber-400 font-sans">Reviewer Feedback Note</div>
                                     <div className="text-xs text-zinc-900 dark:text-zinc-100 whitespace-pre-wrap font-mono leading-relaxed">{selectedReview.note}</div>
                                   </div>
                                 )}
                                 <div className="space-y-2">
-                                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#AFAFAF]">Content Preview</h4>
+                                  <h4 className="text-2xs font-bold uppercase tracking-wider text-text-muted">Content Preview</h4>
                                   {selectedReview.content ? (
                                     <div
-                                      className="prose prose-zinc dark:prose-invert max-w-none text-xs leading-relaxed font-mono bg-[#F7F7F7] dark:bg-zinc-900/30 p-4 border border-[#E5E5E5] dark:border-zinc-800 rounded-2xl max-h-96 overflow-y-auto whitespace-pre-wrap select-all select-text"
+                                      className="prose prose-zinc dark:prose-invert max-w-none text-xs leading-relaxed font-mono bg-surface-base dark:bg-zinc-900/30 p-4 border border-border-subtle dark:border-zinc-800 rounded-2xl max-h-96 overflow-y-auto whitespace-pre-wrap select-all select-text"
                                     >
                                       {selectedReview.content}
                                     </div>
@@ -5216,7 +5216,7 @@ export default function App() {
                               </div>
 
                               {selectedReview.is_actionable && (
-                                <div className="bg-[#F7F7F7] dark:bg-zinc-950 px-6 py-4 border-t-2 border-[#E5E5E5] dark:border-zinc-900 flex flex-col items-stretch space-y-4">
+                                <div className="bg-surface-base dark:bg-zinc-950 px-6 py-4 border-t-2 border-border-subtle dark:border-zinc-900 flex flex-col items-stretch space-y-4">
                                   {showChangesRequestedNoteKey === selectedReview.approval && (
                                     <div className="flex flex-col space-y-2">
                                       <label className="text-xs font-bold text-zinc-700 dark:text-zinc-350">
@@ -5227,10 +5227,10 @@ export default function App() {
                                         onChange={(e) => setChangesRequestedNote(e.target.value)}
                                         placeholder="Type feedback here..."
                                         rows={3}
-                                        className="w-full p-3 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-xl text-xs focus:ring-2 focus:ring-[#FF9600] outline-none resize-none font-sans"
+                                        className="w-full p-3 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 rounded-xl text-xs focus:ring-2 focus:ring-status-warning outline-none resize-none font-sans"
                                       />
                                       {changesRequestedNote.trim() === '' && (
-                                        <div className="text-amber-600 dark:text-amber-400 text-[10px] font-bold">
+                                        <div className="text-amber-600 dark:text-amber-400 text-2xs font-bold">
                                           ⚠️ Feedback note is empty. Please provide detail so the model knows what to revise.
                                         </div>
                                       )}
@@ -5246,7 +5246,7 @@ export default function App() {
                                             setChangesRequestedNote('');
                                           }}
                                           disabled={actionLoading}
-                                          className="bg-white border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-[0_3px_0_#1a1a1a]"
+                                          className="bg-white border-2 border-border-subtle shadow-button text-zinc-700 font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-200 dark:shadow-button"
                                         >
                                           Cancel
                                         </button>
@@ -5256,7 +5256,7 @@ export default function App() {
                                           type="button"
                                           onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
                                           disabled={actionLoading}
-                                          className="bg-white hover:bg-[#FFE2E2] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF4B4B] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                          className="bg-white hover:bg-status-danger-bg border-2 border-border-subtle shadow-button text-status-danger font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
                                         >
                                           {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
                                           <span>{isRejectLoading ? 'Rejecting...' : 'Reject'}</span>
@@ -5272,7 +5272,7 @@ export default function App() {
                                           }
                                         }}
                                         disabled={actionLoading}
-                                        className="bg-white hover:bg-[#FFF0D4] border-2 border-[#E5E5E5] shadow-[0_3px_0_#D1D1D1] text-[#FF9600] font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                        className="bg-white hover:bg-status-warning-bg border-2 border-border-subtle shadow-button text-status-warning font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
                                       >
                                         {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
                                         <span>
@@ -5287,7 +5287,7 @@ export default function App() {
                                           type="button"
                                           onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
                                           disabled={actionLoading}
-                                          className="bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_3px_0_#3D8B00] text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                          className="bg-accent border-2 border-accent-text shadow-button text-white font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
                                         >
                                           {isApproveLoading ? (
                                             <RefreshCw className="h-4 w-4 animate-spin" />
@@ -5299,7 +5299,7 @@ export default function App() {
                                       )}
                                     </div>
                                     {isSelectedApprovalLoading && (
-                                      <span className="text-[10px] text-zinc-500 animate-pulse text-right">
+                                      <span className="text-2xs text-zinc-500 animate-pulse text-right">
                                         Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
                                       </span>
                                     )}
@@ -5333,18 +5333,18 @@ export default function App() {
               {/* Tab: Memory */}
               {(activeTab === 'memory' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'memory')) && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Compounding Memory Layer</h2>
-                    <p className="text-xs text-[#AFAFAF]">Long-term agent memory horizons and the semantic facts retrieved for the latest worker dispatches.</p>
+                    <p className="text-xs text-text-muted">Long-term agent memory horizons and the semantic facts retrieved for the latest worker dispatches.</p>
                   </div>
 
                   {/* Cross-project Search Card */}
-                  <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col">
-                    <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
+                  <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden flex flex-col">
+                    <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-border-subtle dark:border-zinc-800 flex justify-between items-center">
                       <div className="flex items-center space-x-3">
-                        <Search className="h-5 w-5 text-[#1CB0F6] shrink-0" />
+                        <Search className="h-5 w-5 text-status-info shrink-0" />
                         <div>
-                          <span className="text-[10px] font-bold text-[#AFAFAF] uppercase tracking-wider">Search Engine</span>
+                          <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">Search Engine</span>
                           <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 uppercase tracking-wide mt-0.5">Cross-Project Memory Retrieval</h3>
                         </div>
                       </div>
@@ -5354,13 +5354,13 @@ export default function App() {
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                         {/* Role Select/Input */}
                         <div>
-                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
+                          <label className="block text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-1.5">
                             Agent Role
                           </label>
                           <select
                             value={crossRole}
                             onChange={(e) => setCrossRole(e.target.value)}
-                            className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2.5 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                            className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2.5 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-status-info/30"
                           >
                             <option value="implementation">Implementation</option>
                             <option value="ui">UI</option>
@@ -5370,7 +5370,7 @@ export default function App() {
 
                         {/* Query Text Input */}
                         <div className="md:col-span-2">
-                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
+                          <label className="block text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-1.5">
                             Memory Query
                           </label>
                           <input
@@ -5379,7 +5379,7 @@ export default function App() {
                             onChange={(e) => setCrossQuery(e.target.value)}
                             placeholder="Enter keywords or semantic query..."
                             required
-                            className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                            className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-status-info/30"
                           />
                         </div>
 
@@ -5388,7 +5388,7 @@ export default function App() {
                           <button
                             type="submit"
                             disabled={crossLoading}
-                            className="w-full bg-[#58CC02] hover:bg-[#4EBA02] disabled:bg-zinc-300 text-white border-2 border-[#3D8B00] px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider shadow-[0_3px_0_#3D8B00] hover:shadow-[0_2px_0_#3D8B00] disabled:shadow-none hover:translate-y-0.5 active:translate-y-1 transition-all flex items-center justify-center gap-1.5 focus:outline-none cursor-pointer"
+                            className="w-full bg-accent hover:bg-accent disabled:bg-zinc-300 text-white border-2 border-accent-text px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider shadow-button hover:shadow-button disabled:shadow-none hover:translate-y-0.5 active:translate-y-1 transition-all flex items-center justify-center gap-1.5 focus:outline-none cursor-pointer"
                           >
                             {crossLoading ? (
                               <RefreshCw className="h-4 w-4 animate-spin" />
@@ -5401,10 +5401,10 @@ export default function App() {
                       </div>
 
                       {/* Optional Advanced Settings (Scope, Limit) */}
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-dashed border-[#F1F1F1] dark:border-zinc-800">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-dashed border-border-subtle dark:border-zinc-800">
                         {/* Scope */}
                         <div className="md:col-span-3">
-                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
+                          <label className="block text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-1.5">
                             Scope (comma-separated project keys, or 'all')
                           </label>
                           <input
@@ -5412,13 +5412,13 @@ export default function App() {
                             value={crossScope}
                             onChange={(e) => setCrossScope(e.target.value)}
                             placeholder="e.g. all, project-a, project-b"
-                            className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                            className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-status-info/30"
                           />
                         </div>
 
                         {/* Limit (k) */}
                         <div>
-                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF] mb-1.5">
+                          <label className="block text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-1.5">
                             Max Results (k)
                           </label>
                           <input
@@ -5427,7 +5427,7 @@ export default function App() {
                             max="50"
                             value={crossLimit}
                             onChange={(e) => setCrossLimit(parseInt(e.target.value) || 5)}
-                            className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                            className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-status-info/30"
                           />
                         </div>
                       </div>
@@ -5435,14 +5435,14 @@ export default function App() {
 
                     {/* Results / Error / Loading States */}
                     {(crossLoading || crossError || crossResults) && (
-                      <div className="border-t-2 border-[#E5E5E5] dark:border-zinc-800 p-6 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-4">
-                        <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">
+                      <div className="border-t-2 border-border-subtle dark:border-zinc-800 p-6 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-4">
+                        <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">
                           Cross-Project Search Results
                         </h4>
 
                         {crossLoading && (
                           <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl">
-                            <RefreshCw className="h-4 w-4 animate-spin mr-2 text-[#58CC02]" />
+                            <RefreshCw className="h-4 w-4 animate-spin mr-2 text-accent" />
                             <span>Retrieving memories across projects...</span>
                           </div>
                         )}
@@ -5468,19 +5468,19 @@ export default function App() {
                                 className="w-full text-left border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm"
                               >
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <span className="font-mono text-[10px] font-bold text-[#3D8B00] dark:text-emerald-400">
+                                  <span className="font-mono text-2xs font-bold text-accent-text dark:text-emerald-400">
                                     {item.id}
                                   </span>
                                   <span className="flex flex-wrap items-center gap-2">
-                                    <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-blue-100 dark:border-blue-900/50">
+                                    <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-blue-100 dark:border-blue-900/50">
                                       {item.horizon || 'event'}
                                     </span>
                                     {item.score !== undefined && item.score !== null && (
-                                      <span className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded border border-amber-100 dark:border-amber-900/50 text-[9px] font-extrabold uppercase">
+                                      <span className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded border border-amber-100 dark:border-amber-900/50 text-2xs font-extrabold uppercase">
                                         Score: {typeof item.score === 'number' ? item.score.toFixed(2) : item.score}
                                       </span>
                                     )}
-                                    <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-zinc-200 dark:border-zinc-700">
+                                    <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-zinc-200 dark:border-zinc-700">
                                       Project: {item.project_key}
                                     </span>
                                   </span>
@@ -5488,7 +5488,7 @@ export default function App() {
                                 <p className="text-xs font-semibold leading-relaxed text-zinc-750 dark:text-zinc-250 whitespace-pre-wrap">
                                   {item.text || item.body || 'No event body recorded.'}
                                 </p>
-                                <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-zinc-500">
+                                <div className="flex flex-wrap items-center gap-2 text-2xs font-bold text-zinc-500">
                                   <span className="font-mono text-zinc-500">{item.timestamp || item.ts}</span>
                                   {item.source && (
                                     <span className="font-mono text-zinc-400 truncate max-w-full">{item.source}</span>
@@ -5503,8 +5503,8 @@ export default function App() {
                   </div>
 
                   {!state ? (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-8 text-center space-y-4 max-w-md mx-auto">
-                      <Brain className="h-12 w-12 text-[#1CB0F6] mx-auto animate-pulse" />
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-8 text-center space-y-4 max-w-md mx-auto">
+                      <Brain className="h-12 w-12 text-status-info mx-auto animate-pulse" />
                       <h3 className="font-extrabold text-base text-zinc-800 dark:text-zinc-200">No Active Runs</h3>
                       <p className="text-xs text-zinc-550 dark:text-zinc-400 font-semibold">
                         This project does not have an active run or initialized workspace. Please run a workflow first to seed and activate the memory layer.
@@ -5512,7 +5512,7 @@ export default function App() {
                     </div>
                   ) : loadingMemory ? (
                     <div className="flex items-center justify-center p-12 text-zinc-500 font-bold">
-                      <RefreshCw className="h-5 w-5 animate-spin mr-2 text-[#58CC02]" />
+                      <RefreshCw className="h-5 w-5 animate-spin mr-2 text-accent" />
                       <span>Loading memory horizons...</span>
                     </div>
                   ) : memoryError ? (
@@ -5524,7 +5524,7 @@ export default function App() {
                       </p>
                     </div>
                   ) : !memoryData || !memoryData.roles || memoryData.roles.length === 0 ? (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-12 text-center text-[#AFAFAF] italic text-xs">
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-2xl p-12 text-center text-text-muted italic text-xs">
                       No memory data recorded yet for this project.
                     </div>
                   ) : (
@@ -5533,13 +5533,13 @@ export default function App() {
                         const eventBrowser = memoryEventBrowsers[role.role] || {};
                         const browseEvents = Array.isArray(eventBrowser.events) ? eventBrowser.events : [];
                         return (
-                        <div key={role.role} className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden flex flex-col">
+                        <div key={role.role} className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden flex flex-col">
                           {/* Card Header */}
-                          <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 flex justify-between items-center">
+                          <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-border-subtle dark:border-zinc-800 flex justify-between items-center">
                             <div className="flex items-center space-x-3">
-                              <Cpu className="h-5 w-5 text-[#1CB0F6] shrink-0" />
+                              <Cpu className="h-5 w-5 text-status-info shrink-0" />
                               <div>
-                                <span className="text-[10px] font-bold text-[#AFAFAF] uppercase tracking-wider">Agent Role</span>
+                                <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">Agent Role</span>
                                 <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 uppercase tracking-wide mt-0.5">{role.role}</h3>
                               </div>
                             </div>
@@ -5547,13 +5547,13 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => handleToggleMemoryEvents(role.role)}
-                                className="bg-white hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900 text-zinc-650 dark:text-zinc-300 border-2 border-[#E5E5E5] dark:border-zinc-800 px-3 py-1 rounded-xl text-[10px] font-extrabold tracking-wider uppercase transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30 flex items-center gap-1.5"
+                                className="bg-white hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900 text-zinc-650 dark:text-zinc-300 border-2 border-border-subtle dark:border-zinc-800 px-3 py-1 rounded-xl text-2xs font-extrabold tracking-wider uppercase transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-status-info/30 flex items-center gap-1.5"
                                 aria-expanded={Boolean(eventBrowser.open)}
                               >
                                 <FileText className="h-3.5 w-3.5" />
                                 <span>Browse events</span>
                               </button>
-                              <span className="bg-[#E8F9D9] dark:bg-emerald-950/30 text-[#3D8B00] dark:text-emerald-400 border-2 border-[#58CC02]/20 dark:border-emerald-500/20 px-3 py-1 rounded-xl text-[10px] font-extrabold tracking-wider uppercase">
+                              <span className="bg-status-success-bg dark:bg-emerald-950/30 text-accent-text dark:text-emerald-400 border-2 border-accent/20 dark:border-emerald-500/20 px-3 py-1 rounded-xl text-2xs font-extrabold tracking-wider uppercase">
                                 {role.event_count || 0} events
                               </span>
                             </div>
@@ -5570,8 +5570,8 @@ export default function App() {
                                 {/* Memory Horizons Grid */}
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                   {/* Long-term Summary */}
-                                  <div className="border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
-                                    <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1">
+                                  <div className="border-2 border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                    <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted flex items-center space-x-1">
                                       <span>Long-Term Memory</span>
                                     </h4>
                                     <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed">
@@ -5580,8 +5580,8 @@ export default function App() {
                                   </div>
 
                                   {/* Mid-term Summary */}
-                                  <div className="border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
-                                    <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1">
+                                  <div className="border-2 border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                    <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted flex items-center space-x-1">
                                       <span>Mid-Term Memory</span>
                                     </h4>
                                     <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed">
@@ -5590,8 +5590,8 @@ export default function App() {
                                   </div>
 
                                   {/* Short-term Memory */}
-                                  <div className="border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
-                                    <h4 className="text-[9px] font-extrabold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1">
+                                  <div className="border-2 border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                    <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted flex items-center space-x-1">
                                       <span>Short-Term Memory</span>
                                     </h4>
                                     <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed whitespace-pre-wrap">
@@ -5602,8 +5602,8 @@ export default function App() {
 
                                 {eventBrowser.open && (
                                   <div className="space-y-3 pt-2">
-                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-[#F1F1F1] dark:border-zinc-900 pb-2">
-                                      <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1.5">
+                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-border-subtle dark:border-zinc-900 pb-2">
+                                      <h4 className="text-2xs font-bold uppercase tracking-wider text-text-muted flex items-center space-x-1.5">
                                         <span>Browse Events</span>
                                       </h4>
                                       <label className="relative block w-full md:w-72">
@@ -5613,14 +5613,14 @@ export default function App() {
                                           value={eventBrowser.query || ''}
                                           onChange={(event) => handleMemoryEventSearchChange(role.role, event.target.value)}
                                           placeholder="Search events"
-                                          className="w-full rounded-xl border-2 border-[#E5E5E5] dark:border-zinc-800 bg-white dark:bg-zinc-950 py-2 pl-9 pr-3 text-xs font-semibold text-zinc-750 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#1CB0F6]/30"
+                                          className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 py-2 pl-9 pr-3 text-xs font-semibold text-zinc-750 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-status-info/30"
                                         />
                                       </label>
                                     </div>
 
                                     {eventBrowser.loading ? (
                                       <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl">
-                                        <RefreshCw className="h-4 w-4 animate-spin mr-2 text-[#58CC02]" />
+                                        <RefreshCw className="h-4 w-4 animate-spin mr-2 text-accent" />
                                         <span>Loading events...</span>
                                       </div>
                                     ) : eventBrowser.error ? (
@@ -5639,17 +5639,17 @@ export default function App() {
                                             type="button"
                                             key={event.id}
                                             onClick={() => handleOpenMemoryEvent(event.id)}
-                                            className="w-full text-left border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2 bg-[#FDFDFD] hover:bg-zinc-50 dark:bg-zinc-900/20 dark:hover:bg-zinc-900/40 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[#58CC02]/30"
+                                            className="w-full text-left border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2 bg-[#FDFDFD] hover:bg-zinc-50 dark:bg-zinc-900/20 dark:hover:bg-zinc-900/40 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-accent/30"
                                           >
                                             <div className="flex flex-wrap items-center justify-between gap-2">
-                                              <span className="font-mono text-[10px] font-bold text-[#3D8B00] dark:text-emerald-400">{event.id}</span>
+                                              <span className="font-mono text-2xs font-bold text-accent-text dark:text-emerald-400">{event.id}</span>
                                               <span className="flex flex-wrap items-center gap-2">
                                                 {event.is_superseded && (
-                                                  <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-550 dark:text-zinc-400 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-zinc-200 dark:border-zinc-800">
+                                                  <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-550 dark:text-zinc-400 px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-zinc-200 dark:border-zinc-800">
                                                     Superseded
                                                   </span>
                                                 )}
-                                                <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-[9px] font-extrabold border border-blue-100 dark:border-blue-900/50">
+                                                <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-blue-100 dark:border-blue-900/50">
                                                   {event.kind || event.horizon || 'event'}
                                                 </span>
                                               </span>
@@ -5657,7 +5657,7 @@ export default function App() {
                                             <p className="text-xs font-semibold leading-relaxed text-zinc-750 dark:text-zinc-250 whitespace-pre-wrap">
                                               {event.body || 'No event body recorded.'}
                                             </p>
-                                            <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-zinc-500">
+                                            <div className="flex flex-wrap items-center gap-2 text-2xs font-bold text-zinc-500">
                                               <span className="font-mono text-zinc-500">{event.timestamp || event.ts}</span>
                                               {event.source && (
                                                 <span className="font-mono text-zinc-400 truncate max-w-full">{event.source}</span>
@@ -5672,12 +5672,12 @@ export default function App() {
 
                                 {/* Retrieved Facts Section */}
                                 <div className="space-y-3 pt-2">
-                                  <div className="flex justify-between items-center border-b border-[#F1F1F1] dark:border-zinc-900 pb-2">
-                                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#AFAFAF] flex items-center space-x-1.5">
+                                  <div className="flex justify-between items-center border-b border-border-subtle dark:border-zinc-900 pb-2">
+                                    <h4 className="text-2xs font-bold uppercase tracking-wider text-text-muted flex items-center space-x-1.5">
                                       <span>Retrieved Facts</span>
                                     </h4>
                                     {role.latest_retrieval?.job_id && (
-                                      <span className="text-[9px] font-mono text-[#AFAFAF]">
+                                      <span className="text-2xs font-mono text-text-muted">
                                         Last Job: <span className="font-bold text-zinc-650 dark:text-zinc-450 font-semibold">{role.latest_retrieval.job_id}</span>
                                       </span>
                                     )}
@@ -5690,17 +5690,17 @@ export default function App() {
                                           <p className="text-xs font-mono leading-relaxed text-zinc-800 dark:text-zinc-200 bg-zinc-50/50 dark:bg-zinc-900/40 p-2.5 rounded-lg border border-dashed border-zinc-200 dark:border-zinc-800 whitespace-pre-wrap select-all select-text font-medium">
                                             {event.text}
                                           </p>
-                                          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold text-zinc-500">
+                                          <div className="flex flex-wrap items-center justify-between gap-2 text-2xs font-bold text-zinc-500">
                                             <div className="flex items-center space-x-2">
                                               <button
                                                 type="button"
                                                 onClick={() => handleOpenMemoryEvent(event.id)}
-                                                className="bg-[#E8F9D9] hover:bg-[#D7F6BF] dark:bg-emerald-950/30 dark:hover:bg-emerald-900/40 text-[#3D8B00] dark:text-emerald-400 px-2 py-0.5 rounded font-mono border-2 border-[#58CC02]/30 shadow-[0_2px_0_#A7D98A] dark:shadow-[0_2px_0_#12381f] transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-[#58CC02]/40"
+                                                className="bg-status-success-bg hover:bg-status-success-bg dark:bg-emerald-950/30 dark:hover:bg-emerald-900/40 text-accent-text dark:text-emerald-400 px-2 py-0.5 rounded font-mono border-2 border-accent/30 shadow-button dark:shadow-button transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-accent/40"
                                                 aria-label={`Open full memory event ${event.id}`}
                                               >
                                                 {event.id}
                                               </button>
-                                              <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-[9px] border border-blue-100 dark:border-blue-900/50">
+                                              <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-2xs border border-blue-100 dark:border-blue-900/50">
                                                 {event.horizon}
                                               </span>
                                               {event.source && (
@@ -5740,13 +5740,13 @@ export default function App() {
               {activeTab === 'devloop' && (
                 <div className="space-y-6">
                   {/* Header Section */}
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2 flex justify-between items-end flex-wrap gap-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2 flex justify-between items-end flex-wrap gap-2">
                     <div>
                       <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Dev Loop</h2>
-                      <p className="text-xs text-[#AFAFAF]">Observability view of in-flight dev loops, including active worktrees, open PRs, CI statuses, and pre-reviews.</p>
+                      <p className="text-xs text-text-muted">Observability view of in-flight dev loops, including active worktrees, open PRs, CI statuses, and pre-reviews.</p>
                     </div>
                     {devLoopData?.generated_at && (
-                      <span className="text-[10px] font-mono font-bold text-[#AFAFAF] uppercase bg-[#F1F1F1] dark:bg-zinc-900 border border-[#E5E5E5] dark:border-zinc-800 px-2 py-0.5 rounded-lg">
+                      <span className="text-2xs font-mono font-bold text-text-muted uppercase bg-surface-sunken dark:bg-zinc-900 border border-border-subtle dark:border-zinc-800 px-2 py-0.5 rounded-lg">
                         Freshness: {formatHumanTime(devLoopData.generated_at)}
                       </span>
                     )}
@@ -5759,10 +5759,10 @@ export default function App() {
                   {loadingDevLoop && <Spinner />}
 
                   {devLoopError && (
-                    <div className="bg-[#FFE2E2] dark:bg-zinc-900 border-2 border-[#FF4B4B]/30 p-4 rounded-xl text-[#EA2B2B] dark:text-[#FF4B4B] text-xs font-semibold flex items-start gap-2 max-w-2xl">
+                    <div className="bg-status-danger-bg dark:bg-zinc-900 border-2 border-status-danger/30 p-4 rounded-xl text-status-danger-text dark:text-status-danger text-xs font-semibold flex items-start gap-2 max-w-2xl">
                       <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                       <div>
-                        <h4 className="font-extrabold uppercase tracking-wide text-[10px]">Error loading Dev Loop status</h4>
+                        <h4 className="font-extrabold uppercase tracking-wide text-2xs">Error loading Dev Loop status</h4>
                         <p className="mt-1">{devLoopError}</p>
                       </div>
                     </div>
@@ -5785,7 +5785,7 @@ export default function App() {
                         <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900/50 p-4 rounded-xl text-amber-700 dark:text-amber-400 text-xs font-semibold space-y-1">
                           <div className="flex items-center space-x-1.5 text-amber-800 dark:text-amber-300">
                             <AlertTriangle className="h-4 w-4 shrink-0" />
-                            <span className="font-extrabold uppercase text-[10px] tracking-wider">System Warnings</span>
+                            <span className="font-extrabold uppercase text-2xs tracking-wider">System Warnings</span>
                           </div>
                           <ul className="list-disc pl-5 font-medium space-y-1 mt-1 text-zinc-650 dark:text-zinc-400">
                             {devLoopData.warnings.map((w, idx) => (
@@ -5818,7 +5818,7 @@ export default function App() {
                               return (
                                 <article
                                   key={prNumber !== undefined ? prNumber : idx}
-                                  className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-[0_6px_0_#D1D1D1] transition-all duration-200 flex flex-col sm:flex-row justify-between sm:items-center gap-4"
+                                  className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-5 hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 flex flex-col sm:flex-row justify-between sm:items-center gap-4"
                                 >
                                   <div className="space-y-1.5">
                                     <div className="flex flex-wrap items-center gap-2">
@@ -5829,12 +5829,12 @@ export default function App() {
                                         {pr?.title || 'Untitled Pull Request'}
                                       </h4>
                                     </div>
-                                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-zinc-500">
-                                      <span className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-650 dark:text-zinc-400 font-mono text-[10px]">
+                                    <div className="flex flex-wrap items-center gap-2 text-2xs font-bold text-zinc-500">
+                                      <span className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-650 dark:text-zinc-400 font-mono text-2xs">
                                         {pr?.head_branch || 'no branch'}
                                       </span>
                                       {pr?.land_command && (
-                                        <code className="bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-500 dark:text-zinc-400 font-mono text-[10px] truncate max-w-[200px] sm:max-w-xs md:max-w-md lg:max-w-lg" title={pr.land_command}>
+                                        <code className="bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-500 dark:text-zinc-400 font-mono text-2xs truncate max-w-[200px] sm:max-w-xs md:max-w-md lg:max-w-lg" title={pr.land_command}>
                                           {pr.land_command}
                                         </code>
                                       )}
@@ -5843,27 +5843,27 @@ export default function App() {
 
                                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                                     {/* CI badge */}
-                                    <span className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${ciStyle.bg} ${ciStyle.text} ${ciStyle.border}`}>
+                                    <span className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border ${ciStyle.bg} ${ciStyle.text} ${ciStyle.border}`}>
                                       <CIIcon className="h-3 w-3 shrink-0" />
                                       <span>CI: {pr?.ci || 'none'}</span>
                                     </span>
 
                                     {/* Pre-reviewed badge */}
                                     {isPreReviewed && (
-                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border bg-[#D0F0FF] text-[#0A7BAF] border-[#1CB0F6]/30">
+                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border bg-status-info-bg text-status-info-text border-status-info/30">
                                         pre-reviewed
                                       </span>
                                     )}
 
                                     {/* Land Readiness badge */}
                                     {pr?.land_ready === true && (
-                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30">
+                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border bg-status-success-bg text-accent-text border-accent/30">
                                         <CheckCircle className="h-3 w-3 shrink-0" />
                                         <span>Ready to land</span>
                                       </span>
                                     )}
                                     {pr?.land_ready === false && (
-                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border bg-[#F1F1F1] text-[#777777] border-[#AFAFAF]/30">
+                                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-2xs font-extrabold uppercase border bg-surface-sunken text-text-secondary border-border-strong/30">
                                         <Clock className="h-3 w-3 shrink-0" />
                                         <span>not ready</span>
                                       </span>
@@ -5873,29 +5873,29 @@ export default function App() {
                                     {pr?.land_command && (
                                       <button
                                         onClick={() => copyLandCommand(pr.land_command)}
-                                        className={`border-2 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 ${
+                                        className={`border-2 shadow-button dark:shadow-button font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer gap-1 ${
                                           copiedText === pr.land_command
-                                            ? 'bg-[#E8F9D9] text-[#3D8B00] border-[#58CC02]/30 hover:bg-[#E8F9D9]'
+                                            ? 'bg-status-success-bg text-accent-text border-accent/30 hover:bg-status-success-bg'
                                             : copyFailedText === pr.land_command
-                                              ? 'bg-[#FFECEC] text-[#D22F2F] border-[#FF4B4B]/30 hover:bg-[#FFECEC]'
-                                            : 'bg-white dark:bg-zinc-800 hover:bg-[#D0F0FF] hover:text-[#0A7BAF] border-[#E5E5E5] dark:border-zinc-800 text-zinc-700 dark:text-zinc-300'
+                                              ? 'bg-status-danger-bg text-status-danger-text border-status-danger/30 hover:bg-status-danger-bg'
+                                            : 'bg-white dark:bg-zinc-800 hover:bg-status-info-bg hover:text-status-info-text border-border-subtle dark:border-zinc-800 text-zinc-700 dark:text-zinc-300'
                                         }`}
                                         title={`Copy land command: ${pr.land_command}`}
                                       >
                                         {copiedText === pr.land_command ? (
                                           <>
                                             <Check className="h-3.5 w-3.5" />
-                                            <span className="text-[10px] font-extrabold uppercase">Copied!</span>
+                                            <span className="text-2xs font-extrabold uppercase">Copied!</span>
                                           </>
                                         ) : copyFailedText === pr.land_command ? (
                                           <>
                                             <X className="h-3.5 w-3.5" />
-                                            <span className="text-[10px] font-extrabold uppercase">Copy failed</span>
+                                            <span className="text-2xs font-extrabold uppercase">Copy failed</span>
                                           </>
                                         ) : (
                                           <>
                                             <Copy className="h-3.5 w-3.5" />
-                                            <span className="text-[10px] font-extrabold uppercase">Copy land command</span>
+                                            <span className="text-2xs font-extrabold uppercase">Copy land command</span>
                                           </>
                                         )}
                                       </button>
@@ -5907,7 +5907,7 @@ export default function App() {
                                         href={pr.url}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="bg-white dark:bg-zinc-800 hover:bg-[#E8F9D9] hover:text-[#3D8B00] border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_2px_0_#D1D1D1] dark:shadow-[0_2px_0_#1a1a1a] text-zinc-700 dark:text-zinc-300 font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer"
+                                        className="bg-white dark:bg-zinc-800 hover:bg-status-success-bg hover:text-accent-text border-2 border-border-subtle dark:border-zinc-800 shadow-button dark:shadow-button text-zinc-700 dark:text-zinc-300 font-bold p-1.5 rounded-xl text-xs transition-all duo-button-physics inline-flex items-center justify-center shrink-0 cursor-pointer"
                                         title="View Pull Request on GitHub"
                                       >
                                         <ExternalLink className="h-3.5 w-3.5" />
@@ -5929,17 +5929,17 @@ export default function App() {
                       <div className="space-y-3">
                         <h3 className="text-xs font-extrabold text-zinc-550 dark:text-zinc-450 uppercase tracking-wider">Active Worktrees</h3>
                         {Array.isArray(devLoopData.worktrees) && devLoopData.worktrees.length > 0 ? (
-                          <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl overflow-hidden font-semibold text-xs">
+                          <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden font-semibold text-xs">
                             <div className="overflow-x-auto">
                               <table className="w-full text-left border-collapse">
                                 <thead>
-                                  <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-[#E5E5E5] dark:border-zinc-800 text-[10px] font-extrabold uppercase tracking-wider text-[#AFAFAF]">
+                                  <tr className="bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-border-subtle dark:border-zinc-800 text-2xs font-extrabold uppercase tracking-wider text-text-muted">
                                     <th className="px-5 py-3">Path</th>
                                     <th className="px-5 py-3">Branch</th>
                                     <th className="px-5 py-3">Commit Head</th>
                                   </tr>
                                 </thead>
-                                <tbody className="divide-y divide-[#F1F1F1] dark:divide-zinc-900">
+                                <tbody className="divide-y divide-border-subtle dark:divide-zinc-900">
                                   {devLoopData.worktrees.map((wt, idx) => (
                                     <tr key={idx} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 text-zinc-700 dark:text-zinc-300">
                                       <td className="px-5 py-3 font-mono text-[11px] truncate max-w-xs" title={wt?.path}>
@@ -5950,11 +5950,11 @@ export default function App() {
                                       </td>
                                       <td className="px-5 py-3 font-mono text-[11px]">
                                         {wt?.head ? (
-                                          <code className="bg-[#F1F1F1] dark:bg-zinc-900 border border-[#E5E5E5] dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-655 dark:text-zinc-400 font-mono text-[10px]">
+                                          <code className="bg-surface-sunken dark:bg-zinc-900 border border-border-subtle dark:border-zinc-800 px-2 py-0.5 rounded text-zinc-655 dark:text-zinc-400 font-mono text-2xs">
                                             {wt.head.slice(0, 7)}
                                           </code>
                                         ) : (
-                                          <span className="text-[#AFAFAF] italic">n/a</span>
+                                          <span className="text-text-muted italic">n/a</span>
                                         )}
                                       </td>
                                     </tr>
@@ -5975,19 +5975,19 @@ export default function App() {
 
                     {/* Right Column: Dispatch form card */}
                     <div className="lg:col-span-1">
-                      <div className="bg-white dark:bg-zinc-955 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] p-5 rounded-2xl space-y-4">
-                        <div className="border-b border-[#F1F1F1] dark:border-zinc-900 pb-2">
+                      <div className="bg-white dark:bg-zinc-955 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card p-5 rounded-2xl space-y-4">
+                        <div className="border-b border-border-subtle dark:border-zinc-900 pb-2">
                           <h3 className="font-extrabold text-sm text-zinc-855 dark:text-zinc-200">Dispatch a Track</h3>
-                          <p className="text-[11px] text-[#AFAFAF] mt-0.5">Start a new parallel development track.</p>
+                          <p className="text-[11px] text-text-muted mt-0.5">Start a new parallel development track.</p>
                         </div>
 
                         {dispatchSuccess && (
-                          <div className="bg-[#E8F9D9] dark:bg-zinc-900 border-2 border-[#58CC02]/30 p-3 rounded-xl text-[#3D8B00] dark:text-[#58CC02] text-xs font-semibold space-y-1">
+                          <div className="bg-status-success-bg dark:bg-zinc-900 border-2 border-accent/30 p-3 rounded-xl text-accent-text dark:text-accent text-xs font-semibold space-y-1">
                             <div className="flex items-center gap-1 font-bold">
                               <CheckCircle className="h-4 w-4 shrink-0" />
                               <span>Track started asynchronously!</span>
                             </div>
-                            <ul className="list-disc pl-4 font-mono text-[10px] space-y-0.5 mt-1">
+                            <ul className="list-disc pl-4 font-mono text-2xs space-y-0.5 mt-1">
                               <li>Run ID: {dispatchSuccess.run_id}</li>
                               <li>Branch: {dispatchSuccess.branch}</li>
                               <li>Worktree: {dispatchSuccess.worktree}</li>
@@ -5996,7 +5996,7 @@ export default function App() {
                         )}
 
                         {dispatchError && (
-                          <div className="bg-[#FFE2E2] dark:bg-zinc-900 border-2 border-[#FF4B4B]/30 p-3 rounded-xl text-[#EA2B2B] dark:text-[#FF4B4B] text-xs font-semibold flex items-start gap-1.5">
+                          <div className="bg-status-danger-bg dark:bg-zinc-900 border-2 border-status-danger/30 p-3 rounded-xl text-status-danger-text dark:text-status-danger text-xs font-semibold flex items-start gap-1.5">
                             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                             <div className="break-all">{dispatchError}</div>
                           </div>
@@ -6004,25 +6004,25 @@ export default function App() {
 
                         <form onSubmit={handleDispatchTrack} className="space-y-3.5 text-xs font-semibold">
                           <div>
-                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Track Name</label>
+                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Track Name</label>
                             <input
                               type="text"
                               value={dispatchName}
                               onChange={(e) => setDispatchName(e.target.value)}
                               placeholder="e.g. feat-login-page"
                               disabled={dispatchLoading}
-                              className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                              className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono transition-colors"
                             />
                           </div>
 
                           <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Role</label>
+                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Role</label>
                               <select
                                 value={dispatchRole}
                                 onChange={(e) => setDispatchRole(e.target.value)}
                                 disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#58CC02] transition-colors"
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-accent transition-colors"
                               >
                                 {['backend', 'frontend', ...workerRoles.filter(r => r !== 'backend' && r !== 'frontend')].map((role) => (
                                   <option key={role} value={role}>{role}</option>
@@ -6032,12 +6032,12 @@ export default function App() {
                             </div>
 
                             <div>
-                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Adapter</label>
+                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Adapter</label>
                               <select
                                 value={dispatchAdapter}
                                 onChange={(e) => setDispatchAdapter(e.target.value)}
                                 disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#58CC02] transition-colors"
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-2.5 py-2 focus:outline-none focus:border-accent transition-colors"
                               >
                                 {roleBackendOptions.map((opt) => (
                                   <option key={opt} value={opt}>
@@ -6051,70 +6051,70 @@ export default function App() {
 
                           {dispatchRole === 'custom' && (
                             <div>
-                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Custom Role Name</label>
+                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Custom Role Name</label>
                               <input
                                 type="text"
                                 value={dispatchCustomRole}
                                 onChange={(e) => setDispatchCustomRole(e.target.value)}
                                 placeholder="e.g. backend_audit"
                                 disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono transition-colors"
                               />
                             </div>
                           )}
 
                           {dispatchAdapter === 'custom' && (
                             <div>
-                              <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Custom Adapter Name</label>
+                              <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Custom Adapter Name</label>
                               <input
                                 type="text"
                                 value={dispatchCustomAdapter}
                                 onChange={(e) => setDispatchCustomAdapter(e.target.value)}
                                 placeholder="e.g. openai"
                                 disabled={dispatchLoading}
-                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                                className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono transition-colors"
                               />
                             </div>
                           )}
 
                           <div>
-                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Task Details</label>
+                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Task Details</label>
                             <textarea
                               value={dispatchTask}
                               onChange={(e) => setDispatchTask(e.target.value)}
                               placeholder="Describe the task for this worker..."
                               disabled={dispatchLoading}
-                              className="w-full h-24 bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                              className="w-full h-24 bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-accent font-mono leading-relaxed transition-colors resize-none"
                             />
                           </div>
 
                           <div>
-                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Constraints (Optional)</label>
+                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Constraints (Optional)</label>
                             <textarea
                               value={dispatchConstraints}
                               onChange={(e) => setDispatchConstraints(e.target.value)}
                               placeholder="Optional constraints to restrict the worker..."
                               disabled={dispatchLoading}
-                              className="w-full h-16 bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-[#58CC02] font-mono leading-relaxed transition-colors resize-none"
+                              className="w-full h-16 bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl p-3 focus:outline-none focus:border-accent font-mono leading-relaxed transition-colors resize-none"
                             />
                           </div>
 
                           <div>
-                            <label className="block text-[10px] text-[#AFAFAF] uppercase tracking-wider mb-1">Verification Command (Optional)</label>
+                            <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1">Verification Command (Optional)</label>
                             <input
                               type="text"
                               value={dispatchVerify}
                               onChange={(e) => setDispatchVerify(e.target.value)}
                               placeholder="e.g. npm run test"
                               disabled={dispatchLoading}
-                              className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-[#E5E5E5] dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-[#58CC02] font-mono transition-colors"
+                              className="w-full bg-zinc-55 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 focus:outline-none focus:border-accent font-mono transition-colors"
                             />
                           </div>
 
                           <button
                             type="submit"
                             disabled={dispatchLoading}
-                            className="w-full bg-[#58CC02] border-2 border-[#3D8B00] shadow-[0_4px_0_#3D8B00] text-white font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="w-full bg-accent border-2 border-accent-text shadow-button text-white font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {dispatchLoading ? (
                               <>
@@ -6138,19 +6138,19 @@ export default function App() {
               {/* Tab: System */}
               {activeTab === 'system' && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
+                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
                     <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">System Information</h2>
-                    <p className="text-xs text-[#AFAFAF]">Live JSON configuration files, workspaces parameters, and target variables.</p>
+                    <p className="text-xs text-text-muted">Live JSON configuration files, workspaces parameters, and target variables.</p>
                   </div>
 
                   {/* Two columns of white cards: STATE / TARGET */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start font-semibold text-xs">
 
                     {/* STATE Card */}
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 space-y-4">
-                      <div className="border-b border-[#F1F1F1] pb-2 flex justify-between items-center">
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-6 space-y-4">
+                      <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
                         <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">Active Workflow State</h3>
-                        <span className="text-[10px] text-[#AFAFAF] uppercase tracking-wider">state/current.json</span>
+                        <span className="text-2xs text-text-muted uppercase tracking-wider">state/current.json</span>
                       </div>
 
                       {state ? (
@@ -6167,8 +6167,8 @@ export default function App() {
                             { k: 'Context Memory Path', v: <FilePath path={state.context_packet_path} segments={2} /> },
                             { k: 'Task Ledger File', v: <FilePath path={state.artifacts?.task_ledger} segments={2} /> },
                           ].map((field, index) => (
-                            <div key={index} className="flex justify-between items-center border-b border-[#F1F1F1] dark:border-zinc-900 pb-1.5 last:border-b-0">
-                              <dt className="text-[#AFAFAF] uppercase text-[10px] tracking-wider">{field.k}</dt>
+                            <div key={index} className="flex justify-between items-center border-b border-border-subtle dark:border-zinc-900 pb-1.5 last:border-b-0">
+                              <dt className="text-text-muted uppercase text-2xs tracking-wider">{field.k}</dt>
                               <dd className="font-mono text-[11px] truncate max-w-[200px] text-right font-bold text-zinc-800 dark:text-zinc-200">{field.v}</dd>
                             </div>
                           ))}
@@ -6179,10 +6179,10 @@ export default function App() {
                     </div>
 
                     {/* PROJECT TARGET Card */}
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-[#E5E5E5] dark:border-zinc-800 shadow-[0_4px_0_#D1D1D1] dark:shadow-[0_4px_0_#1a1a1a] rounded-2xl p-6 space-y-4">
-                      <div className="border-b border-[#F1F1F1] pb-2 flex justify-between items-center">
+                    <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-6 space-y-4">
+                      <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
                         <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">Project Target Config</h3>
-                        <span className="text-[10px] text-[#AFAFAF] uppercase tracking-wider">Projects environment</span>
+                        <span className="text-2xs text-text-muted uppercase tracking-wider">Projects environment</span>
                       </div>
 
                       <dl className="space-y-3 font-semibold text-zinc-700 dark:text-zinc-300">
@@ -6198,8 +6198,8 @@ export default function App() {
                           { k: 'Delivery Contract Req', v: startContext.delivery_contract?.required ? 'Yes' : 'No' },
                           { k: 'Contract Min Gate', v: startContext.delivery_contract?.minimum_evidence || 'n/a' },
                         ].map((field, index) => (
-                          <div key={index} className="flex justify-between items-center border-b border-[#F1F1F1] dark:border-zinc-900 pb-1.5 last:border-b-0">
-                            <dt className="text-[#AFAFAF] uppercase text-[10px] tracking-wider">{field.k}</dt>
+                          <div key={index} className="flex justify-between items-center border-b border-border-subtle dark:border-zinc-900 pb-1.5 last:border-b-0">
+                            <dt className="text-text-muted uppercase text-2xs tracking-wider">{field.k}</dt>
                             <dd className="font-mono text-[11px] truncate max-w-[200px] text-right font-bold text-zinc-800 dark:text-zinc-200">{field.v}</dd>
                           </div>
                         ))}
