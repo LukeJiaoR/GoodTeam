@@ -21,6 +21,7 @@ class WorkflowNode:
     on_blocked: str = "blocked"
     retry_max: int = 0
     retry_on_classes: tuple[str, ...] = ()
+    depends_on: tuple[str, ...] = ()
 
 
 _GATE_TRANSITIONS = {
@@ -70,26 +71,31 @@ _WORKFLOW_NODES = {
         name="architect",
         run_guard_gate="prd",
         runner_fn="run_architecture_until_gate",
+        depends_on=("product_requirement", "prd"),
     ),
     "planner": WorkflowNode(
         name="planner",
         run_guard_gate="rfc",
         runner_fn="run_delivery_until_release_gate",
+        depends_on=("architect", "rfc", "security"),
     ),
     "release": WorkflowNode(
         name="release",
         run_guard_gate="staging",
         runner_fn="run_release_until_gate",
+        depends_on=("planner", "staging"),
     ),
     "retro_memory": WorkflowNode(
         name="retro_memory",
         run_guard_gate="release",
         runner_fn="run_retro_until_complete",
+        depends_on=("release",),
     ),
     "security": WorkflowNode(
         name="security",
         run_guard_gate="security",
         runner_fn="noop_security_gate",
+        depends_on=("rfc",),
     ),
 }
 
@@ -129,6 +135,53 @@ def workflow_node(node: str) -> WorkflowNode | None:
     return WORKFLOW_NODES.get(node)
 
 
+def validate_workflow_dag(nodes: Mapping[str, WorkflowNode] | None = None) -> None:
+    node_table = nodes or WORKFLOW_NODES
+    identifiers = set(node_table) | set(GATE_TRANSITIONS) | {"product_requirement", "staging"}
+    for node in node_table.values():
+        for dependency in node.depends_on:
+            if dependency not in identifiers:
+                raise ValueError(f"Workflow node {node.name!r} has unknown dependency {dependency!r}")
+
+    visited: set[str] = set()
+    visiting: list[str] = []
+
+    def visit(name: str) -> None:
+        if name in visiting:
+            cycle = " -> ".join([*visiting[visiting.index(name) :], name])
+            raise ValueError(f"Workflow DAG cycle detected: {cycle}")
+        if name in visited or name not in node_table:
+            return
+        visiting.append(name)
+        for dependency in node_table[name].depends_on:
+            visit(dependency)
+        visiting.pop()
+        visited.add(name)
+
+    for name in node_table:
+        visit(name)
+
+
+def topological_workflow_nodes(nodes: Mapping[str, WorkflowNode] | None = None) -> list[str]:
+    node_table = nodes or WORKFLOW_NODES
+    validate_workflow_dag(node_table)
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def append_dependency(name: str) -> None:
+        if name in seen:
+            return
+        if name in node_table:
+            for dependency in node_table[name].depends_on:
+                append_dependency(dependency)
+        seen.add(name)
+        ordered.append(name)
+
+    for name in node_table:
+        append_dependency(name)
+    return ordered
+
+
 def error_next_for_node(node: str) -> str:
     workflow = workflow_node(node)
     if workflow is None:
@@ -152,3 +205,6 @@ def retry_policy_for_node(node: str) -> tuple[int, tuple[str, ...]]:
 
 def disposition_for_failure_class(failure_class: str) -> str:
     return FAILURE_DISPOSITIONS.get((failure_class or "").strip(), "block")
+
+
+validate_workflow_dag(WORKFLOW_NODES)

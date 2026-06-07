@@ -10,6 +10,8 @@ from goodteam_os.workflow_table import (
     approved_next_for_gate,
     disposition_for_failure_class,
     gate_transition,
+    topological_workflow_nodes,
+    validate_workflow_dag,
     workflow_node,
 )
 
@@ -59,6 +61,62 @@ def test_workflow_node_failure_policy_defaults_preserve_blocked_routing():
     assert node.on_blocked == "blocked"
     assert node.retry_max == 0
     assert node.retry_on_classes == ()
+    assert node.depends_on == ()
+
+
+def test_workflow_node_dependencies_describe_current_linear_dag():
+    assert workflow_node("architect").depends_on == ("product_requirement", "prd")
+    assert workflow_node("planner").depends_on == ("architect", "rfc", "security")
+    assert workflow_node("release").depends_on == ("planner", "staging")
+    assert workflow_node("retro_memory").depends_on == ("release",)
+    assert workflow_node("security").depends_on == ("rfc",)
+
+    assert topological_workflow_nodes() == [
+        "product_requirement",
+        "prd",
+        "architect",
+        "rfc",
+        "security",
+        "planner",
+        "staging",
+        "release",
+        "retro_memory",
+    ]
+
+
+def test_workflow_dag_validation_rejects_unknown_dependency():
+    nodes = {
+        "planner": WorkflowNode(
+            name="planner",
+            run_guard_gate="rfc",
+            runner_fn="run_delivery_until_release_gate",
+            depends_on=("missing_node",),
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes)
+    except ValueError as exc:
+        assert "unknown dependency" in str(exc)
+        assert "missing_node" in str(exc)
+    else:
+        raise AssertionError("expected unknown dependency validation failure")
+
+
+def test_workflow_dag_validation_rejects_cycles():
+    nodes = {
+        "a": WorkflowNode(name="a", run_guard_gate="prd", runner_fn="run_a", depends_on=("b",)),
+        "b": WorkflowNode(name="b", run_guard_gate="rfc", runner_fn="run_b", depends_on=("a",)),
+    }
+
+    try:
+        validate_workflow_dag(nodes)
+    except ValueError as exc:
+        assert "cycle" in str(exc).lower()
+        assert "a" in str(exc)
+        assert "b" in str(exc)
+    else:
+        raise AssertionError("expected cycle validation failure")
 
 
 def test_disposition_for_failure_class_maps_declared_classes():

@@ -1362,6 +1362,10 @@ def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, ob
                 edges.append({"from": transition.gate, "to": target, "type": edge_type})
                 identifiers.add(target)
     for node in WORKFLOW_NODES.values():
+        for dependency in getattr(node, "depends_on", ()):
+            edges.append({"from": dependency, "to": node.name, "type": "dependency"})
+            identifiers.add(node.name)
+            identifiers.add(dependency)
         for field, edge_type in (("on_error", "error"), ("on_blocked", "blocked")):
             target = getattr(node, field, "")
             if target:

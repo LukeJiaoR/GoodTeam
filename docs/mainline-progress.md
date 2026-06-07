@@ -12,12 +12,12 @@ reference, verification evidence, and follow-up status.
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Dry-smoke slice completed 2026-06-07 | Add a web-visible safe Run-Smoke action on top of the existing dev-loop/readiness surface; keep merge/land as a human gate unless a later auth design changes that. | `470 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
-| 5 | Graph/DAG engine D2 | Planned, gated | Add node dependency/topological driver foundation only after failure routing and checkpoint/stepper prerequisites stay green. | Pending |
+| 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 
 ## Active Increment
 
-Next active increment: Graph/DAG engine D2 gate review.
+Next active increment: i18n decision gate / remaining low-risk backlog review.
 
 ## Completed Increments
 
@@ -221,6 +221,63 @@ theme-system plan.
 
 **Deferred from this increment:**
 - Blindly converting every remaining bespoke hex. `App.jsx` is down to 15
-  set of low-frequency one-offs that should be reviewed visually before tokenizing.
+  low-frequency one-offs that should be reviewed visually before tokenizing.
 - Componentizing `App.jsx`; this pass stayed mechanical and contract-backed.
 - i18n/copy extraction remains gated separately.
+
+### 2026-06-07 — Graph/DAG engine D2: DAG-spec foundation
+
+**Intent:** move D2 forward without prematurely replacing the current linear
+`next_node` driver. The gate review found the old prerequisites have improved:
+checkpoint revisit is sequence-suffixed and the legacy dashboard stepper is
+table-derived, but there is still no genuine non-linear fan-in that justifies a
+topological executor rewrite in this pass.
+
+**Implemented:**
+- Added `WorkflowNode.depends_on` with default `()`.
+- Declared the current workflow's structural dependencies using existing stage/gate
+  identifiers, for example `architect` depends on `product_requirement` + `prd`,
+  `planner` depends on `architect` + `rfc` + `security`, and `release` depends on
+  `planner` + `staging`.
+- Added `validate_workflow_dag()` to reject unknown dependencies and dependency cycles.
+- Added `topological_workflow_nodes()` so future drivers/tests can consume one
+  deterministic workflow structure order.
+- Exposed dependency edges from `build_workflow_graph()` as `type=dependency`, while
+  keeping approved/changes/rejected/error/blocked edges intact.
+- Preserved current execution semantics: `advance_approved_workflow` still runs the
+  existing linear `next_node` loop.
+
+**Verification evidence:**
+- Red tests:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workflow_table.py -q`
+  first failed with `ImportError: cannot import name 'topological_workflow_nodes'`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workflow_table.py::test_workflow_node_dependencies_describe_current_linear_dag tests/test_workflow_table.py::test_workflow_dag_validation_rejects_unknown_dependency tests/test_workflow_table.py::test_workflow_dag_validation_rejects_cycles tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges -q`
+  -> `4 passed`.
+- Compatibility regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges tests/test_workflow_table.py -q`
+  -> `12 passed`.
+- Related graph/table regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workflow_table.py tests/test_web.py -q -k 'workflow_graph or workflow_node or workflow_dag or dashboard_stepper or advance_approved_workflow or state_store_disambiguates'`
+  -> `9 passed, 103 deselected`.
+- Related state/graph regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_state.py tests/test_graph_sample.py -q -k 'checkpoint or workflow or failure or retry or approval'`
+  -> `21 passed, 51 deselected`.
+- Lint:
+  `.venv/bin/ruff check src/goodteam_os/workflow_table.py src/goodteam_os/web.py tests/test_workflow_table.py tests/test_web.py`
+  -> `All checks passed!`.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `474 passed in 138.25s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+
+**Deferred from this increment:**
+- Replacing the current driver with a topological executor. That remains gated on a
+  real fan-in consumer or dynamic per-run plan, plus live smoke because it changes
+  core walk semantics.
+- Parallel level execution.
