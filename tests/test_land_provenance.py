@@ -336,3 +336,69 @@ def test_land_provenance_airdrop_writes_pr_manifest_linking_job_and_review_artif
         ]
     finally:
         pre_review_report.unlink(missing_ok=True)
+
+
+def test_land_provenance_airdrop_archives_review_rationale_and_links_manifest(tmp_path):
+    root = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    python_shim = _make_fake_main(root)
+    pr = "98708"
+    rationale = tmp_path / "review-rationale.md"
+    job_dir = worktree / ".goodteam" / "workers" / "jobs" / "job-rationale"
+    job_dir.mkdir(parents=True)
+    (job_dir / "task.md").write_text("Implement review-rationale provenance.\n", encoding="utf-8")
+    (job_dir / "job.json").write_text(
+        json.dumps(
+            {
+                "id": "job-rationale",
+                "run_id": "run-rationale",
+                "role": "implementation",
+                "adapter": "codex",
+                "model": "gpt-5-codex",
+                "task_source": "/tmp/rationale-task.md",
+                "constraints_source": "/tmp/rationale-constraints.md",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (job_dir / "status.json").write_text(
+        json.dumps({"run_id": "run-rationale", "job_id": "job-rationale", "role": "implementation"}),
+        encoding="utf-8",
+    )
+    rationale.write_text(
+        "Approved to land because the regression test covers the user-visible bug.\n",
+        encoding="utf-8",
+    )
+
+    result = _run_bash(
+        f"""
+        set -euo pipefail
+        . {_q(HELPER)}
+        export PY={_q(python_shim)}
+        export LAND_PROVENANCE_REVIEW_RATIONALE={_q(rationale)}
+        land_provenance_extract {pr} {_q(worktree)}
+        land_provenance_airdrop {pr} {_q(root)} abc123def456 pass
+        """,
+        env={**os.environ, "PATH": os.environ["PATH"]},
+    )
+
+    archive = root / ".goodteam" / "provenance" / f"pr-{pr}"
+    archived_rationale = archive / "review-rationale.md"
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    event_path = root / ".goodteam" / "memory" / "roles" / "release" / "events.jsonl"
+    events_by_source = _events_by_source(event_path)
+    review_events = events_by_source[f"review/pr-{pr}"]
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert archived_rationale.read_text(encoding="utf-8") == rationale.read_text(encoding="utf-8")
+    assert manifest["review_rationale"] == ".goodteam/provenance/pr-98708/review-rationale.md"
+    assert "review_rationale=y" in review_events[0]["text"]
+    assert "review_rationale_path=.goodteam/provenance/pr-98708/review-rationale.md" in review_events[0]["text"]
+
+
+def test_land_pr_script_accepts_review_rationale_option_and_exports_for_airdrop():
+    script = (REPO_ROOT / "scripts" / "land-pr.sh").read_text(encoding="utf-8")
+
+    assert "--review-rationale) REVIEW_RATIONALE=\"$2\"; shift 2 ;;" in script
+    assert "--review-rationale=*) REVIEW_RATIONALE=\"${1#*=}\"; shift ;;" in script
+    assert "export LAND_PROVENANCE_REVIEW_RATIONALE=\"$REVIEW_RATIONALE\"" in script

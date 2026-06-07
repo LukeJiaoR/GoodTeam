@@ -16,11 +16,11 @@ reference, verification evidence, and follow-up status.
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
-| 9 | Dispatch artifacts audit/memory | PR manifest slice completed 2026-06-07 | Persist dispatch task/constraints source paths, then write a PR-level archive manifest that links job artifacts, review artifacts, and land memory sources. | `479 passed`; ruff clean; frontend build passed |
+| 9 | Dispatch artifacts audit/memory | Review-rationale provenance completed 2026-06-07 | Persist dispatch task/constraints source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `485 passed`; ruff clean; frontend build passed |
 
 ## Active Increment
 
-Next active increment: choose next real open/gated mainline. Good candidates are more dispatch-audit capture or a focused backlog-product-loop slice; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
+Next active increment: choose next real open/gated mainline. Good candidates are first-class research report source capture or a focused backlog-product-loop slice; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
 
 ## Completed Increments
 
@@ -669,3 +669,61 @@ artifacts, and land memory sources.
 **Deferred from this increment:**
 - First-class research report source capture.
 - Structured human review rationale beyond the mechanical approved-to-land fact.
+
+### 2026-06-07 — Dispatch artifacts audit/memory: review-rationale provenance
+
+**Intent:** preserve the human review judgement as a durable artifact when the
+reviewer has written rationale on disk, without automating the judgement or
+changing the land gate.
+
+**Implemented:**
+- `scripts/land-pr.sh` accepts `--review-rationale <path>` and
+  `--review-rationale=<path>`.
+- The script exports the optional path as `LAND_PROVENANCE_REVIEW_RATIONALE` before
+  calling `land_provenance_airdrop`.
+- `land_provenance_airdrop` archives a non-empty rationale file to
+  `.goodteam/provenance/pr-<PR>/review-rationale.md`.
+- The `review/pr-*` release memory event records `review_rationale=y` and
+  `review_rationale_path=...` when the file is archived; otherwise existing
+  behavior remains best-effort and unchanged.
+- The PR manifest records `review_rationale` when the archive is present.
+
+**Verification evidence:**
+- Red tests:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_land_provenance.py::test_land_provenance_airdrop_archives_review_rationale_and_links_manifest tests/test_land_provenance.py::test_land_pr_script_accepts_review_rationale_option_and_exports_for_airdrop -q`
+  failed because `review-rationale.md` was not archived and `land-pr.sh` had no
+  `--review-rationale` option/export.
+- Focused green:
+  the same two tests -> `2 passed`.
+- Land provenance regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_land_provenance.py -q`
+  -> `9 passed`.
+- Related regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_land_provenance.py tests/test_pre_review_script.py tests/test_cli.py -q`
+  -> `32 passed`.
+- Shell syntax:
+  `bash -n scripts/lib/land-provenance.sh scripts/land-pr.sh scripts/pre-review.sh scripts/lib/pre-review.sh`
+  -> exit 0.
+- Touched-test lint:
+  `.venv/bin/ruff check tests/test_land_provenance.py`
+  -> `All checks passed!`.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `485 passed in 137.77s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+
+**Known verification constraint:**
+- `tests/test_land_provenance.py` uses fixed `/tmp/land-provenance-*` and
+  `/tmp/pre-review-*` paths, so overlapping pytest processes can interfere with
+  each other. The related suites were rerun sequentially for the evidence above.
+
+**Deferred from this increment:**
+- First-class research report source capture.

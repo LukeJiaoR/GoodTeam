@@ -121,6 +121,7 @@ archive = Path(archive_arg)
 pr_value = int(pr) if pr.isdigit() else pr
 archive_rel = f".goodteam/provenance/pr-{pr}/"
 pre_review_report = pre_review_archive_rel if (archive / "pre-review-report.md").is_file() else None
+review_rationale = f".goodteam/provenance/pr-{pr}/review-rationale.md" if (archive / "review-rationale.md").is_file() else None
 
 
 def read_json(path: Path) -> dict:
@@ -157,6 +158,7 @@ manifest = {
     "squash_merge_sha": head_sha,
     "archive": archive_rel,
     "pre_review_report": pre_review_report,
+    "review_rationale": review_rationale,
     "memory_sources": [f"land/pr-{pr}", f"review/pr-{pr}"],
     "jobs": jobs,
 }
@@ -180,6 +182,10 @@ land_provenance_airdrop() {
   local pre_review_report="/tmp/pre-review-$pr-report.md"
   local pre_review_archive="$archive/pre-review-report.md"
   local pre_review_archive_rel=".goodteam/provenance/pr-$pr/pre-review-report.md"
+  local review_rationale="n"
+  local review_rationale_source="${LAND_PROVENANCE_REVIEW_RATIONALE:-}"
+  local review_rationale_archive="$archive/review-rationale.md"
+  local review_rationale_archive_rel=".goodteam/provenance/pr-$pr/review-rationale.md"
   local text=""
   local review_text=""
   local python_bin="${PY:-$root/.venv/bin/python}"
@@ -197,6 +203,10 @@ land_provenance_airdrop() {
   if [ -s "$pre_review_report" ]; then
     pre_review="y"
     mkdir -p "$archive" 2>/dev/null && cp "$pre_review_report" "$pre_review_archive" 2>/dev/null || land_provenance_warn "pre-review report archive failed: $pre_review_report -> $pre_review_archive"
+  fi
+  if [ -n "$review_rationale_source" ] && [ -s "$review_rationale_source" ]; then
+    review_rationale="y"
+    mkdir -p "$archive" 2>/dev/null && cp "$review_rationale_source" "$review_rationale_archive" 2>/dev/null || land_provenance_warn "review rationale archive failed: $review_rationale_source -> $review_rationale_archive"
   fi
 
   text="PR #$pr landed; head_branch=$branch; CI=$ci_status; pre_review_report=$pre_review; squash_merge_sha=$head_sha; archive=$archive_rel"
@@ -228,9 +238,12 @@ land_provenance_airdrop() {
       return 0
     }
 
-  review_text="PR #$pr land_review_decision=approved_to_land; head_branch=$branch; CI=$ci_status; pre_review_report=$pre_review; squash_merge_sha=$head_sha"
+  review_text="PR #$pr land_review_decision=approved_to_land; head_branch=$branch; CI=$ci_status; pre_review_report=$pre_review; review_rationale=$review_rationale; squash_merge_sha=$head_sha"
   if [ "$pre_review" = "y" ] && [ -f "$pre_review_archive" ]; then
     review_text="$review_text; pre_review_report=$pre_review_archive_rel"
+  fi
+  if [ "$review_rationale" = "y" ] && [ -f "$review_rationale_archive" ]; then
+    review_text="$review_text; review_rationale_path=$review_rationale_archive_rel"
   fi
   PYTHONPATH="$root/src" "$python_bin" -m goodteam_os.cli memory-append \
     --project-root "$root" \

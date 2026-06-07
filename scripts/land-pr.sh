@@ -7,7 +7,7 @@
 # the PR has been reviewed and CI is green.
 #
 # Usage:
-#   scripts/land-pr.sh <PR-number> [--worktree <path>] [--no-test]
+#   scripts/land-pr.sh <PR-number> [--worktree <path>] [--review-rationale <path>] [--no-test]
 #
 # What it does (idempotent-ish, stops on first failure):
 #   1. Verifies the PR's CI checks are green (refuses if not, unless --force).
@@ -25,6 +25,7 @@ PY="$ROOT/.venv/bin/python"
 
 PR=""
 WORKTREE=""
+REVIEW_RATIONALE=""
 RUN_TEST=1
 FORCE=0
 CI_STATUS="unverified"
@@ -32,6 +33,8 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --worktree) WORKTREE="$2"; shift 2 ;;
     --worktree=*) WORKTREE="${1#*=}"; shift ;;
+    --review-rationale) REVIEW_RATIONALE="$2"; shift 2 ;;
+    --review-rationale=*) REVIEW_RATIONALE="${1#*=}"; shift ;;
     --no-test) RUN_TEST=0; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
@@ -107,6 +110,7 @@ if [ "$MAIN_STASH_CREATED" = 1 ]; then
 fi
 
 LAND_HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+export LAND_PROVENANCE_REVIEW_RATIONALE="$REVIEW_RATIONALE"
 land_provenance_airdrop "$PR" "$ROOT" "$LAND_HEAD_SHA" "$CI_STATUS" || true
 
 if [ "$RUN_TEST" = 1 ]; then
