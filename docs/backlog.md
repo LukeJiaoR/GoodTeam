@@ -241,55 +241,85 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   Added `RoleMemoryStore.list_events` + `GET /api/memory/events` + a per-role "Browse events"
   search panel in the Memory tab that reuses the existing detail modal (superseded events
   flagged, kept not dropped). agy finding closed.
-- **Checkpoint filename collision on node revisit** (found 2026-06-03, D2 research). StateStore
-  checkpoints are keyed by `state.current_node` only (`state.py:68,75`) → revisiting a node in one
-  run overwrites its checkpoint, losing audit history. Must be fixed before any topological/looping
-  driver (D2b) that can revisit nodes; add an attempt/sequence suffix.
-- **Dashboard progress stepper is hardcoded, not table-derived** (found 2026-06-03, D2 research).
-  The stepper uses a hardcoded 13-step node order (`web.py:4040-4057`), NOT `WORKFLOW_NODES`/
-  `GATE_TRANSITIONS`. The new workflow-graph viz (#49/#50) IS table-derived → two differently-sourced
-  views that can desync; any added/reordered node silently fails to render in the stepper. Reconcile
-  to a single source of truth (the table) before adding nodes.
+- ~~**Checkpoint filename collision on node revisit**~~ **RESOLVED 2026-06-04 (#69).**
+  `StateStore` checkpoints now use sequence-suffixed filenames (`start-001.json`,
+  `start-002.json`, ...), and `latest_checkpoint_path` / project-scoped equivalent resolve the
+  newest checkpoint. Covered by `tests/test_state.py::test_state_store_disambiguates_revisited_checkpoint_nodes`
+  and project-scoped companion.
+- ~~**Dashboard progress stepper is hardcoded, not table-derived**~~ **RESOLVED 2026-06-04 (#71).**
+  The legacy dashboard stepper is derived from `GATE_TRANSITIONS` / `WORKFLOW_NODES` via
+  `_dashboard_stepper_table_order()` and `_dashboard_stepper_steps()`. Covered by
+  `tests/test_web.py::test_dashboard_stepper_order_follows_workflow_table_happy_path`.
 - ~~**Dispatch `--verify` 127s in fresh worktrees**~~ **RESOLVED 2026-06-03 (PR #46).**
   `scripts/dispatch-track.sh` now idempotently links `$WORKTREE/.venv/bin -> $ROOT/.venv/bin`
   after worktree setup, so a relative `.venv/bin/python` resolves to the main venv (deps
   included); `.venv` is gitignored so it cannot leak into a commit. Verified empirically.
-- **Dispatch can leave a ZOMBIE job (status=`running`, empty `result.md`, NO completion
-  notification) when the wrapper/worker dies mid-run** (found 2026-06-03; a codex UI-coverage audit
-  job died — `status.json` frozen at `running`, no heartbeat past its last `updated_at`, process
-  gone, `result.md` 0 bytes, and the orchestrator never reported completion/failure). Needs
-  heartbeat-timeout detection + status reconciliation so a dead worker is marked `failed`
-  (not stuck `running`) and surfaced. Until then: re-check `status.json` mtime/process liveness and
-  re-dispatch manually.
+- ~~**Dispatch can leave a ZOMBIE job (status=`running`, empty `result.md`, NO completion
+  notification) when the wrapper/worker dies mid-run**~~ **RESOLVED 2026-06-04 (#70).**
+  Worker jobs now heartbeat while running, `WorkerJobStore.list_jobs()` reconciles stale running
+  statuses, dead PIDs become `failed` with `failure_class=stuck` / `disposition=abandoned`, and
+  live stale PIDs are surfaced as `possibly_stuck`. Covered by `tests/test_workers.py` stale/dead
+  running-job cases.
 - ~~**`GET /api/memory/cross` has no web UI**~~ **RESOLVED 2026-06-03 (PR #55).** Added a
   cross-project search card to the Memory tab (role + query + scope[+k]); scope defaults to "all"
   → resolves to the actual project-key list to satisfy the endpoint's required non-empty scope;
   ranked project-qualified hits, race-guarded.
-- **Web UI is NOT yet a complete control surface for the self-hosting/orchestration loop**
+- **Web UI is NOT yet a complete control surface for the self-hosting/orchestration loop** —
+  🟡 **PARTIAL 2026-06-07.**
   (UI-coverage audit, 2026-06-03). The end-user product loop (idea→PRD→RFC→impl→staging→release→
   retro) is ~90% web-driven; but GoodTeam's own dev/orchestration toolchain
-  (`dispatch-track.sh`, `land-pr.sh`, `graduate-release.sh`, `smoke`) is CLI-only — the §6.2
-  "GoodTeam develops itself from its own UI" endgame. Candidate UI actions: Run-Smoke button
-  (`/api/smoke`), custom-dispatch button, Land-PR action, graduate/tag panel.
-- **G3 pickup filter is slightly over-broad** (found 2026-06-03, pre-review on #56). `RoleMemoryStore._normal_pickup_content` strips short-term lines that start with `- FAILURE [` OR carry the `worker_failure:` source. A legitimate human/worker short-term note literally starting with "FAILURE" would be hidden from the pickup packet (display-only — the event is still stored; retrieval already keys on source only). Tighten the pickup filter to key on the `worker_failure:` source marker alone. Low.
-- **G3c — global cross-project failure-pattern library (hit-count)** (deferred from the G3 design, 2026-06-03). The §7 compounding payoff: signature → classifier hint → recommended action → hit count, readable across projects, applied on match. Needs a NEW global (non-per-project) store: path resolver + mutable schema + write/update + retrieval (none exists today; cross-project is read-only fan-out). Build AFTER G3b failure-capture accumulates real events; own design + gate. The failure-library hit-rate is the §12 north-star metric.
+  (`dispatch-track.sh`, `land-pr.sh`, `graduate-release.sh`, `smoke`) was mostly CLI-only — the
+  §6.2 "GoodTeam develops itself from its own UI" endgame. Landed slices: Dev Loop observability,
+  web `Dispatch a track`, land-readiness / copy land command, and `Run Dry Smoke`. Remaining:
+  graduate/tag panel and any server-side land/merge path remain gated; land is intentionally
+  human-invoked.
+- ~~**G3 pickup filter is slightly over-broad**~~ **RESOLVED 2026-06-04 (#68).**
+  Pickup filtering now keys on the `worker_failure:` source marker rather than stripping human
+  notes that merely start with `FAILURE [...]`. Covered by
+  `tests/test_memory.py::test_pickup_packet_preserves_human_failure_heading_short_term_event`.
+- **G3c — global cross-project failure-pattern library (hit-count)** — ✅ **LIBRARY RESOLVED
+  2026-06-07 (`a93a693`)**, routing application deferred. `FailurePatternLibrary` now stores
+  signature/classifier/disposition hints, hit count, roles/nodes/sources, timestamps, and
+  deterministic lookup; worker failure triage records patterns. Applying pattern matches to alter
+  routing remains a separate measured gate once hit-rate data exists.
 - **G3 LLM triage agent** (deferred from the G3 design). G3a ships a DETERMINISTIC classify→route table covering known classes. Add a model-driven triage agent only for the `unknown`/ambiguous long tail, measured against the §12 hit-rate — don't run a model to route failures a table already handles.
-- **`land-pr.sh` ff-pull fails when a merged PR touches `workers.py`** (found 2026-06-04, during #63 land). The intentional uncommitted local edit `DEFAULT_CODEX_MODEL = os.getenv(...)` (workers.py:20) blocks `git pull --ff-only` whenever a landed PR also modifies workers.py (git refuses to update a file with uncommitted changes, even non-overlapping). Resolved manually via stash→pull→pop (the edit re-applies cleanly since line 20 is untouched upstream). Make `land-pr.sh` stash/restore uncommitted local edits around the pull (or document the model-config as a committed env-overridable default so there's no standing local edit). Recurs for any workers.py-touching PR.
-- **agy CLI actually supports `--model` + `agy models`** (found 2026-06-04, CLI probe), contradicting GoodTeam's `_agy_build_command` comment "agy has no --model flag" (workers.py ~240). agy can list models (`agy models`, display labels only, no stable ids) and accept `--model`. Reconcile: GoodTeam could route a model to agy after all; revisit agy's command builder + whether to expose agy models (labels) in the picker.
-- **Delivery Mode is narrow** (found 2026-06-05, founder using the product). Only 3 hardcoded modes (`projects.py:13` `mvp`/`init_project`/`multi_service`), all Web-product oriented; each just injects a `DELIVERY_MODE_STANDARDS` text block (`graph.py:25`) into role prompts. Doesn't cover static site/landing, CLI tool, library/SDK, data pipeline/ETL, mobile, ML/notebook, incremental feature on an existing system, content/docs project. Hardcoded in 4 places (projects.py / cli.py / graph.py / App.jsx select). Proposed (founder to pick direction; dismissed for now): preset modes + a `Custom…` free-text standards option, isomorphic to the model picker's catalog+Custom. Medium.
-- **Air-drop land event references the newest job = the pre-review `code_review` job, not the implementation job** (found 2026-06-05, first live Air-drop on #74). `land_provenance_extract` picks the newest `.goodteam/workers/jobs/*/status.json` by mtime, but `pre-review.sh` runs a `code_review` job in the same worktree later, so the land event records `dispatch_role=code_review` + that job's run_id/job_id. Archive still captures all job dirs (no data loss); only the event's job linkage is wrong. Fix: pick the implementation job (exclude review roles, or prefer the earliest/non-review job). Low–Medium.
-- **`/api/fs/list` 403 permission branch untested at route level** (found 2026-06-05, pre-review on #74). Handler returns 403 for unreadable dirs but only 400/404 are asserted in `tests/test_api.py`. Add a monkeypatch test (force `iterdir`→`PermissionError`), platform-independent (real chmod is flaky under root/CI). Low.
-- **Legacy f-string dashboard renderer's delivery-mode select is stale** (found 2026-06-05, pre-review on #76). The canonical React UI (App.jsx) now lists all 9 presets + custom, but the NON-canonical legacy f-string dashboard renderer in `web.py` (~4308 + the add-project dialog ~5305) still hardcodes only mvp/init_project/multi_service. Generate those option lists from `DELIVERY_MODES` to avoid drift — or delete the legacy renderer outright (CLAUDE.md already marks it not-canonical). Low.
-- **Detail-view repo paths read the wrong layer (latent, shows empty)** (found 2026-06-05, while fixing #81). `frontend/src/App.jsx:3069/3073/3077` read `startContext.project_report?.project?.repos?.docs|backend|frontend`, but the backend shape is `project_report.repos.<name>.path` (repos is top-level under project_report; `project_report.project` only has name/key/plane_project_id). So the project-detail repo path display has silently been empty. Fix to `project_report?.repos?.<name>?.path`. (The create-form hydration had the same bug and was fixed in #81.) Low.
-- **`pre-review.sh` can write an EMPTY report under heavy concurrent runs** (found 2026-06-04, Wave 1). When several pre-reviews ran concurrently, some `/tmp/pre-review-<PR>-report.md` came back empty (the report-copy / newest-result.md selection appears to race across concurrent throwaway worktrees). Re-running sequentially produced correct verdicts. Fix: make the report path/selection robust to concurrency (key the copied result.md to the PR's own job, not "newest"), or serialize. Workaround: run pre-reviews sequentially.
+- ~~**`land-pr.sh` ff-pull fails when a merged PR touches `workers.py`**~~ **RESOLVED 2026-06-04 (#66).**
+  `scripts/land-pr.sh` now stashes/restores local tracked edits around `git pull --ff-only`, with
+  trap-based restore on failure.
+- ~~**agy CLI actually supports `--model` + `agy models`**~~ **RESOLVED 2026-06-06.**
+  `DEFAULT_AGY_MODEL` is env-overridable via `GOODTEAM_AGY_MODEL`, `_agy_build_command` emits
+  `--model` when non-auto, and `/api/agents` can use live `agy models` labels when available.
+- ~~**Delivery Mode is narrow**~~ **RESOLVED 2026-06-05/06.**
+  `DELIVERY_MODES` now includes static site, CLI tool, library, data pipeline, mobile app,
+  feature increment, and custom standards. CLI, backend validation, React UI, and legacy renderer
+  use the shared catalog.
+- ~~**Air-drop land event references the newest job = the pre-review `code_review` job, not the
+  implementation job**~~ **RESOLVED 2026-06-06.** `land_provenance_extract` now prefers non-review
+  implementation jobs over newer `code_review` jobs. Covered by
+  `tests/test_land_provenance.py::test_land_provenance_extract_prefers_non_review_job_over_newer_code_review`.
+- ~~**`/api/fs/list` 403 permission branch untested at route level**~~ **RESOLVED 2026-06-06.**
+  Covered by `tests/test_api.py::test_api_fs_list_route_maps_permission_error_to_403`.
+- ~~**Legacy f-string dashboard renderer's delivery-mode select is stale**~~ **RESOLVED 2026-06-06.**
+  `render_delivery_mode_options()` generates options from `DELIVERY_MODES`; covered by
+  `tests/test_web.py::test_render_delivery_mode_options_uses_full_delivery_mode_catalog`.
+- ~~**Detail-view repo paths read the wrong layer (latent, shows empty)**~~ **RESOLVED 2026-06-06.**
+  Detail view reads `startContext.project_report?.repos?.<name>?.path`; covered by the frontend
+  contract in `tests/test_web.py`.
+- ~~**`pre-review.sh` can write an EMPTY report under heavy concurrent runs**~~ **RESOLVED
+  2026-06-07 (`ab9df71`).** The helper ignores empty/failed reports, falls back across adapters on
+  auth/provider failures, and now binds report/status selection to the current invocation marker so
+  concurrent or back-to-back `code_review` jobs cannot copy another run's report.
 
-## Worker Routing Configuration — Simple / Advanced modes  (founder, 2026-06-06)
+## ✅ RESOLVED 2026-06-06 — Worker Routing Configuration: Simple / Advanced modes
 
-The per-role agent+model picker (Worker Routing Configuration) exposes EVERY workflow role (product_requirement/architect/planner/implementation/ui/qa/code_review/release/retro…) — too granular for non-power users. **Plan: a default SIMPLE mode that clusters roles into ~4 function buckets, each one agent choice, with a clear labour split; the full per-role config moves behind an ADVANCED toggle.** Proposed buckets: Planning&Design (product_requirement, architect, planner) · Building (implementation, ui) · Quality (qa, code_review) · Release (release, retro). Picking a bucket's agent sets all underlying roles (writes the existing panelRoleOverrides). FE-only (buckets are a presentation layer over existing per-role overrides). Founder also open to "even simpler: one global agent by default, buckets/per-role only under Advanced." Queue after the IA restructure (same App.jsx area). Medium.
+Simple/Advanced worker routing landed in `frontend/src/App.jsx`: function buckets apply role
+overrides, then switch users into Advanced review before save. Covered by
+`tests/test_web.py::test_frontend_contract_has_simple_advanced_worker_routing_modes`.
 
-## Tiny: FilePath tooltip is unreadable (vertical 1-char column)  (founder, 2026-06-06)
+## ✅ RESOLVED 2026-06-06 — Tiny: FilePath tooltip is unreadable
 
-The `FilePath` tooltip (frontend/src/App.jsx:235, used in Actions/[blocks] etc.) uses `max-w-xs whitespace-normal break-all`; in narrow containers `break-all` + the collapsing flex context shrink it to a ~1-char-wide vertical strip. Fix: `break-words` + a defined width that can't collapse (e.g. `w-max max-w-[28rem]`). One-line className change — **folded into the IA restructure track** (same file). Low.
+`FilePath` tooltip now uses `w-max max-w-[28rem] whitespace-normal break-words`; the visible chip
+can still break long paths while the hover tooltip no longer collapses into a one-character column.
 
 ## i18n / multi-language support  (raised 2026-06-06, founder asked; DEFERRED — founder agreed)
 
@@ -319,72 +349,34 @@ Founder asked whether to add multi-language support. **Decision: defer.** Curren
   all screens (also systematically kills any remaining dark-mode-invisible text); (3) add dark mode
   for the winning theme (data-theme × prefers-color-scheme). FE → agy (model `Gemini 3.5 Flash
   (Medium)`). **Awaiting founder's Vivid-vs-Minimal pick.**
-- **Worker picker shows "claude" twice** (founder, 2026-06-05). `CLI_BACKENDS` aliases `anthropic`
-  and `claude` to the same `CLAUDE_BACKEND` (and `agy`/`antigravity` likewise), and the UI /
-  `_PREFERRED_WORKER_BACKEND_ORDER` enumerate raw keys, so Claude appears as two entries. Harmless
-  but confusing. Dedup the picker by backend identity (one row per distinct `CliBackendSpec`, keep
-  aliases accepted on input). Low.
-- **codex pre-review channel was auth-down (403 Forbidden) this session** (2026-06-05). `pre-review.sh`
-  (codex gpt-5.5, ChatGPT account) returned `403 Forbidden` / `failure_class: auth` on repeated runs,
-  so the independent pre-review leg was unavailable for #82–#85 (landed on Claude review + CI-green +
-  live smoke, founder-authorized). Likely account/rate auth, not code. Follow-up: confirm codex auth
-  recovers; add a fallback reviewer (claude/agy) when codex auth fails; surface auth failure distinctly
-  (not a silent empty report). Low–Medium.
-- **agy `--model` env-driven default works — productize it** (2026-06-05). To route a specific agy
-  model (`Gemini 3.5 Flash (Medium)`), a LOCAL uncommitted edit made `DEFAULT_AGY_MODEL` read
-  `GOODTEAM_AGY_MODEL` and fixed the `_agy_build_command` guard to compare against the literal `"auto"`
-  (so an env-set default still emits `--model`). Mirrors the `GOODTEAM_CODEX_MODEL` pattern; confirmed
-  to emit `--model "<label>"`. Productize: commit the env-overridable agy default + guard fix (no
-  standing local edit), optionally surface `agy models` labels in the per-role picker. (Supersedes the
-  2026-06-04 "agy supports --model" reconcile note.) Low.
-- **Role prompt template hardcodes "Use model gpt-5.3-codex"** (observed 2026-06-05, in the agy job
-  prompt body). The dispatched worker prompt template carries a literal "Use model gpt-5.3-codex"
-  line regardless of the actual adapter/model (agy still honored its real `--model` flag, so harmless
-  here). Make that line reflect the resolved adapter+model, or drop it. Low.
-- **sync_stage_tasks can leave stale `artifact_refs` on existing stage tasks** (pre-review on #86, 2026-06-06, Low). `sync_stage_tasks` only writes `artifact_refs` when `_stage_artifact_ref(...)` is truthy (tasks.py ~146), so a stage task that previously had an artifact ref is never CLEARED when the state no longer carries that ref. Replace/clear artifact_refs on each sync; add a test asserting ref replacement + clearing (tests/test_tasks.py ~116 covers status only). Low.
-- **Workflow Graph never highlights the current GATE node + ignores non-approved decisions**
+- ~~**Worker picker shows "claude" twice**~~ **RESOLVED 2026-06-06.** Agent discovery collapses
+  aliases to canonical backend rows (`claude`, `agy`, etc.) while keeping aliases accepted on input.
+  Covered by `tests/test_workers.py::test_discover_installed_agents_dedups_backend_aliases` and
+  `/api/agents` tests.
+- **codex pre-review channel was auth-down (403 Forbidden) this session** — 🟡 **PARTIAL
+  2026-06-07.** `pre-review.sh --adapter` now falls back codex → claude → agy on auth/provider
+  failure, detects 403/auth distinctly, ignores empty failed reports, and binds report selection to
+  the current invocation marker. Remaining: actual Codex account/auth recovery is external.
+- ~~**agy `--model` env-driven default works — productize it**~~ **RESOLVED 2026-06-06.**
+  `GOODTEAM_AGY_MODEL` is committed, `_agy_build_command` emits `--model` when non-auto, and live
+  `agy models` labels are surfaced when available.
+- ~~**Role prompt template hardcodes "Use model gpt-5.3-codex"**~~ **RESOLVED 2026-06-06.**
+  Worker prompts no longer hardcode the Codex model for non-Codex adapters; adapter/model are
+  resolved from the actual job.
+- ~~**sync_stage_tasks can leave stale `artifact_refs` on existing stage tasks**~~ **RESOLVED
+  2026-06-06.** `sync_stage_tasks` now replaces and clears stage `artifact_refs`; covered by
+  `tests/test_tasks.py::test_sync_stage_tasks_replaces_and_clears_stage_artifact_refs`.
+- ~~**Workflow Graph never highlights the current GATE node + ignores non-approved decisions**~~
+  **RESOLVED 2026-06-06.**
   (founder, 2026-06-06; "新项目 Workflow Graph 数据感觉被污染" → NOT pollution, verified). The run
   overlay is correctly project-scoped (VPSSSH showed its own run_id/current_node/approvals; fetch
-  has a `graphRequestSeq` race guard). The real bugs: (1) **node-id naming mismatch** — `state
-  .current_node` uses `"<gate>_review_gate"` ids (e.g. `prd_review_gate`), but `build_workflow_graph`
-  names gate nodes by the short gate key (`prd`/`rfc`/`staging`/`takeover`, kind=gate). So the FE's
-  `graphData.run.current_node === node.name` NEVER matches at a gate position → the current node is
-  not highlighted (it only highlights when current_node is a stage like `architect`). Node naming is
-  also internally inconsistent (some gate concepts are kind=gate, e.g. `prd`/`staging`; others are
-  stages, e.g. `security` gate=security, `release` gate=staging). (2) The FE only colors a gate green
-  when `run.approvals[node.gate] === 'approved'`; `changes_requested`/`rejected`/`pending` are not
-  reflected, so a real decision (VPSSSH `prd=changes_requested`) is invisible — and the static
-  edge-type pills ("approved"/"rejected"/"blocked"/"changes_requested", which are EDGE TYPES, not the
-  project's state) read as if the project were already approved. Fix: align `build_workflow_graph`
-  node identifiers with the WORKFLOW_NODES/state `current_node` values (BE, web.py — OVERLAPS the
-  in-flight PRD-loop BE track, so sequence AFTER it lands), + FE (App.jsx) reflect ALL approval
-  decisions on gate nodes (approved=green / changes_requested=orange / rejected=red / pending=neutral)
-  and visually distinguish "possible transition" edge labels from actual decisions. Optionally tailor
-  the graph to the project's `delivery_mode` (cli_tool shouldn't show the full multi-service/deploy
-  pipeline). Medium. **Next up after PRD-loop BE lands.**
-- **New-project creation should git-init the repo (+ optional GitHub remote)** (founder, 2026-06-05;
-  founder picked options 1 **and** 3). Today `create_local_project_config` (web.py:814) creates the
-  project config + auto-mkdir `docs/` but NEVER runs `git init`, so a new project root isn't a git
-  repo. Consequences: Dev Loop is always empty for new projects, AND GoodTeam's own
-  dispatch→worktree→PR→land self-driving loop can't run on them (`dispatch-track.sh` does
-  `git worktree add … main`, which needs a git repo with a `main` branch). Build:
-  (1) a **default-ON "Initialize Git repository" checkbox** on the New-Project form → on create,
-  `git init` the project root + an initial commit of the scaffold/docs (skippable for adopt/existing
-  or users who just want a dir); plus
-  (3) an **optional "Create & link GitHub remote" toggle** (gh-authed: `gh repo create` + set
-  `origin` + push) so the Dev Loop PR list and the full branch→PR→CI→land loop work end-to-end on a
-  fresh project. BE: web.py create path (run git init/commit, optional gh remote, record warnings,
-  never touch existing repos) + FE: two checkboxes on the create form. Design-first for the remote
-  half (gh auth/safety). Medium. Deferred to next round.
-- **Workflow stages don't materialize as Agile Board tasks** (founder, 2026-06-05, while writing a
-  PRD). The Agile Board reads a per-project task ledger (`tasks.json` via `LocalTaskStore`), but the
-  REAL workflow never creates tasks: `ensure_project_task_ledger` (graph.py:297) only writes an
-  EMPTY ledger (`"tasks": []`), and `create_task` is called ONLY in `smoke.py` (the demo/seed path) —
-  never by any real PRD/RFC/implementation/QA node in graph.py. So on a real run, writing a PRD (and
-  every other stage) leaves NO board trace; the board is only populated for the seeded DEMO. Fix:
-  have the workflow materialize stages as board tasks — at minimum a "Write PRD" task created when
-  the product_requirement stage starts and moved todo→doing→done as the run progresses; ideally each
-  role/node (PRD, RFC, implementation, QA, release) gets a task with status synced to the run state.
-  Touches graph.py (create/update tasks at node transitions) + the board projection. Design-first;
-  pairs with the "PRD edit → LLM deepen → re-review loop" item (same human-in-the-loop authoring
-  area). Medium. Deferred to next round.
+  has a `graphRequestSeq` race guard). Landed fix maps runtime gate node ids to graph ids and colors
+  approved / changes_requested / rejected / pending decisions distinctly; static transition labels
+  remain possible-edge labels, not project state.
+- ~~**New-project creation should git-init the repo (+ optional GitHub remote)**~~ **RESOLVED
+  2026-06-06 (`bab42f9`).** New project creation supports default-on git init with initial commit,
+  optional GitHub remote creation/push using `GITHUB_TOKEN`/`GH_TOKEN`, UI toggles, PAT guidance,
+  and surfaced warnings. Existing repos are not touched.
+- ~~**Workflow stages don't materialize as Agile Board tasks**~~ **RESOLVED 2026-06-06.**
+  Real workflow stages now seed/sync Agile Board tasks, including stage artifact refs and status
+  transitions. Covered by `tests/test_tasks.py` stage sync cases and web board tests.

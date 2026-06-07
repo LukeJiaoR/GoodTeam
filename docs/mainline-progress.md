@@ -15,10 +15,11 @@ reference, verification evidence, and follow-up status.
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
+| 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
 
 ## Active Increment
 
-Next active increment: remaining low-risk backlog review; i18n remains gated on target market / primary language.
+Next active increment: choose next real open/gated mainline after backlog audit; i18n remains gated on target market / primary language.
 
 ## Completed Increments
 
@@ -334,3 +335,43 @@ script without changing dispatch, worker job storage, or the human land gate.
 - A first-class persisted invocation id in worker job metadata. The task marker is
   enough for this script-level race and avoids widening the worker job schema.
 - Serializing all pre-review runs. Invocation binding keeps parallel runs possible.
+
+### 2026-06-07 — Backlog status audit
+
+**Intent:** remove stale open work from `docs/backlog.md` after the mainline push so
+the next planning pass does not repeatedly pick issues already fixed by recent
+commits.
+
+**Resolved entries marked with evidence:**
+- D2 blockers: checkpoint revisit collision and table-derived dashboard stepper.
+- Worker reliability: stale/dead running job reconciliation.
+- G3 pickup filter over-breadth.
+- `land-pr.sh` stash/restore around main sync.
+- agy model support and live model listing.
+- Expanded delivery-mode catalog and custom standards.
+- Air-drop implementation-job preference.
+- `/api/fs/list` 403 route test.
+- Legacy delivery-mode option generation.
+- Detail-view repo path display.
+- Pre-review report binding and empty/failed report filtering.
+- Worker Routing Simple/Advanced and FilePath tooltip.
+- Worker picker alias dedup, role prompt model line, `sync_stage_tasks` artifact refs,
+  workflow graph gate/decision highlighting, new-project git init/remote, and workflow
+  stage board tasks.
+
+**Still open/gated after audit:**
+- i18n target-market / primary-language decision.
+- Remaining theme token/visual work after review.
+- D2b topological executor / parallel level execution.
+- G3 LLM triage and applying failure-pattern hits to routing.
+- Self-hosting graduate/tag controls and any server-side land/merge decision.
+- PRD edit/deepen/re-review loop as a larger product workflow.
+- Broader dispatch artifacts as first-class memory/audit.
+
+**Verification evidence:**
+- Targeted proof command:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_state.py tests/test_web.py tests/test_workers.py tests/test_memory.py tests/test_land_provenance.py tests/test_api.py tests/test_tasks.py tests/test_pre_review_script.py -q -k 'checkpoint or dashboard_stepper or stale or pickup_packet or land_provenance_extract_prefers_non_review or fs_list_route_maps_permission_error_to_403 or sync_stage_tasks_replaces or frontend_contract_has_simple_advanced or render_delivery_mode_options or pre_review or discover_installed_agents'`
+  -> `34 passed, 248 deselected`.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
