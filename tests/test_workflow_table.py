@@ -103,6 +103,61 @@ def test_workflow_dag_validation_rejects_unknown_dependency():
         raise AssertionError("expected unknown dependency validation failure")
 
 
+def test_workflow_dag_validation_rejects_unknown_run_guard_gate():
+    nodes = {
+        "planner": WorkflowNode(
+            name="planner",
+            run_guard_gate="missing_gate",
+            runner_fn="run_delivery_until_release_gate",
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes)
+    except ValueError as exc:
+        assert "unknown run guard gate" in str(exc)
+        assert "missing_gate" in str(exc)
+    else:
+        raise AssertionError("expected unknown run guard gate validation failure")
+
+
+def test_workflow_dag_validation_rejects_unknown_failure_targets():
+    nodes = {
+        "planner": WorkflowNode(
+            name="planner",
+            run_guard_gate="rfc",
+            runner_fn="run_delivery_until_release_gate",
+            on_error="missing_error_target",
+            on_blocked="missing_blocked_target",
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes)
+    except ValueError as exc:
+        assert "unknown error target" in str(exc)
+        assert "missing_error_target" in str(exc)
+    else:
+        raise AssertionError("expected unknown error target validation failure")
+
+    nodes = {
+        "planner": WorkflowNode(
+            name="planner",
+            run_guard_gate="rfc",
+            runner_fn="run_delivery_until_release_gate",
+            on_blocked="missing_blocked_target",
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes)
+    except ValueError as exc:
+        assert "unknown blocked target" in str(exc)
+        assert "missing_blocked_target" in str(exc)
+    else:
+        raise AssertionError("expected unknown blocked target validation failure")
+
+
 def test_workflow_dag_validation_rejects_cycles():
     nodes = {
         "a": WorkflowNode(name="a", run_guard_gate="prd", runner_fn="run_a", depends_on=("b",)),
