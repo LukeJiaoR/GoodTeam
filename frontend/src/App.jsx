@@ -50,6 +50,7 @@ import {
 } from './i18n';
 import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
 import RolesTab from './components/tabs/RolesTab';
+import ArtifactsTab from './components/tabs/ArtifactsTab';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -3614,42 +3615,11 @@ export default function App() {
 
               {/* Tab: Artifacts */}
               {activeTab === 'artifacts' && (
-                <div className="space-y-6">
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">State Artifacts</h2>
-                    <p className="text-xs text-text-muted">Durable ledger file records generated and updated by this run.</p>
-                  </div>
-
-                  {/* 4-column card grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                    {state?.artifacts && Object.entries(state.artifacts).map(([name, path]) => (
-                      <div
-                        key={name}
-                        className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card p-4 rounded-2xl flex items-center justify-between hover:-translate-y-0.5 hover:shadow-card transition-all duration-200"
-                      >
-                        <div className="flex items-center space-x-3 overflow-hidden">
-                          <FileText className="h-6 w-6 text-status-info shrink-0" />
-                          <div className="overflow-hidden">
-                            <span className="font-extrabold text-2xs uppercase tracking-widest text-text-muted block mb-0.5">{name}</span>
-                            <FilePath path={path} segments={1} />
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handleEditArtifact(name)}
-                          className="bg-zinc-50 hover:bg-status-info-bg border-2 border-border-subtle hover:border-status-info p-1.5 rounded-xl transition-all duo-button-physics shrink-0 text-zinc-500 hover:text-status-info-text"
-                          title="Open artifact"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    {(!state?.artifacts || Object.keys(state.artifacts).length === 0) && (
-                      <div className="col-span-4 border-2 border-dashed border-border-subtle rounded-2xl p-12 text-center text-text-muted italic text-xs">
-                        No artifacts recorded in this state yet.
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <ArtifactsTab
+                  artifacts={state?.artifacts}
+                  handleEditArtifact={handleEditArtifact}
+                  FilePath={FilePath}
+                />
               )}
 
               {/* Tab: Actions */}

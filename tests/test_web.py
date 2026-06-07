@@ -1728,6 +1728,48 @@ def test_roles_page_is_extracted_and_uses_theme_tokens():
         assert semantic_class in roles_page
 
 
+def test_artifacts_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Artifacts */}")
+    end = app.index("{/* Tab: Actions */}", start)
+    artifacts_mount = app[start:end]
+
+    assert "<ArtifactsTab" in artifacts_mount
+    assert "Object.entries(state.artifacts).map" not in artifacts_mount
+
+    artifacts_tab = root / "frontend" / "src" / "components" / "tabs" / "ArtifactsTab.jsx"
+    assert artifacts_tab.exists()
+    artifacts_page = artifacts_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+    ]
+    assert {snippet: artifacts_page.count(snippet) for snippet in disallowed_snippets if snippet in artifacts_page} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+        "bg-status-info-bg",
+        "text-status-info-text",
+        "border-status-info",
+    ]:
+        assert semantic_class in artifacts_page
+
+
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 
