@@ -16,11 +16,11 @@ reference, verification evidence, and follow-up status.
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
-| 9 | Dispatch artifacts audit/memory | Source-provenance foundation completed 2026-06-07 | Persist dispatch task/constraints source paths into job metadata and short-term provenance memory. | `478 passed`; ruff clean; frontend build passed |
+| 9 | Dispatch artifacts audit/memory | PR manifest slice completed 2026-06-07 | Persist dispatch task/constraints source paths, then write a PR-level archive manifest that links job artifacts, review artifacts, and land memory sources. | `479 passed`; ruff clean; frontend build passed |
 
 ## Active Increment
 
-Next active increment: continue dispatch artifacts audit/memory or choose another real open/gated mainline; i18n remains gated on target market / primary language.
+Next active increment: choose next real open/gated mainline. Good candidates are G3 failure-pattern hit routing or self-hosting graduate/tag readiness; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
 
 ## Completed Increments
 
@@ -421,5 +421,57 @@ landed job.
 **Deferred from this increment:**
 - First-class research report source capture.
 - Human review rationale as structured provenance.
-- A PR-level provenance manifest that links task, constraints, research, review, job,
-  and land memory into one object.
+- Research and review rationale fields inside the PR-level manifest.
+
+### 2026-06-07 — Dispatch artifacts audit/memory: PR-level provenance manifest
+
+**Intent:** turn the durable `.goodteam/provenance/pr-*` archive from a directory of
+copied artifacts into a machine-readable PR index that links job artifacts, review
+artifacts, and land memory sources.
+
+**Implemented:**
+- `land_provenance_airdrop` now writes
+  `.goodteam/provenance/pr-<PR>/manifest.json` when an archive directory exists.
+- The manifest records PR number, head branch, CI status, squash merge SHA, archive
+  path, `land/pr-*` and `review/pr-*` memory sources, and the archived pre-review
+  report path when present.
+- Each archived job entry includes job/run/role/adapter/model, the archived
+  `task.md` path, `task_source`, `constraints_source`, and expected artifacts.
+- Missing worktree / missing archive behavior stays best-effort and unchanged:
+  land/review memory can still be written without a manifest.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_land_provenance.py::test_land_provenance_airdrop_writes_pr_manifest_linking_job_and_review_artifacts -q`
+  failed with `FileNotFoundError` for `manifest.json`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_land_provenance.py::test_land_provenance_airdrop_writes_pr_manifest_linking_job_and_review_artifacts -q`
+  -> `1 passed`.
+- Land provenance regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_land_provenance.py -q`
+  -> `7 passed`.
+- Related regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_land_provenance.py tests/test_pre_review_script.py tests/test_cli.py -q`
+  -> `30 passed`.
+- Shell syntax:
+  `bash -n scripts/lib/land-provenance.sh scripts/land-pr.sh scripts/pre-review.sh scripts/lib/pre-review.sh`
+  -> exit 0.
+- Touched-test lint:
+  `.venv/bin/ruff check tests/test_land_provenance.py`
+  -> `All checks passed!`.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `479 passed in 137.87s`.
+- Full lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- First-class research report source capture.
+- Structured human review rationale beyond the mechanical approved-to-land fact.

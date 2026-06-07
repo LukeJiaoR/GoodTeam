@@ -267,3 +267,72 @@ def test_land_provenance_airdrop_archives_pre_review_report_and_links_review_eve
         assert f"pre_review_report=.goodteam/provenance/pr-{pr}/pre-review-report.md" in review_events[0]["text"]
     finally:
         pre_review_report.unlink(missing_ok=True)
+
+
+def test_land_provenance_airdrop_writes_pr_manifest_linking_job_and_review_artifacts(tmp_path):
+    root = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    python_shim = _make_fake_main(root)
+    pr = "98707"
+    pre_review_report = Path(f"/tmp/pre-review-{pr}-report.md")
+    job_dir = worktree / ".goodteam" / "workers" / "jobs" / "job-manifest"
+    job_dir.mkdir(parents=True)
+    (job_dir / "task.md").write_text("Implement manifest-backed provenance.\n", encoding="utf-8")
+    (job_dir / "job.json").write_text(
+        json.dumps(
+            {
+                "id": "job-manifest",
+                "run_id": "run-manifest",
+                "role": "implementation",
+                "adapter": "codex",
+                "model": "gpt-5-codex",
+                "task_source": "/tmp/contract-task.md",
+                "constraints_source": "/tmp/contract-constraints.md",
+                "expected_artifacts": ["scripts/lib/land-provenance.sh"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (job_dir / "status.json").write_text(
+        json.dumps({"run_id": "run-manifest", "job_id": "job-manifest", "role": "implementation"}),
+        encoding="utf-8",
+    )
+
+    try:
+        pre_review_report.write_text("Approved mechanically.\n", encoding="utf-8")
+
+        result = _run_bash(
+            f"""
+            set -euo pipefail
+            . {_q(HELPER)}
+            export PY={_q(python_shim)}
+            land_provenance_extract {pr} {_q(worktree)}
+            land_provenance_airdrop {pr} {_q(root)} fff111222333 pass
+            """,
+            env={**os.environ, "PATH": os.environ["PATH"]},
+        )
+
+        manifest_path = root / ".goodteam" / "provenance" / f"pr-{pr}" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert manifest["pr"] == 98707
+        assert manifest["ci_status"] == "pass"
+        assert manifest["squash_merge_sha"] == "fff111222333"
+        assert manifest["pre_review_report"] == ".goodteam/provenance/pr-98707/pre-review-report.md"
+        assert manifest["memory_sources"] == ["land/pr-98707", "review/pr-98707"]
+        assert manifest["jobs"] == [
+            {
+                "job_id": "job-manifest",
+                "run_id": "run-manifest",
+                "role": "implementation",
+                "adapter": "codex",
+                "model": "gpt-5-codex",
+                "task_artifact": ".goodteam/provenance/pr-98707/job-manifest/task.md",
+                "task_source": "/tmp/contract-task.md",
+                "constraints_source": "/tmp/contract-constraints.md",
+                "expected_artifacts": ["scripts/lib/land-provenance.sh"],
+            }
+        ]
+    finally:
+        pre_review_report.unlink(missing_ok=True)

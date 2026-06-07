@@ -99,6 +99,74 @@ PY
   return 0
 }
 
+land_provenance_write_manifest() {
+  local pr="$1"
+  local archive="$2"
+  local head_sha="$3"
+  local ci_status="$4"
+  local branch="$5"
+  local pre_review_archive_rel="$6"
+  local python_bin="$7"
+  local manifest_err="/tmp/land-provenance-$pr-manifest.err"
+
+  [ -d "$archive" ] || return 0
+
+  "$python_bin" - "$pr" "$archive" "$head_sha" "$ci_status" "$branch" "$pre_review_archive_rel" <<'PY' 2>"$manifest_err" || {
+import json
+import sys
+from pathlib import Path
+
+pr, archive_arg, head_sha, ci_status, branch, pre_review_archive_rel = sys.argv[1:]
+archive = Path(archive_arg)
+pr_value = int(pr) if pr.isdigit() else pr
+archive_rel = f".goodteam/provenance/pr-{pr}/"
+pre_review_report = pre_review_archive_rel if (archive / "pre-review-report.md").is_file() else None
+
+
+def read_json(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+jobs = []
+for job_dir in sorted(path for path in archive.iterdir() if path.is_dir()):
+    job = read_json(job_dir / "job.json")
+    status = read_json(job_dir / "status.json")
+    job_id = str(job.get("id") or status.get("job_id") or status.get("jobId") or job_dir.name)
+    jobs.append(
+        {
+            "job_id": job_id,
+            "run_id": str(job.get("run_id") or status.get("run_id") or status.get("runId") or ""),
+            "role": str(job.get("role") or status.get("role") or status.get("role_key") or status.get("roleKey") or ""),
+            "adapter": str(job.get("adapter") or ""),
+            "model": str(job.get("model") or ""),
+            "task_artifact": f"{archive_rel}{job_dir.name}/task.md" if (job_dir / "task.md").is_file() else "",
+            "task_source": str(job.get("task_source") or ""),
+            "constraints_source": str(job.get("constraints_source") or ""),
+            "expected_artifacts": job.get("expected_artifacts") if isinstance(job.get("expected_artifacts"), list) else [],
+        }
+    )
+
+manifest = {
+    "pr": pr_value,
+    "head_branch": branch,
+    "ci_status": ci_status,
+    "squash_merge_sha": head_sha,
+    "archive": archive_rel,
+    "pre_review_report": pre_review_report,
+    "memory_sources": [f"land/pr-{pr}", f"review/pr-{pr}"],
+    "jobs": jobs,
+}
+(archive / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+    land_provenance_warn "manifest write failed: $(cat "$manifest_err" 2>/dev/null)"
+    return 0
+  }
+}
+
 land_provenance_airdrop() {
   local pr="$1"
   local root="$2"
@@ -149,6 +217,7 @@ land_provenance_airdrop() {
     land_provenance_warn "memory append skipped: python not executable at $python_bin"
     return 0
   fi
+  land_provenance_write_manifest "$pr" "$archive" "$head_sha" "$ci_status" "$branch" "$pre_review_archive_rel" "$python_bin" || true
   PYTHONPATH="$root/src" "$python_bin" -m goodteam_os.cli memory-append \
     --project-root "$root" \
     --role release \
