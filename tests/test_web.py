@@ -1504,6 +1504,7 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
     assert "onClick={() => copyLandCommand(releaseReadiness.release_up_command)}" in app
     assert "onClick={() => copyLandCommand(releaseReadiness.graduate_command)}" in app
     assert "devLoopData.release_readiness?.available !== true" in app
+    assert "Release Readiness unavailable" not in app
     assert "Run release-up" not in app
     assert "Run graduate" not in app
 

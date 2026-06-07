@@ -5848,10 +5848,6 @@ export default function App() {
                               )}
                             </div>
                           </div>
-                        ) : releaseReadiness?.available === false ? (
-                          <div className="bg-zinc-50/50 dark:bg-zinc-900/10 border border-zinc-200 dark:border-zinc-800 p-4 rounded-2xl text-xs text-text-muted font-semibold">
-                            Release Readiness unavailable: {releaseReadiness.reason || 'release scripts unavailable'}.
-                          </div>
                         ) : null;
                       })()}
 

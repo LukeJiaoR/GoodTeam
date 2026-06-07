@@ -10,7 +10,7 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | Pattern-hit observability completed 2026-06-07 | Add deterministic global store, record worker failures, and surface best-match signature/hit/disposition evidence during triage without changing routing. | `480 passed`; ruff clean; frontend build passed |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Release-readiness UI completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
+| 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
@@ -20,7 +20,7 @@ reference, verification evidence, and follow-up status.
 
 ## Active Increment
 
-Next active increment: choose next real open/gated mainline. Good candidates are more dispatch-audit capture or a small release-readiness polish/contract slice; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
+Next active increment: choose next real open/gated mainline. Good candidates are more dispatch-audit capture or a focused backlog-product-loop slice; i18n remains gated on target market / primary language, and D2b topo execution remains gated on a real fan-in/dynamic-plan consumer.
 
 ## Completed Increments
 
@@ -319,6 +319,54 @@ UI while preserving the manual release-up / graduate boundary.
 - Full lint:
   `.venv/bin/ruff check src/goodteam_os/ tests/`
   -> `All checks passed!`.
+
+**Deferred from this increment:**
+- Executing graduate/tag/release-up from the web. Those remain human-invoked scripts.
+
+### 2026-06-07 — Self-hosting control plane: release-readiness unavailable-state polish
+
+**Intent:** keep the release-readiness UI scoped to GoodTeam repos that can actually
+report release metadata, and avoid showing a release-specific unavailable panel
+beside the normal Dev Loop empty state for non-GoodTeam repos.
+
+**Root cause:**
+- The Dev Loop empty-state predicate intentionally treats
+  `devLoopData.release_readiness?.available !== true` as no visible release
+  readiness content.
+- The UI still rendered a separate `Release Readiness unavailable` panel when the
+  API returned `{available:false, reason:...}`.
+- On a non-GoodTeam repo, that could produce both the ordinary empty state and a
+  release-readiness unavailable message.
+
+**Implemented:**
+- Removed the unavailable release-readiness UI branch from `frontend/src/App.jsx`.
+- Release readiness now renders only when `release_readiness.available === true`.
+- Non-GoodTeam repos continue to use the normal Dev Loop empty state.
+- Kept the existing copy-command-only release-up/graduate panel for available
+  GoodTeam release metadata; no server-side release execution was added.
+
+**Verification evidence:**
+- Red contract:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_frontend_contract_exposes_release_readiness_without_execution_controls -q`
+  failed because `App.jsx` still contained `Release Readiness unavailable`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py -q -k 'frontend_contract or dev_loop or devloop'`
+  -> `13 passed, 91 deselected`.
+- Touched-test lint:
+  `.venv/bin/ruff check tests/test_web.py`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Full regression already run before this ledger update:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `483 passed in 143.37s`.
+- Full lint already run before this ledger update:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
 
 **Deferred from this increment:**
 - Executing graduate/tag/release-up from the web. Those remain human-invoked scripts.
