@@ -1595,6 +1595,46 @@ def test_message_feed_uses_theme_tokens_and_small_type_floor():
         assert semantic_class in message_feed
 
 
+def test_memory_panel_uses_theme_tokens_and_small_type_floor():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Memory */}")
+    end = app.index("{/* Tab: Dev Loop */}", start)
+    memory_panel = app[start:end]
+
+    disallowed_snippets = [
+        "bg-[#FDFDFD]",
+        "text-[11px]",
+        "bg-zinc-50",
+        "dark:bg-zinc-900/30",
+        "dark:bg-zinc-900/20",
+        "dark:bg-zinc-900/10",
+        "dark:",
+        "border-zinc-200",
+        "border-zinc-250",
+        "text-zinc-750",
+        "dark:text-zinc-250",
+        "text-zinc-700",
+        "dark:text-zinc-300",
+        "text-zinc-500",
+    ]
+    assert {snippet: memory_panel.count(snippet) for snippet in disallowed_snippets if snippet in memory_panel} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "bg-status-info-bg",
+        "text-status-info-text",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+    ]:
+        assert semantic_class in memory_panel
+
+
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 

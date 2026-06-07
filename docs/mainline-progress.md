@@ -11,7 +11,7 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
-| 4 | Theme token conversion | MessageFeed productionize slice completed 2026-06-07 | Keep Vivid and Minimal as permanent themes, convert `App.jsx` high-volume base tokens plus `MessageFeed.jsx` status/surface/type debt incrementally. | MessageFeed contracts `8 passed`; frontend lint/build passed |
+| 4 | Theme token conversion | Memory panel productionize slice completed 2026-06-07 | Keep Vivid and Minimal as permanent themes, convert `App.jsx` high-volume base tokens plus MessageFeed and Memory panel status/surface/type debt incrementally. | Memory panel contracts `9 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
@@ -587,6 +587,48 @@ gate or doing a blind full-App conversion.
 - Further App.jsx/panel conversion and visual review.
 - Theme-specific dark-mode polish beyond the existing token support.
 - i18n/copy extraction for MessageFeed and deeper panels.
+
+### 2026-06-07 — Theme token conversion: Memory panel slice
+
+**Intent:** continue Theme System productionization on a contained `App.jsx` panel
+after MessageFeed, while keeping Vivid and Minimal both permanent and avoiding a
+blind full-App conversion.
+
+**Implemented:**
+- Converted the Agents & Memory / Memory tab slice to semantic surface, border,
+  text, and status utilities.
+- Replaced `bg-[#FDFDFD]`, repeated `bg-white` / `dark:bg-zinc-*` panel surfaces,
+  zinc borders/text, and blue/amber ad-hoc badge families in that slice.
+- Replaced Memory-panel `text-[11px]` empty states with `text-2xs`.
+- Added a focused frontend contract test that extracts only the Memory tab slice
+  from `App.jsx` and rejects legacy surface/text snippets plus `dark:` overrides
+  in that slice.
+
+**Verification evidence:**
+- Red contract test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_memory_panel_uses_theme_tokens_and_small_type_floor -q`
+  first failed with counts for 13 disallowed snippets; after tightening the test,
+  it caught one remaining `dark:` override before final green.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'memory_panel or message_feed or theme_tokens or frontend_contract'`
+  -> `9 passed, 100 deselected`.
+- Touched-test lint:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check tests/test_web.py`
+  -> `All checks passed!`.
+- Frontend lint:
+  `cd frontend && npm run lint`
+  -> exit 0.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- Approval/review panel token cleanup.
+- Dev Loop token cleanup.
+- Broader App.jsx componentization and i18n/copy extraction.
 
 ### 2026-06-07 — Graph/DAG engine D2: DAG-spec foundation
 

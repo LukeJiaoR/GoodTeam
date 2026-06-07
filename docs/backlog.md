@@ -31,9 +31,10 @@ implementation.
 **Incremental productization tracks:**
 - Theme System v1 — founder decision is settled: keep both Vivid and Minimal as
   permanent themes, Vivid default. Completed slices include the semantic token
-  layer/switcher, App.jsx high-volume palette/type cleanup, and MessageFeed token
-  cleanup. Continue panel/component conversion in focused passes with visual
-  review; do not block on a Vivid-vs-Minimal winner.
+  layer/switcher, App.jsx high-volume palette/type cleanup, MessageFeed token
+  cleanup, and the Agents & Memory / Memory panel token cleanup. Continue
+  panel/component conversion in focused passes with visual review; do not block
+  on a Vivid-vs-Minimal winner.
 
 ## ✅ RESOLVED 2026-06-07 — Dispatch artifacts (task contract / research / review) as first-class audit  (raised 2026-06-02, charter item)
 
