@@ -1604,27 +1604,44 @@ def test_message_feed_uses_theme_tokens_and_small_type_floor():
         assert semantic_class in message_feed
 
 
-def test_memory_panel_uses_theme_tokens_and_small_type_floor():
-    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+def test_memory_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     start = app.index("{/* Tab: Memory */}")
     end = app.index("{/* Tab: Dev Loop */}", start)
-    memory_panel = app[start:end]
+    memory_mount = app[start:end]
+
+    assert "<MemoryTab" in memory_mount
+    assert "memoryData.roles.map" not in memory_mount
+    assert "crossResults.map" not in memory_mount
+
+    memory_tab = root / "frontend" / "src" / "components" / "tabs" / "MemoryTab.jsx"
+    assert memory_tab.exists()
+    memory_panel = memory_tab.read_text(encoding="utf-8")
 
     disallowed_snippets = [
+        "bg-white",
         "bg-[#FDFDFD]",
         "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
         "bg-zinc-50",
+        "bg-zinc",
         "dark:bg-zinc-900/30",
         "dark:bg-zinc-900/20",
         "dark:bg-zinc-900/10",
         "dark:",
         "border-zinc-200",
         "border-zinc-250",
+        "border-zinc",
         "text-zinc-750",
         "dark:text-zinc-250",
         "text-zinc-700",
         "dark:text-zinc-300",
         "text-zinc-500",
+        "text-zinc",
     ]
     assert {snippet: memory_panel.count(snippet) for snippet in disallowed_snippets if snippet in memory_panel} == {}
 
