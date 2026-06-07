@@ -11,7 +11,7 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
-| 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
+| 4 | Theme token conversion | MessageFeed productionize slice completed 2026-06-07 | Keep Vivid and Minimal as permanent themes, convert `App.jsx` high-volume base tokens plus `MessageFeed.jsx` status/surface/type debt incrementally. | MessageFeed contracts `8 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
@@ -21,11 +21,13 @@ reference, verification evidence, and follow-up status.
 
 ## Active Increment
 
-No active backlog increment remains. Remaining work is parked behind explicit gates:
-theme winner selection, D2b topo executor fan-in consumer, server-side land/tag
-auth/security design, G3 routing outcome quality, G3 unknown-failure data for LLM
-triage, external Codex auth recovery, shared-worktree edit-collision need, and
-optional full research/review memory ingestion.
+No active backlog increment remains. Remaining work is parked behind explicit gates
+or deliberate incremental tracks: D2b topo executor fan-in consumer, server-side
+land/tag auth/security design, G3 routing outcome quality, G3 unknown-failure data
+for LLM triage, external Codex auth recovery, shared-worktree edit-collision need,
+optional full research/review memory ingestion, and continued Theme panel/component
+token cleanup with visual review. Theme System no longer has a Vivid-vs-Minimal
+winner gate; both themes stay productized, with Vivid as default.
 
 ## Completed Increments
 
@@ -90,11 +92,11 @@ tasks.
 - `docs/backlog.md` now starts from an explicit "no actionable projects remain"
   state.
 - The remaining non-local work is listed in a gated/external-decision parking lot:
-  i18n target-language choice, Theme System winner selection, D2b topo/parallel
-  executor gate, server-side land/tag/graduate auth and human-gate boundary, G3
-  routing application quality gate, G3 LLM triage data gate, Codex auth recovery,
-  shared-worktree edit-collision detection, and optional full research/review
-  memory ingestion.
+  D2b topo/parallel executor gate, server-side land/tag/graduate auth and
+  human-gate boundary, G3 routing application quality gate, G3 LLM triage data
+  gate, Codex auth recovery, shared-worktree edit-collision detection, optional
+  full research/review memory ingestion, and focused Theme panel/component token
+  cleanup with visual review.
 - The stale PRD edit -> LLM deepen -> re-review backlog item is marked resolved by
   the existing explicit refinement workflow: `Refine with AI`, proposed revision
   review, accept/discard, open-question answer application, and approval reset on
@@ -546,6 +548,45 @@ theme-system plan.
   low-frequency one-offs that should be reviewed visually before tokenizing.
 - Componentizing `App.jsx`; this pass stayed mechanical and contract-backed.
 - i18n/copy extraction remains gated separately.
+
+### 2026-06-07 — Theme token conversion: MessageFeed slice
+
+**Intent:** continue Theme System productionization after the founder decision to
+keep both Vivid and Minimal permanently, without reviving the old winner-selection
+gate or doing a blind full-App conversion.
+
+**Implemented:**
+- Converted `frontend/src/components/MessageFeed.jsx` status kind styles from
+  hardcoded Duo hex values to semantic `status-*` theme classes.
+- Replaced MessageFeed surfaces, borders, muted/primary text, accent icon color,
+  and card shadow with `bg-surface-*`, `border-border-*`, `text-text-*`,
+  `text-accent`, and `shadow-card` utilities.
+- Replaced MessageFeed `text-[8px]`, `text-[9px]`, and `text-[10px]` usages with
+  the existing `text-2xs` floor.
+- Added a focused frontend contract test that fails if MessageFeed reintroduces
+  the legacy Vivid palette or sub-11px arbitrary text.
+
+**Verification evidence:**
+- Red contract test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_message_feed_uses_theme_tokens_and_small_type_floor -q`
+  first failed with counts for 18 legacy palette tokens.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'message_feed or theme_tokens or frontend_contract'`
+  -> `8 passed, 100 deselected`.
+- Frontend lint:
+  `cd frontend && npm run lint`
+  -> exit 0.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- Further App.jsx/panel conversion and visual review.
+- Theme-specific dark-mode polish beyond the existing token support.
+- i18n/copy extraction for MessageFeed and deeper panels.
 
 ### 2026-06-07 — Graph/DAG engine D2: DAG-spec foundation
 

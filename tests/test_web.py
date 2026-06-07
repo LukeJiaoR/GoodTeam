@@ -1541,6 +1541,60 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
         assert semantic_class in app
 
 
+def test_message_feed_uses_theme_tokens_and_small_type_floor():
+    message_feed = (
+        Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
+    ).read_text(encoding="utf-8")
+
+    disallowed_palette_tokens = [
+        "#E5E5E5",
+        "#AFAFAF",
+        "#58CC02",
+        "#D1D1D1",
+        "#3D8B00",
+        "#1a1a1a",
+        "#F1F1F1",
+        "#FF4B4B",
+        "#EA2B2B",
+        "#FFE2E2",
+        "#1CB0F6",
+        "#0A7BAF",
+        "#D0F0FF",
+        "#E8F9D9",
+        "#FF9600",
+        "#B36B00",
+        "#FFF0D4",
+        "#777777",
+    ]
+    assert {token: message_feed.count(token) for token in disallowed_palette_tokens if token in message_feed} == {}
+    assert "text-[10px]" not in message_feed
+    assert "text-[9px]" not in message_feed
+    assert "text-[8px]" not in message_feed
+
+    for semantic_class in [
+        "border-border-subtle",
+        "text-text-muted",
+        "text-text-primary",
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "shadow-card",
+        "text-accent",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+        "border-l-status-warning",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+        "border-l-status-info",
+        "bg-status-info-bg",
+        "text-status-info-text",
+        "border-l-status-success",
+        "bg-status-success-bg",
+        "text-status-success-text",
+        "text-2xs",
+    ]:
+        assert semantic_class in message_feed
+
+
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 

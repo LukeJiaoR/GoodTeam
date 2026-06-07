@@ -12,8 +12,6 @@ gates that require founder input or validated runtime evidence before
 implementation.
 
 **Gated / external-decision parking lot:**
-- Theme System v1 — requires founder Vivid-vs-Minimal selection before the
-  remaining full-screen token conversion and dark-mode pass.
 - D2b topological executor / parallel level execution — requires a real
   non-linear fan-in or dynamic-plan consumer and live smoke budget.
 - Self-hosting graduate/tag controls and any server-side land/merge execution —
@@ -29,6 +27,13 @@ implementation.
 - Full research/review document ingestion into role memory — optional
   retrieval-budget-aware product decision; durable audit artifacts are already
   retained.
+
+**Incremental productization tracks:**
+- Theme System v1 — founder decision is settled: keep both Vivid and Minimal as
+  permanent themes, Vivid default. Completed slices include the semantic token
+  layer/switcher, App.jsx high-volume palette/type cleanup, and MessageFeed token
+  cleanup. Continue panel/component conversion in focused passes with visual
+  review; do not block on a Vivid-vs-Minimal winner.
 
 ## ✅ RESOLVED 2026-06-07 — Dispatch artifacts (task contract / research / review) as first-class audit  (raised 2026-06-02, charter item)
 
@@ -406,18 +411,16 @@ Agents, Workflow Graph, and System diagnostics.
   line-by-line comparison, full proposed text review, and accept/discard controls.
   Covered by graph/API/frontend contract tests. Save-only behavior remains a
   deliberate plain persistence action; the AI follow-up is explicit.
-- **Theme System v1 — pick winner + productionize** — 🟠 **GATED 2026-06-07.**
-  (founder, 2026-06-05; DESIGN DONE, prototype
-  built, NOT landed). Two switchable light themes (Vivid = refined Duolingo/Wise, Minimal =
-  Claude-web) + semantic token layer + type scale + persisted switcher were prototyped on the
-  home + project-detail slices and live-smoked (branch **`feat/theme-proto`**, worktree
-  `../goodteam-dev-theme-proto`). Design: `docs/plans/theme-system-v1-design.md`. Remaining once
-  founder picks a winner: (1) bump prototyped body/label text off the 11px floor to `text-sm/base`
-  (13.5–15px) — the real "Duolingo-clarity" fix (agy leaned on `text-2xs`, clarity gain was modest);
-  (2) full conversion of the remaining ~837 hardcoded hex + ~113 sub-11px usages to tokens across
-  all screens (also systematically kills any remaining dark-mode-invisible text); (3) add dark mode
-  for the winning theme (data-theme × prefers-color-scheme). FE → agy (model `Gemini 3.5 Flash
-  (Medium)`). **Awaiting founder's Vivid-vs-Minimal pick.**
+- **Theme System v1 — two permanent themes + incremental productionize** — 🟡
+  **PARTIALLY RESOLVED 2026-06-07.** Founder decision has superseded the old
+  "pick winner" gate: keep both switchable themes as a permanent base feature,
+  with Vivid default. Landed slices: semantic token layer + type scale +
+  persisted switcher, high-volume `App.jsx` base palette/type conversion, and
+  `MessageFeed.jsx` status/surface/type token cleanup. Remaining work is ordinary
+  focused UI productionization: continue converting panels/components away from
+  bespoke hex/dark/zinc classes, raise cramped body/label text where visual review
+  shows the 11px floor is still too small, and polish dark variants through the
+  same token system.
 - ~~**Worker picker shows "claude" twice**~~ **RESOLVED 2026-06-06.** Agent discovery collapses
   aliases to canonical backend rows (`claude`, `agy`, etc.) while keeping aliases accepted on input.
   Covered by `tests/test_workers.py::test_discover_installed_agents_dedups_backend_aliases` and
