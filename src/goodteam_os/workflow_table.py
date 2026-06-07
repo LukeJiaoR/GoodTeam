@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Mapping
+from typing import Iterable, Mapping
+
+from goodteam_os.roles import list_role_definitions
 
 
 @dataclass(frozen=True)
@@ -139,9 +141,15 @@ def validate_workflow_dag(
     nodes: Mapping[str, WorkflowNode] | None = None,
     *,
     gate_transitions: Mapping[str, GateTransition] | None = None,
+    valid_advisors: Iterable[str] | None = None,
 ) -> None:
     node_table = nodes or WORKFLOW_NODES
     transition_table = gate_transitions or GATE_TRANSITIONS
+    advisor_keys = (
+        set(valid_advisors)
+        if valid_advisors is not None
+        else {str(role.get("key", "")) for role in list_role_definitions()}
+    )
     identifiers = set(node_table) | set(transition_table) | {"product_requirement", "staging"}
     terminal_identifiers = {"blocked", "rejected"}
     revision_identifiers = {f"revise_{gate}" for gate in transition_table}
@@ -160,6 +168,9 @@ def validate_workflow_dag(
     for gate, transition in transition_table.items():
         if transition.gate != gate:
             raise ValueError(f"Gate transition mapping key {gate!r} does not match gate name {transition.gate!r}")
+        for advisor in transition.advisors:
+            if advisor not in advisor_keys:
+                raise ValueError(f"Gate transition {gate!r} has unknown advisor {advisor!r}")
         for label, target in [
             ("approved", transition.on_approved_next),
             ("changes_requested", transition.on_changes_requested),
