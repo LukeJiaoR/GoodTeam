@@ -52,6 +52,7 @@ import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
 import RolesTab from './components/tabs/RolesTab';
 import ArtifactsTab from './components/tabs/ArtifactsTab';
 import ActionsTab from './components/tabs/ActionsTab';
+import AgileBoardTab from './components/tabs/AgileBoardTab';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -3634,91 +3635,7 @@ export default function App() {
 
               {/* Tab: Agile Board */}
               {activeTab === 'board' && (
-                <div className="space-y-6">
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Agile Board</h2>
-                    <p className="text-xs text-text-muted">Real-time projection of task ledger task items.</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start font-semibold">
-                    {['backlog', 'doing', 'blocked', 'done'].map((columnKey) => {
-                      const columns = agileBoard.columns || {};
-                      const counts = agileBoard.counts || {};
-                      const columnTasks = columns[columnKey] || [];
-
-                      const columnLabel = {
-                        backlog: 'Backlog',
-                        doing: 'Doing',
-                        blocked: 'Blocked',
-                        done: 'Done',
-                      }[columnKey];
-
-                      // Blocked: Orange, Done: Green, columns heads matching Duo opacity badges
-                      const headStyles = {
-                        backlog: 'bg-surface-sunken text-text-secondary border-2 border-border-strong/20',
-                        doing: 'bg-status-info-bg text-status-info-text border-2 border-status-info/20',
-                        blocked: 'bg-status-warning-bg text-status-warning-text border-2 border-status-warning/20',
-                        done: 'bg-status-success-bg text-accent-text border-2 border-accent/20',
-                      }[columnKey];
-
-                      return (
-                        <section
-                          key={columnKey}
-                          className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-4 flex flex-col min-h-[420px]"
-                        >
-                          <div className={`flex justify-between items-center px-3 py-2 rounded-xl mb-4 font-extrabold text-xs uppercase tracking-wider leading-none ${headStyles}`}>
-                            <span>{columnLabel}</span>
-                            <span className="text-2xs leading-none px-2 py-0.5 rounded-full bg-white/70 dark:bg-black/20 font-extrabold">
-                              {counts[columnKey] || 0}
-                            </span>
-                          </div>
-
-                          <div className="flex-grow space-y-3">
-                            {columnTasks.map((task) => (
-                              <article
-                                key={task.id}
-                                className="bg-surface-base dark:bg-zinc-900 border-2 border-border-subtle dark:border-zinc-800 rounded-xl p-3.5 shadow-xs space-y-3 hover:-translate-y-0.5 hover:shadow-sm transition-all group"
-                              >
-                                <div className="flex justify-between items-start gap-1">
-                                  <span className="font-mono text-2xs text-text-muted uppercase tracking-wide font-extrabold select-all leading-none">{task.id}</span>
-                                  <span className={`inline-block px-1.5 py-0.5 rounded-md text-2xs font-extrabold uppercase leading-none ${task.priority === 'high' ? 'bg-status-danger-bg text-status-danger-text' : 'bg-surface-sunken text-text-secondary'}`}>
-                                    {task.priority}
-                                  </span>
-                                </div>
-
-                                <div>
-                                  <h4 className="font-bold text-xs text-zinc-800 dark:text-zinc-200 leading-snug">{task.title}</h4>
-                                  <p className="text-2xs font-semibold text-zinc-500 mt-1 leading-relaxed">{task.description}</p>
-                                </div>
-
-                                {task.acceptance_criteria && task.acceptance_criteria.length > 0 && (
-                                  <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800 text-2xs space-y-1">
-                                    <span className="font-bold text-text-muted block uppercase tracking-wider">Criteria</span>
-                                    <ul className="list-disc pl-3 text-zinc-500 space-y-0.5 leading-snug">
-                                      {task.acceptance_criteria.map((c, cIdx) => <li key={cIdx}>{c}</li>)}
-                                    </ul>
-                                  </div>
-                                )}
-
-                                <div className="flex justify-between items-center text-2xs pt-1 leading-none font-bold">
-                                  <span className="text-text-muted uppercase">Actor: <span className="text-zinc-700 dark:text-zinc-300 font-extrabold">{task.role}</span></span>
-                                  <span className="text-text-muted font-mono">{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : ''}</span>
-                                </div>
-                              </article>
-                            ))}
-
-                            {columnTasks.length === 0 && (
-                              <div className="border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-xl p-6 text-center text-text-muted text-2xs flex flex-col items-center justify-center space-y-1 select-none">
-                                <Info className="h-4 w-4 text-zinc-300" />
-                                <span>暂无任务</span>
-                              </div>
-                            )}
-                          </div>
-                        </section>
-                      );
-                    })}
-                  </div>
-                </div>
+                <AgileBoardTab agileBoard={agileBoard} />
               )}
 
               {/* Tab: Smoke Runs */}
