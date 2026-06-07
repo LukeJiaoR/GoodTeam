@@ -54,6 +54,7 @@ import ArtifactsTab from './components/tabs/ArtifactsTab';
 import ActionsTab from './components/tabs/ActionsTab';
 import AgileBoardTab from './components/tabs/AgileBoardTab';
 import SmokeRunsTab from './components/tabs/SmokeRunsTab';
+import WorkersTab from './components/tabs/WorkersTab';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -3653,405 +3654,42 @@ export default function App() {
 
               {/* Tab: Workers */}
               {(activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && (
-                <div className="space-y-6">
-                  {/* Worker Backends config panel */}
-                  <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card p-6 rounded-2xl space-y-6">
-                    <div className="border-b border-border-subtle dark:border-zinc-900 pb-3">
-                      <h3 className="text-sm font-extrabold text-zinc-800 dark:text-zinc-200">Worker Routing Configuration</h3>
-                      <p className="text-xs text-text-muted mt-0.5">Configure which agent CLI execution backends are used for each project role.</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                      {/* Left Column: Form Controls */}
-                      <div className="space-y-4">
-                        {/* Global default selection */}
-                        <div>
-                          <label className="block text-2xs text-zinc-550 mb-1.5 uppercase font-bold tracking-wider">Global Default Mode</label>
-                          <select
-                            value={panelGlobalMode}
-                            onChange={(e) => setPanelGlobalMode(e.target.value)}
-                            disabled={savingBackends || actionLoading}
-                            className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-accent transition-colors"
-                          >
-                            {backendOptions.map((opt) => (
-                              <option key={opt} value={opt}>
-                                {opt === 'codex' ? 'Codex CLI' : opt === 'anthropic' || opt === 'claude' ? 'Claude CLI' : opt}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="flex items-center gap-2 rounded-xl bg-zinc-100 dark:bg-zinc-900 p-1 border border-border-subtle dark:border-zinc-800">
-                          {['simple', 'advanced'].map((mode) => (
-                            <button
-                              key={mode}
-                              type="button"
-                              onClick={() => setWorkerRoutingMode(mode)}
-                              className={`flex-1 px-3 py-1.5 rounded-lg text-2xs font-extrabold uppercase tracking-wider transition-all ${
-                                workerRoutingMode === mode
-                                  ? 'bg-white dark:bg-zinc-800 text-accent-text dark:text-emerald-400 shadow-sm'
-                                  : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
-                              }`}
-                            >
-                              {mode === 'simple' ? 'Simple' : 'Advanced'}
-                            </button>
-                          ))}
-                        </div>
-
-                        {workerRoutingMode === 'simple' && (
-                          <div className="space-y-3 border border-border-subtle dark:border-zinc-900 rounded-xl p-4 bg-zinc-50/60 dark:bg-zinc-900/20">
-                            {WORKER_ROUTING_BUCKETS.map((bucket) => (
-                              <div key={bucket.key} className="space-y-1.5">
-                                <label className="block text-2xs text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
-                                  {bucket.label}
-                                </label>
-                                <select
-                                  value={simpleRoutingBackends[bucket.key] || ''}
-                                  onChange={(e) => setSimpleRoutingBackends(prev => ({ ...prev, [bucket.key]: e.target.value }))}
-                                  disabled={savingBackends || actionLoading}
-                                  className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-accent transition-colors"
-                                >
-                                  <option value="">Inherit global default</option>
-                                  {roleBackendOptions.map((opt) => (
-                                    <option key={opt} value={opt}>
-                                      {getBackendOptionLabel(opt)}
-                                    </option>
-                                  ))}
-                                </select>
-                                <p className="text-2xs text-zinc-500 dark:text-zinc-500 font-medium">
-                                  {bucket.roles.filter(role => workerRoles.includes(role)).join(', ') || 'No matching roles in this project.'}
-                                </p>
-                              </div>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={handleApplySimpleRouting}
-                              disabled={savingBackends || actionLoading}
-                              className="w-full bg-accent hover:bg-accent text-white border-b-4 border-accent-text active:border-b-0 active:translate-y-1 px-4 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all duo-button-physics"
-                            >
-                              Apply Simple Routing
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Role configurations */}
-                        <div className={`space-y-3 ${workerRoutingMode === 'simple' ? 'hidden' : ''}`}>
-                          <span className="block text-2xs text-zinc-550 uppercase font-bold tracking-wider">Per-Role Routing Overrides</span>
-                          {(activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && loadingDiscoveredAgents && (
-                            <p className="text-2xs text-text-muted italic">Loading discovered agents...</p>
-                          )}
-                          {discoveredAgents !== null && safeDiscoveredAgents.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5">
-                              {safeDiscoveredAgents.map((agent) => (
-                                <span
-                                  key={agent.backend}
-                                  className={`inline-flex items-center px-2 py-0.5 rounded-full border text-2xs font-extrabold uppercase tracking-wider ${
-                                    agent.ready
-                                      ? 'bg-status-success-bg text-accent-text border-accent/30'
-                                      : 'bg-status-warning-bg text-status-warning-text border-status-warning/30'
-                                  }`}
-                                  title={agent.hint || ''}
-                                >
-                                  {agent.backend} {agent.ready ? '✓ ready' : '⚠ not-ready'}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          {workerRoles.map((role) => {
-                            const isConfiguring = configuringRoles[role];
-                            const selectedBackend = panelRoleOverrides[role] || '';
-                            const effectiveBackend = selectedBackend || panelGlobalMode;
-                            const selectedModel = panelRoleModels[role] || '';
-
-                            const selectedAgent = effectiveBackend ? discoveredAgentByBackend[effectiveBackend] : null;
-                            const isBuiltin = ['fake', 'noop', 'human'].includes(effectiveBackend);
-                            const hasModel = effectiveBackend && !isBuiltin;
-
-                            return (
-                              <div key={role} className="border-b border-border-subtle dark:border-zinc-900 pb-3.5 pt-1">
-                                <div className="flex items-center justify-between space-x-4">
-                                  <div className="space-y-1">
-                                    <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 capitalize">{role} Role</span>
-                                    <div className="text-[11px] text-text-muted dark:text-zinc-550 flex items-center space-x-1.5 flex-wrap">
-                                      <span className="font-semibold text-zinc-600 dark:text-zinc-400">
-                                        {selectedBackend ? getBackendOptionLabel(selectedBackend) : `Inherit default (${getBackendOptionLabel(panelGlobalMode)})`}
-                                      </span>
-                                      {hasModel && (
-                                        <>
-                                          <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                          <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded font-mono text-2xs">
-                                            {selectedModel || 'default'}
-                                          </span>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfiguringRoles(prev => ({ ...prev, [role]: !prev[role] }))}
-                                    className={`px-3 py-1.5 border-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 ${
-                                      isConfiguring
-                                        ? 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300'
-                                        : 'bg-white dark:bg-zinc-900 border-border-subtle dark:border-zinc-800 hover:border-accent text-zinc-700 dark:text-zinc-300'
-                                    }`}
-                                  >
-                                    <span>{isConfiguring ? 'Close' : 'Configure'}</span>
-                                  </button>
-                                </div>
-
-                                {isConfiguring && (
-                                  <div className="mt-3 bg-zinc-50/50 dark:bg-zinc-900/10 border border-border-subtle dark:border-zinc-800/80 rounded-xl p-4 space-y-4">
-                                    <div>
-                                      <label className="block text-2xs text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
-                                        Step 1: Select Agent Backend
-                                      </label>
-                                      <select
-                                        value={selectedBackend}
-                                        onChange={(e) => handleAgentChange(role, e.target.value)}
-                                        disabled={savingBackends || actionLoading}
-                                        className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-accent transition-colors"
-                                      >
-                                        <option value="">Use default</option>
-                                        {roleBackendOptions.map((opt) => (
-                                          <option key={opt} value={opt}>
-                                            {getBackendOptionLabel(opt)}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      {selectedAgent && (
-                                        <p className="mt-1 text-2xs text-zinc-550 dark:text-zinc-500 font-medium leading-relaxed">
-                                          {selectedAgent.ready ? '✓ Ready' : '⚠ Not ready'}
-                                          {selectedAgent.hint ? ` - ${selectedAgent.hint}` : ''}
-                                        </p>
-                                      )}
-                                    </div>
-
-                                    {effectiveBackend && (
-                                      <div className="border-t border-border-subtle dark:border-zinc-900/60 pt-3">
-                                        {isBuiltin ? (
-                                          <div className="text-[11px] text-zinc-550 dark:text-zinc-500 font-medium bg-zinc-100/50 dark:bg-zinc-900/40 border border-zinc-200/50 dark:border-zinc-800 px-3 py-2 rounded-lg italic">
-                                            Model selection not applicable for built-in backends.
-                                          </div>
-                                        ) : (
-                                          <div className="space-y-3">
-                                            <div>
-                                              <label className="block text-2xs text-zinc-550 dark:text-zinc-400 mb-1.5 uppercase font-bold tracking-wider">
-                                                Step 2: Select Model
-                                              </label>
-                                              {(() => {
-                                                const agentInfo = discoveredAgentByBackend[effectiveBackend];
-                                                const modelsList = agentInfo?.models || FALLBACK_AGENT_MODES[effectiveBackend]?.models || ['auto'];
-                                                const defaultModel = agentInfo?.model_default || FALLBACK_AGENT_MODES[effectiveBackend]?.model_default || 'auto';
-                                                const isCustom = customModelSelected[role] || Boolean(selectedModel && !modelsList.includes(selectedModel));
-                                                const dropdownVal = isCustom ? '__custom__' : (modelsList.includes(selectedModel) ? selectedModel : (selectedModel ? '__custom__' : defaultModel));
-
-                                                return (
-                                                  <div className="space-y-3">
-                                                    <select
-                                                      value={dropdownVal}
-                                                      onChange={(e) => handleModelDropdownChange(role, e.target.value)}
-                                                      disabled={savingBackends || actionLoading}
-                                                      className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-accent transition-colors"
-                                                    >
-                                                      {modelsList.map((m) => (
-                                                        <option key={m} value={m}>
-                                                          {m === defaultModel ? `${m} (Default)` : m}
-                                                        </option>
-                                                      ))}
-                                                      <option value="__custom__">Custom...</option>
-                                                    </select>
-
-                                                    {isCustom && (
-                                                      <div className="space-y-1">
-                                                        <label className="block text-2xs text-zinc-550 dark:text-zinc-400 uppercase font-bold tracking-wider">
-                                                          Custom Model Name
-                                                        </label>
-                                                        <input
-                                                          type="text"
-                                                          placeholder="e.g. gpt-5.5-custom"
-                                                          value={selectedModel}
-                                                          onChange={(e) => handleCustomModelChange(role, e.target.value)}
-                                                          disabled={savingBackends || actionLoading}
-                                                          className="w-full bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-2 border-border-subtle dark:border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold font-mono focus:outline-none focus:border-accent transition-colors"
-                                                        />
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })()}
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Save Button & Messages */}
-                        <div className="pt-2 space-y-3">
-                          {backendsError && (
-                            <div className="p-3 bg-status-danger-bg dark:bg-red-950/20 border border-status-danger/30 rounded-xl text-xs font-bold text-status-danger-text dark:text-red-400 flex items-center space-x-2">
-                              <AlertTriangle className="h-4 w-4 shrink-0" />
-                              <span>{backendsError}</span>
-                            </div>
-                          )}
-                          {backendsSuccess && (
-                            <div className="p-3 bg-status-success-bg dark:bg-status-success-bg/10 border border-accent/30 rounded-xl text-xs font-bold text-accent-text dark:text-emerald-400 flex items-center space-x-2">
-                              <CheckCircle2 className="h-4 w-4 shrink-0" />
-                              <span>{backendsSuccess}</span>
-                            </div>
-                          )}
-                          <div className="flex justify-end">
-                            <button
-                              onClick={handleSaveWorkerBackends}
-                              disabled={savingBackends || actionLoading}
-                              className="bg-accent hover:bg-accent text-white border-b-4 border-accent-text active:border-b-0 active:translate-y-1 px-5 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center space-x-2"
-                            >
-                              {savingBackends ? (
-                                <>
-                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                  <span>Saving...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Check className="h-3.5 w-3.5" />
-                                  <span>Save Configurations</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Right Column: Preflight / Readiness Badges */}
-                      <div className="space-y-4 border-t lg:border-t-0 lg:border-l border-border-subtle dark:border-zinc-900 lg:pl-8 pt-4 lg:pt-0">
-                        <div className="font-extrabold text-2xs text-text-muted uppercase tracking-wider">Backend Readiness Preflight</div>
-
-                        <div className="space-y-3.5">
-                          {usedBackends.map((backend) => {
-                            const preflight = startContext.project_report?.worker_backends_preflight?.[backend] || {};
-                            const isReady = preflight.ready ?? false;
-                            const badge = getBadgeStyle(isReady ? 'success' : 'error');
-                            const Icon = badge.icon;
-
-                            return (
-                              <div key={backend} className="bg-zinc-50 dark:bg-zinc-900/30 border border-border-subtle dark:border-zinc-800 rounded-xl p-3.5 space-y-2">
-                                <div className="flex justify-between items-center">
-                                  <span className="text-xs font-extrabold text-zinc-800 dark:text-zinc-200 capitalize">
-                                    {backend === 'codex' ? 'Codex CLI' : backend === 'anthropic' || backend === 'claude' ? 'Claude CLI' : backend}
-                                    {backend === panelGlobalMode && <span className="text-2xs text-text-muted font-normal ml-1.5 lowercase">(global default)</span>}
-                                  </span>
-
-                                  <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider ${badge.bg} ${badge.text} ${badge.border}`}>
-                                    <Icon className="h-3 w-3" />
-                                    <span>{isReady ? 'Ready' : 'Not Ready'}</span>
-                                  </span>
-                                </div>
-
-                                {preflight.hint ? (
-                                  <p className="text-2xs text-zinc-550 dark:text-zinc-400 font-medium leading-relaxed bg-white dark:bg-zinc-950/40 p-2 rounded-lg border border-border-subtle dark:border-zinc-900 font-mono select-all">
-                                    {preflight.hint}
-                                  </p>
-                                ) : (
-                                  <p className="text-2xs text-text-muted italic font-medium leading-relaxed">
-                                    No additional hints or warnings available.
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          })}
-                          {usedBackends.length === 0 && (
-                            <div className="text-xs text-text-muted italic">
-                              No backends are currently configured or in use.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Worker Jobs</h2>
-                    <p className="text-xs text-text-muted">Live observation of background Codex CLI and agent executors.</p>
-                  </div>
-
-                  {/* Worker job list in a card grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {workerJobs.map((job) => {
-                      const isCompleted = job.status === 'completed';
-                      const isRunning = job.status === 'running';
-                      const isZeroExit = String(job.summary || '').includes('exit code 0') || isCompleted; // check exit code
-
-                      return (
-                        <div
-                          key={job.id}
-                          className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card p-5 rounded-2xl hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 space-y-3"
-                        >
-                          <div className="flex justify-between items-center border-b border-border-subtle dark:border-zinc-900 pb-2">
-                            <div>
-                              <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 leading-snug">{job.role}</h3>
-                              <span className="text-2xs text-text-muted font-bold capitalize tracking-wide">{job.adapter} adapter</span>
-                            </div>
-
-                            <div className="flex items-center space-x-1.5 shrink-0">
-                              {isCompleted ? (
-                                <span className="bg-status-success-bg text-accent-text border border-accent/20 font-extrabold text-2xs uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center space-x-1 select-none">
-                                  <Check className="h-3 w-3" />
-                                  <span>Done</span>
-                                </span>
-                              ) : isRunning ? (
-                                <span className="bg-status-info-bg text-status-info-text border border-status-info/20 font-extrabold text-2xs uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center space-x-1 animate-pulse select-none">
-                                  <RefreshCw className="h-2.5 w-2.5 animate-spin" />
-                                  <span>Running</span>
-                                </span>
-                              ) : (
-                                <span className="bg-status-warning-bg text-status-warning-text border border-status-warning/20 font-extrabold text-2xs uppercase tracking-wider px-2 py-0.5 rounded-full select-none">
-                                  {job.status}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="font-mono text-2xs font-bold text-zinc-500 space-y-1.5">
-                            <div className="flex justify-between items-center">
-                              <span className="text-text-muted uppercase tracking-wider text-2xs">Job ID</span>
-                              <span className="select-all text-zinc-700 dark:text-zinc-300">{job.id.substring(0, 12)}...{job.id.slice(-6)}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="text-text-muted uppercase tracking-wider text-2xs">PID</span>
-                              <span className="text-zinc-700 dark:text-zinc-300 font-bold">{job.pid || 'n/a'}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="text-text-muted uppercase tracking-wider text-2xs">Heartbeat</span>
-                              <span className="text-zinc-750 dark:text-zinc-300">{job.heartbeat_at ? new Date(job.heartbeat_at).toLocaleTimeString() : 'none'}</span>
-                            </div>
-
-                            <div className="border-t border-border-subtle dark:border-zinc-900 pt-2 font-sans normal-case text-xs font-semibold leading-relaxed flex items-start space-x-2 text-zinc-700 dark:text-zinc-300">
-                              {isCompleted && isZeroExit ? (
-                                <CheckCircle className="h-4 w-4 text-accent shrink-0 mt-0.5" />
-                              ) : isCompleted ? (
-                                <XCircle className="h-4 w-4 text-status-danger shrink-0 mt-0.5" />
-                              ) : (
-                                <Info className="h-4 w-4 text-status-info shrink-0 mt-0.5" />
-                              )}
-                              <span className="truncate" title={job.summary}>{job.summary || 'Executing task...'}</span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {workerJobs.length === 0 && (
-                      <div className="col-span-3 border-2 border-dashed border-border-subtle rounded-2xl p-12 text-center text-text-muted italic text-xs">
-                        No background worker tasks active or completed.
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <WorkersTab
+                  panelGlobalMode={panelGlobalMode}
+                  setPanelGlobalMode={setPanelGlobalMode}
+                  panelRoleOverrides={panelRoleOverrides}
+                  panelRoleModels={panelRoleModels}
+                  simpleRoutingBackends={simpleRoutingBackends}
+                  setSimpleRoutingBackends={setSimpleRoutingBackends}
+                  configuringRoles={configuringRoles}
+                  setConfiguringRoles={setConfiguringRoles}
+                  savingBackends={savingBackends}
+                  actionLoading={actionLoading}
+                  backendOptions={backendOptions}
+                  roleBackendOptions={roleBackendOptions}
+                  workerRoutingMode={workerRoutingMode}
+                  setWorkerRoutingMode={setWorkerRoutingMode}
+                  workerRoutingBuckets={WORKER_ROUTING_BUCKETS}
+                  workerRoles={workerRoles}
+                  loadingDiscoveredAgents={loadingDiscoveredAgents}
+                  discoveredAgents={discoveredAgents}
+                  safeDiscoveredAgents={safeDiscoveredAgents}
+                  discoveredAgentByBackend={discoveredAgentByBackend}
+                  customModelSelected={customModelSelected}
+                  fallbackAgentModes={FALLBACK_AGENT_MODES}
+                  usedBackends={usedBackends}
+                  startContext={startContext}
+                  workerJobs={workerJobs}
+                  backendsError={backendsError}
+                  backendsSuccess={backendsSuccess}
+                  getBadgeStyle={getBadgeStyle}
+                  getBackendOptionLabel={getBackendOptionLabel}
+                  handleAgentChange={handleAgentChange}
+                  handleApplySimpleRouting={handleApplySimpleRouting}
+                  handleModelDropdownChange={handleModelDropdownChange}
+                  handleCustomModelChange={handleCustomModelChange}
+                  handleSaveWorkerBackends={handleSaveWorkerBackends}
+                />
               )}
 
               {/* Tab: Approvals */}
