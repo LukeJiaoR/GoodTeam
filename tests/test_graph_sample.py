@@ -29,6 +29,7 @@ from goodteam_os.graph import (
     worker_blocker_message,
 )
 from goodteam_os.graph import run_adoption_until_next_gate
+from goodteam_os.failure_patterns import FailurePatternLibrary
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import decide_approval
@@ -1807,6 +1808,14 @@ def test_escalated_worker_failure_writes_scoped_failure_memory_event(tmp_path, m
     packet = memory_store.build_pickup_packet("implementation", query="network socket closed")
     assert "FAILURE [network]" not in str(packet["short_term"])
     assert packet["relevant_events"] == []
+
+    patterns = FailurePatternLibrary(tmp_path).list_patterns()
+    assert len(patterns) == 1
+    assert patterns[0]["classifier_hint"] == "network"
+    assert patterns[0]["recommended_disposition"] == "escalate_human"
+    assert patterns[0]["hit_count"] == 1
+    assert patterns[0]["roles"] == ["implementation"]
+    assert patterns[0]["sources"] == ["worker_failure:run-1:implementation:implementation"]
 
 
 def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):

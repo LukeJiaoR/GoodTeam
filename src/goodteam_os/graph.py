@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from goodteam_os.artifacts import ArtifactStore
+from goodteam_os.failure_patterns import FailurePatternLibrary
 from goodteam_os.memory import ProjectMemoryStore, RoleMemoryStore, summarize_markdown
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import load_project_target
@@ -1351,7 +1352,33 @@ def triage_worker_failure(
         disposition=disposition,
         project_config=project_config,
     )
+    append_worker_failure_pattern(
+        workspace=workspace,
+        result=result,
+        disposition=disposition,
+        source=f"worker_failure:{state.run_id}:implementation:{str(result.get('role', 'worker')).strip() or 'worker'}",
+    )
     return disposition
+
+
+def append_worker_failure_pattern(
+    *,
+    workspace: Path | None,
+    result: dict[str, object],
+    disposition: str,
+    source: str,
+) -> None:
+    if workspace is None:
+        return
+    role = str(result.get("role", "worker")).strip() or "worker"
+    FailurePatternLibrary(workspace).record_failure(
+        failure_class=normalized_failure_class(result),
+        summary=short_failure_summary(result),
+        disposition=disposition,
+        role=role,
+        node="implementation",
+        source=source,
+    )
 
 
 def append_worker_failure_memory_event(
