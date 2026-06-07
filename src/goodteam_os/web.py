@@ -221,10 +221,12 @@ def build_smoke_run_items(workspace: Path) -> list[dict[str, str]]:
             report = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             continue
-        for run in report.get("runs", []):
+        nested_report = report.get("report")
+        display_report = dict(nested_report) if isinstance(nested_report, dict) and nested_report else report
+        for run in display_report.get("runs", []):
             raw = dict(run)
             raw["report_path"] = str(path)
-            raw["report_status"] = str(report.get("status", ""))
+            raw["report_status"] = str(display_report.get("status", report.get("status", "")))
             items.append({key: str(value) for key, value in raw.items()})
     return items[:12]
 
@@ -380,6 +382,10 @@ def _dispatch_track_status_path(workspace: Path, run_id: str) -> Path:
     return workspace / "state" / "dispatch-tracks" / f"dispatch-track-{run_id}.json"
 
 
+def _smoke_run_status_path(workspace: Path, run_id: str) -> Path:
+    return workspace / "state" / "smoke-runs" / f"smoke-run-{run_id}.json"
+
+
 def _write_dispatch_track_status(
     workspace: Path,
     *,
@@ -396,6 +402,34 @@ def _write_dispatch_track_status(
         "name": name,
         "worktree": str(worktree),
         "status": status,
+        "error": error,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_smoke_run_status(
+    workspace: Path,
+    *,
+    run_id: str,
+    suites: list[str],
+    cycles: int,
+    dry_run: bool,
+    worker_mode: str,
+    status: str,
+    report: dict[str, object] | None = None,
+    error: str = "",
+) -> None:
+    status_path = _smoke_run_status_path(workspace, run_id)
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run_id": run_id,
+        "suites": suites,
+        "cycles": cycles,
+        "dry_run": dry_run,
+        "worker_mode": worker_mode,
+        "status": status,
+        "report": report or {},
         "error": error,
         "updated_at": datetime.now(UTC).isoformat(),
     }
@@ -456,6 +490,105 @@ def _start_dispatch_track_background(
         daemon=True,
     )
     thread.start()
+
+
+def run_smoke_suite(**kwargs) -> dict[str, object]:
+    from goodteam_os.smoke import run_smoke_suite as _run_smoke_suite
+
+    return _run_smoke_suite(**kwargs)
+
+
+def _start_smoke_run_background(
+    *,
+    workspace: Path,
+    run_id: str,
+    suites: list[str],
+    cycles: int,
+    dry_run: bool,
+    worker_mode: str,
+) -> None:
+    def run_smoke() -> None:
+        _write_smoke_run_status(
+            workspace,
+            run_id=run_id,
+            suites=suites,
+            cycles=cycles,
+            dry_run=dry_run,
+            worker_mode=worker_mode,
+            status="started",
+        )
+        try:
+            report = run_smoke_suite(
+                workspace=workspace,
+                suites=suites,
+                cycles=cycles,
+                autonomy="full",
+                dry_run=dry_run,
+                worker_mode=worker_mode,
+            )
+        except Exception as exc:
+            _write_smoke_run_status(
+                workspace,
+                run_id=run_id,
+                suites=suites,
+                cycles=cycles,
+                dry_run=dry_run,
+                worker_mode=worker_mode,
+                status="failed",
+                error=str(exc),
+            )
+            return
+        status = "failed" if str(report.get("status", "")) == "failed" else "completed"
+        _write_smoke_run_status(
+            workspace,
+            run_id=run_id,
+            suites=suites,
+            cycles=cycles,
+            dry_run=dry_run,
+            worker_mode=worker_mode,
+            status=status,
+            report=report,
+        )
+
+    threading.Thread(target=run_smoke, daemon=True).start()
+
+
+def start_smoke_run(workspace: Path, request: dict[str, object]) -> dict[str, object]:
+    raw_suite = request.get("suite", request.get("suites", "self"))
+    if isinstance(raw_suite, list):
+        suites = [str(value).strip() for value in raw_suite if str(value).strip()]
+    else:
+        suites = [part.strip() for part in str(raw_suite or "self").split(",") if part.strip()]
+    suites = suites or ["self"]
+    invalid_suites = [suite for suite in suites if suite not in {"contentops", "self"}]
+    if invalid_suites:
+        raise ValueError(f"Unknown smoke suite: {', '.join(invalid_suites)}")
+    cycles = int(request.get("cycles", 1) or 1)
+    if cycles < 1 or cycles > 5:
+        raise ValueError("cycles must be between 1 and 5")
+    worker_mode = str(request.get("worker_mode", "fake") or "fake").strip()
+    if worker_mode not in {"fake", "noop", "codex"}:
+        raise ValueError("worker_mode must be one of: fake, noop, codex")
+    # The web control plane starts in dry-run mode by default. Real smoke can be
+    # enabled explicitly once the operator wants the workflow-mutating path.
+    dry_run = bool(request.get("dry_run", True))
+    run_id = f"smoke-{uuid4()}"
+    _start_smoke_run_background(
+        workspace=workspace,
+        run_id=run_id,
+        suites=suites,
+        cycles=cycles,
+        dry_run=dry_run,
+        worker_mode=worker_mode,
+    )
+    return {
+        "run_id": run_id,
+        "suites": suites,
+        "cycles": cycles,
+        "dry_run": dry_run,
+        "worker_mode": worker_mode,
+        "status": "started",
+    }
 
 
 def start_dispatch_track(
@@ -6184,7 +6317,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/fs/mkdir"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -6327,6 +6460,10 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         self._send_json(202, result)
                     finally:
                         response_written.set()
+                    return
+                elif normalized_path == "/smoke-run":
+                    result = start_smoke_run(workspace, request)
+                    self._send_json(202, result)
                     return
                 # `/project-config` carries two operations: the worker-backends
                 # panel sends `project` + `workers` for an existing project; the

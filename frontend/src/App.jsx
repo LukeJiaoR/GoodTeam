@@ -492,6 +492,7 @@ export default function App() {
   const [actionLoading, setActionLoading] = useState(false);
   const [generatingPrd, setGeneratingPrd] = useState(false);
   const [startingWorkflow, setStartingWorkflow] = useState(false);
+  const [smokeRunLoading, setSmokeRunLoading] = useState(false);
   const [approvingAction, setApprovingAction] = useState(null);
 
   // Changes requested note states
@@ -1592,6 +1593,32 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setDispatchLoading(false);
+    }
+  };
+
+  const handleSmokeRun = async () => {
+    setSmokeRunLoading(true);
+    try {
+      const response = await fetch('/api/smoke-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          suite: 'self',
+          cycles: 1,
+          dry_run: true,
+          worker_mode: 'fake',
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) {
+        throw new Error(res.error || 'Failed to start smoke run');
+      }
+      showToast(`Smoke run started: ${res.run_id || 'queued'}`);
+      setTimeout(() => fetchState(projectKey, false), 600);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setSmokeRunLoading(false);
     }
   };
 
@@ -4139,9 +4166,20 @@ export default function App() {
               {/* Tab: Smoke Runs */}
               {activeTab === 'smoke' && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Smoke Test Reports</h2>
-                    <p className="text-xs text-[#AFAFAF]">Verify codebase status and health against configured suites.</p>
+                  <div className="border-b-2 border-[#E5E5E5] dark:border-zinc-800 pb-3 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+                    <div>
+                      <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Smoke Test Reports</h2>
+                      <p className="text-xs text-[#AFAFAF]">Verify codebase status and health against configured suites.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSmokeRun}
+                      disabled={smokeRunLoading}
+                      className="bg-[#58CC02] hover:bg-[#46A302] disabled:bg-zinc-300 text-white border-b-4 border-[#3D8B00] disabled:border-zinc-400 px-4 py-2 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all flex items-center justify-center gap-2 min-w-[9rem]"
+                    >
+                      <PlaySquare className="h-4 w-4" />
+                      {smokeRunLoading ? 'Starting...' : 'Run Dry Smoke'}
+                    </button>
                   </div>
 
                   <div className="space-y-4 max-w-4xl">

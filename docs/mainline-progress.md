@@ -10,14 +10,14 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | Completed 2026-06-07 | Add a deterministic global store with signature, classifier hint, recommended disposition, hit count, and query helpers; wire failed worker triage to record patterns. | `466 passed`; ruff clean; frontend build passed |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Planned | Add web-visible/safe Run-Smoke and graduate/readiness actions; keep merge/land as a human gate unless a later auth design changes that. | Pending |
+| 3 | Self-hosting control plane | Dry-smoke slice completed 2026-06-07 | Add a web-visible safe Run-Smoke action on top of the existing dev-loop/readiness surface; keep merge/land as a human gate unless a later auth design changes that. | `470 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | Planned | Convert remaining high-volume hardcoded colors/font-size outliers to semantic tokens after preserving the existing theme switcher. | Pending |
 | 5 | Graph/DAG engine D2 | Planned, gated | Add node dependency/topological driver foundation only after failure routing and checkpoint/stepper prerequisites stay green. | Pending |
 | 6 | i18n | Deferred, gated | Requires target-market/language decision and stabilized copy; not started in this pass unless that decision is made. | Pending |
 
 ## Active Increment
 
-Next active increment: self-hosting control plane.
+Next active increment: theme token conversion.
 
 ## Completed Increments
 
@@ -129,3 +129,47 @@ memory event; this increment adds durable pre-review report capture and a separa
 - Capturing the original `/tmp` task/constraints source paths into job metadata.
 - A richer human-written review rationale surface; this increment records the land
   decision fact and evidence links mechanically.
+
+### 2026-06-07 — Self-hosting control plane: dry smoke action
+
+**Intent:** move one more mechanical self-hosting action from CLI-only into the
+GoodTeam web surface without adding a dangerous server-side merge/land path.
+
+**Implemented:**
+- Added `POST /api/smoke-run` with the existing same-origin mutating-route guard.
+- The endpoint defaults to safe dry-run self smoke: `suite=self`, `cycles=1`,
+  `dry_run=true`, `worker_mode=fake`.
+- Smoke runs execute in a daemon background thread and write status files under
+  `state/smoke-runs/smoke-run-<id>.json`.
+- `build_smoke_run_items` now unwraps async status files so dry-run reports appear
+  in the existing Smoke tab data.
+- The React Smoke tab now has a compact `Run Dry Smoke` button that starts the
+  safe dry-run and refreshes dashboard state.
+
+**Verification evidence:**
+- Red API tests failed because `goodteam_os.web.run_smoke_suite` / endpoint seam
+  did not exist.
+- Red display test failed because async status reports were invisible to
+  `build_smoke_run_items`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_api.py -q -k 'smoke or devloop or dispatch_track'`
+  -> `13 passed, 32 deselected`.
+- Compatibility regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_smoke.py::test_dashboard_renders_recent_smoke_runs tests/test_api.py::test_smoke_run_items_include_async_status_report_runs -q`
+  -> `2 passed`.
+- Full regression:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q`
+  -> `470 passed in 155.00s`.
+- Lint:
+  `.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+
+**Deferred from this increment:**
+- Running real non-dry smoke from the web by default. The endpoint supports explicit
+  `dry_run=false`, but the UI intentionally starts with dry-run only.
+- Server-side land/merge execution. Land remains a human-invoked script and readiness
+  surface, per the self-driving design.
+- Release graduation controls.

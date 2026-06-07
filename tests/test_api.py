@@ -192,6 +192,120 @@ def test_api_devloop_route_returns_contract_shape(tmp_path, monkeypatch):
     assert payload["generated_at"]
 
 
+def test_api_smoke_run_starts_background_dry_run(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    smoke_entered = threading.Event()
+    completed_status_written = threading.Event()
+    calls = []
+
+    def fake_run_smoke_suite(**kwargs):
+        calls.append(kwargs)
+        smoke_entered.set()
+        return {
+            "status": "planned",
+            "suite": kwargs["suites"],
+            "cycles": kwargs["cycles"],
+            "runs": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.web.run_smoke_suite", fake_run_smoke_suite)
+    original_write_status = web._write_smoke_run_status
+
+    def write_status_and_signal(*args, **kwargs):
+        original_write_status(*args, **kwargs)
+        if kwargs.get("status") == "completed":
+            completed_status_written.set()
+
+    monkeypatch.setattr("goodteam_os.web._write_smoke_run_status", write_status_and_signal)
+    simulate_post = capture_post_handler(workspace, monkeypatch)
+
+    response = simulate_post(
+        "/api/smoke-run",
+        {"suite": "self", "cycles": 1, "dry_run": True, "worker_mode": "fake"},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 202 in response.responses
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["run_id"].startswith("smoke-")
+    assert payload == {
+        "run_id": payload["run_id"],
+        "suites": ["self"],
+        "cycles": 1,
+        "dry_run": True,
+        "worker_mode": "fake",
+        "status": "started",
+    }
+    assert smoke_entered.wait(timeout=1)
+    assert completed_status_written.wait(timeout=1)
+    assert calls[0]["workspace"] == workspace
+    assert calls[0]["suites"] == ["self"]
+    assert calls[0]["cycles"] == 1
+    assert calls[0]["dry_run"] is True
+    assert calls[0]["worker_mode"] == "fake"
+    status_path = workspace / "state" / "smoke-runs" / f"smoke-run-{payload['run_id']}.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["status"] == "completed"
+    assert status["report"]["status"] == "planned"
+
+
+def test_api_smoke_run_rejects_cross_origin_before_start(tmp_path, monkeypatch):
+    def fail_if_called(**kwargs):
+        raise AssertionError("smoke run should not start for cross-origin requests")
+
+    monkeypatch.setattr("goodteam_os.web.run_smoke_suite", fail_if_called)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/smoke-run",
+        {"suite": "self"},
+        headers={"Host": "127.0.0.1:8788", "Origin": "https://evil.test"},
+    )
+
+    assert 403 in response.responses
+    assert json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+
+
+def test_smoke_run_items_include_async_status_report_runs(tmp_path):
+    smoke_root = tmp_path / "state" / "smoke-runs"
+    smoke_root.mkdir(parents=True)
+    status_path = smoke_root / "smoke-run-smoke-123.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "run_id": "smoke-123",
+                "status": "completed",
+                "report": {
+                    "status": "planned",
+                    "runs": [
+                        {
+                            "suite": "self",
+                            "project_key": "GOODTEAM-SELF",
+                            "cycle": 1,
+                            "status": "planned",
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = web.build_smoke_run_items(tmp_path)
+
+    assert items == [
+        {
+            "suite": "self",
+            "project_key": "GOODTEAM-SELF",
+            "cycle": "1",
+            "status": "planned",
+            "report_path": str(status_path),
+            "report_status": "planned",
+        }
+    ]
+
+
 def test_api_fs_list_route_returns_directory_listing(tmp_path, monkeypatch):
     (tmp_path / "repo").mkdir()
     (tmp_path / "repo" / ".git").mkdir()
