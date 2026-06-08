@@ -98,7 +98,7 @@
 
 ### CP3 - D3 Execution Plan v2 Validation
 
-**Status:** planned.
+**Status:** completed in branch `feat/workflow-plan-v2`.
 
 **Scope:** Introduce a read-only `workflow_execution_plan_v2` artifact/projection with nodes, dependencies, write domains, runner kind, gates, and validation errors.
 
@@ -112,6 +112,16 @@
 **Verification:**
 - Unit tests for validation failures and a valid linear plan.
 - Existing workflow graph tests remain green.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'execution_plan_v2'` first failed with `ImportError: cannot import name 'validate_workflow_execution_plan_v2'`.
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges tests/test_web.py::test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges -q` first failed because `workflow_execution_plan_v2` was absent from the graph payload.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'execution_plan_v2'` -> `3 passed, 19 deselected`.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges tests/test_web.py::test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges -q` -> `2 passed`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py tests/test_web.py tests/test_api.py -q -k 'workflow_graph or workflow_node or workflow_dag or execution_plan or dashboard_stepper or api_workflow_graph'` -> `22 passed, 209 deselected`.
+- `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `564 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
 
 **Rollback:** Revert CP3 PR; old workflow graph projection remains.
 

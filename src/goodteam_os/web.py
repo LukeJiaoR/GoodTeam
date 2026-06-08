@@ -51,7 +51,14 @@ from goodteam_os.staging import (
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import send_approval_notification
-from goodteam_os.workflow_table import GATE_TRANSITIONS, WORKFLOW_NODES, advisors_for_gate, approved_next_for_gate, workflow_execution_plan
+from goodteam_os.workflow_table import (
+    GATE_TRANSITIONS,
+    WORKFLOW_NODES,
+    advisors_for_gate,
+    approved_next_for_gate,
+    workflow_execution_plan,
+    workflow_execution_plan_v2,
+)
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
@@ -1591,6 +1598,7 @@ def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, ob
         "nodes": nodes,
         "edges": edges,
         "execution_plan": _workflow_execution_plan_payload(),
+        "workflow_execution_plan_v2": _workflow_execution_plan_v2_payload(),
         "run": run,
     }
 
@@ -1605,6 +1613,10 @@ def _workflow_execution_plan_payload() -> dict[str, object]:
             "levels": [],
             "error": str(exc),
         }
+
+
+def _workflow_execution_plan_v2_payload() -> dict[str, object]:
+    return workflow_execution_plan_v2(WORKFLOW_NODES, gate_transitions=GATE_TRANSITIONS)
 
 
 def is_active_run(state: AgileDevState | None) -> bool:
