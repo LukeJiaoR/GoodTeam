@@ -1032,6 +1032,15 @@ def _single_line_config_value(label: str, value: str, *, default: str = "") -> s
     return text
 
 
+def _config_scalar(label: str, value: str, *, default: str = "") -> str:
+    text = _single_line_config_value(label, value, default=default)
+    if not text:
+        return ""
+    if any(char in text for char in [":", "#", '"', "'"]) or text != text.strip():
+        return json.dumps(text)
+    return text
+
+
 def _config_mapping_key(label: str, value: str) -> str:
     key = _single_line_config_value(label, value)
     if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
@@ -1272,26 +1281,29 @@ def create_local_project_config(
         if str(role).strip() and str(model).strip()
     }
     lines = [
-        f"name: {name}",
-        f"key: {key}",
-        f"model_profile: {profile}",
+        f"name: {_config_scalar('Project name', name)}",
+        f"key: {_config_scalar('Project key', key)}",
+        f"model_profile: {_config_scalar('Model profile', profile)}",
         f"delivery_mode: {mode}",
     ]
     custom_standards = [line.strip() for line in delivery_standards.splitlines() if line.strip()]
     if mode == "custom" and custom_standards:
         lines.append("delivery_standards:")
-        lines.extend(f"  standard_{index:04d}: {standard}" for index, standard in enumerate(custom_standards, start=1))
+        lines.extend(
+            f"  standard_{index:04d}: {_config_scalar('Delivery standard', standard)}"
+            for index, standard in enumerate(custom_standards, start=1)
+        )
     if overrides:
         lines.append("role_model_overrides:")
-        lines.extend(f"  {role}: {model}" for role, model in sorted(overrides.items()))
+        lines.extend(f"  {role}: {_config_scalar('Role model override model', model)}" for role, model in sorted(overrides.items()))
     lines.extend([
         "repos:",
     ])
-    lines.extend(f"  {repo}: {repo_path}" for repo, repo_path in repos)
+    lines.extend(f"  {repo}: {_config_scalar('Repo path', str(repo_path))}" for repo, repo_path in repos)
     sync_values = [_single_line_config_value("Task sync value", str(value)) for value in (task_sync or []) if value]
     lines.extend(["task_backend:", "  mode: local", "  sync:"])
     if sync_values:
-        lines[-1] = "  sync: " + ",".join(sync_values)
+        lines[-1] = "  sync: " + ",".join(_config_scalar("Task sync value", value) for value in sync_values)
     else:
         lines[-1] = "  sync: "
     plane_config = {
@@ -1303,9 +1315,9 @@ def create_local_project_config(
     }
     if "plane" in sync_values:
         lines.append("  plane:")
-        lines.extend(f"    {key}: {value}" for key, value in plane_config.items() if value)
+        lines.extend(f"    {key}: {_config_scalar('Plane config value', value)}" for key, value in plane_config.items() if value)
     worker_mode = _single_line_config_value("Worker backend mode", worker_backend_mode, default="codex")
-    lines.extend(["worker_backend:", f"  mode: {worker_mode}"])
+    lines.extend(["worker_backend:", f"  mode: {_config_scalar('Worker backend mode', worker_mode)}"])
     deployment_backend = {
         "mode": _single_line_config_value("Deployment backend mode", deployment_backend_mode),
         "staging_ssh_target": _single_line_config_value("Staging SSH target", staging_ssh_target),
@@ -1319,7 +1331,7 @@ def create_local_project_config(
         "staging_smoke_command": _single_line_config_value("Staging smoke command", staging_smoke_command),
     }
     if deployment_backend["mode"]:
-        lines.extend(["deployment_backend:", f"  mode: {deployment_backend['mode']}"])
+        lines.extend(["deployment_backend:", f"  mode: {_config_scalar('Deployment backend mode', deployment_backend['mode'])}"])
         for config_key in [
             "staging_ssh_target",
             "staging_remote_dir",
@@ -1331,7 +1343,7 @@ def create_local_project_config(
         ]:
             value = deployment_backend[config_key]
             if value:
-                lines.append(f"  {config_key}: {value}")
+                lines.append(f"  {config_key}: {_config_scalar(config_key, value)}")
     delivery_contract_lines = _delivery_contract_lines(
         required=delivery_contract_required,
         minimum_evidence=delivery_contract_minimum_evidence,
@@ -1407,16 +1419,16 @@ def _delivery_contract_lines(
     if pattern_values:
         lines.append("  fatal_output_patterns:")
         for index, pattern in enumerate(pattern_values, start=1):
-            lines.append(f"    pattern_{index}: {pattern}")
+            lines.append(f"    pattern_{index}: {_config_scalar('Delivery fatal pattern', pattern)}")
     if checks:
         lines.append("  staging_acceptance:")
         for index, (check_id, check_type, command) in enumerate(checks, start=1):
             lines.extend(
                 [
                     f"    check_{index}:",
-                    f"      id: {check_id}",
-                    f"      type: {check_type}",
-                    f"      command: {command}",
+                    f"      id: {_config_scalar('Delivery acceptance check ID', check_id)}",
+                    f"      type: {_config_scalar('Delivery acceptance check type', check_type)}",
+                    f"      command: {_config_scalar('Delivery acceptance command', command)}",
                 ]
             )
     return lines

@@ -29,6 +29,29 @@ def test_build_project_config_round_trips_through_parser(tmp_path):
     assert parsed["repos"]["app"] == "/home/dev/myapp"
 
 
+def test_parse_simple_yaml_decodes_json_style_quoted_scalars(tmp_path):
+    config_path = tmp_path / "quoted.local.yaml"
+    config_path.write_text(
+        '\n'.join(
+            [
+                'name: "Quoted: Product #1"',
+                "deployment_backend:",
+                '  staging_deploy_command: "\\"deploy:prod # safe\\""',
+                "legacy:",
+                "  single_quoted: 'legacy literal'",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    parsed = _parse_simple_yaml(config_path)
+
+    assert parsed["name"] == "Quoted: Product #1"
+    assert parsed["deployment_backend"]["staging_deploy_command"] == '"deploy:prod # safe"'
+    assert parsed["legacy"]["single_quoted"] == "legacy literal"
+
+
 def test_build_project_config_defaults_repo_to_cwd_placeholder():
     text = build_project_config(key="GTO", name="GoodTeam")
     # Every non-empty, non-comment line must carry a value the parser can read.
