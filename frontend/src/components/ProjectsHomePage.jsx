@@ -21,10 +21,10 @@ export default function ProjectsHomePage({
   error,
   handleDeleteProject,
   handleTerminate,
+  languageSwitcher,
   loading,
   message,
   newProjectModal,
-  renderLanguageSwitcher,
   setDarkMode,
   setNewProjectModalOpen,
   setStartMode,
@@ -78,7 +78,7 @@ export default function ProjectsHomePage({
                 {t('theme.minimal')}
               </button>
             </div>
-            {renderLanguageSwitcher('wide')}
+            {languageSwitcher}
             <button
               onClick={() => setDarkMode(!darkMode)}
               className="bg-surface-raised p-2 border-2 border-border-subtle shadow-button text-text-secondary rounded-xl transition-all duo-button-physics"

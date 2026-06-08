@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import DirectoryPickerModal from './components/DirectoryPickerModal';
 import FilePath from './components/FilePath';
+import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModal from './components/NewProjectModal';
 import ProjectsHomePage from './components/ProjectsHomePage';
 import Spinner from './components/Spinner';
@@ -118,26 +119,6 @@ export default function App() {
     { value: 'en', label: t('language.english'), ariaLabel: t('language.useEnglish') },
     { value: 'zh-CN', label: t('language.chinese'), ariaLabel: t('language.useChinese') },
   ];
-  const renderLanguageSwitcher = (size = 'compact') => {
-    const paddingClass = size === 'wide' ? 'px-3 py-1' : 'px-2 py-0.5';
-    const roundedClass = size === 'wide' ? 'rounded-lg' : 'rounded';
-    return (
-      <div className="flex bg-surface-raised p-0.5 rounded-lg border border-border-subtle select-none" aria-label="Language">
-        {languageOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => setLanguagePreference(option.value)}
-            className={`${paddingClass} ${roundedClass} min-w-10 text-center text-2xs font-bold transition-all cursor-pointer ${languagePreference === option.value ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
-            aria-label={option.ariaLabel}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    );
-  };
-
   // Mobile navigation drawer toggle
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showConfigDrawer, setShowConfigDrawer] = useState(false);
@@ -1864,10 +1845,17 @@ export default function App() {
         error={error}
         handleDeleteProject={handleDeleteProject}
         handleTerminate={handleTerminate}
+        languageSwitcher={(
+          <LanguageSwitcher
+            activeValue={languagePreference}
+            onChange={setLanguagePreference}
+            options={languageOptions}
+            size="wide"
+          />
+        )}
         loading={loading}
         message={message}
         newProjectModal={newProjectModal}
-        renderLanguageSwitcher={renderLanguageSwitcher}
         setDarkMode={setDarkMode}
         setNewProjectModalOpen={setNewProjectModalOpen}
         setStartMode={setStartMode}
@@ -2097,7 +2085,11 @@ export default function App() {
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           </div>
-          {renderLanguageSwitcher()}
+          <LanguageSwitcher
+            activeValue={languagePreference}
+            onChange={setLanguagePreference}
+            options={languageOptions}
+          />
         </div>
       </aside>
 
