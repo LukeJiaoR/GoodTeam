@@ -27,6 +27,7 @@ import NewProjectModal from './components/NewProjectModal';
 import ProjectsHomePage from './components/ProjectsHomePage';
 import Spinner from './components/Spinner';
 import { useAppearancePreferences } from './hooks/useAppearancePreferences';
+import { useClipboardFeedback } from './hooks/useClipboardFeedback';
 import { useDirectoryPicker } from './hooks/useDirectoryPicker';
 import { useDispatchTrackForm } from './hooks/useDispatchTrackForm';
 import { useNewProjectForm } from './hooks/useNewProjectForm';
@@ -261,60 +262,9 @@ export default function App() {
   const [loadingDevLoop, setLoadingDevLoop] = useState(false);
   const [devLoopError, setDevLoopError] = useState(null);
   const devLoopRequestSeq = useRef(0);
-  const [copiedText, setCopiedText] = useState(null);
-  const [copyFailedText, setCopyFailedText] = useState(null);
+  const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();
 
   const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);
-
-  const markLandCommandCopied = (command) => {
-    setCopyFailedText(prev => prev === command ? null : prev);
-    setCopiedText(command);
-    setTimeout(() => {
-      setCopiedText(prev => prev === command ? null : prev);
-    }, 2000);
-  };
-
-  const markLandCommandCopyFailed = (command) => {
-    setCopiedText(prev => prev === command ? null : prev);
-    setCopyFailedText(command);
-    setTimeout(() => {
-      setCopyFailedText(prev => prev === command ? null : prev);
-    }, 2000);
-  };
-
-  const copyLandCommand = (command) => {
-    if (!command) return;
-
-    const clipboard = navigator.clipboard;
-    if (clipboard?.writeText) {
-      clipboard.writeText(command)
-        .then(() => markLandCommandCopied(command))
-        .catch(() => markLandCommandCopyFailed(command));
-      return;
-    }
-
-    const textarea = document.createElement('textarea');
-    textarea.value = command;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'fixed';
-    textarea.style.top = '-9999px';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    textarea.select();
-
-    try {
-      const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
-      if (copied) {
-        markLandCommandCopied(command);
-      } else {
-        markLandCommandCopyFailed(command);
-      }
-    } catch {
-      markLandCommandCopyFailed(command);
-    } finally {
-      document.body.removeChild(textarea);
-    }
-  };
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -2566,7 +2516,7 @@ export default function App() {
                   formatHumanTime={formatHumanTime}
                   Spinner={Spinner}
                   getBadgeStyle={getBadgeStyle}
-                  copyLandCommand={copyLandCommand}
+                  copyLandCommand={copyCommand}
                   copiedText={copiedText}
                   copyFailedText={copyFailedText}
                   FilePath={FilePath}
