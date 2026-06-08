@@ -1657,7 +1657,17 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
 
 
 def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type():
-    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    shell_sources = "\n".join(
+        [
+            app,
+            (root / "frontend" / "src" / "components" / "ApprovalBanner.jsx").read_text(encoding="utf-8"),
+            (root / "frontend" / "src" / "components" / "GitCreationNotice.jsx").read_text(encoding="utf-8"),
+            (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8"),
+            (root / "frontend" / "src" / "components" / "ProjectSidebar.jsx").read_text(encoding="utf-8"),
+        ]
+    )
 
     disallowed_palette_tokens = [
         "#E5E5E5",
@@ -1672,10 +1682,10 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
         "#E8F9D9",
         "#FF9600",
     ]
-    assert {token: app.count(token) for token in disallowed_palette_tokens if token in app} == {}
-    assert "text-[10px]" not in app
-    assert "text-[9px]" not in app
-    assert "text-[8px]" not in app
+    assert {token: shell_sources.count(token) for token in disallowed_palette_tokens if token in shell_sources} == {}
+    assert "text-[10px]" not in shell_sources
+    assert "text-[9px]" not in shell_sources
+    assert "text-[8px]" not in shell_sources
 
     for semantic_class in [
         "border-border-subtle",
@@ -1685,7 +1695,7 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
         "bg-status-danger-bg",
         "text-2xs",
     ]:
-        assert semantic_class in app
+        assert semantic_class in shell_sources
 
 
 def test_file_path_component_is_extracted_from_app_shell():
@@ -2280,6 +2290,27 @@ def test_approval_banner_is_extracted_from_app_shell_without_theme_changes():
     assert "<ApprovalBanner" in app
     assert "Persistent Approvals Banner" not in app
     assert "bg-status-warning-bg border-b-2 border-status-warning/30" not in app
+
+
+def test_git_creation_notice_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    notice = root / "frontend" / "src" / "components" / "GitCreationNotice.jsx"
+
+    assert notice.exists()
+    notice_source = notice.read_text(encoding="utf-8")
+    assert "export default function GitCreationNotice" in notice_source
+    assert "CheckCircle" in notice_source
+    assert "AlertTriangle" in notice_source
+    assert "Git Repository Initialized" in notice_source
+    assert "Git Warnings:" in notice_source
+    assert "gitWarnings.map" in notice_source
+    assert "setShowGitNotice(false)" in notice_source
+    assert "duo-button-physics cursor-pointer shrink-0" in notice_source
+    assert "import GitCreationNotice from './components/GitCreationNotice';" in app
+    assert "<GitCreationNotice" in app
+    assert "Git Creation Notice" not in app
+    assert "Git Repository Initialized" not in app
 
 
 def test_project_url_hook_is_extracted_from_app_shell():
