@@ -380,6 +380,21 @@ def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
     assert graph["workflow_execution_plan_v2"]["version"] == 2
     assert graph["workflow_execution_plan_v2"]["valid"] is True
     assert graph["workflow_execution_plan_v2"]["validation_errors"] == []
+    assert graph["workflow_execution_plan_v2"]["parallel_execution_plan"] == {
+        "version": 1,
+        "valid": False,
+        "scheduler": "parallel_levels",
+        "runner_kind": "read_only_fake_projection",
+        "parallel_level_execution": "blocked",
+        "validation_errors": [
+            "Parallel execution refuses runner 'architect' with kind 'sequential_worker'",
+            "Parallel execution refuses runner 'planner' with kind 'sequential_worker'",
+            "Parallel execution refuses runner 'release' with kind 'sequential_worker'",
+            "Parallel execution refuses runner 'retro_memory' with kind 'sequential_worker'",
+            "Parallel execution refuses runner 'security' with kind 'human_gate'",
+        ],
+        "batches": [],
+    }
     assert {
         "id": "planner",
         "kind": "stage",

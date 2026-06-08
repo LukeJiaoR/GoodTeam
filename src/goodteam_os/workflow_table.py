@@ -389,6 +389,10 @@ def workflow_execution_plan_v2(
 ) -> dict[str, object]:
     node_table = nodes or WORKFLOW_NODES
     transition_table = gate_transitions or GATE_TRANSITIONS
+    inferred_runner_kinds = {
+        identifier: ("human_gate" if workflow.runner_fn == "noop_security_gate" else "sequential_worker")
+        for identifier, workflow in node_table.items()
+    }
     validation_errors = validate_workflow_execution_plan_v2(
         node_table,
         gate_transitions=transition_table,
@@ -415,6 +419,7 @@ def workflow_execution_plan_v2(
                 else _workflow_node_write_domains(identifier)
             )
             dependencies = list(getattr(workflow, "depends_on", ()))
+            runner_kind = inferred_runner_kinds[identifier]
             plan_nodes.append(
                 {
                     "id": identifier,
@@ -422,7 +427,7 @@ def workflow_execution_plan_v2(
                     "dependencies": dependencies,
                     "write_domains": list(domains),
                     "runner": workflow.runner_fn,
-                    "runner_kind": "sequential_worker" if workflow.runner_fn != "noop_security_gate" else "human_gate",
+                    "runner_kind": runner_kind,
                     "gate": workflow.run_guard_gate,
                     "fan_in_required": bool(dependencies),
                 }
@@ -454,6 +459,67 @@ def workflow_execution_plan_v2(
         "order": list(plan.order),
         "levels": [level.to_dict() for level in plan.levels],
         "nodes": plan_nodes,
+        "parallel_execution_plan": workflow_parallel_execution_plan(
+            node_table,
+            gate_transitions=transition_table,
+            runner_kinds=inferred_runner_kinds,
+            write_domains=write_domains,
+        ),
+    }
+
+
+PARALLEL_SAFE_RUNNER_KINDS = frozenset({"fake_worker", "read_only_advisor"})
+
+
+def workflow_parallel_execution_plan(
+    nodes: Mapping[str, WorkflowNode] | None = None,
+    *,
+    gate_transitions: Mapping[str, GateTransition] | None = None,
+    runner_kinds: Mapping[str, str] | None = None,
+    write_domains: Mapping[str, Iterable[str]] | None = None,
+) -> dict[str, object]:
+    node_table = nodes or WORKFLOW_NODES
+    transition_table = gate_transitions or GATE_TRANSITIONS
+    validation_errors = validate_workflow_execution_plan_v2(
+        node_table,
+        gate_transitions=transition_table,
+        write_domains=write_domains,
+    )
+
+    for identifier in node_table:
+        runner_kind = str((runner_kinds or {}).get(identifier, "sequential_worker"))
+        if runner_kind not in PARALLEL_SAFE_RUNNER_KINDS:
+            validation_errors.append(f"Parallel execution refuses runner {identifier!r} with kind {runner_kind!r}")
+
+    if validation_errors:
+        return {
+            "version": 1,
+            "valid": False,
+            "scheduler": "parallel_levels",
+            "runner_kind": "read_only_fake_projection",
+            "parallel_level_execution": "blocked",
+            "validation_errors": validation_errors,
+            "batches": [],
+        }
+
+    plan = workflow_execution_plan(node_table, gate_transitions=transition_table)
+    batches = [
+        {
+            "level": level.index,
+            "nodes": list(level.runnable),
+            "mode": "parallel" if len(level.runnable) > 1 else "sequential",
+        }
+        for level in plan.levels
+        if level.runnable
+    ]
+    return {
+        "version": 1,
+        "valid": True,
+        "scheduler": "parallel_levels",
+        "runner_kind": "read_only_fake_projection",
+        "parallel_level_execution": "enabled_for_fake_and_readonly",
+        "validation_errors": [],
+        "batches": batches,
     }
 
 
