@@ -11,9 +11,9 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
-| 4 | Theme token conversion | High-volume slice completed 2026-06-07 | Convert the repeated base palette and sub-11px text outliers in `App.jsx` to the existing semantic theme tokens while preserving the Vivid/Minimal switcher. | `471 passed`; ruff clean; frontend lint/build passed |
+| 4 | Theme token conversion | Memory panel productionize slice completed 2026-06-07 | Keep Vivid and Minimal as permanent themes, convert `App.jsx` high-volume base tokens plus MessageFeed and Memory panel status/surface/type debt incrementally. | Memory panel contracts `9 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
-| 6 | i18n | Gated / parked 2026-06-07 | Requires target-market/language decision and stabilized copy; not an actionable local backlog item in this pass. | Documented gate |
+| 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
 | 9 | Dispatch artifacts audit/memory | Audit artifact chain completed 2026-06-07 | Persist dispatch task/constraints/research source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `487 passed`; ruff clean; frontend build passed |
@@ -21,13 +21,66 @@ reference, verification evidence, and follow-up status.
 
 ## Active Increment
 
-No active backlog increment remains. Remaining work is parked behind explicit gates:
-i18n target market/primary language, theme winner selection, D2b topo executor fan-in
-consumer, server-side land/tag auth/security design, G3 routing outcome quality,
-G3 unknown-failure data for LLM triage, external Codex auth recovery, shared-worktree
-edit-collision need, and optional full research/review memory ingestion.
+No active backlog increment remains. Remaining work is parked behind explicit gates
+or deliberate incremental tracks: D2b topo executor fan-in consumer, server-side
+land/tag auth/security design, G3 routing outcome quality, G3 unknown-failure data
+for LLM triage, external Codex auth recovery, shared-worktree edit-collision need,
+optional full research/review memory ingestion, and continued Theme panel/component
+token cleanup with visual review. Theme System no longer has a Vivid-vs-Minimal
+winner gate; both themes stay productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-07 — i18n lightweight foundation
+
+**Intent:** resolve the i18n target-language gate with the smallest durable
+frontend foundation: browser/system auto mode, explicit user override, and a
+scoped first chrome extraction.
+
+**Implemented:**
+- Added `frontend/src/i18n/` with `en` and `zh-CN` locale dictionaries plus
+  `normalizeLanguagePreference`, `resolveLanguage`, browser-language lookup, and
+  `translate`.
+- Supported `gt-language=auto|en|zh-CN`; `auto` maps `zh-*` browsers to
+  Simplified Chinese and falls back to English otherwise.
+- Added compact language switchers beside existing theme controls in the root
+  overview header and detailed project sidebar footer.
+- Extracted the first high-traffic dashboard chrome slice to locale keys: root
+  header labels, detailed sidebar groups/tabs, shell dashboard/run/status labels,
+  theme labels, approval banner copy, and shell loading label.
+- Kept deeper feature panels, user/project data, backend payloads, artifacts, and
+  worker output untranslated for later focused passes.
+
+**Verification evidence:**
+- Red module tests:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py -q -k 'frontend_i18n'`
+  first failed because `frontend/src/i18n/` files did not exist.
+- Red App chrome contract:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py::test_frontend_contract_uses_i18n_for_dashboard_chrome -q`
+  first failed because `App.jsx` did not import `LANGUAGE_STORAGE_KEY`.
+- Focused green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_web.py -q -k 'frontend_i18n or frontend_contract'`
+  -> `9 passed, 98 deselected`.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Review fixes during implementation:**
+- Stacked sidebar footer controls so the theme buttons, language switcher, and
+  dark-mode icon do not overflow the fixed `220px` sidebar.
+- Preserved English fallback behavior for existing unsliced `getStatusLabel`
+  callers instead of rendering locale keys.
+- Localized the shell `complete` status badge and fixed English singular
+  `Question` handling.
+- Replaced the second root `+ New Project` chrome label that was initially missed.
+
+**Deferred from this increment:**
+- Full `App.jsx` copy extraction.
+- New-project/start-run forms, approval panels, Dev Loop, Smoke Runs, Memory,
+  Agents, Workflow Graph, and System diagnostics panel localization.
 
 ### 2026-06-07 — Backlog closure / gated parking
 
@@ -39,11 +92,11 @@ tasks.
 - `docs/backlog.md` now starts from an explicit "no actionable projects remain"
   state.
 - The remaining non-local work is listed in a gated/external-decision parking lot:
-  i18n target-language choice, Theme System winner selection, D2b topo/parallel
-  executor gate, server-side land/tag/graduate auth and human-gate boundary, G3
-  routing application quality gate, G3 LLM triage data gate, Codex auth recovery,
-  shared-worktree edit-collision detection, and optional full research/review
-  memory ingestion.
+  D2b topo/parallel executor gate, server-side land/tag/graduate auth and
+  human-gate boundary, G3 routing application quality gate, G3 LLM triage data
+  gate, Codex auth recovery, shared-worktree edit-collision detection, optional
+  full research/review memory ingestion, and focused Theme panel/component token
+  cleanup with visual review.
 - The stale PRD edit -> LLM deepen -> re-review backlog item is marked resolved by
   the existing explicit refinement workflow: `Refine with AI`, proposed revision
   review, accept/discard, open-question answer application, and approval reset on
@@ -495,6 +548,87 @@ theme-system plan.
   low-frequency one-offs that should be reviewed visually before tokenizing.
 - Componentizing `App.jsx`; this pass stayed mechanical and contract-backed.
 - i18n/copy extraction remains gated separately.
+
+### 2026-06-07 — Theme token conversion: MessageFeed slice
+
+**Intent:** continue Theme System productionization after the founder decision to
+keep both Vivid and Minimal permanently, without reviving the old winner-selection
+gate or doing a blind full-App conversion.
+
+**Implemented:**
+- Converted `frontend/src/components/MessageFeed.jsx` status kind styles from
+  hardcoded Duo hex values to semantic `status-*` theme classes.
+- Replaced MessageFeed surfaces, borders, muted/primary text, accent icon color,
+  and card shadow with `bg-surface-*`, `border-border-*`, `text-text-*`,
+  `text-accent`, and `shadow-card` utilities.
+- Replaced MessageFeed `text-[8px]`, `text-[9px]`, and `text-[10px]` usages with
+  the existing `text-2xs` floor.
+- Added a focused frontend contract test that fails if MessageFeed reintroduces
+  the legacy Vivid palette or sub-11px arbitrary text.
+
+**Verification evidence:**
+- Red contract test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_message_feed_uses_theme_tokens_and_small_type_floor -q`
+  first failed with counts for 18 legacy palette tokens.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'message_feed or theme_tokens or frontend_contract'`
+  -> `8 passed, 100 deselected`.
+- Frontend lint:
+  `cd frontend && npm run lint`
+  -> exit 0.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- Further App.jsx/panel conversion and visual review.
+- Theme-specific dark-mode polish beyond the existing token support.
+- i18n/copy extraction for MessageFeed and deeper panels.
+
+### 2026-06-07 — Theme token conversion: Memory panel slice
+
+**Intent:** continue Theme System productionization on a contained `App.jsx` panel
+after MessageFeed, while keeping Vivid and Minimal both permanent and avoiding a
+blind full-App conversion.
+
+**Implemented:**
+- Converted the Agents & Memory / Memory tab slice to semantic surface, border,
+  text, and status utilities.
+- Replaced `bg-[#FDFDFD]`, repeated `bg-white` / `dark:bg-zinc-*` panel surfaces,
+  zinc borders/text, and blue/amber ad-hoc badge families in that slice.
+- Replaced Memory-panel `text-[11px]` empty states with `text-2xs`.
+- Added a focused frontend contract test that extracts only the Memory tab slice
+  from `App.jsx` and rejects legacy surface/text snippets plus `dark:` overrides
+  in that slice.
+
+**Verification evidence:**
+- Red contract test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_memory_panel_uses_theme_tokens_and_small_type_floor -q`
+  first failed with counts for 13 disallowed snippets; after tightening the test,
+  it caught one remaining `dark:` override before final green.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'memory_panel or message_feed or theme_tokens or frontend_contract'`
+  -> `9 passed, 100 deselected`.
+- Touched-test lint:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check tests/test_web.py`
+  -> `All checks passed!`.
+- Frontend lint:
+  `cd frontend && npm run lint`
+  -> exit 0.
+- Frontend build:
+  `cd frontend && npm run build`
+  -> Vite build succeeded.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- Approval/review panel token cleanup.
+- Dev Loop token cleanup.
+- Broader App.jsx componentization and i18n/copy extraction.
 
 ### 2026-06-07 — Graph/DAG engine D2: DAG-spec foundation
 

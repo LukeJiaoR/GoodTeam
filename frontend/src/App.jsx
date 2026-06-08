@@ -41,6 +41,14 @@ import {
   HelpCircle
 } from 'lucide-react';
 import MessageFeed from './components/MessageFeed';
+import {
+  LANGUAGE_PREFERENCE_AUTO,
+  LANGUAGE_STORAGE_KEY,
+  normalizeLanguagePreference,
+  resolveLanguage,
+  translate,
+} from './i18n';
+import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -56,125 +64,6 @@ const DELIVERY_MODE_OPTIONS = [
   { value: 'feature_increment', label: 'Feature on existing system' },
   { value: 'custom', label: 'Custom…' },
 ];
-
-// Build graph layout and compute ranks for DAG columns
-function computeGraphLayout(rawNodes, rawEdges) {
-  const nodes = Array.isArray(rawNodes) ? rawNodes : [];
-  const edges = Array.isArray(rawEdges) ? rawEdges : [];
-  const allNodeNames = new Set(nodes.map(n => n.name));
-  for (const edge of edges) {
-    allNodeNames.add(edge.from);
-    allNodeNames.add(edge.to);
-  }
-
-  const nodeMap = {};
-  for (const name of allNodeNames) {
-    const originalNode = nodes.find(n => n.name === name);
-    nodeMap[name] = {
-      name,
-      gate: originalNode?.gate || '',
-      runner: originalNode?.runner || '',
-      kind: originalNode?.kind || 'stage',
-      incoming: [],
-      outgoing: [],
-      rank: 0,
-      index: 0
-    };
-  }
-
-  for (const edge of edges) {
-    if (nodeMap[edge.from] && nodeMap[edge.to]) {
-      nodeMap[edge.from].outgoing.push(edge);
-      nodeMap[edge.to].incoming.push(edge);
-    }
-  }
-
-  // To be safe against cycles, compute ranks using Longest Path from source nodes (DAG-based),
-  // with an iteration limit to break cycle back-edges.
-  const maxIterations = 1000;
-  let iterations = 0;
-  let changed = true;
-
-  while (changed && iterations < maxIterations) {
-    changed = false;
-    iterations++;
-    for (const edge of edges) {
-      const fromNode = nodeMap[edge.from];
-      const toNode = nodeMap[edge.to];
-      if (fromNode && toNode) {
-        if (fromNode.rank + 1 > toNode.rank && toNode.rank < Object.keys(nodeMap).length) {
-          toNode.rank = fromNode.rank + 1;
-          changed = true;
-        }
-      }
-    }
-  }
-
-  // Group nodes by rank
-  const columns = {};
-  for (const node of Object.values(nodeMap)) {
-    if (!columns[node.rank]) {
-      columns[node.rank] = [];
-    }
-    node.index = columns[node.rank].length;
-    columns[node.rank].push(node);
-  }
-
-  return { nodeMap, columns };
-}
-
-const drawEdgePath = (u, v) => {
-  const nodeWidth = 200;
-  const nodeHeight = 90;
-  const columnWidth = 270;
-  const rowHeight = 150;
-  const paddingX = 40;
-  const paddingY = 40;
-
-  const uLeft = paddingX + u.rank * columnWidth;
-  const uTop = paddingY + u.index * rowHeight;
-  const vLeft = paddingX + v.rank * columnWidth;
-  const vTop = paddingY + v.index * rowHeight;
-
-  if (v.rank > u.rank) {
-    // Forward edge
-    const x1 = uLeft + nodeWidth;
-    const y1 = uTop + nodeHeight / 2;
-    const x2 = vLeft - 8;
-    const y2 = vTop + nodeHeight / 2;
-    const controlX = (x1 + x2) / 2;
-    return {
-      path: `M ${x1} ${y1} C ${controlX} ${y1}, ${controlX} ${y2}, ${x2} ${y2}`,
-      midX: controlX,
-      midY: (y1 + y2) / 2
-    };
-  } else if (v.rank === u.rank) {
-    // Same column edge
-    const x1 = uLeft + nodeWidth;
-    const y1 = uTop + nodeHeight / 2;
-    const x2 = vLeft - 8;
-    const y2 = vTop + nodeHeight / 2;
-    const controlX = x1 + 40;
-    return {
-      path: `M ${x1} ${y1} C ${controlX} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`,
-      midX: controlX - 20,
-      midY: (y1 + y2) / 2
-    };
-  } else {
-    // Back edge
-    const x1 = uLeft;
-    const y1 = uTop + nodeHeight / 2;
-    const x2 = vLeft - 8;
-    const y2 = vTop + nodeHeight / 2;
-    const controlX1 = x1 - 50;
-    const controlX2 = x2 - 50;
-    return {
-      path: `M ${x1} ${y1} C ${controlX1} ${y1}, ${controlX2} ${y2}, ${x2} ${y2}`,
-      midX: (controlX1 + controlX2) / 2,
-      midY: (y1 + y2) / 2
-    };
-  }
-};
 
 // Semantic status badges mapping with 15% transparent backgrounds and solid text colors
 function getBadgeStyle(status) {
@@ -221,14 +110,21 @@ function getBadgeStyle(status) {
   };
 }
 
-function getStatusLabel(status) {
+function getStatusLabel(status, t = (key) => ({
+  'status.approved': 'Approved',
+  'status.pending': 'Pending',
+  'status.complete': 'Complete',
+  'status.active': 'Active',
+  'status.artifactReady': 'Artifact Ready',
+  'chrome.noActiveRun': 'No Activity',
+}[key] || key)) {
   const norm = String(status || '').toLowerCase().trim();
-  if (norm === 'approved') return '✓ Approved';
-  if (norm === 'pending') return '⏳ Pending';
-  if (norm === 'complete') return '✓ Complete';
-  if (norm === 'active' || norm === 'running') return 'Active';
-  if (norm === 'artifact ready' || norm === 'artifact_ready') return 'Artifact Ready';
-  if (norm === 'no activity' || norm === 'no_activity' || norm === 'no_active_run') return 'No Activity';
+  if (norm === 'approved') return `✓ ${t('status.approved')}`;
+  if (norm === 'pending') return `⏳ ${t('status.pending')}`;
+  if (norm === 'complete') return `✓ ${t('status.complete')}`;
+  if (norm === 'active' || norm === 'running') return t('status.active');
+  if (norm === 'artifact ready' || norm === 'artifact_ready') return t('status.artifactReady');
+  if (norm === 'no activity' || norm === 'no_activity' || norm === 'no_active_run') return t('chrome.noActiveRun');
   return status.replace(/_/g, ' ');
 }
 
@@ -261,10 +157,11 @@ function FilePath({ path, segments = 1 }) {
 }
 
 // Spinner component
-function Spinner() {
+function Spinner({ label = 'Loading...' }) {
   return (
     <div className="flex justify-center items-center py-16">
       <RefreshCw className="h-10 w-10 text-accent animate-spin" />
+      <span className="sr-only">{label}</span>
     </div>
   );
 }
@@ -425,6 +322,39 @@ export default function App() {
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('gt-theme') || 'vivid';
   });
+
+  const [languagePreference, setLanguagePreferenceState] = useState(() => {
+    return normalizeLanguagePreference(localStorage.getItem(LANGUAGE_STORAGE_KEY));
+  });
+  const language = resolveLanguage(languagePreference);
+  const t = (key, params) => translate(language, key, params);
+  const setLanguagePreference = (preference) => {
+    setLanguagePreferenceState(normalizeLanguagePreference(preference));
+  };
+  const languageOptions = [
+    { value: LANGUAGE_PREFERENCE_AUTO, label: t('language.auto'), ariaLabel: t('language.useAuto') },
+    { value: 'en', label: t('language.english'), ariaLabel: t('language.useEnglish') },
+    { value: 'zh-CN', label: t('language.chinese'), ariaLabel: t('language.useChinese') },
+  ];
+  const renderLanguageSwitcher = (size = 'compact') => {
+    const paddingClass = size === 'wide' ? 'px-3 py-1' : 'px-2 py-0.5';
+    const roundedClass = size === 'wide' ? 'rounded-lg' : 'rounded';
+    return (
+      <div className="flex bg-surface-raised p-0.5 rounded-lg border border-border-subtle select-none" aria-label="Language">
+        {languageOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => setLanguagePreference(option.value)}
+            className={`${paddingClass} ${roundedClass} min-w-10 text-center text-2xs font-bold transition-all cursor-pointer ${languagePreference === option.value ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+            aria-label={option.ariaLabel}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   // Mobile navigation drawer toggle
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -721,6 +651,10 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('gt-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, languagePreference);
+  }, [languagePreference]);
 
   // Reset Git toggles/notices when the new project modal is opened
   useEffect(() => {
@@ -2746,8 +2680,8 @@ export default function App() {
               <LayoutDashboard className="h-5 w-5" />
             </div>
             <div>
-              <span className="text-2xs uppercase tracking-wider font-bold text-text-muted">Multi-project control room</span>
-              <h1 className="text-base font-bold tracking-tight text-text-primary">GoodTeam Projects</h1>
+              <span className="text-2xs uppercase tracking-wider font-bold text-text-muted">{t('chrome.multiProjectEyebrow')}</span>
+              <h1 className="text-base font-bold tracking-tight text-text-primary">{t('chrome.goodteamProjects')}</h1>
             </div>
           </div>
 
@@ -2759,7 +2693,7 @@ export default function App() {
               }}
               className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-4 py-1.5 rounded-xl text-2xs uppercase tracking-wider transition-all duo-button-physics hover:opacity-90 cursor-pointer"
             >
-              + New Project
+              {t('chrome.newProject')}
             </button>
             <div className="flex bg-surface-sunken p-1 rounded-xl border border-border-subtle select-none">
               <button
@@ -2767,20 +2701,21 @@ export default function App() {
                 onClick={() => setTheme('vivid')}
                 className={`px-3 py-1 rounded-lg text-2xs font-bold transition-all cursor-pointer ${theme === 'vivid' ? 'bg-surface-raised shadow-sm text-accent-text border border-border-subtle' : 'text-text-muted hover:text-text-secondary'}`}
               >
-                Vivid
+                {t('theme.vivid')}
               </button>
               <button
                 type="button"
                 onClick={() => setTheme('minimal')}
                 className={`px-3 py-1 rounded-lg text-2xs font-bold transition-all cursor-pointer ${theme === 'minimal' ? 'bg-surface-raised shadow-sm text-accent-text border border-border-subtle' : 'text-text-muted hover:text-text-secondary'}`}
               >
-                Minimal
+                {t('theme.minimal')}
               </button>
             </div>
+            {renderLanguageSwitcher('wide')}
             <button
               onClick={() => setDarkMode(!darkMode)}
               className="bg-surface-raised p-2 border-2 border-border-subtle shadow-button text-text-secondary rounded-xl transition-all duo-button-physics"
-              aria-label="Toggle theme"
+              aria-label={t('theme.toggle')}
             >
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
@@ -2814,7 +2749,7 @@ export default function App() {
 
           {/* Project List */}
           {loading ? (
-            <Spinner />
+            <Spinner label={t('chrome.loading')} />
           ) : error ? (
             <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-xl text-status-danger flex items-center space-x-3">
               <AlertTriangle className="h-6 w-6 shrink-0" />
@@ -2831,7 +2766,7 @@ export default function App() {
                   }}
                   className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center gap-1.5 hover:opacity-90 cursor-pointer"
                 >
-                  <span>+ New Project</span>
+                  <span>{t('chrome.newProject')}</span>
                 </button>
               </div>
 
@@ -3045,6 +2980,45 @@ export default function App() {
   const openQuestionsGateCount = openQuestions.length;
   const totalApprovalsCount = approvalReviews.length || 6;
   const approvalProgressPercent = Math.min(100, Math.round((approvedCount / totalApprovalsCount) * 100));
+  const approvalBannerQuestions = openQuestionsGateCount > 0
+    ? t('approvalBanner.questions', {
+      count: openQuestionsGateCount,
+      plural: openQuestionsGateCount === 1 ? '' : 's',
+    })
+    : '';
+  const navGroups = [
+    {
+      title: t('nav.groups.work'),
+      items: [
+        { id: 'overview', label: t('nav.tabs.overview'), icon: LayoutDashboard },
+        { id: 'approvals', label: t('nav.tabs.approvals'), icon: CheckCircle2 },
+        { id: 'artifacts', label: t('nav.tabs.artifacts'), icon: FileCode },
+        { id: 'actions', label: t('nav.tabs.actions'), icon: Activity },
+        { id: 'board', label: t('nav.tabs.board'), icon: Kanban },
+      ],
+    },
+    {
+      title: t('nav.groups.observe'),
+      items: [
+        { id: 'workflow', label: t('nav.tabs.workflow'), icon: GitBranch },
+        { id: 'devloop', label: t('nav.tabs.devloop'), icon: GitPullRequest },
+        { id: 'messages', label: t('nav.tabs.messages'), icon: MessageSquare },
+      ],
+    },
+    {
+      title: t('nav.groups.inspect'),
+      items: [
+        { id: 'agents_memory', label: t('nav.tabs.agentsMemory'), icon: Users },
+        { id: 'smoke', label: t('nav.tabs.smoke'), icon: PlaySquare },
+      ],
+    },
+    {
+      title: t('nav.groups.system'),
+      items: [
+        { id: 'system', label: t('nav.tabs.system'), icon: Settings },
+      ],
+    },
+  ];
   const currentMemoryEvent = memoryEventDetail?.data || {};
   const memorySupersedes = currentMemoryEvent.supersedes || '';
   const memorySupersededBy = Array.isArray(currentMemoryEvent.superseded_by)
@@ -3072,13 +3046,13 @@ export default function App() {
         <div className="p-5 border-b-2 border-border-subtle flex justify-between items-center bg-surface-sunken">
           <div>
             <span className="text-2xs uppercase tracking-widest text-accent-text font-bold">GoodTeam OS</span>
-            <h2 className="text-sm font-bold tracking-tight text-text-primary mt-0.5">{state?.project_name || startContext.project_name || 'Dashboard'}</h2>
+            <h2 className="text-sm font-bold tracking-tight text-text-primary mt-0.5">{state?.project_name || startContext.project_name || t('chrome.dashboard')}</h2>
           </div>
           <button
             onClick={() => updateUrl('')}
             className="text-2xs text-text-secondary hover:text-accent border-2 border-border-subtle hover:border-accent px-2.5 py-0.5 rounded-lg transition-all font-bold uppercase cursor-pointer"
           >
-            Exit
+            {t('chrome.exit')}
           </button>
         </div>
 
@@ -3090,39 +3064,7 @@ export default function App() {
 
         {/* Tab buttons - grouped by priority */}
         <nav className="flex-grow py-4 space-y-4 overflow-y-auto">
-          {[
-            {
-              title: 'WORK',
-              items: [
-                { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-                { id: 'approvals', label: 'Approvals', icon: CheckCircle2 },
-                { id: 'artifacts', label: 'Artifacts', icon: FileCode },
-                { id: 'actions', label: 'Actions', icon: Activity },
-                { id: 'board', label: 'Agile Board', icon: Kanban },
-              ]
-            },
-            {
-              title: 'OBSERVE',
-              items: [
-                { id: 'workflow', label: 'Workflow Graph', icon: GitBranch },
-                { id: 'devloop', label: 'Dev Loop', icon: GitPullRequest },
-                { id: 'messages', label: 'Messages', icon: MessageSquare },
-              ]
-            },
-            {
-              title: 'INSPECT',
-              items: [
-                { id: 'agents_memory', label: 'Agents & Memory', icon: Users },
-                { id: 'smoke', label: 'Smoke Runs', icon: PlaySquare },
-              ]
-            },
-            {
-              title: 'SYSTEM',
-              items: [
-                { id: 'system', label: 'System', icon: Settings },
-              ]
-            }
-          ].map((group) => (
+          {navGroups.map((group) => (
             <div key={group.title} className="space-y-1">
               <div className="px-4 py-1 text-2xs font-bold tracking-widest text-text-muted uppercase">
                 {group.title}
@@ -3160,30 +3102,33 @@ export default function App() {
         </nav>
 
         {/* Sidebar Footer */}
-        <div className="p-4 border-t-2 border-border-subtle flex items-center justify-between gap-2 text-xs bg-surface-sunken font-bold text-text-muted">
-          <div className="flex bg-surface-raised p-0.5 rounded-lg border border-border-subtle select-none">
+        <div className="p-4 border-t-2 border-border-subtle flex flex-col gap-2 text-xs bg-surface-sunken font-bold text-text-muted">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex bg-surface-raised p-0.5 rounded-lg border border-border-subtle select-none">
+              <button
+                type="button"
+                onClick={() => setTheme('vivid')}
+                className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'vivid' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+              >
+                {t('theme.vivid')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme('minimal')}
+                className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'minimal' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+              >
+                {t('theme.minimal')}
+              </button>
+            </div>
             <button
-              type="button"
-              onClick={() => setTheme('vivid')}
-              className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'vivid' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
+              onClick={() => setDarkMode(!darkMode)}
+              className="p-1.5 rounded-lg border-2 border-border-subtle hover:bg-surface-sunken transition-colors text-text-secondary cursor-pointer"
+              aria-label={t('theme.toggle')}
             >
-              Vivid
-            </button>
-            <button
-              type="button"
-              onClick={() => setTheme('minimal')}
-              className={`px-2 py-0.5 rounded text-2xs font-bold transition-all cursor-pointer ${theme === 'minimal' ? 'bg-surface-sunken shadow-sm text-accent-text' : 'text-text-muted hover:text-text-secondary'}`}
-            >
-              Minimal
+              {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           </div>
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            className="p-1.5 rounded-lg border-2 border-border-subtle hover:bg-surface-sunken transition-colors text-text-secondary cursor-pointer"
-            aria-label="Toggle theme"
-          >
-            {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
+          {renderLanguageSwitcher()}
         </div>
       </aside>
 
@@ -3195,15 +3140,15 @@ export default function App() {
         >
           {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
-        <span className="font-bold text-sm tracking-tight text-text-primary">{state?.project_name || 'Dashboard'}</span>
+        <span className="font-bold text-sm tracking-tight text-text-primary">{state?.project_name || t('chrome.dashboard')}</span>
         {headerStatus.toLowerCase() === 'complete' ? (
           <div className="bg-status-success-bg text-status-success-text font-bold text-xs px-2.5 py-1 rounded-full border-2 border-status-success/20 flex items-center space-x-1">
             <span>✅</span>
-            <span>COMPLETE</span>
+            <span>{t('status.complete')}</span>
           </div>
         ) : (
           <div className={`px-2.5 py-0.5 rounded-full text-2xs uppercase font-bold border ${activeRun ? 'bg-status-info-bg text-status-info-text border-status-info/30' : headBadge.bg + ' ' + headBadge.text + ' ' + headBadge.border}`}>
-            {getStatusLabel(headerStatus)}
+            {getStatusLabel(headerStatus, t)}
           </div>
         )}
       </header>
@@ -3223,22 +3168,22 @@ export default function App() {
             <span onClick={() => updateUrl('')} className="font-bold text-lg tracking-tight text-text-primary cursor-pointer hover:text-accent transition-colors">GoodTeam</span>
             <span className="text-border-strong font-bold text-sm">|</span>
             <span className="text-text-secondary font-bold text-xs uppercase tracking-wider">
-              {state?.project_name || startContext.project_name || 'Dashboard'}
+              {state?.project_name || startContext.project_name || t('chrome.dashboard')}
             </span>
           </div>
 
           <div className="flex items-center space-x-4">
-            <span className="text-2xs font-mono font-bold text-text-muted uppercase hidden sm:inline">Run ID: <code className="bg-surface-sunken border border-border-subtle px-2 py-0.5 rounded-lg text-text-secondary select-all font-mono">{state?.run_id || 'none'}</code></span>
+            <span className="text-2xs font-mono font-bold text-text-muted uppercase hidden sm:inline">{t('chrome.runId')}: <code className="bg-surface-sunken border border-border-subtle px-2 py-0.5 rounded-lg text-text-secondary select-all font-mono">{state?.run_id || t('chrome.none')}</code></span>
 
             {headerStatus.toLowerCase() === 'complete' ? (
               <div className="bg-status-success-bg text-status-success-text font-bold text-base px-5 py-2.5 rounded-full border-2 border-status-success/30 flex items-center space-x-1.5 shadow-sm">
                 <span>✅</span>
-                <span>COMPLETE</span>
+                <span>{t('status.complete')}</span>
               </div>
             ) : (
               <div className={`inline-flex items-center space-x-1.5 px-4 py-2 rounded-full text-xs font-semibold uppercase border ${headBadge.bg} ${headBadge.text} ${headBadge.border}`}>
                 {activeRun && <span className="h-1.5 w-1.5 bg-status-info rounded-full animate-pulse" />}
-                <span>{getStatusLabel(headerStatus)}</span>
+                <span>{getStatusLabel(headerStatus, t)}</span>
               </div>
             )}
           </div>
@@ -3249,13 +3194,17 @@ export default function App() {
           <div className="bg-status-warning-bg border-b-2 border-status-warning/30 px-6 py-3 flex items-center justify-between text-xs font-bold text-status-warning-text animate-fade-in shrink-0">
             <div className="flex items-center space-x-2">
               <span className="h-2 w-2 rounded-full bg-status-warning animate-pulse shrink-0" />
-              <span>{actionableCount} gate{actionableCount > 1 ? 's' : ''} awaiting your approval{openQuestionsGateCount > 0 ? ` · ${openQuestionsGateCount} Questions` : ''}</span>
+              <span>{t('approvalBanner.message', {
+                count: actionableCount,
+                plural: actionableCount > 1 ? 's' : '',
+                questions: approvalBannerQuestions,
+              })}</span>
             </div>
             <button
               onClick={() => setActiveTab('approvals')}
               className="bg-surface-raised hover:bg-status-warning-bg border-2 border-status-warning/30 shadow-button text-status-warning-text font-bold px-3 py-1 rounded-lg uppercase tracking-wider transition-all duo-button-physics text-2xs cursor-pointer"
             >
-              Review
+              {t('approvalBanner.review')}
             </button>
           </div>
         )}
@@ -3406,7 +3355,7 @@ export default function App() {
         {/* Main Panel Content Area - padded 32px (#F7F7F7 canvas background) */}
         <main className="flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6">
           {loading ? (
-            <Spinner />
+            <Spinner label={t('chrome.loading')} />
           ) : error ? (
             <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl text-status-danger-text flex items-center space-x-3 shadow-xs">
               <AlertTriangle className="h-6 w-6 shrink-0" />
@@ -3416,278 +3365,12 @@ export default function App() {
             <>
               {/* Tab: Workflow Graph */}
               {activeTab === 'workflow' && (
-                <div className="space-y-6">
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Workflow Graph</h2>
-                    <p className="text-xs text-text-muted">Visual topology of pipeline nodes, decision gates, transition edges, and active execution run path.</p>
-                  </div>
-
-                  {loadingGraph ? (
-                    <Spinner />
-                  ) : graphError ? (
-                    <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl text-status-danger-text flex items-center space-x-3 shadow-xs">
-                      <AlertTriangle className="h-6 w-6 shrink-0" />
-                      <span className="font-bold text-sm">{graphError}</span>
-                    </div>
-                  ) : !graphData || (
-                    (Array.isArray(graphData.nodes) ? graphData.nodes : []).length === 0 &&
-                    (Array.isArray(graphData.edges) ? graphData.edges : []).length === 0
-                  ) ? (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-2xl p-12 text-center text-text-muted italic text-xs">
-                      No workflow graph nodes or edges recorded for this project yet.
-                    </div>
-                  ) : (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-6 overflow-x-auto relative">
-                      {/* Active Run Status Header */}
-                      {graphData.run && (
-                        <div className="mb-6 bg-zinc-50 dark:bg-zinc-900/50 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 flex flex-col gap-3 text-xs font-bold">
-                          <div className="flex flex-wrap items-center justify-between gap-4">
-                            <div className="flex items-center space-x-2">
-                              <span className="text-text-muted uppercase tracking-wider">Active Run:</span>
-                              <span className="font-mono text-zinc-800 dark:text-zinc-200">{graphData.run.run_id}</span>
-                            </div>
-                            <div className="flex flex-wrap gap-4">
-                              {(graphData.run.current_graph_node || graphData.run.current_node) && (
-                                <div className="flex items-center space-x-1.5">
-                                  <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
-                                  <span className="text-text-muted">Current Node:</span>
-                                  <span className="text-accent-text font-mono">{graphData.run.current_graph_node || graphData.run.current_node}</span>
-                                </div>
-                              )}
-                              {(graphData.run.next_graph_node || graphData.run.next_node) && (
-                                <div className="flex items-center space-x-1.5">
-                                  <span className="h-2 w-2 rounded-full bg-status-info animate-pulse" />
-                                  <span className="text-text-muted">Next Node:</span>
-                                  <span className="text-status-info-text font-mono">{graphData.run.next_graph_node || graphData.run.next_node}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="border-t border-zinc-200 dark:border-zinc-800/80 pt-2 flex items-center space-x-1.5 text-2xs text-zinc-550 font-normal">
-                            <Info className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
-                            <span className="text-zinc-900 dark:text-zinc-100">
-                              Note: Colored edge pills represent transition path types, not the project's actual gate decisions.
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* DAG Canvas Layout */}
-                      {(() => {
-                        const safeNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-                        const safeEdges = Array.isArray(graphData?.edges) ? graphData.edges : [];
-                        const { nodeMap, columns } = computeGraphLayout(safeNodes, safeEdges);
-                        const colIndices = Object.keys(columns).map(Number).sort((a, b) => a - b);
-
-                        const nodeWidth = 200;
-                        const nodeHeight = 90;
-                        const columnWidth = 270;
-                        const rowHeight = 150;
-                        const paddingX = 40;
-                        const paddingY = 40;
-
-                        const numCols = colIndices.length || 1;
-                        const maxNodesInAnyCol = Math.max(...Object.values(columns).map(cols => cols.length), 1);
-
-                        const canvasWidth = numCols * columnWidth + paddingX * 2;
-                        const canvasHeight = maxNodesInAnyCol * rowHeight + paddingY * 2;
-
-                        const getEdgeColor = (type) => {
-                          const norm = String(type || '').toLowerCase().trim();
-                          if (norm === 'approved') return 'var(--success)';
-                          if (norm === 'changes_requested' || norm === 'blocked') return 'var(--warning)';
-                          if (norm === 'rejected' || norm === 'error') return 'var(--danger)';
-                          return 'var(--text-muted)';
-                        };
-
-                        const getEdgeMarker = (type) => {
-                          const norm = String(type || '').toLowerCase().trim();
-                          if (['approved', 'changes_requested', 'rejected', 'error', 'blocked'].includes(norm)) {
-                            return `url(#arrow-${norm})`;
-                          }
-                          return 'url(#arrow-default)';
-                        };
-
-                        return (
-                          <div
-                            className="relative select-none"
-                            style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}
-                          >
-                            {/* SVG Connection Lines */}
-                            <svg
-                              className="absolute inset-0 pointer-events-none z-0"
-                              style={{ width: '100%', height: '100%' }}
-                            >
-                              <defs>
-                                <marker id="arrow-approved" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--success)" />
-                                </marker>
-                                <marker id="arrow-changes_requested" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--warning)" />
-                                </marker>
-                                <marker id="arrow-rejected" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--danger)" />
-                                </marker>
-                                <marker id="arrow-error" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--danger)" />
-                                </marker>
-                                <marker id="arrow-blocked" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--warning)" />
-                                </marker>
-                                <marker id="arrow-default" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="var(--text-muted)" />
-                                </marker>
-                              </defs>
-
-                              {safeEdges.map((edge, idx) => {
-                                const fromNode = nodeMap[edge.from];
-                                const toNode = nodeMap[edge.to];
-                                if (!fromNode || !toNode) return null;
-
-                                const { path } = drawEdgePath(fromNode, toNode);
-                                const strokeColor = getEdgeColor(edge.type);
-                                const marker = getEdgeMarker(edge.type);
-
-                                return (
-                                  <path
-                                    key={idx}
-                                    d={path}
-                                    fill="none"
-                                    stroke={strokeColor}
-                                    strokeWidth="2.5"
-                                    markerEnd={marker}
-                                    className="transition-all duration-300 opacity-80"
-                                  />
-                                );
-                              })}
-                            </svg>
-
-                            {/* Floating Edge Labels */}
-                            {safeEdges.map((edge, idx) => {
-                              const fromNode = nodeMap[edge.from];
-                              const toNode = nodeMap[edge.to];
-                              if (!fromNode || !toNode) return null;
-
-                              const { midX, midY } = drawEdgePath(fromNode, toNode);
-                              const color = getEdgeColor(edge.type);
-
-                              return (
-                                <div
-                                  key={idx}
-                                  className="absolute bg-surface-raised border border-border-subtle rounded-full px-2 py-0.5 text-2xs font-bold shadow-xs select-none pointer-events-none z-10"
-                                  style={{
-                                    left: `${midX}px`,
-                                    top: `${midY}px`,
-                                    transform: 'translate(-50%, -50%)',
-                                    color: color,
-                                  }}
-                                >
-                                  {edge.type}
-                                </div>
-                              );
-                            })}
-
-                            {/* Node Cards */}
-                            {Object.values(nodeMap).map((node) => {
-                              const isCurrent = graphData.run && (graphData.run.current_graph_node || graphData.run.current_node) === node.name;
-                              const isNext = graphData.run && (graphData.run.next_graph_node || graphData.run.next_node) === node.name;
-                              const approvalStatus = node.gate && graphData.run && graphData.run.approvals ? graphData.run.approvals[node.gate] : null;
-
-                              const left = paddingX + node.rank * columnWidth;
-                              const top = paddingY + node.index * rowHeight;
-
-                              let cardBorder = 'border-border-subtle';
-                              let shadowStyle = 'shadow-card';
-                              if (isCurrent) {
-                                cardBorder = 'border-status-success';
-                                shadowStyle = 'shadow-[0_4px_0_var(--success)]';
-                              } else if (isNext) {
-                                cardBorder = 'border-status-info';
-                                shadowStyle = 'shadow-[0_4px_0_var(--info)]';
-                              } else if (node.gate) {
-                                if (approvalStatus === 'approved') {
-                                  cardBorder = 'border-status-success';
-                                  shadowStyle = 'shadow-[0_4px_0_var(--success)]';
-                                } else if (approvalStatus === 'changes_requested') {
-                                  cardBorder = 'border-status-warning';
-                                  shadowStyle = 'shadow-[0_4px_0_var(--warning)]';
-                                } else if (approvalStatus === 'rejected') {
-                                  cardBorder = 'border-status-danger';
-                                  shadowStyle = 'shadow-[0_4px_0_var(--danger)]';
-                                }
-                              }
-
-                              return (
-                                <div
-                                  key={node.name}
-                                  className={`absolute bg-surface-raised border-2 rounded-xl p-4 flex flex-col justify-between z-20 ${cardBorder} ${shadowStyle}`}
-                                  style={{
-                                    left: `${left}px`,
-                                    top: `${top}px`,
-                                    width: `${nodeWidth}px`,
-                                    height: `${nodeHeight}px`,
-                                  }}
-                                >
-                                  <div className="flex justify-between items-start gap-1">
-                                    <span
-                                      className="font-mono text-2xs font-bold text-text-primary truncate select-all"
-                                      title={node.name}
-                                    >
-                                      {node.name}
-                                    </span>
-
-                                    <div className="flex items-center space-x-1 shrink-0">
-                                      {node.gate && approvalStatus === 'approved' && (
-                                        <span className="bg-status-success-bg dark:bg-status-success/10 border border-status-success/20 dark:border-status-success/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-success-text" title="Approved">
-                                          <Check className="h-2.5 w-2.5 text-status-success" />
-                                          <span>approved</span>
-                                        </span>
-                                      )}
-                                      {node.gate && approvalStatus === 'changes_requested' && (
-                                        <span className="bg-status-warning-bg dark:bg-status-warning/10 border border-status-warning/20 dark:border-status-warning/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-warning-text" title="Changes Requested">
-                                          <AlertTriangle className="h-2.5 w-2.5 text-status-warning" />
-                                          <span>changes</span>
-                                        </span>
-                                      )}
-                                      {node.gate && approvalStatus === 'rejected' && (
-                                        <span className="bg-status-danger-bg dark:bg-status-danger/10 border border-status-danger/20 dark:border-status-danger/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-danger-text" title="Rejected">
-                                          <XCircle className="h-2.5 w-2.5 text-status-danger" />
-                                          <span>rejected</span>
-                                        </span>
-                                      )}
-                                      {isCurrent ? (
-                                        <span className="h-2 w-2 rounded-full bg-status-success animate-pulse" title="Current Node" />
-                                      ) : isNext ? (
-                                        <span className="h-2 w-2 rounded-full bg-status-info animate-pulse" title="Next Node" />
-                                      ) : null}
-                                    </div>
-                                  </div>
-
-                                  <div className="space-y-1">
-                                    {node.gate && (
-                                      <div className="flex items-center text-2xs text-text-secondary font-bold">
-                                        <Lock className="h-3 w-3 mr-1 text-text-muted" />
-                                        <span className="uppercase">{node.gate} Gate</span>
-                                      </div>
-                                    )}
-                                    <div className="flex justify-between items-center text-2xs font-bold uppercase tracking-wider text-text-muted">
-                                      <span>{node.kind}</span>
-                                      {node.runner && (
-                                        <span className="font-mono text-2xs max-w-[100px] truncate" title={node.runner}>
-                                          {node.runner}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-                </div>
+                <WorkflowGraphTab
+                  loadingGraph={loadingGraph}
+                  graphError={graphError}
+                  graphData={graphData}
+                  Spinner={Spinner}
+                />
               )}
 
               {/* Tab: Overview */}
@@ -5333,19 +5016,19 @@ export default function App() {
               {/* Tab: Memory */}
               {(activeTab === 'memory' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'memory')) && (
                 <div className="space-y-6">
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Compounding Memory Layer</h2>
+                  <div className="border-b-2 border-border-subtle pb-2">
+                    <h2 className="text-base font-extrabold text-text-primary">Compounding Memory Layer</h2>
                     <p className="text-xs text-text-muted">Long-term agent memory horizons and the semantic facts retrieved for the latest worker dispatches.</p>
                   </div>
 
                   {/* Cross-project Search Card */}
-                  <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden flex flex-col">
-                    <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-border-subtle dark:border-zinc-800 flex justify-between items-center">
+                  <div className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl overflow-hidden flex flex-col">
+                    <div className="px-6 py-4 bg-surface-sunken border-b-2 border-border-subtle flex justify-between items-center">
                       <div className="flex items-center space-x-3">
                         <Search className="h-5 w-5 text-status-info shrink-0" />
                         <div>
                           <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">Search Engine</span>
-                          <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 uppercase tracking-wide mt-0.5">Cross-Project Memory Retrieval</h3>
+                          <h3 className="font-extrabold text-sm text-text-primary uppercase tracking-wide mt-0.5">Cross-Project Memory Retrieval</h3>
                         </div>
                       </div>
                     </div>
@@ -5360,7 +5043,7 @@ export default function App() {
                           <select
                             value={crossRole}
                             onChange={(e) => setCrossRole(e.target.value)}
-                            className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2.5 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-status-info/30"
+                            className="w-full rounded-xl border-2 border-border-subtle bg-surface-raised px-3 py-2.5 text-xs font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-status-info/30"
                           >
                             <option value="implementation">Implementation</option>
                             <option value="ui">UI</option>
@@ -5379,7 +5062,7 @@ export default function App() {
                             onChange={(e) => setCrossQuery(e.target.value)}
                             placeholder="Enter keywords or semantic query..."
                             required
-                            className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-status-info/30"
+                            className="w-full rounded-xl border-2 border-border-subtle bg-surface-raised px-3 py-2 text-xs font-semibold text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-status-info/30"
                           />
                         </div>
 
@@ -5388,7 +5071,7 @@ export default function App() {
                           <button
                             type="submit"
                             disabled={crossLoading}
-                            className="w-full bg-accent hover:bg-accent disabled:bg-zinc-300 text-white border-2 border-accent-text px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider shadow-button hover:shadow-button disabled:shadow-none hover:translate-y-0.5 active:translate-y-1 transition-all flex items-center justify-center gap-1.5 focus:outline-none cursor-pointer"
+                            className="w-full bg-accent hover:bg-accent disabled:bg-surface-sunken disabled:text-text-muted text-text-inverse border-2 border-accent-text px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider shadow-button hover:shadow-button disabled:shadow-none hover:translate-y-0.5 active:translate-y-1 transition-all flex items-center justify-center gap-1.5 focus:outline-none cursor-pointer"
                           >
                             {crossLoading ? (
                               <RefreshCw className="h-4 w-4 animate-spin" />
@@ -5401,7 +5084,7 @@ export default function App() {
                       </div>
 
                       {/* Optional Advanced Settings (Scope, Limit) */}
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-dashed border-border-subtle dark:border-zinc-800">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-dashed border-border-subtle">
                         {/* Scope */}
                         <div className="md:col-span-3">
                           <label className="block text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-1.5">
@@ -5412,7 +5095,7 @@ export default function App() {
                             value={crossScope}
                             onChange={(e) => setCrossScope(e.target.value)}
                             placeholder="e.g. all, project-a, project-b"
-                            className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-status-info/30"
+                            className="w-full rounded-xl border-2 border-border-subtle bg-surface-raised px-3 py-2 text-xs font-semibold text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-status-info/30"
                           />
                         </div>
 
@@ -5427,7 +5110,7 @@ export default function App() {
                             max="50"
                             value={crossLimit}
                             onChange={(e) => setCrossLimit(parseInt(e.target.value) || 5)}
-                            className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-2 text-xs font-semibold text-zinc-750 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-status-info/30"
+                            className="w-full rounded-xl border-2 border-border-subtle bg-surface-raised px-3 py-2 text-xs font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-status-info/30"
                           />
                         </div>
                       </div>
@@ -5435,27 +5118,27 @@ export default function App() {
 
                     {/* Results / Error / Loading States */}
                     {(crossLoading || crossError || crossResults) && (
-                      <div className="border-t-2 border-border-subtle dark:border-zinc-800 p-6 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-4">
+                      <div className="border-t-2 border-border-subtle p-6 bg-surface-sunken space-y-4">
                         <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">
                           Cross-Project Search Results
                         </h4>
 
                         {crossLoading && (
-                          <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                          <div className="flex items-center justify-center p-8 text-text-secondary font-bold text-xs bg-surface-raised border border-border-subtle rounded-xl">
                             <RefreshCw className="h-4 w-4 animate-spin mr-2 text-accent" />
                             <span>Retrieving memories across projects...</span>
                           </div>
                         )}
 
                         {crossError && (
-                          <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900 p-4 rounded-xl text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-start gap-2">
+                          <div className="bg-status-warning-bg border-2 border-status-warning p-4 rounded-xl text-status-warning-text text-xs font-semibold flex items-start gap-2">
                             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                             <span>{crossError}</span>
                           </div>
                         )}
 
                         {!crossLoading && !crossError && crossResults && crossResults.length === 0 && (
-                          <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-xs font-semibold">
+                          <div className="text-center py-8 bg-surface-raised border border-border-subtle rounded-xl text-text-muted italic text-xs font-semibold">
                             no cross-project matches
                           </div>
                         )}
@@ -5465,33 +5148,33 @@ export default function App() {
                             {crossResults.map((item) => (
                               <div
                                 key={item.id}
-                                className="w-full text-left border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm"
+                                className="w-full text-left border border-border-subtle p-4 rounded-xl space-y-2 bg-surface-raised shadow-sm"
                               >
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <span className="font-mono text-2xs font-bold text-accent-text dark:text-emerald-400">
+                                  <span className="font-mono text-2xs font-bold text-accent-text">
                                     {item.id}
                                   </span>
                                   <span className="flex flex-wrap items-center gap-2">
-                                    <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-blue-100 dark:border-blue-900/50">
+                                    <span className="bg-status-info-bg text-status-info-text px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-status-info/30">
                                       {item.horizon || 'event'}
                                     </span>
                                     {item.score !== undefined && item.score !== null && (
-                                      <span className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded border border-amber-100 dark:border-amber-900/50 text-2xs font-extrabold uppercase">
+                                      <span className="bg-status-warning-bg text-status-warning-text px-2 py-0.5 rounded border border-status-warning/30 text-2xs font-extrabold uppercase">
                                         Score: {typeof item.score === 'number' ? item.score.toFixed(2) : item.score}
                                       </span>
                                     )}
-                                    <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-zinc-200 dark:border-zinc-700">
+                                    <span className="bg-surface-sunken text-text-secondary px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-border-subtle">
                                       Project: {item.project_key}
                                     </span>
                                   </span>
                                 </div>
-                                <p className="text-xs font-semibold leading-relaxed text-zinc-750 dark:text-zinc-250 whitespace-pre-wrap">
+                                <p className="text-xs font-semibold leading-relaxed text-text-primary whitespace-pre-wrap">
                                   {item.text || item.body || 'No event body recorded.'}
                                 </p>
-                                <div className="flex flex-wrap items-center gap-2 text-2xs font-bold text-zinc-500">
-                                  <span className="font-mono text-zinc-500">{item.timestamp || item.ts}</span>
+                                <div className="flex flex-wrap items-center gap-2 text-2xs font-bold text-text-muted">
+                                  <span className="font-mono text-text-muted">{item.timestamp || item.ts}</span>
                                   {item.source && (
-                                    <span className="font-mono text-zinc-400 truncate max-w-full">{item.source}</span>
+                                    <span className="font-mono text-text-muted truncate max-w-full">{item.source}</span>
                                   )}
                                 </div>
                               </div>
@@ -5503,28 +5186,28 @@ export default function App() {
                   </div>
 
                   {!state ? (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-8 text-center space-y-4 max-w-md mx-auto">
+                    <div className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-8 text-center space-y-4 max-w-md mx-auto">
                       <Brain className="h-12 w-12 text-status-info mx-auto animate-pulse" />
-                      <h3 className="font-extrabold text-base text-zinc-800 dark:text-zinc-200">No Active Runs</h3>
-                      <p className="text-xs text-zinc-550 dark:text-zinc-400 font-semibold">
+                      <h3 className="font-extrabold text-base text-text-primary">No Active Runs</h3>
+                      <p className="text-xs text-text-muted font-semibold">
                         This project does not have an active run or initialized workspace. Please run a workflow first to seed and activate the memory layer.
                       </p>
                     </div>
                   ) : loadingMemory ? (
-                    <div className="flex items-center justify-center p-12 text-zinc-500 font-bold">
+                    <div className="flex items-center justify-center p-12 text-text-secondary font-bold">
                       <RefreshCw className="h-5 w-5 animate-spin mr-2 text-accent" />
                       <span>Loading memory horizons...</span>
                     </div>
                   ) : memoryError ? (
-                    <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900 p-6 rounded-2xl text-center space-y-2 max-w-xl mx-auto">
-                      <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto" />
-                      <h3 className="font-extrabold text-sm text-amber-800 dark:text-amber-300">Memory Endpoint Not Available Yet</h3>
-                      <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold leading-relaxed">
+                    <div className="bg-status-warning-bg border-2 border-status-warning p-6 rounded-2xl text-center space-y-2 max-w-xl mx-auto">
+                      <AlertTriangle className="h-8 w-8 text-status-warning mx-auto" />
+                      <h3 className="font-extrabold text-sm text-status-warning-text">Memory Endpoint Not Available Yet</h3>
+                      <p className="text-xs text-status-warning-text font-semibold leading-relaxed">
                         The backend memory query API might not be deployed or is temporarily offline. Details: {memoryError}
                       </p>
                     </div>
                   ) : !memoryData || !memoryData.roles || memoryData.roles.length === 0 ? (
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-dashed border-border-subtle dark:border-zinc-800 rounded-2xl p-12 text-center text-text-muted italic text-xs">
+                    <div className="bg-surface-raised border-2 border-dashed border-border-subtle rounded-2xl p-12 text-center text-text-muted italic text-xs">
                       No memory data recorded yet for this project.
                     </div>
                   ) : (
@@ -5533,27 +5216,27 @@ export default function App() {
                         const eventBrowser = memoryEventBrowsers[role.role] || {};
                         const browseEvents = Array.isArray(eventBrowser.events) ? eventBrowser.events : [];
                         return (
-                        <div key={role.role} className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl overflow-hidden flex flex-col">
+                        <div key={role.role} className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl overflow-hidden flex flex-col">
                           {/* Card Header */}
-                          <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-900/50 border-b-2 border-border-subtle dark:border-zinc-800 flex justify-between items-center">
+                          <div className="px-6 py-4 bg-surface-sunken border-b-2 border-border-subtle flex justify-between items-center">
                             <div className="flex items-center space-x-3">
                               <Cpu className="h-5 w-5 text-status-info shrink-0" />
                               <div>
                                 <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">Agent Role</span>
-                                <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 uppercase tracking-wide mt-0.5">{role.role}</h3>
+                                <h3 className="font-extrabold text-sm text-text-primary uppercase tracking-wide mt-0.5">{role.role}</h3>
                               </div>
                             </div>
                             <div className="flex flex-wrap items-center justify-end gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleToggleMemoryEvents(role.role)}
-                                className="bg-white hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900 text-zinc-650 dark:text-zinc-300 border-2 border-border-subtle dark:border-zinc-800 px-3 py-1 rounded-xl text-2xs font-extrabold tracking-wider uppercase transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-status-info/30 flex items-center gap-1.5"
+                                className="bg-surface-raised hover:bg-status-info-bg text-text-secondary hover:text-status-info-text border-2 border-border-subtle px-3 py-1 rounded-xl text-2xs font-extrabold tracking-wider uppercase transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-status-info/30 flex items-center gap-1.5"
                                 aria-expanded={Boolean(eventBrowser.open)}
                               >
                                 <FileText className="h-3.5 w-3.5" />
                                 <span>Browse events</span>
                               </button>
-                              <span className="bg-status-success-bg dark:bg-emerald-950/30 text-accent-text dark:text-emerald-400 border-2 border-accent/20 dark:border-emerald-500/20 px-3 py-1 rounded-xl text-2xs font-extrabold tracking-wider uppercase">
+                              <span className="bg-status-success-bg text-status-success-text border-2 border-status-success/30 px-3 py-1 rounded-xl text-2xs font-extrabold tracking-wider uppercase">
                                 {role.event_count || 0} events
                               </span>
                             </div>
@@ -5562,7 +5245,7 @@ export default function App() {
                           {/* Card Body */}
                           <div className="p-6 space-y-6">
                             {role.event_count === 0 ? (
-                              <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-xs font-semibold">
+                              <div className="text-center py-8 bg-surface-sunken border border-border-subtle rounded-xl text-text-muted italic text-xs font-semibold">
                                 no events yet
                               </div>
                             ) : (
@@ -5570,31 +5253,31 @@ export default function App() {
                                 {/* Memory Horizons Grid */}
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                   {/* Long-term Summary */}
-                                  <div className="border-2 border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                  <div className="border-2 border-border-subtle rounded-2xl p-4 bg-surface-sunken space-y-2">
                                     <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted flex items-center space-x-1">
                                       <span>Long-Term Memory</span>
                                     </h4>
-                                    <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed">
+                                    <p className="text-xs text-text-secondary font-semibold leading-relaxed">
                                       {role.summaries?.['long-term'] || 'No long-term summary recorded.'}
                                     </p>
                                   </div>
 
                                   {/* Mid-term Summary */}
-                                  <div className="border-2 border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                  <div className="border-2 border-border-subtle rounded-2xl p-4 bg-surface-sunken space-y-2">
                                     <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted flex items-center space-x-1">
                                       <span>Mid-Term Memory</span>
                                     </h4>
-                                    <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed">
+                                    <p className="text-xs text-text-secondary font-semibold leading-relaxed">
                                       {role.summaries?.['mid-term'] || 'No mid-term summary recorded.'}
                                     </p>
                                   </div>
 
                                   {/* Short-term Memory */}
-                                  <div className="border-2 border-border-subtle dark:border-zinc-800 rounded-2xl p-4 bg-zinc-50/50 dark:bg-zinc-900/10 space-y-2">
+                                  <div className="border-2 border-border-subtle rounded-2xl p-4 bg-surface-sunken space-y-2">
                                     <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted flex items-center space-x-1">
                                       <span>Short-Term Memory</span>
                                     </h4>
-                                    <p className="text-xs text-zinc-700 dark:text-zinc-300 font-semibold leading-relaxed whitespace-pre-wrap">
+                                    <p className="text-xs text-text-secondary font-semibold leading-relaxed whitespace-pre-wrap">
                                       {role.short_term || 'No short-term text recorded.'}
                                     </p>
                                   </div>
@@ -5602,34 +5285,34 @@ export default function App() {
 
                                 {eventBrowser.open && (
                                   <div className="space-y-3 pt-2">
-                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-border-subtle dark:border-zinc-900 pb-2">
+                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-border-subtle pb-2">
                                       <h4 className="text-2xs font-bold uppercase tracking-wider text-text-muted flex items-center space-x-1.5">
                                         <span>Browse Events</span>
                                       </h4>
                                       <label className="relative block w-full md:w-72">
-                                        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                                        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
                                         <input
                                           type="search"
                                           value={eventBrowser.query || ''}
                                           onChange={(event) => handleMemoryEventSearchChange(role.role, event.target.value)}
                                           placeholder="Search events"
-                                          className="w-full rounded-xl border-2 border-border-subtle dark:border-zinc-800 bg-white dark:bg-zinc-950 py-2 pl-9 pr-3 text-xs font-semibold text-zinc-750 dark:text-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-status-info/30"
+                                          className="w-full rounded-xl border-2 border-border-subtle bg-surface-raised py-2 pl-9 pr-3 text-xs font-semibold text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-status-info/30"
                                         />
                                       </label>
                                     </div>
 
                                     {eventBrowser.loading ? (
-                                      <div className="flex items-center justify-center p-8 text-zinc-500 font-bold text-xs bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                                      <div className="flex items-center justify-center p-8 text-text-secondary font-bold text-xs bg-surface-sunken border border-border-subtle rounded-xl">
                                         <RefreshCw className="h-4 w-4 animate-spin mr-2 text-accent" />
                                         <span>Loading events...</span>
                                       </div>
                                     ) : eventBrowser.error ? (
-                                      <div className="bg-amber-50 dark:bg-amber-950/20 border-2 border-amber-200 dark:border-amber-900 p-4 rounded-xl text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-start gap-2">
+                                      <div className="bg-status-warning-bg border-2 border-status-warning p-4 rounded-xl text-status-warning-text text-xs font-semibold flex items-start gap-2">
                                         <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                                         <span>{eventBrowser.error}</span>
                                       </div>
                                     ) : browseEvents.length === 0 ? (
-                                      <div className="text-center py-6 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-[11px] font-semibold">
+                                      <div className="text-center py-6 bg-surface-sunken border border-border-subtle rounded-xl text-text-muted italic text-2xs font-semibold">
                                         No memory events match this search.
                                       </div>
                                     ) : (
@@ -5639,28 +5322,28 @@ export default function App() {
                                             type="button"
                                             key={event.id}
                                             onClick={() => handleOpenMemoryEvent(event.id)}
-                                            className="w-full text-left border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2 bg-[#FDFDFD] hover:bg-zinc-50 dark:bg-zinc-900/20 dark:hover:bg-zinc-900/40 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-accent/30"
+                                            className="w-full text-left border border-border-subtle p-4 rounded-xl space-y-2 bg-surface-raised hover:bg-surface-sunken shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-accent/30"
                                           >
                                             <div className="flex flex-wrap items-center justify-between gap-2">
-                                              <span className="font-mono text-2xs font-bold text-accent-text dark:text-emerald-400">{event.id}</span>
+                                              <span className="font-mono text-2xs font-bold text-accent-text">{event.id}</span>
                                               <span className="flex flex-wrap items-center gap-2">
                                                 {event.is_superseded && (
-                                                  <span className="bg-zinc-100 dark:bg-zinc-800 text-zinc-550 dark:text-zinc-400 px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-zinc-200 dark:border-zinc-800">
+                                                  <span className="bg-surface-sunken text-text-muted px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-border-subtle">
                                                     Superseded
                                                   </span>
                                                 )}
-                                                <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-blue-100 dark:border-blue-900/50">
+                                                <span className="bg-status-info-bg text-status-info-text px-2 py-0.5 rounded uppercase text-2xs font-extrabold border border-status-info/30">
                                                   {event.kind || event.horizon || 'event'}
                                                 </span>
                                               </span>
                                             </div>
-                                            <p className="text-xs font-semibold leading-relaxed text-zinc-750 dark:text-zinc-250 whitespace-pre-wrap">
+                                            <p className="text-xs font-semibold leading-relaxed text-text-primary whitespace-pre-wrap">
                                               {event.body || 'No event body recorded.'}
                                             </p>
-                                            <div className="flex flex-wrap items-center gap-2 text-2xs font-bold text-zinc-500">
-                                              <span className="font-mono text-zinc-500">{event.timestamp || event.ts}</span>
+                                            <div className="flex flex-wrap items-center gap-2 text-2xs font-bold text-text-muted">
+                                              <span className="font-mono text-text-muted">{event.timestamp || event.ts}</span>
                                               {event.source && (
-                                                <span className="font-mono text-zinc-400 truncate max-w-full">{event.source}</span>
+                                                <span className="font-mono text-text-muted truncate max-w-full">{event.source}</span>
                                               )}
                                             </div>
                                           </button>
@@ -5672,13 +5355,13 @@ export default function App() {
 
                                 {/* Retrieved Facts Section */}
                                 <div className="space-y-3 pt-2">
-                                  <div className="flex justify-between items-center border-b border-border-subtle dark:border-zinc-900 pb-2">
+                                  <div className="flex justify-between items-center border-b border-border-subtle pb-2">
                                     <h4 className="text-2xs font-bold uppercase tracking-wider text-text-muted flex items-center space-x-1.5">
                                       <span>Retrieved Facts</span>
                                     </h4>
                                     {role.latest_retrieval?.job_id && (
                                       <span className="text-2xs font-mono text-text-muted">
-                                        Last Job: <span className="font-bold text-zinc-650 dark:text-zinc-450 font-semibold">{role.latest_retrieval.job_id}</span>
+                                        Last Job: <span className="font-bold text-text-secondary font-semibold">{role.latest_retrieval.job_id}</span>
                                       </span>
                                     )}
                                   </div>
@@ -5686,32 +5369,32 @@ export default function App() {
                                   {role.latest_retrieval?.relevant_events && role.latest_retrieval.relevant_events.length > 0 ? (
                                     <div className="space-y-3">
                                       {role.latest_retrieval.relevant_events.map((event, idx) => (
-                                        <div key={event.id || idx} className="border border-zinc-250 dark:border-zinc-800 p-4 rounded-xl space-y-2.5 bg-[#FDFDFD] dark:bg-zinc-900/20 shadow-sm">
-                                          <p className="text-xs font-mono leading-relaxed text-zinc-800 dark:text-zinc-200 bg-zinc-50/50 dark:bg-zinc-900/40 p-2.5 rounded-lg border border-dashed border-zinc-200 dark:border-zinc-800 whitespace-pre-wrap select-all select-text font-medium">
+                                        <div key={event.id || idx} className="border border-border-subtle p-4 rounded-xl space-y-2.5 bg-surface-raised shadow-sm">
+                                          <p className="text-xs font-mono leading-relaxed text-text-primary bg-surface-sunken p-2.5 rounded-lg border border-dashed border-border-subtle whitespace-pre-wrap select-all select-text font-medium">
                                             {event.text}
                                           </p>
-                                          <div className="flex flex-wrap items-center justify-between gap-2 text-2xs font-bold text-zinc-500">
+                                          <div className="flex flex-wrap items-center justify-between gap-2 text-2xs font-bold text-text-muted">
                                             <div className="flex items-center space-x-2">
                                               <button
                                                 type="button"
                                                 onClick={() => handleOpenMemoryEvent(event.id)}
-                                                className="bg-status-success-bg hover:bg-status-success-bg dark:bg-emerald-950/30 dark:hover:bg-emerald-900/40 text-accent-text dark:text-emerald-400 px-2 py-0.5 rounded font-mono border-2 border-accent/30 shadow-button dark:shadow-button transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-accent/40"
+                                                className="bg-status-success-bg hover:bg-status-success-bg text-status-success-text px-2 py-0.5 rounded font-mono border-2 border-status-success/30 shadow-button transition-all duo-button-physics focus:outline-none focus:ring-2 focus:ring-accent/40"
                                                 aria-label={`Open full memory event ${event.id}`}
                                               >
                                                 {event.id}
                                               </button>
-                                              <span className="bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded uppercase text-2xs border border-blue-100 dark:border-blue-900/50">
+                                              <span className="bg-status-info-bg text-status-info-text px-2 py-0.5 rounded uppercase text-2xs border border-status-info/30">
                                                 {event.horizon}
                                               </span>
                                               {event.source && (
-                                                <span className="text-zinc-400 dark:text-zinc-500 flex items-center space-x-1">
+                                                <span className="text-text-muted flex items-center space-x-1">
                                                   <span>Source:</span>
-                                                  <span className="font-mono text-zinc-600 dark:text-zinc-400 truncate max-w-[200px]">{event.source}</span>
+                                                  <span className="font-mono text-text-secondary truncate max-w-[200px]">{event.source}</span>
                                                 </span>
                                               )}
                                             </div>
                                             {event.score !== undefined && event.score !== null && (
-                                              <span className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded border border-amber-100 dark:border-amber-900/50">
+                                              <span className="bg-status-warning-bg text-status-warning-text px-2 py-0.5 rounded border border-status-warning/30">
                                                 Score: {typeof event.score === 'number' ? event.score.toFixed(2) : event.score}
                                               </span>
                                             )}
@@ -5720,7 +5403,7 @@ export default function App() {
                                       ))}
                                     </div>
                                   ) : (
-                                    <div className="text-center py-6 bg-zinc-50 dark:bg-zinc-900/30 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 italic text-[11px] font-semibold">
+                                    <div className="text-center py-6 bg-surface-sunken border border-border-subtle rounded-xl text-text-muted italic text-2xs font-semibold">
                                       No relevant facts retrieved in the latest job.
                                     </div>
                                   )}

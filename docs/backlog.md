@@ -12,10 +12,6 @@ gates that require founder input or validated runtime evidence before
 implementation.
 
 **Gated / external-decision parking lot:**
-- i18n / multi-language support — requires target market and primary-language
-  decision, plus stabilized product copy.
-- Theme System v1 — requires founder Vivid-vs-Minimal selection before the
-  remaining full-screen token conversion and dark-mode pass.
 - D2b topological executor / parallel level execution — requires a real
   non-linear fan-in or dynamic-plan consumer and live smoke budget.
 - Self-hosting graduate/tag controls and any server-side land/merge execution —
@@ -31,6 +27,14 @@ implementation.
 - Full research/review document ingestion into role memory — optional
   retrieval-budget-aware product decision; durable audit artifacts are already
   retained.
+
+**Incremental productization tracks:**
+- Theme System v1 — founder decision is settled: keep both Vivid and Minimal as
+  permanent themes, Vivid default. Completed slices include the semantic token
+  layer/switcher, App.jsx high-volume palette/type cleanup, MessageFeed token
+  cleanup, and the Agents & Memory / Memory panel token cleanup. Continue
+  panel/component conversion in focused passes with visual review; do not block
+  on a Vivid-vs-Minimal winner.
 
 ## ✅ RESOLVED 2026-06-07 — Dispatch artifacts (task contract / research / review) as first-class audit  (raised 2026-06-02, charter item)
 
@@ -380,9 +384,21 @@ overrides, then switch users into Advanced review before save. Covered by
 `FilePath` tooltip now uses `w-max max-w-[28rem] whitespace-normal break-words`; the visible chip
 can still break long paths while the hover tooltip no longer collapses into a one-character column.
 
-## 🟠 GATED / PARKED — i18n / multi-language support  (raised 2026-06-06, founder asked; DEFERRED — founder agreed)
+## ✅ RESOLVED 2026-06-07 — i18n / multi-language support foundation  (raised 2026-06-06)
 
-Founder asked whether to add multi-language support. **Decision: defer.** Current state: the FE has NO i18n setup (no framework/locales/deps); `frontend/src/App.jsx` carries **260+ hardcoded English strings** (~228 JSX text nodes + 31 placeholders, plus toasts/templates), essentially all-English (only ~7 Chinese strings mixed in). Why defer: (1) the UI is mid-redesign (theme v1 pending) and features/copy are changing fast — extracting strings to i18n keys now means re-translating on every copy change (churn); (2) still single-user dogfooding — i18n pays off only with real users in a target locale; (3) it is a cross-cutting refactor of the single-file App.jsx that would conflict with every other FE track; (4) the real prerequisite is an unmade product decision: target market / primary language (Chinese-first? English-first? bilingual? more?). **Do it AFTER** the theme + core UX stabilize, as ONE clean pass: pick the framework (react-i18next or a light context), extract strings → keys, ship `zh`/`en` (or whatever the market needs) locale files + a language switcher placed alongside the theme switcher (same preferences surface). Medium–Large. Gating decision: target market / primary language.
+Founder picked browser/system auto mode. GoodTeam now has a lightweight
+frontend-only i18n foundation: `frontend/src/i18n/` ships `en` and `zh-CN`
+locale dictionaries plus language resolution helpers, `gt-language=auto|en|zh-CN`
+persists the user choice in browser storage, `auto` maps `zh-*` browsers to
+Simplified Chinese and falls back to English, and compact language switchers sit
+beside the existing theme controls. The first dashboard chrome slice is extracted:
+root header labels, detailed sidebar groups/tabs, shell dashboard/run/status
+labels, theme labels, approval banner copy, and shell loading label.
+
+Remaining i18n work is no longer blocked on target-market choice; it is ordinary
+incremental copy extraction. Translate deeper feature panels in focused slices:
+new-project/start-run forms, approval panels, Dev Loop, Smoke Runs, Memory,
+Agents, Workflow Graph, and System diagnostics.
 
 ## Raised 2026-06-05 (b) — product-use round 2 (founder using the dashboard)
 
@@ -396,18 +412,16 @@ Founder asked whether to add multi-language support. **Decision: defer.** Curren
   line-by-line comparison, full proposed text review, and accept/discard controls.
   Covered by graph/API/frontend contract tests. Save-only behavior remains a
   deliberate plain persistence action; the AI follow-up is explicit.
-- **Theme System v1 — pick winner + productionize** — 🟠 **GATED 2026-06-07.**
-  (founder, 2026-06-05; DESIGN DONE, prototype
-  built, NOT landed). Two switchable light themes (Vivid = refined Duolingo/Wise, Minimal =
-  Claude-web) + semantic token layer + type scale + persisted switcher were prototyped on the
-  home + project-detail slices and live-smoked (branch **`feat/theme-proto`**, worktree
-  `../goodteam-dev-theme-proto`). Design: `docs/plans/theme-system-v1-design.md`. Remaining once
-  founder picks a winner: (1) bump prototyped body/label text off the 11px floor to `text-sm/base`
-  (13.5–15px) — the real "Duolingo-clarity" fix (agy leaned on `text-2xs`, clarity gain was modest);
-  (2) full conversion of the remaining ~837 hardcoded hex + ~113 sub-11px usages to tokens across
-  all screens (also systematically kills any remaining dark-mode-invisible text); (3) add dark mode
-  for the winning theme (data-theme × prefers-color-scheme). FE → agy (model `Gemini 3.5 Flash
-  (Medium)`). **Awaiting founder's Vivid-vs-Minimal pick.**
+- **Theme System v1 — two permanent themes + incremental productionize** — 🟡
+  **PARTIALLY RESOLVED 2026-06-07.** Founder decision has superseded the old
+  "pick winner" gate: keep both switchable themes as a permanent base feature,
+  with Vivid default. Landed slices: semantic token layer + type scale +
+  persisted switcher, high-volume `App.jsx` base palette/type conversion, and
+  `MessageFeed.jsx` status/surface/type token cleanup. Remaining work is ordinary
+  focused UI productionization: continue converting panels/components away from
+  bespoke hex/dark/zinc classes, raise cramped body/label text where visual review
+  shows the 11px floor is still too small, and polish dark variants through the
+  same token system.
 - ~~**Worker picker shows "claude" twice**~~ **RESOLVED 2026-06-06.** Agent discovery collapses
   aliases to canonical backend rows (`claude`, `agy`, etc.) while keeping aliases accepted on input.
   Covered by `tests/test_workers.py::test_discover_installed_agents_dedups_backend_aliases` and

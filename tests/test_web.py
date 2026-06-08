@@ -1541,6 +1541,212 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
         assert semantic_class in app
 
 
+def test_message_feed_uses_theme_tokens_and_small_type_floor():
+    message_feed = (
+        Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
+    ).read_text(encoding="utf-8")
+
+    disallowed_palette_tokens = [
+        "#E5E5E5",
+        "#AFAFAF",
+        "#58CC02",
+        "#D1D1D1",
+        "#3D8B00",
+        "#1a1a1a",
+        "#F1F1F1",
+        "#FF4B4B",
+        "#EA2B2B",
+        "#FFE2E2",
+        "#1CB0F6",
+        "#0A7BAF",
+        "#D0F0FF",
+        "#E8F9D9",
+        "#FF9600",
+        "#B36B00",
+        "#FFF0D4",
+        "#777777",
+    ]
+    assert {token: message_feed.count(token) for token in disallowed_palette_tokens if token in message_feed} == {}
+    assert "text-[10px]" not in message_feed
+    assert "text-[9px]" not in message_feed
+    assert "text-[8px]" not in message_feed
+
+    for semantic_class in [
+        "border-border-subtle",
+        "text-text-muted",
+        "text-text-primary",
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "shadow-card",
+        "text-accent",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+        "border-l-status-warning",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+        "border-l-status-info",
+        "bg-status-info-bg",
+        "text-status-info-text",
+        "border-l-status-success",
+        "bg-status-success-bg",
+        "text-status-success-text",
+        "text-2xs",
+    ]:
+        assert semantic_class in message_feed
+
+
+def test_memory_panel_uses_theme_tokens_and_small_type_floor():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Memory */}")
+    end = app.index("{/* Tab: Dev Loop */}", start)
+    memory_panel = app[start:end]
+
+    disallowed_snippets = [
+        "bg-[#FDFDFD]",
+        "text-[11px]",
+        "bg-zinc-50",
+        "dark:bg-zinc-900/30",
+        "dark:bg-zinc-900/20",
+        "dark:bg-zinc-900/10",
+        "dark:",
+        "border-zinc-200",
+        "border-zinc-250",
+        "text-zinc-750",
+        "dark:text-zinc-250",
+        "text-zinc-700",
+        "dark:text-zinc-300",
+        "text-zinc-500",
+    ]
+    assert {snippet: memory_panel.count(snippet) for snippet in disallowed_snippets if snippet in memory_panel} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "bg-status-info-bg",
+        "text-status-info-text",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+    ]:
+        assert semantic_class in memory_panel
+
+
+def test_workflow_graph_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Workflow Graph */}")
+    end = app.index("{/* Tab: Overview */}", start)
+    workflow_mount = app[start:end]
+
+    assert "<WorkflowGraphTab" in workflow_mount
+    assert "computeGraphLayout" not in app
+    assert "drawEdgePath" not in app
+
+    workflow_tab = root / "frontend" / "src" / "components" / "tabs" / "WorkflowGraphTab.jsx"
+    assert workflow_tab.exists()
+    workflow_graph = workflow_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+    ]
+    assert {snippet: workflow_graph.count(snippet) for snippet in disallowed_snippets if snippet in workflow_graph} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+        "bg-status-success-bg",
+        "text-status-success-text",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+        "bg-status-info-bg",
+        "text-status-info-text",
+    ]:
+        assert semantic_class in workflow_graph
+
+
+def test_frontend_contract_uses_i18n_for_dashboard_chrome():
+    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "LANGUAGE_STORAGE_KEY" in app
+    assert "normalizeLanguagePreference" in app
+    assert "resolveLanguage" in app
+    assert "translate(language" in app or "translate(resolvedLanguage" in app
+    assert "languagePreference" in app
+    assert "setLanguagePreference" in app
+    assert "navGroups" in app
+    assert "t('nav.groups.work')" in app
+    assert "t('nav.tabs.overview')" in app
+    assert "t('chrome.dashboard')" in app
+    assert "t('approvalBanner.review')" in app
+    assert "t('chrome.loading')" in app
+    assert "language.useAuto" in app
+    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in app
+
+
+def test_frontend_i18n_locale_files_exist_and_define_core_chrome_keys():
+    root = Path(__file__).resolve().parents[1]
+    en = root / "frontend" / "src" / "i18n" / "locales" / "en.js"
+    zh = root / "frontend" / "src" / "i18n" / "locales" / "zh-CN.js"
+
+    assert en.exists()
+    assert zh.exists()
+
+    en_text = en.read_text(encoding="utf-8")
+    zh_text = zh.read_text(encoding="utf-8")
+    for key in [
+        "nav.groups.work",
+        "nav.tabs.overview",
+        "nav.tabs.approvals",
+        "chrome.dashboard",
+        "chrome.exit",
+        "chrome.runId",
+        "language.auto",
+        "language.english",
+        "language.chinese",
+        "theme.toggle",
+        "approvalBanner.review",
+    ]:
+        assert key in en_text
+        assert key in zh_text
+
+
+def test_frontend_i18n_resolves_auto_language_and_falls_back_to_english():
+    i18n_path = Path(__file__).resolve().parents[1] / "frontend" / "src" / "i18n" / "index.js"
+    assert i18n_path.exists()
+    i18n = i18n_path.read_text(encoding="utf-8")
+
+    assert "gt-language" in i18n
+    assert "LANGUAGE_PREFERENCE_AUTO = 'auto'" in i18n
+    assert "SUPPORTED_LANGUAGE_PREFERENCES = ['auto', 'en', 'zh-CN']" in i18n
+    assert "startsWith('zh')" in i18n or 'startsWith("zh")' in i18n
+    assert "return 'zh-CN'" in i18n
+    assert "return 'en'" in i18n
+    assert "normalizeLanguagePreference" in i18n
+    assert "resolveLanguage" in i18n
+    assert "translate" in i18n
+
+
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):
     docs = tmp_path / "content-research"
     docs.mkdir()
