@@ -21,12 +21,12 @@ import {
   GitBranch,
   GitPullRequest
 } from 'lucide-react';
-import DirectoryPickerModal from './components/DirectoryPickerModal';
 import FilePath from './components/FilePath';
 import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModal from './components/NewProjectModal';
 import ProjectsHomePage from './components/ProjectsHomePage';
 import Spinner from './components/Spinner';
+import { useDirectoryPicker } from './hooks/useDirectoryPicker';
 import { useProjectUrl } from './hooks/useProjectUrl';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
@@ -234,20 +234,7 @@ export default function App() {
   const [copiedText, setCopiedText] = useState(null);
   const [copyFailedText, setCopyFailedText] = useState(null);
 
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerInitialPath, setPickerInitialPath] = useState('');
-
-  const openDirectoryPicker = (currentPath) => {
-    setPickerInitialPath(currentPath || '');
-    setPickerOpen(true);
-  };
-  const directoryPickerModal = pickerOpen && (
-    <DirectoryPickerModal
-      initialPath={pickerInitialPath}
-      onClose={() => setPickerOpen(false)}
-      onSelect={setProjectRoot}
-    />
-  );
+  const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);
 
   const markLandCommandCopied = (command) => {
     setCopyFailedText(prev => prev === command ? null : prev);
