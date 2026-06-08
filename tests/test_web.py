@@ -1735,6 +1735,26 @@ def test_new_project_modal_is_extracted_from_app_shell():
     assert "<NewProjectModal" in app
 
 
+def test_projects_home_page_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    page = root / "frontend" / "src" / "components" / "ProjectsHomePage.jsx"
+
+    assert page.exists()
+    page_source = page.read_text(encoding="utf-8")
+    assert "export default function ProjectsHomePage" in page_source
+    assert "Registered Projects" in page_source
+    assert "No Projects Configured" in page_source
+    assert "Legacy Active Run Detected" in page_source
+    assert "FilePath" in page_source
+    assert "getBadgeStyle" in page_source
+    assert "Registered Projects" not in app
+    assert "No Projects Configured" not in app
+    assert "projectItems.map" not in app
+    assert "import ProjectsHomePage from './components/ProjectsHomePage';" in app
+    assert "<ProjectsHomePage" in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
