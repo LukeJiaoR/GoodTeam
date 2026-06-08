@@ -1,4 +1,5 @@
 import json
+import hmac
 import os
 import re
 import shutil
@@ -94,6 +95,7 @@ WORKER_ROLES = [
 ]
 PRE_REVIEW_REPORT_DIR = Path("/tmp")
 DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS = 10
+SERVER_ACTION_TIMEOUT_SECONDS = 600
 FS_LIST_MAX_ENTRIES = 500
 FS_LIST_IGNORED_NAMES = {".git", ".github", ".venv", "__pycache__", "node_modules", ".next", "dist", "build"}
 DISPATCH_TRACK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -717,6 +719,199 @@ def _non_empty_file_exists(path: Path) -> bool:
         return False
 
 
+def _server_actions_enabled() -> bool:
+    return os.environ.get("GOODTEAM_SERVER_ACTIONS", "").strip() == "1"
+
+
+def _server_action_nonce() -> str:
+    return os.environ.get("GOODTEAM_SERVER_ACTION_NONCE", "").strip()
+
+
+def _server_action_audit_dir(root: Path) -> Path:
+    return root / ".goodteam" / "server-actions"
+
+
+def _tail_text(value: str, *, max_chars: int = 2000) -> str:
+    text = str(value or "")
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
+
+
+def _decode_subprocess_text(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def _positive_int(value: object, field: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return parsed
+
+
+def _optional_absolute_path(value: object, field: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"{field} must be an absolute path")
+    return str(path)
+
+
+def _git_safe_ref(value: object, field: str = "ref") -> str:
+    ref = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{7,80}", ref):
+        raise ValueError(f"{field} must be a git-safe ref or SHA")
+    if ref.startswith(("-", "/", ".")) or ref.endswith(("/", ".")):
+        raise ValueError(f"{field} must be a git-safe ref or SHA")
+    if ".." in ref or "//" in ref or "@{" in ref:
+        raise ValueError(f"{field} must be a git-safe ref or SHA")
+    for component in ref.split("/"):
+        if (
+            not component
+            or component in {".", ".."}
+            or component.startswith(("-", "."))
+            or component.endswith(".lock")
+        ):
+            raise ValueError(f"{field} must be a git-safe ref or SHA")
+    return ref
+
+
+def _server_action_expected_confirmation(action: str, request: dict[str, object]) -> str:
+    if action == "land_pr":
+        pr_number = _positive_int(request.get("pr"), "pr")
+        return f"LAND PR {pr_number}"
+    if action == "graduate_release":
+        ref = _git_safe_ref(request.get("ref", ""))
+        return f"GRADUATE RELEASE {ref}"
+    raise ValueError(f"Unsupported server action: {action}")
+
+
+def _land_pr_action_argv(root: Path, request: dict[str, object]) -> list[str]:
+    pr_number = _positive_int(request.get("pr"), "pr")
+    dev_loop = build_dev_loop(root)
+    readiness = dev_loop.get("land_tag_readiness", {})
+    candidates = readiness.get("pull_requests", []) if isinstance(readiness, dict) else []
+    matching = next(
+        (
+            item
+            for item in candidates
+            if isinstance(item, dict) and int(item.get("pr", 0) or 0) == pr_number
+        ),
+        None,
+    )
+    if matching is None:
+        raise ValueError(f"PR {pr_number} is not present in local land readiness")
+    if not matching.get("ready"):
+        missing = matching.get("missing", [])
+        missing_text = ", ".join(str(item) for item in missing) if isinstance(missing, list) else str(missing)
+        raise ValueError(f"PR {pr_number} is not ready to land: {missing_text}")
+    worktree = _optional_absolute_path(matching.get("worktree", ""), "worktree")
+    rationale = _optional_absolute_path(matching.get("review_rationale_path", ""), "review_rationale_path")
+    if not worktree or not rationale:
+        raise ValueError(f"PR {pr_number} is missing trusted land paths")
+    return [
+        "scripts/land-pr.sh",
+        str(pr_number),
+        "--worktree",
+        worktree,
+        "--review-rationale",
+        rationale,
+    ]
+
+
+def _server_action_argv(root: Path, action: str, request: dict[str, object]) -> list[str]:
+    if action == "land_pr":
+        return _land_pr_action_argv(root, request)
+    if action == "graduate_release":
+        ref = _git_safe_ref(request.get("ref", ""))
+        return ["scripts/graduate-release.sh", "--ref", ref, "--yes"]
+    raise ValueError(f"Unsupported server action: {action}")
+
+
+def run_gated_server_action(
+    root: Path,
+    request: dict[str, object],
+    *,
+    origin: str = "",
+    actor: str = "local-dashboard",
+) -> dict[str, object]:
+    if not _server_actions_enabled():
+        raise PermissionError("server action execution is disabled")
+    expected_nonce = _server_action_nonce()
+    supplied_nonce = str(request.get("nonce", ""))
+    if not expected_nonce or not hmac.compare_digest(supplied_nonce, expected_nonce):
+        raise PermissionError("server action nonce is missing or invalid")
+
+    action = str(request.get("action", "")).strip()
+    expected_confirmation = _server_action_expected_confirmation(action, request)
+    typed_confirmation = str(request.get("confirm", "")).strip()
+    if typed_confirmation != expected_confirmation:
+        raise ValueError(f"typed confirmation must exactly match: {expected_confirmation}")
+    argv = _server_action_argv(root, action, request)
+
+    started_at = datetime.now(UTC).isoformat()
+    timed_out = False
+    returncode: int | None
+    stdout = ""
+    stderr = ""
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=SERVER_ACTION_TIMEOUT_SECONDS,
+            check=False,
+        )
+        returncode = result.returncode
+        stdout = result.stdout
+        stderr = result.stderr
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        returncode = None
+        stdout = _decode_subprocess_text(exc.output)
+        stderr = _decode_subprocess_text(exc.stderr)
+    finished_at = datetime.now(UTC).isoformat()
+    audit = {
+        "id": f"server-action-{uuid4()}",
+        "timestamp": finished_at,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "actor": actor,
+        "origin": origin,
+        "action": action,
+        "argv": argv,
+        "typed_confirmation": typed_confirmation,
+        "returncode": returncode,
+        "timed_out": timed_out,
+        "stdout_tail": _tail_text(stdout),
+        "stderr_tail": _tail_text(stderr),
+        "rollback_hint": "Use GitHub PR/release rollback guidance from the audit context; do not rerun blindly.",
+    }
+    audit_dir = _server_action_audit_dir(root)
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = audit_dir / f"{audit['id']}.json"
+    audit["audit_path"] = str(audit_path)
+    audit_path.write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "status": "completed" if returncode == 0 else "failed",
+        "action": action,
+        "argv": argv,
+        "returncode": returncode,
+        "timed_out": timed_out,
+        "stdout_tail": audit["stdout_tail"],
+        "stderr_tail": audit["stderr_tail"],
+        "audit_path": str(audit_path),
+    }
+
+
 def _worktree_status_for_path(path: str, root: Path, warnings: list[str]) -> str:
     if not path:
         return "missing"
@@ -863,6 +1058,9 @@ def build_server_action_capabilities(
             build_release_readiness(root, capability_warnings) if root is not None else {"available": False}
         )
     graduate_command = str(release_readiness.get("graduate_command", ""))
+    destructive_actions_available = bool(root is not None and _server_actions_enabled() and _server_action_nonce())
+    destructive_reason = "" if destructive_actions_available else "disabled_by_default"
+    destructive_mode = "guarded_execute" if destructive_actions_available else "human_command_only"
     return {
         "actions": {
             "dispatch_track": _server_action_capability(
@@ -874,9 +1072,9 @@ def build_server_action_capabilities(
                 mode="execute",
             ),
             "land_pr": _server_action_capability(
-                available=False,
-                mode="human_command_only",
-                reason="disabled_by_default",
+                available=destructive_actions_available,
+                mode=destructive_mode,
+                reason=destructive_reason,
                 readiness=land_tag_readiness,
             ),
             "tag_release": _server_action_capability(
@@ -886,9 +1084,9 @@ def build_server_action_capabilities(
                 readiness=land_tag_readiness,
             ),
             "graduate_release": _server_action_capability(
-                available=False,
-                mode="human_command_only",
-                reason="disabled_by_default",
+                available=destructive_actions_available,
+                mode=destructive_mode,
+                reason=destructive_reason,
                 command=graduate_command,
             ),
         },
@@ -2709,6 +2907,18 @@ def _project_config_for_key(workspace: Path, project_key: str) -> Path:
     if fallback.is_file():
         return fallback
     raise ValueError(f"No local project config found for project: {key}")
+
+
+def resolve_project_root_for_request(workspace: Path, request: dict[str, object]) -> Path:
+    project_key = str(request.get("project", "") or request.get("project_key", "")).strip()
+    if not project_key:
+        return workspace
+    config_path = _project_config_for_key(workspace, project_key)
+    target = load_project_target(config_path)
+    repos = target.get("repos", {})
+    if isinstance(repos, dict) and repos:
+        return resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()})
+    return config_path.parent
 
 
 def normalize_task_backend(value: object) -> dict[str, object]:
@@ -6648,7 +6858,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -6796,6 +7006,15 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     result = start_smoke_run(workspace, request)
                     self._send_json(202, result)
                     return
+                elif normalized_path == "/server-actions/run":
+                    project_root = resolve_project_root_for_request(workspace, request)
+                    result = run_gated_server_action(
+                        project_root,
+                        request,
+                        origin=str(self.headers.get("Origin", "")),
+                    )
+                    self._send_json(202, result)
+                    return
                 # `/project-config` carries two operations: the worker-backends
                 # panel sends `project` + `workers` for an existing project; the
                 # create-config form sends neither. Route both explicitly so an
@@ -6842,6 +7061,8 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         remote_private=_request_bool(request.get("remote_private"), True),
                     )
                 self._send_json(200, result)
+            except PermissionError as exc:
+                self._send_json(403, {"error": str(exc)})
             except Exception as exc:
                 self._send_json(400, {"error": str(exc)})
 

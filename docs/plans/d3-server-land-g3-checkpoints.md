@@ -279,19 +279,37 @@
 
 ### CP9 - Server-Side Land/Tag Execution Gate
 
-**Status:** parked until CP1, CP2, CP6, and enough operational evidence are complete.
+**Status:** completed in branch `feat/server-action-execution-gate`.
 
-**Scope:** Execute land/tag only behind an explicit environment capability, same-origin enforcement, CSRF/action nonce, typed confirmation, command allowlist, and audit record.
+**Scope:** Execute the destructive server actions only behind an explicit environment capability, same-origin enforcement, action nonce, typed confirmation, command allowlist, readiness-derived argv construction, and audit record. This checkpoint enables guarded execution for `land_pr` and `graduate_release`; `tag_release` stays disabled/report-only.
 
 **Entry Gate:** CP6 readiness has been used manually without incident. Founder explicitly approves enabling server execution.
 
 **Implementation Notes:**
 - Use argv allowlists, never arbitrary shell from request bodies.
-- Execute out-of-process and never mutate the serving checkout unexpectedly.
-- Record actor/session, command argv, preflight, stdout/stderr summary, result, and rollback hint.
+- Require `GOODTEAM_SERVER_ACTIONS=1` and non-empty `GOODTEAM_SERVER_ACTION_NONCE`.
+- Compare the nonce with `hmac.compare_digest`.
+- Keep POST same-origin enforcement on `/api/server-actions/run`.
+- Require exact typed confirmations: `LAND PR <number>` or `GRADUATE RELEASE <ref>`.
+- Derive `land_pr` worktree and review-rationale paths from local Dev Loop readiness, not request-supplied paths.
+- Reject unsafe release refs before subprocess execution.
+- Execute out-of-process with `shell=False`, fixed argv, timeout, captured output, and noninteractive `graduate-release.sh --yes`.
+- Write JSON audit records under `.goodteam/server-actions/` with actor, origin, argv, timestamps, return code, stdout/stderr tails, and rollback hint.
 
 **Verification:**
 - Unit tests for rejected origins, missing nonce, wrong typed confirmation, unsafe refs, and disabled env.
 - Dry-run integration before any live execution.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_api_server_action_run_rejects_unsafe_release_refs_before_subprocess -q` first failed because `../../abc1234` was accepted and execution returned `202`.
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_api_server_action_run_derives_land_paths_from_readiness_not_request -q` first failed because request-supplied `/tmp/spoofed-worktree` was used in argv.
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_api_server_action_run_executes_graduate_release_non_interactively -q` first failed because `--yes` was missing from the graduate argv.
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_api_server_action_run_writes_audit_when_subprocess_times_out -q` first failed because timeout raised through the route as `400` without an audit record.
+- Focused green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_api_server_action_run_rejects_until_env_nonce_and_confirmation_pass tests/test_api.py::test_api_server_action_run_rejects_unsafe_release_refs_before_subprocess tests/test_api.py::test_api_server_action_run_executes_allowlisted_land_pr_and_writes_audit tests/test_api.py::test_api_server_action_run_derives_land_paths_from_readiness_not_request tests/test_api.py::test_api_server_action_run_executes_graduate_release_non_interactively tests/test_api.py::test_api_server_action_run_writes_audit_when_subprocess_times_out tests/test_api.py::test_api_server_action_run_resolves_project_root_from_project_config tests/test_api.py::test_api_post_same_origin_guard_rejects_cross_origin_and_allows_trusted_requests tests/test_web.py::test_build_server_actions_marks_destructive_actions_available_only_with_env_gate tests/test_web.py::test_build_dev_loop_reports_release_graduation_readiness_without_mutating -q` -> `10 passed`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py tests/test_web.py -q -k 'server_action or server_actions or same_origin or dev_loop or release_readiness'` -> `20 passed, 197 deselected`.
+- `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `581 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/web.py tests/test_api.py tests/test_web.py` -> `All checks passed!`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
 
 **Rollback:** Remove the env gate or revert CP9 PR; command-copy workflow remains.
