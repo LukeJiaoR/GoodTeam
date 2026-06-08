@@ -11,7 +11,7 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
-| 4 | Theme/App.jsx productization | Approval banner extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | ApprovalBanner/header/sidebar/i18n/theme contract slice `21 passed`; frontend lint/build passed |
+| 4 | Theme/App.jsx productization | Git creation notice extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | GitCreationNotice/banner/header/sidebar/i18n/theme contract slice `22 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | Execution-plan foundation completed 2026-06-08 | Add deterministic topology levels over declared dependencies and expose them from `/api/workflow/graph` without replacing the linear runner or enabling parallel worker execution. | Focused workflow regression `19 passed`; graph/state regression `22 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
@@ -31,6 +31,36 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-08 — Theme/App.jsx productization: git creation notice extraction
+
+**Intent:** continue shrinking `App.jsx` through another small presentational
+shell slice without changing the post-create git notice UI or behavior.
+
+**Implemented:**
+- Added `frontend/src/components/GitCreationNotice.jsx`.
+- Moved the git initialization notice out of `App.jsx`.
+- Preserved the success icon, optional remote-created message, git warnings
+  list, dismiss button, and existing theme utility classes.
+- Kept git setup state in `App.jsx`; the extracted component is presentational.
+- Expanded the common shell theme-token contract so it scans App.jsx plus the
+  extracted shell components after token-bearing chrome moved out of App.jsx.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_git_creation_notice_is_extracted_from_app_shell_without_theme_changes -q`
+  first failed because `GitCreationNotice.jsx` did not exist.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'git_creation_notice or approval_banner or project_header or project_sidebar or language_switcher or appearance_preferences or frontend_contract_uses_i18n or theme_tokens'`
+  -> `22 passed, 132 deselected`.
+- Frontend checks:
+  `cd frontend && npm ci && npm run lint && npm run build`
+  -> passed.
+
+**Deferred from this increment:**
+- Additional App.jsx panel/page extraction.
+- Any visual redesign, theme-token conversion, or i18n expansion outside the
+  moved git notice chrome.
 
 ### 2026-06-08 — Theme/App.jsx productization: approval banner extraction
 
