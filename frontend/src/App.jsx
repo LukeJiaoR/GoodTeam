@@ -27,6 +27,7 @@ import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModal from './components/NewProjectModal';
 import ProjectsHomePage from './components/ProjectsHomePage';
 import Spinner from './components/Spinner';
+import { useProjectUrl } from './hooks/useProjectUrl';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
 import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';
@@ -64,13 +65,7 @@ const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
 
 export default function App() {
-  // Sync project key from URL search query parameter '?project='
-  const getUrlProject = () => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('project') || '';
-  };
-
-  const [projectKey, setProjectKey] = useState(getUrlProject());
+  const { projectKey, updateUrl } = useProjectUrl();
   const [activeTab, setActiveTab] = useState('overview');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -317,19 +312,6 @@ export default function App() {
     ? `${gateDebateProjectKey}:${gateDebateRunId}:${actionableGateReview.approval}`
     : '';
   const visibleGateDebate = gateDebate.key === targetGateDebateKey ? gateDebate : EMPTY_GATE_DEBATE;
-
-
-
-  // Sync state when URL updates
-  useEffect(() => {
-    const handlePopState = () => {
-      const pk = getUrlProject();
-      setProjectKey(pk);
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
-
   // Update theme classes on document element
   useEffect(() => {
     const meta = document.querySelector('meta[name="color-scheme"]');
@@ -365,12 +347,6 @@ export default function App() {
       setShowGitNotice(false);
     }
   }, [newProjectModalOpen]);
-
-  const updateUrl = (key) => {
-    const newUrl = key ? `${window.location.pathname}?project=${key}` : window.location.pathname;
-    window.history.pushState({ project: key }, '', newUrl);
-    setProjectKey(key);
-  };
 
   const showToast = (msg, isError = false) => {
     setMessage({ text: msg, isError });
