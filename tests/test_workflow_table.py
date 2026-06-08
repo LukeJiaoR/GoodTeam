@@ -13,7 +13,9 @@ from goodteam_os.workflow_table import (
     gate_transition,
     topological_workflow_nodes,
     validate_workflow_dag,
+    validate_workflow_execution_plan_v2,
     workflow_execution_plan,
+    workflow_execution_plan_v2,
     workflow_node,
 )
 
@@ -169,6 +171,115 @@ def test_workflow_execution_plan_exposes_current_runner_levels_without_enabling_
     assert plan.level_for("security") < plan.level_for("planner")
     assert plan.level_for("planner") < plan.level_for("release")
     assert plan.level_for("release") < plan.level_for("retro_memory")
+
+
+def test_workflow_execution_plan_v2_projects_nodes_and_validation_metadata():
+    plan = workflow_execution_plan_v2()
+
+    assert plan["version"] == 2
+    assert plan["valid"] is True
+    assert plan["scheduler"] == "sequential"
+    assert plan["runner_kind"] == "read_only_projection"
+    assert plan["parallel_level_execution"] == "deferred"
+    assert plan["validation_errors"] == []
+    assert plan["order"] == [
+        "product_requirement",
+        "prd",
+        "architect",
+        "rfc",
+        "security",
+        "planner",
+        "staging",
+        "release",
+        "retro_memory",
+    ]
+    assert plan["levels"][0] == {
+        "index": 0,
+        "identifiers": ["product_requirement", "prd"],
+        "runnable": [],
+        "passive": ["product_requirement", "prd"],
+    }
+    assert {
+        "id": "architect",
+        "kind": "stage",
+        "dependencies": ["product_requirement", "prd"],
+        "write_domains": ["workflow:architect"],
+        "runner": "run_architecture_until_gate",
+        "runner_kind": "sequential_worker",
+        "gate": "prd",
+        "fan_in_required": True,
+    } in plan["nodes"]
+    assert {
+        "id": "prd",
+        "kind": "gate",
+        "dependencies": [],
+        "write_domains": ["approval:prd"],
+        "runner": "",
+        "runner_kind": "human_gate",
+        "gate": "prd",
+        "fan_in_required": False,
+    } in plan["nodes"]
+
+
+def test_workflow_execution_plan_v2_reports_unknown_dependency_without_raising():
+    nodes = {
+        "planner": WorkflowNode(
+            name="planner",
+            run_guard_gate="rfc",
+            runner_fn="run_delivery_until_release_gate",
+            depends_on=("missing_node",),
+        )
+    }
+
+    plan = workflow_execution_plan_v2(nodes)
+
+    assert plan["version"] == 2
+    assert plan["valid"] is False
+    assert plan["levels"] == []
+    assert plan["validation_errors"] == [
+        "Workflow node 'planner' has unknown dependency 'missing_node'",
+        "Workflow execution plan v2 has missing fan-in node 'missing_node' for 'planner'",
+    ]
+
+
+def test_workflow_execution_plan_v2_reports_cycles_missing_fanin_and_write_domain_collisions():
+    nodes = {
+        "a": WorkflowNode(
+            name="a",
+            run_guard_gate="prd",
+            runner_fn="run_shared",
+            depends_on=("b", "missing_fanin"),
+        ),
+        "b": WorkflowNode(
+            name="b",
+            run_guard_gate="prd",
+            runner_fn="run_shared",
+            depends_on=("a",),
+        ),
+    }
+    write_domains = {
+        "a": ("repo:shared",),
+        "b": ("repo:shared",),
+    }
+    gate_transitions = {
+        "prd": GateTransition(
+            gate="prd",
+            on_approved_next="a",
+            on_changes_requested="revise_prd",
+            on_rejected="rejected",
+        )
+    }
+
+    errors = validate_workflow_execution_plan_v2(
+        nodes,
+        gate_transitions=gate_transitions,
+        write_domains=write_domains,
+    )
+
+    assert "Workflow node 'a' has unknown dependency 'missing_fanin'" in errors
+    assert "Workflow DAG cycle detected: a -> b -> a" in errors
+    assert "Workflow execution plan v2 has missing fan-in node 'missing_fanin' for 'a'" in errors
+    assert "Workflow execution plan v2 write-domain collision repo:shared: a, b" in errors
 
 
 def test_workflow_dag_validation_rejects_unknown_dependency():

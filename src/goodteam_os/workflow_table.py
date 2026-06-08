@@ -66,6 +66,14 @@ class WorkflowExecutionPlan:
         }
 
 
+def _workflow_node_write_domains(identifier: str) -> tuple[str, ...]:
+    return (f"workflow:{identifier}",)
+
+
+def _gate_write_domains(identifier: str) -> tuple[str, ...]:
+    return (f"approval:{identifier}",)
+
+
 _GATE_TRANSITIONS = {
     "takeover": GateTransition(
         gate="takeover",
@@ -298,6 +306,155 @@ def workflow_execution_plan(
             )
         )
     return WorkflowExecutionPlan(levels=tuple(levels))
+
+
+def validate_workflow_execution_plan_v2(
+    nodes: Mapping[str, WorkflowNode] | None = None,
+    *,
+    gate_transitions: Mapping[str, GateTransition] | None = None,
+    write_domains: Mapping[str, Iterable[str]] | None = None,
+) -> list[str]:
+    node_table = nodes or WORKFLOW_NODES
+    transition_table = gate_transitions or GATE_TRANSITIONS
+    errors: list[str] = []
+
+    try:
+        validate_workflow_dag(node_table, gate_transitions=transition_table)
+    except ValueError as exc:
+        errors.append(str(exc))
+    errors.extend(_workflow_execution_plan_v2_cycle_errors(node_table, existing_errors=errors))
+
+    passive_identifiers = set(transition_table) | {"product_requirement", "staging"}
+    known_identifiers = set(node_table) | passive_identifiers
+    for node in node_table.values():
+        for dependency in getattr(node, "depends_on", ()):
+            if dependency not in known_identifiers:
+                message = f"Workflow execution plan v2 has missing fan-in node {dependency!r} for {node.name!r}"
+                if message not in errors:
+                    errors.append(message)
+
+    domain_owners: dict[str, list[str]] = {}
+    for identifier in node_table:
+        domains = (
+            tuple(write_domains.get(identifier, _workflow_node_write_domains(identifier)))
+            if write_domains
+            else _workflow_node_write_domains(identifier)
+        )
+        for domain in domains:
+            domain_owners.setdefault(str(domain), []).append(identifier)
+    for domain, owners in sorted(domain_owners.items()):
+        if len(owners) > 1:
+            errors.append(f"Workflow execution plan v2 write-domain collision {domain}: {', '.join(sorted(owners))}")
+
+    return errors
+
+
+def _workflow_execution_plan_v2_cycle_errors(
+    nodes: Mapping[str, WorkflowNode],
+    *,
+    existing_errors: Iterable[str],
+) -> list[str]:
+    errors: list[str] = []
+    existing = set(existing_errors)
+    visited: set[str] = set()
+    visiting: list[str] = []
+
+    def visit(name: str) -> None:
+        if name in visiting:
+            cycle = " -> ".join([*visiting[visiting.index(name) :], name])
+            message = f"Workflow DAG cycle detected: {cycle}"
+            if message not in existing:
+                errors.append(message)
+                existing.add(message)
+            return
+        if name in visited or name not in nodes:
+            return
+        visiting.append(name)
+        for dependency in getattr(nodes[name], "depends_on", ()):
+            if dependency in nodes:
+                visit(dependency)
+        visiting.pop()
+        visited.add(name)
+
+    for name in nodes:
+        visit(name)
+    return errors
+
+
+def workflow_execution_plan_v2(
+    nodes: Mapping[str, WorkflowNode] | None = None,
+    *,
+    gate_transitions: Mapping[str, GateTransition] | None = None,
+    write_domains: Mapping[str, Iterable[str]] | None = None,
+) -> dict[str, object]:
+    node_table = nodes or WORKFLOW_NODES
+    transition_table = gate_transitions or GATE_TRANSITIONS
+    validation_errors = validate_workflow_execution_plan_v2(
+        node_table,
+        gate_transitions=transition_table,
+        write_domains=write_domains,
+    )
+
+    try:
+        plan = workflow_execution_plan(node_table, gate_transitions=transition_table)
+    except ValueError:
+        plan = WorkflowExecutionPlan(levels=())
+
+    passive_identifiers = set(transition_table) | {"product_requirement", "staging"}
+    ordered_identifiers = list(plan.order)
+    for identifier in sorted((set(node_table) | passive_identifiers) - set(ordered_identifiers)):
+        ordered_identifiers.append(identifier)
+
+    plan_nodes: list[dict[str, object]] = []
+    for identifier in ordered_identifiers:
+        workflow = node_table.get(identifier)
+        if workflow is not None:
+            domains = (
+                tuple(write_domains.get(identifier, _workflow_node_write_domains(identifier)))
+                if write_domains
+                else _workflow_node_write_domains(identifier)
+            )
+            dependencies = list(getattr(workflow, "depends_on", ()))
+            plan_nodes.append(
+                {
+                    "id": identifier,
+                    "kind": "stage",
+                    "dependencies": dependencies,
+                    "write_domains": list(domains),
+                    "runner": workflow.runner_fn,
+                    "runner_kind": "sequential_worker" if workflow.runner_fn != "noop_security_gate" else "human_gate",
+                    "gate": workflow.run_guard_gate,
+                    "fan_in_required": bool(dependencies),
+                }
+            )
+            continue
+
+        kind = "gate" if identifier in transition_table else "role"
+        domains = _gate_write_domains(identifier) if kind == "gate" else (f"artifact:{identifier}",)
+        plan_nodes.append(
+            {
+                "id": identifier,
+                "kind": kind,
+                "dependencies": [],
+                "write_domains": list(domains),
+                "runner": "",
+                "runner_kind": "human_gate" if kind == "gate" else "passive_artifact",
+                "gate": identifier if kind == "gate" else "",
+                "fan_in_required": False,
+            }
+        )
+
+    return {
+        "version": 2,
+        "valid": not validation_errors,
+        "scheduler": "sequential",
+        "runner_kind": "read_only_projection",
+        "parallel_level_execution": "deferred",
+        "validation_errors": validation_errors,
+        "order": list(plan.order),
+        "levels": [level.to_dict() for level in plan.levels],
+        "nodes": plan_nodes,
+    }
 
 
 def _topological_dependency_order(

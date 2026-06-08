@@ -321,6 +321,19 @@ def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
             {"index": 5, "identifiers": ["retro_memory"], "runnable": ["retro_memory"], "passive": []},
         ],
     }
+    assert graph["workflow_execution_plan_v2"]["version"] == 2
+    assert graph["workflow_execution_plan_v2"]["valid"] is True
+    assert graph["workflow_execution_plan_v2"]["validation_errors"] == []
+    assert {
+        "id": "planner",
+        "kind": "stage",
+        "dependencies": ["architect", "rfc", "security"],
+        "write_domains": ["workflow:planner"],
+        "runner": "run_delivery_until_release_gate",
+        "runner_kind": "sequential_worker",
+        "gate": "rfc",
+        "fan_in_required": True,
+    } in graph["workflow_execution_plan_v2"]["nodes"]
     node_names = {node["name"] for node in graph["nodes"]}
     edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
     assert edge_endpoints <= node_names
@@ -456,6 +469,8 @@ def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_p
         "levels": [],
         "error": "Workflow node 'qa_runner' has unknown error target 'qa_error'",
     }
+    assert graph["workflow_execution_plan_v2"]["valid"] is False
+    assert "Workflow node 'qa_runner' has unknown error target 'qa_error'" in graph["workflow_execution_plan_v2"]["validation_errors"]
     node_names = {node["name"] for node in graph["nodes"]}
     edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
     assert edge_endpoints <= node_names
