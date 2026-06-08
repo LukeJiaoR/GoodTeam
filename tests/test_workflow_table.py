@@ -13,6 +13,7 @@ from goodteam_os.workflow_table import (
     gate_transition,
     topological_workflow_nodes,
     validate_workflow_dag,
+    workflow_execution_plan,
     workflow_node,
 )
 
@@ -83,6 +84,89 @@ def test_workflow_node_dependencies_describe_current_linear_dag():
         "release",
         "retro_memory",
     ]
+
+
+def test_workflow_execution_plan_groups_fanout_and_fanin_levels():
+    nodes = {
+        "research": WorkflowNode(
+            name="research",
+            run_guard_gate="prd",
+            runner_fn="run_research",
+            depends_on=("product_requirement",),
+        ),
+        "design": WorkflowNode(
+            name="design",
+            run_guard_gate="prd",
+            runner_fn="run_design",
+            depends_on=("product_requirement",),
+        ),
+        "review": WorkflowNode(
+            name="review",
+            run_guard_gate="rfc",
+            runner_fn="run_review",
+            depends_on=("research", "design"),
+        ),
+    }
+    gate_transitions = {
+        "prd": GateTransition(
+            gate="prd",
+            on_approved_next="research",
+            on_changes_requested="revise_prd",
+            on_rejected="rejected",
+        ),
+        "rfc": GateTransition(
+            gate="rfc",
+            on_approved_next="review",
+            on_changes_requested="revise_rfc",
+            on_rejected="rejected",
+        ),
+    }
+
+    plan = workflow_execution_plan(nodes, gate_transitions=gate_transitions)
+
+    assert plan.scheduler == "sequential"
+    assert plan.parallel_level_execution == "deferred"
+    assert [level.identifiers for level in plan.levels] == [
+        ("product_requirement",),
+        ("research", "design"),
+        ("review",),
+    ]
+    assert [level.runnable for level in plan.levels] == [
+        (),
+        ("research", "design"),
+        ("review",),
+    ]
+    assert [level.passive for level in plan.levels] == [
+        ("product_requirement",),
+        (),
+        (),
+    ]
+    assert plan.level_for("research") == 1
+    assert plan.level_for("design") == 1
+    assert plan.level_for("review") == 2
+
+
+def test_workflow_execution_plan_exposes_current_runner_levels_without_enabling_parallelism():
+    plan = workflow_execution_plan()
+
+    assert plan.scheduler == "sequential"
+    assert plan.parallel_level_execution == "deferred"
+    assert plan.order == (
+        "product_requirement",
+        "prd",
+        "architect",
+        "rfc",
+        "security",
+        "planner",
+        "staging",
+        "release",
+        "retro_memory",
+    )
+    assert plan.level_for("architect") < plan.level_for("planner")
+    assert plan.level_for("rfc") < plan.level_for("security")
+    assert plan.level_for("security") < plan.level_for("planner")
+    assert plan.level_for("planner") < plan.level_for("release")
+    assert plan.level_for("release") < plan.level_for("retro_memory")
 
 
 def test_workflow_dag_validation_rejects_unknown_dependency():

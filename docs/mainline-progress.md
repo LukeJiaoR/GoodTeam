@@ -12,7 +12,7 @@ reference, verification evidence, and follow-up status.
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
 | 4 | Theme token conversion | Memory panel productionize slice completed 2026-06-07 | Keep Vivid and Minimal as permanent themes, convert `App.jsx` high-volume base tokens plus MessageFeed and Memory panel status/surface/type debt incrementally. | Memory panel contracts `9 passed`; frontend lint/build passed |
-| 5 | Graph/DAG engine D2 | DAG-spec foundation completed 2026-06-07 | Add node dependency declaration, topological ordering, cycle/unknown dependency validation, and graph dependency edges without replacing the current linear driver. | `474 passed`; ruff clean; frontend build passed |
+| 5 | Graph/DAG engine D2 | Execution-plan foundation completed 2026-06-08 | Add deterministic topology levels over declared dependencies and expose them from `/api/workflow/graph` without replacing the linear runner or enabling parallel worker execution. | Focused workflow regression `19 passed`; graph/state regression `22 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
@@ -22,14 +22,64 @@ reference, verification evidence, and follow-up status.
 ## Active Increment
 
 No active backlog increment remains. Remaining work is parked behind explicit gates
-or deliberate incremental tracks: D2b topo executor fan-in consumer, server-side
-land/tag auth/security design, G3 routing outcome quality, G3 unknown-failure data
-for LLM triage, external Codex auth recovery, shared-worktree edit-collision need,
-optional full research/review memory ingestion, and continued Theme panel/component
-token cleanup with visual review. Theme System no longer has a Vivid-vs-Minimal
-winner gate; both themes stay productized, with Vivid as default.
+or deliberate incremental tracks: D2b runner takeover / D3 parallel execution fan-in
+consumer and live-smoke gate, server-side land/tag auth/security design, G3 routing
+outcome quality, G3 unknown-failure data for LLM triage, external Codex auth
+recovery, shared-worktree edit-collision need, optional full research/review memory
+ingestion, and continued Theme panel/component token cleanup with visual review.
+Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
+productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-08 — Graph/DAG engine D2b: execution-plan foundation
+
+**Intent:** move D2b forward without replacing the production runner or enabling
+parallel worker execution before a real fan-in/dynamic-plan consumer exists.
+
+**Implemented:**
+- Added `WorkflowExecutionLevel` and `WorkflowExecutionPlan` to represent
+  topological levels over `WorkflowNode.depends_on`.
+- Added `workflow_execution_plan()` with `scheduler=sequential` and
+  `parallel_level_execution=deferred`.
+- Each level separates `runnable` workflow nodes from passive gate/role
+  identifiers so future D3 work has an explicit, testable boundary.
+- Exposed the serialized execution plan from `/api/workflow/graph` alongside the
+  existing graph nodes, edges, and active run payload.
+- Kept workflow-graph forward compatibility by returning `scheduler=unavailable`
+  when a future/incomplete graph table cannot produce a validated execution plan.
+- Preserved current execution semantics: `run_until_next_gate` and
+  `advance_approved_workflow` still use the existing linear `next_node` loop.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py::test_workflow_execution_plan_groups_fanout_and_fanin_levels tests/test_workflow_table.py::test_workflow_execution_plan_exposes_current_runner_levels_without_enabling_parallelism tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges -q`
+  first failed with `ImportError: cannot import name 'workflow_execution_plan'`.
+- Follow-up red assertion:
+  `tests/test_workflow_table.py::test_workflow_execution_plan_exposes_current_runner_levels_without_enabling_parallelism`
+  failed because `rfc` and `security` were incorrectly assigned the same level.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges tests/test_workflow_table.py::test_workflow_execution_plan_groups_fanout_and_fanin_levels tests/test_workflow_table.py::test_workflow_execution_plan_exposes_current_runner_levels_without_enabling_parallelism tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges -q`
+  -> `4 passed`.
+- Related workflow/web regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py tests/test_web.py -q -k 'workflow_graph or workflow_node or workflow_dag or execution_plan or dashboard_stepper or advance_approved_workflow or state_store_disambiguates'`
+  -> `19 passed, 150 deselected`.
+- Related graph/state regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_graph_sample.py tests/test_state.py -q -k 'workflow or failure or retry or approval or checkpoint'`
+  -> `22 passed, 51 deselected`.
+- Touched-file lint:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/workflow_table.py src/goodteam_os/web.py tests/test_workflow_table.py tests/test_web.py`
+  -> `All checks passed!`.
+- Whitespace check:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- Replacing the current driver with a topological executor that owns
+  `next_node` advancement.
+- D3 parallel level execution.
+- Live smoke for runner semantics, because runner semantics did not change in
+  this slice.
 
 ### 2026-06-07 — i18n lightweight foundation
 

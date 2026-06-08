@@ -26,6 +26,46 @@ class WorkflowNode:
     depends_on: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class WorkflowExecutionLevel:
+    index: int
+    identifiers: tuple[str, ...]
+    runnable: tuple[str, ...]
+    passive: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "index": self.index,
+            "identifiers": list(self.identifiers),
+            "runnable": list(self.runnable),
+            "passive": list(self.passive),
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowExecutionPlan:
+    levels: tuple[WorkflowExecutionLevel, ...]
+    scheduler: str = "sequential"
+    parallel_level_execution: str = "deferred"
+
+    @property
+    def order(self) -> tuple[str, ...]:
+        return tuple(identifier for level in self.levels for identifier in level.identifiers)
+
+    def level_for(self, identifier: str) -> int:
+        for level in self.levels:
+            if identifier in level.identifiers:
+                return level.index
+        raise ValueError(f"Unknown workflow execution identifier: {identifier}")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scheduler": self.scheduler,
+            "parallel_level_execution": self.parallel_level_execution,
+            "levels": [level.to_dict() for level in self.levels],
+        }
+
+
 _GATE_TRANSITIONS = {
     "takeover": GateTransition(
         gate="takeover",
@@ -158,7 +198,7 @@ def validate_workflow_dag(
             raise ValueError(f"Workflow node mapping key {key!r} does not match node name {node.name!r}")
         if node.run_guard_gate not in transition_table:
             raise ValueError(f"Workflow node {node.name!r} has unknown run guard gate {node.run_guard_gate!r}")
-        for dependency in node.depends_on:
+        for dependency in getattr(node, "depends_on", ()):
             if dependency not in identifiers:
                 raise ValueError(f"Workflow node {node.name!r} has unknown dependency {dependency!r}")
         for label, target in [("error", node.on_error), ("blocked", node.on_blocked)]:
@@ -192,7 +232,7 @@ def validate_workflow_dag(
         if name in visited or name not in node_table:
             return
         visiting.append(name)
-        for dependency in node_table[name].depends_on:
+        for dependency in getattr(node_table[name], "depends_on", ()):
             visit(dependency)
         visiting.pop()
         visited.add(name)
@@ -217,6 +257,76 @@ def topological_workflow_nodes(nodes: Mapping[str, WorkflowNode] | None = None) 
         ordered.append(name)
 
     for name in node_table:
+        append_dependency(name)
+    return ordered
+
+
+def workflow_execution_plan(
+    nodes: Mapping[str, WorkflowNode] | None = None,
+    *,
+    gate_transitions: Mapping[str, GateTransition] | None = None,
+) -> WorkflowExecutionPlan:
+    node_table = nodes or WORKFLOW_NODES
+    transition_table = gate_transitions or GATE_TRANSITIONS
+    validate_workflow_dag(node_table, gate_transitions=transition_table)
+    ordered = _topological_dependency_order(node_table, gate_transitions=transition_table)
+    level_by_identifier: dict[str, int] = {}
+
+    for identifier in ordered:
+        if identifier not in node_table:
+            level_by_identifier[identifier] = max(level_by_identifier.values(), default=0)
+            continue
+
+        dependencies = tuple(getattr(node_table[identifier], "depends_on", ()))
+        if not dependencies:
+            level = 0
+        else:
+            level = max(level_by_identifier[dependency] for dependency in dependencies) + 1
+        level_by_identifier[identifier] = level
+
+    levels: list[WorkflowExecutionLevel] = []
+    for index in sorted(set(level_by_identifier.values())):
+        identifiers = tuple(identifier for identifier in ordered if level_by_identifier[identifier] == index)
+        runnable = tuple(identifier for identifier in identifiers if identifier in node_table)
+        passive = tuple(identifier for identifier in identifiers if identifier not in node_table)
+        levels.append(
+            WorkflowExecutionLevel(
+                index=index,
+                identifiers=identifiers,
+                runnable=runnable,
+                passive=passive,
+            )
+        )
+    return WorkflowExecutionPlan(levels=tuple(levels))
+
+
+def _topological_dependency_order(
+    nodes: Mapping[str, WorkflowNode],
+    *,
+    gate_transitions: Mapping[str, GateTransition],
+) -> list[str]:
+    passive_identifiers = set(gate_transitions) | {"product_requirement", "staging"}
+    ordered: list[str] = []
+    seen: set[str] = set()
+    visiting: list[str] = []
+
+    def append_dependency(name: str) -> None:
+        if name in visiting:
+            cycle = " -> ".join([*visiting[visiting.index(name) :], name])
+            raise ValueError(f"Workflow DAG cycle detected: {cycle}")
+        if name in seen:
+            return
+        if name not in nodes and name not in passive_identifiers:
+            raise ValueError(f"Workflow DAG has unknown dependency {name!r}")
+        visiting.append(name)
+        if name in nodes:
+            for dependency in getattr(nodes[name], "depends_on", ()):
+                append_dependency(dependency)
+        visiting.pop()
+        seen.add(name)
+        ordered.append(name)
+
+    for name in nodes:
         append_dependency(name)
     return ordered
 

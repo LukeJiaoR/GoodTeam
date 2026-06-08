@@ -301,6 +301,18 @@ def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
     assert {"from": "prd", "to": "architect", "type": "approved"} in graph["edges"]
     assert {"from": "prd", "to": "revise_prd", "type": "changes_requested"} in graph["edges"]
     assert {"from": "prd", "to": "rejected", "type": "rejected"} in graph["edges"]
+    assert graph["execution_plan"] == {
+        "scheduler": "sequential",
+        "parallel_level_execution": "deferred",
+        "levels": [
+            {"index": 0, "identifiers": ["product_requirement", "prd"], "runnable": [], "passive": ["product_requirement", "prd"]},
+            {"index": 1, "identifiers": ["architect", "rfc"], "runnable": ["architect"], "passive": ["rfc"]},
+            {"index": 2, "identifiers": ["security"], "runnable": ["security"], "passive": []},
+            {"index": 3, "identifiers": ["planner", "staging"], "runnable": ["planner"], "passive": ["staging"]},
+            {"index": 4, "identifiers": ["release"], "runnable": ["release"], "passive": []},
+            {"index": 5, "identifiers": ["retro_memory"], "runnable": ["retro_memory"], "passive": []},
+        ],
+    }
     node_names = {node["name"] for node in graph["nodes"]}
     edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
     assert edge_endpoints <= node_names
@@ -428,6 +440,12 @@ def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_p
 
     assert {"from": "qa_runner", "to": "qa_error", "type": "error"} in graph["edges"]
     assert {"from": "qa_runner", "to": "qa_blocked", "type": "blocked"} in graph["edges"]
+    assert graph["execution_plan"] == {
+        "scheduler": "unavailable",
+        "parallel_level_execution": "deferred",
+        "levels": [],
+        "error": "Workflow node 'qa_runner' has unknown error target 'qa_error'",
+    }
     node_names = {node["name"] for node in graph["nodes"]}
     edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
     assert edge_endpoints <= node_names
