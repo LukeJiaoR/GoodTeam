@@ -1604,6 +1604,21 @@ def test_file_path_component_is_extracted_from_app_shell():
     assert "import FilePath from './components/FilePath';" in app
 
 
+def test_spinner_component_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    spinner_component = root / "frontend" / "src" / "components" / "Spinner.jsx"
+
+    assert spinner_component.exists()
+    component_source = spinner_component.read_text(encoding="utf-8")
+    assert "export default function Spinner" in component_source
+    assert "Loading..." in component_source
+    assert "RefreshCw" in component_source
+    assert "sr-only" in component_source
+    assert "function Spinner" not in app
+    assert "import Spinner from './components/Spinner';" in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"

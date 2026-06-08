@@ -30,6 +30,7 @@ import {
   GitPullRequest
 } from 'lucide-react';
 import FilePath from './components/FilePath';
+import Spinner from './components/Spinner';
 import {
   LANGUAGE_PREFERENCE_AUTO,
   LANGUAGE_STORAGE_KEY,
@@ -117,16 +118,6 @@ function getStatusLabel(status, t = (key) => ({
   if (norm === 'artifact ready' || norm === 'artifact_ready') return t('status.artifactReady');
   if (norm === 'no activity' || norm === 'no_activity' || norm === 'no_active_run') return t('chrome.noActiveRun');
   return status.replace(/_/g, ' ');
-}
-
-// Spinner component
-function Spinner({ label = 'Loading...' }) {
-  return (
-    <div className="flex justify-center items-center py-16">
-      <RefreshCw className="h-10 w-10 text-accent animate-spin" />
-      <span className="sr-only">{label}</span>
-    </div>
-  );
 }
 
 // Humanize datetime strings to "May 27, 02:44"
