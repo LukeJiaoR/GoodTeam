@@ -1802,6 +1802,58 @@ def test_overview_page_is_extracted_and_uses_theme_tokens():
         assert semantic_class in overview_panel
 
 
+def test_agents_memory_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{activeTab === 'agents_memory'")
+    end = app.index("{/* Tab: Roles */}", start)
+    agents_memory_mount = app[start:end]
+
+    assert "<AgentsMemoryTab" in agents_memory_mount
+    assert "setAgentsMemorySubTab('roles')" not in agents_memory_mount
+    assert "setAgentsMemorySubTab('memory')" not in agents_memory_mount
+    assert "setAgentsMemorySubTab('workers')" not in agents_memory_mount
+
+    agents_memory_tab = root / "frontend" / "src" / "components" / "tabs" / "AgentsMemoryTab.jsx"
+    assert agents_memory_tab.exists()
+    agents_memory_panel = agents_memory_tab.read_text(encoding="utf-8")
+
+    for required_text in [
+        "Roles",
+        "Memory",
+        "Jobs",
+        "<RolesTab",
+        "<MemoryTab",
+        "<WorkersTab",
+    ]:
+        assert required_text in agents_memory_panel
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+    ]
+    assert {snippet: agents_memory_panel.count(snippet) for snippet in disallowed_snippets if snippet in agents_memory_panel} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-accent-text",
+        "shadow-card",
+    ]:
+        assert semantic_class in agents_memory_panel
+
+
 def test_roles_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")

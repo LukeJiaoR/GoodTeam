@@ -49,6 +49,7 @@ import DevLoopTab from './components/tabs/DevLoopTab';
 import SystemTab from './components/tabs/SystemTab';
 import MemoryTab from './components/tabs/MemoryTab';
 import OverviewTab from './components/tabs/OverviewTab';
+import AgentsMemoryTab from './components/tabs/AgentsMemoryTab';
 import { DELIVERY_MODE_OPTIONS } from './constants/deliveryModes';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
@@ -3401,30 +3402,71 @@ export default function App() {
               )}
 
               {activeTab === 'agents_memory' && (
-                <div className="flex bg-surface-sunken dark:bg-zinc-900 p-1 rounded-xl w-fit space-x-1">
-                  <button
-                    onClick={() => setAgentsMemorySubTab('roles')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'roles' ? 'bg-white dark:bg-zinc-800 shadow-sm text-accent-text dark:text-emerald-400' : 'text-text-muted hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                  >
-                    Roles
-                  </button>
-                  <button
-                    onClick={() => setAgentsMemorySubTab('memory')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'memory' ? 'bg-white dark:bg-zinc-800 shadow-sm text-accent-text dark:text-emerald-400' : 'text-text-muted hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                  >
-                    Memory
-                  </button>
-                  <button
-                    onClick={() => setAgentsMemorySubTab('workers')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${agentsMemorySubTab === 'workers' ? 'bg-white dark:bg-zinc-800 shadow-sm text-accent-text dark:text-emerald-400' : 'text-text-muted hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                  >
-                    Jobs
-                  </button>
-                </div>
+                <AgentsMemoryTab
+                  agentsMemorySubTab={agentsMemorySubTab}
+                  setAgentsMemorySubTab={setAgentsMemorySubTab}
+                  roleObservations={roleObservations}
+                  getBadgeStyle={getBadgeStyle}
+                  getStatusLabel={getStatusLabel}
+                  FilePath={FilePath}
+                  state={state}
+                  loadingMemory={loadingMemory}
+                  memoryError={memoryError}
+                  memoryData={memoryData}
+                  memoryEventBrowsers={memoryEventBrowsers}
+                  crossRole={crossRole}
+                  setCrossRole={setCrossRole}
+                  crossQuery={crossQuery}
+                  setCrossQuery={setCrossQuery}
+                  crossScope={crossScope}
+                  setCrossScope={setCrossScope}
+                  crossLimit={crossLimit}
+                  setCrossLimit={setCrossLimit}
+                  crossLoading={crossLoading}
+                  crossError={crossError}
+                  crossResults={crossResults}
+                  handleCrossSearch={handleCrossSearch}
+                  handleToggleMemoryEvents={handleToggleMemoryEvents}
+                  handleMemoryEventSearchChange={handleMemoryEventSearchChange}
+                  handleOpenMemoryEvent={handleOpenMemoryEvent}
+                  panelGlobalMode={panelGlobalMode}
+                  setPanelGlobalMode={setPanelGlobalMode}
+                  panelRoleOverrides={panelRoleOverrides}
+                  panelRoleModels={panelRoleModels}
+                  simpleRoutingBackends={simpleRoutingBackends}
+                  setSimpleRoutingBackends={setSimpleRoutingBackends}
+                  configuringRoles={configuringRoles}
+                  setConfiguringRoles={setConfiguringRoles}
+                  savingBackends={savingBackends}
+                  actionLoading={actionLoading}
+                  backendOptions={backendOptions}
+                  roleBackendOptions={roleBackendOptions}
+                  workerRoutingMode={workerRoutingMode}
+                  setWorkerRoutingMode={setWorkerRoutingMode}
+                  workerRoutingBuckets={WORKER_ROUTING_BUCKETS}
+                  workerRoles={workerRoles}
+                  loadingDiscoveredAgents={loadingDiscoveredAgents}
+                  discoveredAgents={discoveredAgents}
+                  safeDiscoveredAgents={safeDiscoveredAgents}
+                  discoveredAgentByBackend={discoveredAgentByBackend}
+                  customModelSelected={customModelSelected}
+                  fallbackAgentModes={FALLBACK_AGENT_MODES}
+                  usedBackends={usedBackends}
+                  startContext={startContext}
+                  workerJobs={workerJobs}
+                  backendsError={backendsError}
+                  backendsSuccess={backendsSuccess}
+                  getBackendOptionLabel={getBackendOptionLabel}
+                  handleAgentChange={handleAgentChange}
+                  handleApplySimpleRouting={handleApplySimpleRouting}
+                  handleModelDropdownChange={handleModelDropdownChange}
+                  handleCustomModelChange={handleCustomModelChange}
+                  handleSaveWorkerBackends={handleSaveWorkerBackends}
+                />
               )}
 
               {/* Tab: Roles */}
-              {(activeTab === 'roles' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'roles')) && (
+              {activeTab === 'roles' && (
                 <RolesTab
                   roleObservations={roleObservations}
                   getBadgeStyle={getBadgeStyle}
@@ -3469,7 +3511,7 @@ export default function App() {
               )}
 
               {/* Tab: Workers */}
-              {(activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && (
+              {activeTab === 'workers' && (
                 <WorkersTab
                   panelGlobalMode={panelGlobalMode}
                   setPanelGlobalMode={setPanelGlobalMode}
@@ -3568,7 +3610,7 @@ export default function App() {
               )}
 
               {/* Tab: Memory */}
-              {(activeTab === 'memory' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'memory')) && (
+              {activeTab === 'memory' && (
                 <MemoryTab
                   state={state}
                   loadingMemory={loadingMemory}
