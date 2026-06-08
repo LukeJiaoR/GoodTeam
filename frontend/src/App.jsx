@@ -7,7 +7,6 @@ import {
   PlaySquare,
   CheckCircle2,
   Settings,
-  AlertTriangle,
   FileCode,
   MessageSquare,
   GitBranch,
@@ -43,6 +42,7 @@ import ApprovalBanner from './components/ApprovalBanner';
 import GlobalToast from './components/GlobalToast';
 import GitCreationNotice from './components/GitCreationNotice';
 import MemoryEventDetailModal from './components/MemoryEventDetailModal';
+import ProjectMainPanel from './components/ProjectMainPanel';
 import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
 import RolesTab from './components/tabs/RolesTab';
 import ArtifactsTab from './components/tabs/ArtifactsTab';
@@ -1115,17 +1115,8 @@ export default function App() {
         {newProjectModal}
         {directoryPickerModal}
 
-        {/* Main Panel Content Area - padded 32px (#F7F7F7 canvas background) */}
-        <main className="flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6">
-          {loading ? (
-            <Spinner label={t('chrome.loading')} />
-          ) : error ? (
-            <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl text-status-danger-text flex items-center space-x-3 shadow-xs">
-              <AlertTriangle className="h-6 w-6 shrink-0" />
-              <span className="font-bold text-sm">{error}</span>
-            </div>
-          ) : (
-            <>
+        <ProjectMainPanel loading={loading} error={error} loadingLabel={t('chrome.loading')}>
+          <>
               {/* Tab: Workflow Graph */}
               {activeTab === 'workflow' && (
                 <WorkflowGraphTab
@@ -1453,9 +1444,8 @@ export default function App() {
                   FilePath={FilePath}
                 />
               )}
-            </>
-          )}
-        </main>
+          </>
+        </ProjectMainPanel>
       </div>
     </div>
   );

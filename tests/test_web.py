@@ -1668,6 +1668,7 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
             (root / "frontend" / "src" / "components" / "GlobalToast.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "GitCreationNotice.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "MemoryEventDetailModal.jsx").read_text(encoding="utf-8"),
+            (root / "frontend" / "src" / "components" / "ProjectMainPanel.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectSidebar.jsx").read_text(encoding="utf-8"),
         ]
@@ -2361,6 +2362,27 @@ def test_memory_event_detail_modal_is_extracted_from_app_shell_without_theme_cha
     assert "<MemoryEventDetailModal" in app
     assert "memory-event-detail-title" not in app
     assert "fixed inset-0 z-40 flex items-center justify-center" not in app
+
+
+def test_project_main_panel_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    panel = root / "frontend" / "src" / "components" / "ProjectMainPanel.jsx"
+
+    assert panel.exists()
+    panel_source = panel.read_text(encoding="utf-8")
+    assert "export default function ProjectMainPanel" in panel_source
+    assert "flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6" in panel_source
+    assert "<Spinner label={loadingLabel} />" in panel_source
+    assert "bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl" in panel_source
+    assert "text-status-danger-text flex items-center space-x-3 shadow-xs" in panel_source
+    assert "AlertTriangle" in panel_source
+    assert "children" in panel_source
+    assert "import ProjectMainPanel from './components/ProjectMainPanel';" in app
+    assert "<ProjectMainPanel" in app
+    assert "loadingLabel={t('chrome.loading')}" in app
+    assert "flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6" not in app
+    assert "bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl" not in app
 
 
 def test_project_url_hook_is_extracted_from_app_shell():
