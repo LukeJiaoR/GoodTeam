@@ -1696,6 +1696,26 @@ def test_approval_helpers_are_extracted_from_app_shell():
     assert "import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';" in app
 
 
+def test_directory_picker_modal_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    picker = root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx"
+
+    assert picker.exists()
+    picker_source = picker.read_text(encoding="utf-8")
+    assert "export default function DirectoryPickerModal" in picker_source
+    assert "/api/fs/list" in picker_source
+    assert "/api/fs/mkdir" in picker_source
+    assert "Directory Browser" in picker_source
+    assert "Select this folder" in picker_source
+    assert "const directoryPickerOverlay" not in app
+    assert "fetchDirectory" not in app
+    assert "handleCreateFolder" not in app
+    assert "pickerEntries.map" not in app
+    assert "import DirectoryPickerModal from './components/DirectoryPickerModal';" in app
+    assert "<DirectoryPickerModal" in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
