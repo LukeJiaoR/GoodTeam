@@ -159,7 +159,7 @@
 
 ### CP5 - G3 Shadow Routing
 
-**Status:** planned.
+**Status:** completed in branch `feat/g3-shadow-routing`.
 
 **Scope:** Let failure-pattern recommendations produce `would_route_to` evidence while deterministic routing remains authoritative.
 
@@ -173,6 +173,17 @@
 **Verification:**
 - Tests prove actual disposition still comes from deterministic table.
 - Tests prove shadow evidence is recorded when a pattern matches.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_reports_routing_readiness_without_applying_patterns -q` first failed because readiness reports lacked `shadow_routing`, `false_positive_review_required`, `would_route_to`, and `confidence_inputs`.
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_graph_sample.py::test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition -q` first failed because triage actions lacked `would_route_to` shadow evidence.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_reports_routing_readiness_without_applying_patterns -q` -> `1 passed`.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_graph_sample.py::test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition tests/test_graph_sample.py::test_escalated_worker_failure_writes_scoped_failure_memory_event -q` -> `2 passed`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_graph_sample.py tests/test_cli.py -q -k 'failure_pattern or triage or worker_failure or retry_exhausted or failure_patterns_outputs'` -> `12 passed, 78 deselected`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/failure_patterns.py src/goodteam_os/graph.py tests/test_failure_patterns.py tests/test_graph_sample.py tests/test_cli.py` -> `All checks passed!`.
+- `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `568 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
 
 **Rollback:** Revert CP5 PR; deterministic G3a/G3b behavior remains.
 
