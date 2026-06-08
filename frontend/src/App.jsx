@@ -29,7 +29,6 @@ import {
   GitBranch,
   GitPullRequest
 } from 'lucide-react';
-import MessageFeed from './components/MessageFeed';
 import {
   LANGUAGE_PREFERENCE_AUTO,
   LANGUAGE_STORAGE_KEY,
@@ -50,6 +49,7 @@ import SystemTab from './components/tabs/SystemTab';
 import MemoryTab from './components/tabs/MemoryTab';
 import OverviewTab from './components/tabs/OverviewTab';
 import AgentsMemoryTab from './components/tabs/AgentsMemoryTab';
+import MessagesTab from './components/tabs/MessagesTab';
 import { DELIVERY_MODE_OPTIONS } from './constants/deliveryModes';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
@@ -3600,12 +3600,11 @@ export default function App() {
 
               {/* Tab: Messages */}
               {activeTab === 'messages' && (
-                <MessageFeed
-                  projectKey={messageFeedProjectKey}
-                  runId={messageFeedRunId}
-                  messages={messageFeed.key === targetMessageFeedKey ? messageFeed.messages : []}
-                  loading={messageFeed.key === targetMessageFeedKey && messageFeed.loading}
-                  error={messageFeed.key === targetMessageFeedKey ? messageFeed.error : ''}
+                <MessagesTab
+                  messageFeedProjectKey={messageFeedProjectKey}
+                  messageFeedRunId={messageFeedRunId}
+                  messageFeed={messageFeed}
+                  targetMessageFeedKey={targetMessageFeedKey}
                 />
               )}
 
