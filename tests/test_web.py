@@ -1558,11 +1558,12 @@ def test_frontend_contract_keeps_agy_model_selectable_and_aliases_deduped():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     workers_constants = (root / "frontend" / "src" / "constants" / "workers.js").read_text(encoding="utf-8")
+    worker_hook = (root / "frontend" / "src" / "hooks" / "useWorkerBackendSettings.js").read_text(encoding="utf-8")
 
     assert 'MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human"]' in workers_constants
     assert "Model is not applicable for Antigravity" not in app
     assert "export function canonicalBackendForOption" in workers_constants
-    assert "import {" in app and "canonicalBackendForOption" in app
+    assert "import {" in worker_hook and "canonicalBackendForOption" in worker_hook
 
 
 def test_frontend_contract_exposes_open_questions_at_approval_gate():
@@ -2078,6 +2079,56 @@ def test_approval_editor_hook_is_extracted_from_app_shell():
     assert "const handleRefineArtifact = async" not in app
     assert "const handleAcceptRefinement = async" not in app
     assert "const handleDiscardRefinement = async" not in app
+
+
+def test_worker_backend_settings_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useWorkerBackendSettings.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useWorkerBackendSettings" in hook_source
+    assert "seedWorkerBackendSettings" in hook_source
+    assert "safeDiscoveredAgents" in hook_source
+    assert "discoveredAgentByBackend" in hook_source
+    assert "/api/agents" in hook_source
+    assert "/api/project-config" in hook_source
+    assert "handleSaveWorkerBackends" in hook_source
+    assert "import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';" in app
+    assert "const workerBackendSettings = useWorkerBackendSettings({" in app
+    assert "seedWorkerBackendSettings" in app
+    for state_name in [
+        "panelGlobalMode",
+        "panelRoleOverrides",
+        "panelRoleModels",
+        "workerRoutingMode",
+        "simpleRoutingBackends",
+        "customModelSelected",
+        "configuringRoles",
+        "backendsError",
+        "backendsSuccess",
+        "savingBackends",
+        "discoveredAgents",
+        "loadingDiscoveredAgents",
+    ]:
+        assert f"const [{state_name}" not in app
+    for handler_name in [
+        "handleAgentChange",
+        "handleApplySimpleRouting",
+        "handleModelDropdownChange",
+        "handleCustomModelChange",
+        "handleSaveWorkerBackends",
+        "fetchDiscoveredAgents",
+    ]:
+        assert f"const {handler_name}" not in app
+    assert "const safeDiscoveredAgents" not in app
+    assert "const discoveredAgentByBackend" not in app
+    assert "const getBackendOptionLabel" not in app
+    assert "const usedBackends" not in app
+    assert "/api/agents" not in app
+    assert "workers: workers" not in app
+    assert "role_models: role_models" not in app
 
 
 def test_projects_home_page_is_extracted_from_app_shell():
