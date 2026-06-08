@@ -1619,6 +1619,22 @@ def test_spinner_component_is_extracted_from_app_shell():
     assert "import Spinner from './components/Spinner';" in app
 
 
+def test_status_helpers_are_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    status_utils = root / "frontend" / "src" / "utils" / "status.jsx"
+
+    assert status_utils.exists()
+    utils_source = status_utils.read_text(encoding="utf-8")
+    assert "export function getBadgeStyle" in utils_source
+    assert "export function getStatusLabel" in utils_source
+    assert "bg-status-success-bg" in utils_source
+    assert "chrome.noActiveRun" in utils_source
+    assert "function getBadgeStyle" not in app
+    assert "function getStatusLabel" not in app
+    assert "import { getBadgeStyle, getStatusLabel } from './utils/status';" in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
