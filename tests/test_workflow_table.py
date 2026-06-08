@@ -606,3 +606,127 @@ def test_advance_approved_workflow_uses_node_table(tmp_path, monkeypatch):
     assert calls[0] == "architect"
     assert result.next_node == "await_rfc_approval"
     assert Path(result.artifacts["rfc"]).is_file()
+
+
+def test_advance_approved_workflow_uses_legacy_runner_by_default(tmp_path, monkeypatch):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    project_config = tmp_path / "project.local.yaml"
+    project_config.write_text(
+        f"name: Test\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "architect"
+    state.approvals["prd"] = "approved"
+
+    def fail_if_topology_runner_is_used(*args, **kwargs):
+        raise AssertionError("topology runner must be opt-in")
+
+    monkeypatch.setattr(graph, "advance_approved_workflow_topology", fail_if_topology_runner_is_used, raising=False)
+
+    result = graph.advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.next_node == "await_rfc_approval"
+    assert Path(result.artifacts["rfc"]).is_file()
+
+
+def test_advance_approved_workflow_uses_topology_runner_when_project_opts_in(tmp_path, monkeypatch):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    project_config = tmp_path / "project.local.yaml"
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: Test",
+                "key: CONTENTOPS",
+                "workflow_runner: topo_v2",
+                "worker_backend:",
+                "  mode: fake",
+                "repos:",
+                f"  docs: {docs}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "architect"
+    state.approvals["prd"] = "approved"
+    calls = []
+    original_topology_runner = graph.advance_approved_workflow_topology
+
+    def spy_topology_runner(*, state, workspace, project_config):
+        calls.append((state.next_node, project_config))
+        return original_topology_runner(state=state, workspace=workspace, project_config=project_config)
+
+    monkeypatch.setattr(graph, "advance_approved_workflow_topology", spy_topology_runner)
+
+    result = graph.advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert calls == [("architect", project_config)]
+    assert result.next_node == "await_rfc_approval"
+    assert Path(result.artifacts["rfc"]).is_file()
+
+
+def test_topology_runner_consumes_plan_v2_nodes_without_legacy_node_lookup(tmp_path, monkeypatch):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    project_config = tmp_path / "project.local.yaml"
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: Test",
+                "key: CONTENTOPS",
+                "workflow_runner: topo_v2",
+                "worker_backend:",
+                "  mode: fake",
+                "repos:",
+                f"  docs: {docs}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "architect"
+    state.approvals["prd"] = "approved"
+
+    def fail_legacy_lookup(node):
+        raise AssertionError(f"topology runner must use plan v2 node metadata, not workflow_node({node!r})")
+
+    monkeypatch.setattr(graph, "workflow_node", fail_legacy_lookup)
+
+    result = graph.advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.next_node == "await_rfc_approval"
+    assert Path(result.artifacts["rfc"]).is_file()
+
+
+def test_topology_runner_fails_closed_when_plan_v2_is_invalid(tmp_path, monkeypatch):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    project_config = tmp_path / "project.local.yaml"
+    project_config.write_text(
+        f"name: Test\nkey: CONTENTOPS\nworkflow_runner: topo_v2\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "architect"
+    state.approvals["prd"] = "approved"
+    monkeypatch.setattr(
+        graph,
+        "workflow_execution_plan_v2",
+        lambda *args, **kwargs: {
+            "valid": False,
+            "validation_errors": ["Workflow DAG cycle detected: a -> b -> a"],
+        },
+    )
+
+    result = graph.advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.current_node == "architect"
+    assert result.next_node == "blocked"
+    assert result.blockers == ["workflow execution plan v2 invalid: Workflow DAG cycle detected: a -> b -> a"]

@@ -1,3 +1,5 @@
+import json
+
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 
 
@@ -80,6 +82,10 @@ def test_state_store_disambiguates_revisited_checkpoint_nodes(tmp_path):
     assert first.exists()
     assert second.exists()
     assert store.latest_checkpoint_path("run-1", "start") == second
+    first_payload = json.loads(first.read_text(encoding="utf-8"))
+    second_payload = json.loads(second.read_text(encoding="utf-8"))
+    assert first_payload["checkpoint"] == {"node": "start", "sequence": 1}
+    assert second_payload["checkpoint"] == {"node": "start", "sequence": 2}
 
 
 def test_state_store_disambiguates_revisited_project_checkpoint_nodes(tmp_path):
@@ -96,6 +102,10 @@ def test_state_store_disambiguates_revisited_project_checkpoint_nodes(tmp_path):
     assert first.exists()
     assert second.exists()
     assert store.latest_project_checkpoint_path("CONTENTOPS", "run-1", "start") == second
+    first_payload = json.loads(first.read_text(encoding="utf-8"))
+    second_payload = json.loads(second.read_text(encoding="utf-8"))
+    assert first_payload["checkpoint"] == {"node": "start", "sequence": 1}
+    assert second_payload["checkpoint"] == {"node": "start", "sequence": 2}
 
 
 def test_state_store_archives_and_clears_project_current(tmp_path):

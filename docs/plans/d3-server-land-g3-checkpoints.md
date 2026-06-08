@@ -127,7 +127,7 @@
 
 ### CP4 - Sequential Dynamic Topology Runner
 
-**Status:** planned.
+**Status:** completed in branch `feat/sequential-topo-runner`.
 
 **Scope:** Add a sequential topo runner behind a feature flag or explicit project capability. It consumes validated plan v2 but executes one node at a time.
 
@@ -142,6 +142,18 @@
 - Red/green tests for node revisit checkpoint preservation.
 - Red/green tests for plan-derived progress.
 - Focused graph regression.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'topology_runner or legacy_runner_by_default'` first failed because `advance_approved_workflow_topology` and graph-local `workflow_execution_plan_v2` did not exist.
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_state.py -q -k 'disambiguates_revisited'` first failed because checkpoint JSON did not include `checkpoint.node` / `checkpoint.sequence` metadata.
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py::test_topology_runner_consumes_plan_v2_nodes_without_legacy_node_lookup -q` failed while the topology path delegated to the legacy `workflow_node()` lookup.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'topology_runner or legacy_runner_by_default'` -> `4 passed, 22 deselected`.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_state.py -q -k 'disambiguates_revisited'` -> `2 passed, 5 deselected`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py tests/test_graph_sample.py tests/test_state.py tests/test_web.py -q -k 'topology_runner or legacy_runner_by_default or advance_approved_workflow or disambiguates_revisited or workflow_graph or dashboard_stepper'` -> `16 passed, 246 deselected`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/graph.py src/goodteam_os/state.py tests/test_workflow_table.py tests/test_state.py` -> `All checks passed!`.
+- `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `568 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
 
 **Rollback:** Disable the feature flag or revert CP4 PR; legacy driver remains available.
 

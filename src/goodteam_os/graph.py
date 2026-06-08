@@ -26,6 +26,7 @@ from goodteam_os.workflow_table import (
     disposition_for_failure_class,
     error_next_for_node,
     retry_policy_for_node,
+    workflow_execution_plan_v2,
     workflow_node,
 )
 from goodteam_os.workers import BUILTIN_WORKER_MODES, WorkerJobStore
@@ -940,6 +941,31 @@ def advance_approved_workflow(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    if _workflow_runner_mode(project_config) == "topo_v2":
+        return advance_approved_workflow_topology(
+            state=state,
+            workspace=workspace,
+            project_config=project_config,
+        )
+    return _advance_approved_workflow_legacy(state=state, workspace=workspace, project_config=project_config)
+
+
+def _workflow_runner_mode(project_config: Path | None) -> str:
+    if project_config is None or not project_config.is_file():
+        return "legacy"
+    try:
+        target = load_project_target(project_config)
+    except Exception:
+        return "legacy"
+    return str(target.get("workflow_runner", "legacy") or "legacy").strip()
+
+
+def _advance_approved_workflow_legacy(
+    *,
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None = None,
+) -> AgileDevState:
     runners = {
         "run_architecture_until_gate": run_architecture_until_gate,
         "run_delivery_until_release_gate": run_delivery_until_release_gate,
@@ -978,6 +1004,82 @@ def advance_approved_workflow(
             )
             return state
         state = runners[node.runner_fn](state, workspace, project_config)
+        after = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
+        if after == before:
+            return state
+    return state
+
+
+def _workflow_runners() -> dict[str, object]:
+    return {
+        "run_architecture_until_gate": run_architecture_until_gate,
+        "run_delivery_until_release_gate": run_delivery_until_release_gate,
+        "run_release_until_gate": run_release_until_gate,
+        "run_retro_until_complete": run_retro_until_complete,
+        "noop_security_gate": noop_security_gate,
+    }
+
+
+def advance_approved_workflow_topology(
+    *,
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None = None,
+) -> AgileDevState:
+    plan = workflow_execution_plan_v2()
+    validation_errors = [str(error) for error in plan.get("validation_errors", [])]
+    if plan.get("valid") is not True:
+        state.current_node = state.next_node
+        state.next_node = "blocked"
+        state.blockers = [f"workflow execution plan v2 invalid: {'; '.join(validation_errors) or 'unknown error'}"]
+        return state
+
+    plan_nodes = {
+        str(node.get("id", "")): node
+        for node in plan.get("nodes", [])
+        if isinstance(node, dict) and str(node.get("kind", "")) == "stage"
+    }
+    runners = _workflow_runners()
+    while True:
+        before = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
+        node = plan_nodes.get(state.next_node)
+        if node is None:
+            return state
+        dependencies = [str(dependency) for dependency in node.get("dependencies", [])]
+        blocked_gate = next(
+            (
+                dependency
+                for dependency in dependencies
+                if dependency in state.approvals
+                and str(state.approvals.get(dependency, "")) != ApprovalDecision.APPROVED
+            ),
+            "",
+        )
+        if blocked_gate:
+            state.current_node = f"{blocked_gate}_review_gate"
+            state.next_node = gate_next_node(
+                state,
+                gate=blocked_gate,
+                approved_next=approved_next_for_gate(blocked_gate),
+            )
+            return state
+        run_guard_gate = str(node.get("gate", ""))
+        if str(state.approvals.get(run_guard_gate, "")) != ApprovalDecision.APPROVED:
+            state.current_node = f"{run_guard_gate}_review_gate"
+            state.next_node = gate_next_node(
+                state,
+                gate=run_guard_gate,
+                approved_next=approved_next_for_gate(run_guard_gate),
+            )
+            return state
+        runner_name = str(node.get("runner", ""))
+        runner = runners.get(runner_name)
+        if runner is None:
+            state.current_node = state.next_node
+            state.next_node = "blocked"
+            state.blockers = [f"workflow execution plan v2 has unknown runner {runner_name!r}"]
+            return state
+        state = runner(state, workspace, project_config)
         after = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
         if after == before:
             return state
