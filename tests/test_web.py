@@ -1517,12 +1517,15 @@ def test_frontend_contract_keeps_agy_model_selectable_and_aliases_deduped():
 
 
 def test_frontend_contract_exposes_open_questions_at_approval_gate():
-    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    approval_utils = (root / "frontend" / "src" / "utils" / "approvals.js").read_text(encoding="utf-8")
 
     assert "openQuestionsGateCount" in app
     assert "Questions" in app
     assert "handleOpenQuestionsFromApproval" in app
-    assert "suggestedAnswersForQuestion" in app
+    assert "export function suggestedAnswersForQuestion" in approval_utils
+    assert "suggestedAnswersForQuestion={suggestedAnswersForQuestion}" in app
 
 
 def test_frontend_contract_has_simple_advanced_worker_routing_modes():
@@ -1675,6 +1678,22 @@ def test_time_helpers_are_extracted_from_app_shell():
     assert "padStart(2, '0')" in utils_source
     assert "function formatHumanTime" not in app
     assert "import { formatHumanTime } from './utils/time';" in app
+
+
+def test_approval_helpers_are_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    approval_utils = root / "frontend" / "src" / "utils" / "approvals.js"
+
+    assert approval_utils.exists()
+    utils_source = approval_utils.read_text(encoding="utf-8")
+    assert "export function suggestedAnswersForQuestion" in utils_source
+    assert "export function computeLineDiff" in utils_source
+    assert "optionPattern" in utils_source
+    assert "new Int32Array" in utils_source
+    assert "function suggestedAnswersForQuestion" not in app
+    assert "function computeLineDiff" not in app
+    assert "import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';" in app
 
 
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
