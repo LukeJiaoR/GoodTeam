@@ -37,6 +37,7 @@ import { useMemoryData } from './hooks/useMemoryData';
 import { useCrossProjectMemorySearch } from './hooks/useCrossProjectMemorySearch';
 import { useApprovalEditor } from './hooks/useApprovalEditor';
 import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';
+import { useMessageFeeds } from './hooks/useMessageFeeds';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
@@ -63,9 +64,6 @@ import {
   FALLBACK_AGENT_MODES,
   WORKER_ROUTING_BUCKETS,
 } from './constants/workers';
-
-const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
-const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
 
 export default function App() {
   const { projectKey, updateUrl } = useProjectUrl();
@@ -208,10 +206,6 @@ export default function App() {
   const [changesRequestedNote, setChangesRequestedNote] = useState('');
   const [showChangesRequestedNoteKey, setShowChangesRequestedNoteKey] = useState(null);
 
-  const [gateDebate, setGateDebate] = useState(EMPTY_GATE_DEBATE);
-  const [debateRun, setDebateRun] = useState({ key: '', loading: false, error: '' });
-  const [messageFeed, setMessageFeed] = useState(EMPTY_MESSAGE_FEED);
-
   const { graphData, loadingGraph, graphError, fetchWorkflowGraph } = useWorkflowGraphData();
   const { devLoopData, loadingDevLoop, devLoopError, fetchDevLoop } = useDevLoopData();
   const memory = useMemoryData(projectKey);
@@ -248,17 +242,19 @@ export default function App() {
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
-  const gateDebateRunId = data?.state?.run_id || '';
-  const gateDebateProjectKey = projectKey || data?.state?.project_key || '';
-  const messageFeedProjectKey = projectKey || data?.state?.project_key || '';
-  const messageFeedRunId = data?.state?.run_id || '';
-  const targetMessageFeedKey = activeTab === 'messages' && messageFeedProjectKey && messageFeedRunId
-    ? `${messageFeedProjectKey}:${messageFeedRunId}`
-    : '';
-  const targetGateDebateKey = activeTab === 'approvals' && actionableGateReview?.is_actionable && gateDebateProjectKey && gateDebateRunId
-    ? `${gateDebateProjectKey}:${gateDebateRunId}:${actionableGateReview.approval}`
-    : '';
-  const visibleGateDebate = gateDebate.key === targetGateDebateKey ? gateDebate : EMPTY_GATE_DEBATE;
+  const messageFeeds = useMessageFeeds({ activeTab, projectKey, data, actionableGateReview });
+  const {
+    gateDebateProjectKey,
+    gateDebateRunId,
+    debateRun,
+    visibleGateDebate,
+    messageFeedProjectKey,
+    messageFeedRunId,
+    messageFeed,
+    targetMessageFeedKey,
+    handleRunDebate,
+    getResolvingDebateRef,
+  } = messageFeeds;
 
   const showToast = (msg, isError = false) => {
     setMessage({ text: msg, isError });
@@ -414,74 +410,6 @@ export default function App() {
     handleDiscardRefinement,
   } = approvalEditor;
 
-  const fetchGateDebate = async ({ key, runId, gate }) => {
-    const debateKey = `${key}:${runId}:${gate}`;
-    setGateDebate({ key: debateKey, messages: [], loading: true, error: '' });
-    try {
-      const params = new URLSearchParams({ project: key, run: runId, gate });
-      const response = await fetch(`/api/messages?${params.toString()}`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.error || 'Failed to fetch gate debate');
-      }
-      setGateDebate({ key: debateKey, messages: payload.messages || [], loading: false, error: '' });
-    } catch (err) {
-      setGateDebate({ key: debateKey, messages: [], loading: false, error: err.message });
-    }
-  };
-
-  const fetchMessageFeed = async ({ key, runId }) => {
-    const feedKey = `${key}:${runId}`;
-    setMessageFeed({ key: feedKey, messages: [], loading: true, error: '' });
-    try {
-      const params = new URLSearchParams({ project: key, run: runId });
-      const response = await fetch(`/api/messages?${params.toString()}`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.error || 'Failed to fetch message feed');
-      }
-      setMessageFeed({ key: feedKey, messages: payload.messages || [], loading: false, error: '' });
-    } catch (err) {
-      setMessageFeed({ key: feedKey, messages: [], loading: false, error: err.message });
-    }
-  };
-
-  const handleRunDebate = async (approvalKey) => {
-    const key = projectKey || data?.state?.project_key || '';
-    const runId = data?.state?.run_id || '';
-    const debateKey = `${key}:${runId}:${approvalKey}`;
-
-    if (!key || !runId || !approvalKey) {
-      setDebateRun({ key: debateKey, loading: false, error: 'Missing project, run, or gate for debate.' });
-      return;
-    }
-
-    setDebateRun({ key: debateKey, loading: true, error: '' });
-    try {
-      const response = await fetch('/api/debate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_key: key,
-          run: runId,
-          gate: approvalKey,
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.error || 'Failed to run debate');
-      }
-      await fetchGateDebate({ key, runId, gate: approvalKey });
-      setDebateRun((current) => (
-        current.key === debateKey ? { key: debateKey, loading: false, error: '' } : current
-      ));
-    } catch (err) {
-      setDebateRun((current) => (
-        current.key === debateKey ? { key: debateKey, loading: false, error: err.message } : current
-      ));
-    }
-  };
-
   // Auto-refresh timer when there is an active run
   useEffect(() => {
     let interval = null;
@@ -498,7 +426,9 @@ export default function App() {
 
   // Fetch state on mount and projectKey changes
   useEffect(() => {
-    fetchState(projectKey, true);
+    Promise.resolve().then(() => {
+      fetchState(projectKey, true);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchState is intentionally omitted so loading fetches only when the project key changes.
   }, [projectKey]);
 
@@ -522,28 +452,6 @@ export default function App() {
       fetchDevLoop(projectKey);
     }
   }, [activeTab, fetchDevLoop, projectKey]);
-
-  useEffect(() => {
-    if (!targetMessageFeedKey || messageFeed.key === targetMessageFeedKey) return;
-    Promise.resolve().then(() => {
-      fetchMessageFeed({ key: messageFeedProjectKey, runId: messageFeedRunId });
-    });
-  }, [targetMessageFeedKey, messageFeed.key, messageFeedProjectKey, messageFeedRunId]);
-
-  useEffect(() => {
-    if (!targetGateDebateKey || gateDebate.key === targetGateDebateKey) return;
-    Promise.resolve().then(() => {
-      fetchGateDebate({ key: gateDebateProjectKey, runId: gateDebateRunId, gate: actionableGateReview.approval });
-    });
-  }, [targetGateDebateKey, gateDebate.key, gateDebateProjectKey, gateDebateRunId, actionableGateReview?.approval]);
-
-  const getResolvingDebateRef = (approvalKey) => {
-    const runId = data?.state?.run_id || '';
-    if (!runId || !visibleGateDebate.messages.length || !visibleGateDebate.key.endsWith(`:${approvalKey}`)) return '';
-    const resolving = [...visibleGateDebate.messages].reverse().find((item) => ['assert', 'propose'].includes(item.kind))
-      || visibleGateDebate.messages[visibleGateDebate.messages.length - 1];
-    return resolving?.id ? `messages/${runId}.jsonl#${resolving.id}` : '';
-  };
 
   // POST action handlers
   const handleTerminate = async (key) => {

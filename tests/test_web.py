@@ -2131,6 +2131,40 @@ def test_worker_backend_settings_hook_is_extracted_from_app_shell():
     assert "role_models: role_models" not in app
 
 
+def test_message_feeds_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useMessageFeeds.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useMessageFeeds" in hook_source
+    assert "EMPTY_GATE_DEBATE" in hook_source
+    assert "EMPTY_MESSAGE_FEED" in hook_source
+    assert "/api/messages?" in hook_source
+    assert "/api/debate" in hook_source
+    assert "fetchGateDebate" in hook_source
+    assert "fetchMessageFeed" in hook_source
+    assert "handleRunDebate" in hook_source
+    assert "getResolvingDebateRef" in hook_source
+    assert "import { useMessageFeeds } from './hooks/useMessageFeeds';" in app
+    assert "const messageFeeds = useMessageFeeds({" in app
+    for state_name in [
+        "gateDebate",
+        "debateRun",
+        "messageFeed",
+    ]:
+        assert f"const [{state_name}" not in app
+    assert "const fetchGateDebate = async" not in app
+    assert "const fetchMessageFeed = async" not in app
+    assert "const handleRunDebate = async" not in app
+    assert "const getResolvingDebateRef" not in app
+    assert "EMPTY_GATE_DEBATE" not in app
+    assert "EMPTY_MESSAGE_FEED" not in app
+    assert "/api/messages?" not in app
+    assert "/api/debate" not in app
+
+
 def test_projects_home_page_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
