@@ -1981,6 +1981,53 @@ def test_memory_data_hook_is_extracted_from_app_shell():
     assert "/api/memory/events?" not in app
 
 
+def test_cross_project_memory_search_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useCrossProjectMemorySearch.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useCrossProjectMemorySearch" in hook_source
+    assert "crossSearchRequestSeq" in hook_source
+    assert "setAllProjectKeys" in hook_source
+    assert "/api/state" in hook_source
+    assert "/api/memory/cross" in hook_source
+    assert "handleCrossSearch" in hook_source
+    assert "import { useCrossProjectMemorySearch } from './hooks/useCrossProjectMemorySearch';" in app
+    assert "const crossMemorySearch = useCrossProjectMemorySearch(projectKey, activeTab, agentsMemorySubTab);" in app
+    for name in [
+        "crossRole",
+        "setCrossRole",
+        "crossQuery",
+        "setCrossQuery",
+        "crossScope",
+        "setCrossScope",
+        "crossLimit",
+        "setCrossLimit",
+        "crossLoading",
+        "crossError",
+        "crossResults",
+        "handleCrossSearch",
+    ]:
+        assert f"{name}," in app
+    for state_name in [
+        "crossRole",
+        "crossQuery",
+        "crossScope",
+        "crossLimit",
+        "crossLoading",
+        "crossError",
+        "crossResults",
+        "allProjectKeys",
+    ]:
+        assert f"const [{state_name}" not in app
+    assert "const crossSearchRequestSeq" not in app
+    assert "const handleCrossSearch = async" not in app
+    assert "setAllProjectKeys" not in app
+    assert "/api/memory/cross" not in app
+
+
 def test_projects_home_page_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
