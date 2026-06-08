@@ -26,6 +26,7 @@ import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModal from './components/NewProjectModal';
 import ProjectsHomePage from './components/ProjectsHomePage';
 import Spinner from './components/Spinner';
+import { useAppearancePreferences } from './hooks/useAppearancePreferences';
 import { useDirectoryPicker } from './hooks/useDirectoryPicker';
 import { useProjectUrl } from './hooks/useProjectUrl';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
@@ -33,10 +34,6 @@ import { formatHumanTime } from './utils/time';
 import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';
 import {
   LANGUAGE_PREFERENCE_AUTO,
-  LANGUAGE_STORAGE_KEY,
-  normalizeLanguagePreference,
-  resolveLanguage,
-  translate,
 } from './i18n';
 import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
 import RolesTab from './components/tabs/RolesTab';
@@ -89,26 +86,8 @@ export default function App() {
   const [newProjectModalOpen, setNewProjectModalOpen] = useState(false);
 
 
-  // Theme state
-  const [darkMode, setDarkMode] = useState(() => {
-    const saved = localStorage.getItem('color-scheme');
-    if (saved) return saved === 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
-  });
-
-  // Persistent Theme state (vivid or minimal)
-  const [theme, setTheme] = useState(() => {
-    return localStorage.getItem('gt-theme') || 'vivid';
-  });
-
-  const [languagePreference, setLanguagePreferenceState] = useState(() => {
-    return normalizeLanguagePreference(localStorage.getItem(LANGUAGE_STORAGE_KEY));
-  });
-  const language = resolveLanguage(languagePreference);
-  const t = (key, params) => translate(language, key, params);
-  const setLanguagePreference = (preference) => {
-    setLanguagePreferenceState(normalizeLanguagePreference(preference));
-  };
+  const appearance = useAppearancePreferences();
+  const { darkMode, setDarkMode, theme, setTheme, languagePreference, setLanguagePreference, t } = appearance;
   const languageOptions = [
     { value: LANGUAGE_PREFERENCE_AUTO, label: t('language.auto'), ariaLabel: t('language.useAuto') },
     { value: 'en', label: t('language.english'), ariaLabel: t('language.useEnglish') },
@@ -299,30 +278,6 @@ export default function App() {
     ? `${gateDebateProjectKey}:${gateDebateRunId}:${actionableGateReview.approval}`
     : '';
   const visibleGateDebate = gateDebate.key === targetGateDebateKey ? gateDebate : EMPTY_GATE_DEBATE;
-  // Update theme classes on document element
-  useEffect(() => {
-    const meta = document.querySelector('meta[name="color-scheme"]');
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-      if (meta) meta.content = 'dark';
-      localStorage.setItem('color-scheme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      if (meta) meta.content = 'light';
-      localStorage.setItem('color-scheme', 'light');
-    }
-  }, [darkMode]);
-
-  // Sync theme changes to data-theme attribute on document element
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('gt-theme', theme);
-  }, [theme]);
-
-  useEffect(() => {
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, languagePreference);
-  }, [languagePreference]);
-
   // Reset Git toggles/notices when the new project modal is opened
   useEffect(() => {
     if (newProjectModalOpen) {

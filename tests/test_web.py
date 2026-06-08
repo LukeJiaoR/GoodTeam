@@ -1862,6 +1862,31 @@ def test_project_url_hook_is_extracted_from_app_shell():
     assert "removeEventListener('popstate'" not in app
 
 
+def test_appearance_preferences_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useAppearancePreferences.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useAppearancePreferences" in hook_source
+    assert "localStorage.getItem('color-scheme')" in hook_source
+    assert "localStorage.setItem('color-scheme'" in hook_source
+    assert "localStorage.getItem('gt-theme')" in hook_source
+    assert "document.documentElement.dataset.theme" in hook_source
+    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in hook_source
+    assert "resolveLanguage(languagePreference)" in hook_source
+    assert "translate(language" in hook_source
+    assert "import { useAppearancePreferences } from './hooks/useAppearancePreferences';" in app
+    assert "const appearance = useAppearancePreferences();" in app
+    assert "const [darkMode" not in app
+    assert "const [theme" not in app
+    assert "const [languagePreference" not in app
+    assert "localStorage.setItem('color-scheme'" not in app
+    assert "document.documentElement.dataset.theme" not in app
+    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" not in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
@@ -2578,12 +2603,14 @@ def test_system_page_is_extracted_and_uses_theme_tokens():
 
 
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
-    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = (root / "frontend" / "src" / "hooks" / "useAppearancePreferences.js").read_text(encoding="utf-8")
 
-    assert "LANGUAGE_STORAGE_KEY" in app
-    assert "normalizeLanguagePreference" in app
-    assert "resolveLanguage" in app
-    assert "translate(language" in app or "translate(resolvedLanguage" in app
+    assert "LANGUAGE_STORAGE_KEY" in hook
+    assert "normalizeLanguagePreference" in hook
+    assert "resolveLanguage" in hook
+    assert "translate(language" in hook or "translate(resolvedLanguage" in hook
     assert "languagePreference" in app
     assert "setLanguagePreference" in app
     assert "navGroups" in app
@@ -2593,7 +2620,7 @@ def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     assert "t('approvalBanner.review')" in app
     assert "t('chrome.loading')" in app
     assert "language.useAuto" in app
-    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in app
+    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in hook
 
 
 def test_frontend_i18n_locale_files_exist_and_define_core_chrome_keys():
