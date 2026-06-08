@@ -1494,12 +1494,15 @@ def test_render_delivery_mode_options_uses_full_delivery_mode_catalog():
 
 
 def test_frontend_contract_reads_project_report_repos_from_top_level():
-    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    overview_tab = root / "frontend" / "src" / "components" / "tabs" / "OverviewTab.jsx"
+    frontend_source = app + (overview_tab.read_text(encoding="utf-8") if overview_tab.exists() else "")
 
-    assert "startContext.project_report?.repos?.docs?.path" in app
-    assert "startContext.project_report?.repos?.backend?.path" in app
-    assert "startContext.project_report?.repos?.frontend?.path" in app
-    assert "startContext.project_report?.project?.repos" not in app
+    assert "startContext.project_report?.repos?.docs?.path" in frontend_source
+    assert "startContext.project_report?.repos?.backend?.path" in frontend_source
+    assert "startContext.project_report?.repos?.frontend?.path" in frontend_source
+    assert "startContext.project_report?.project?.repos" not in frontend_source
 
 
 def test_frontend_contract_keeps_agy_model_selectable_and_aliases_deduped():
@@ -1745,6 +1748,58 @@ def test_workflow_graph_page_is_extracted_and_uses_theme_tokens():
         "text-status-info-text",
     ]:
         assert semantic_class in workflow_graph
+
+
+def test_overview_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Overview */}")
+    end = app.index("{activeTab === 'agents_memory'", start)
+    overview_mount = app[start:end]
+
+    assert "<OverviewTab" in overview_mount
+    assert "Current Mission" not in overview_mount
+    assert "Run Environment Configuration" not in overview_mount
+    assert "Start another run for this project" not in overview_mount
+
+    overview_tab = root / "frontend" / "src" / "components" / "tabs" / "OverviewTab.jsx"
+    assert overview_tab.exists()
+    overview_panel = overview_tab.read_text(encoding="utf-8")
+
+    for required_text in [
+        "Current Mission",
+        "Run Environment Configuration",
+        "Start another run for this project",
+        "Retry Blocked Workers",
+    ]:
+        assert required_text in overview_panel
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+    ]
+    assert {snippet: overview_panel.count(snippet) for snippet in disallowed_snippets if snippet in overview_panel} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+    ]:
+        assert semantic_class in overview_panel
 
 
 def test_roles_page_is_extracted_and_uses_theme_tokens():
