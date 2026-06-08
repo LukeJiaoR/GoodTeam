@@ -1716,6 +1716,25 @@ def test_directory_picker_modal_is_extracted_from_app_shell():
     assert "<DirectoryPickerModal" in app
 
 
+def test_new_project_modal_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    modal = root / "frontend" / "src" / "components" / "NewProjectModal.jsx"
+
+    assert modal.exists()
+    modal_source = modal.read_text(encoding="utf-8")
+    assert "export default function NewProjectModal" in modal_source
+    assert "Start Workflow Console" in modal_source
+    assert "Create or Adopt Project" in modal_source
+    assert "Project Location" in modal_source
+    assert "Launch Check" in modal_source
+    assert "DELIVERY_MODE_OPTIONS.map" in modal_source
+    assert "Start Workflow Console" not in app
+    assert "DELIVERY_MODE_OPTIONS.map" not in app
+    assert "import NewProjectModal from './components/NewProjectModal';" in app
+    assert "<NewProjectModal" in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
