@@ -100,5 +100,13 @@ def test_failure_pattern_library_reports_routing_readiness_without_applying_patt
     assert report["candidate_count"] == 1
     assert report["routing_application"] == "deferred"
     assert report["routing_gate_satisfied"] is False
+    assert report["shadow_routing"] == "enabled"
+    assert report["false_positive_review_required"] is True
     assert report["candidate_patterns"][0]["classifier_hint"] == "network"
     assert report["candidate_patterns"][0]["hit_count"] == 3
+    assert report["candidate_patterns"][0]["would_route_to"] == "escalate_human"
+    assert report["candidate_patterns"][0]["confidence_inputs"] == {
+        "hit_count": 3,
+        "roles": ["implementation"],
+        "nodes": ["implementation"],
+    }

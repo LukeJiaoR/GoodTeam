@@ -1881,11 +1881,17 @@ def test_worker_failure_triage_records_failure_pattern_match_without_overriding_
     assert triage[-1]["failure_pattern_signature"].startswith("fail:")
     assert triage[-1]["failure_pattern_hits"] == "1"
     assert triage[-1]["failure_pattern_disposition"] == "escalate_human"
+    assert triage[-1]["would_route_to"] == "escalate_human"
+    assert triage[-1]["shadow_route_source"] == "failure_pattern"
+    assert triage[-1]["shadow_route_hit_count"] == "1"
+    assert triage[-1]["deterministic_disposition"] == "block"
     memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation")
     failure_events = [event for event in memory_events if event["source"] == "worker_failure:run-1:implementation:implementation"]
     assert "pattern_match=" in failure_events[0]["body"]
     assert "pattern_hits=1" in failure_events[0]["body"]
     assert "pattern_disposition=escalate_human" in failure_events[0]["body"]
+    assert "would_route_to=escalate_human" in failure_events[0]["body"]
+    assert "deterministic_disposition=block" in failure_events[0]["body"]
 
 
 def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):

@@ -103,7 +103,11 @@ class FailurePatternLibrary:
     def routing_readiness_report(self, *, min_hits: int = 3) -> dict[str, object]:
         threshold = max(int(min_hits), 1)
         patterns = self.list_patterns()
-        candidates = [pattern for pattern in patterns if int(pattern.get("hit_count", 0)) >= threshold]
+        candidates = [
+            shadow_routing_candidate(pattern)
+            for pattern in patterns
+            if int(pattern.get("hit_count", 0)) >= threshold
+        ]
         return {
             "total_patterns": len(patterns),
             "total_hits": sum(int(pattern.get("hit_count", 0)) for pattern in patterns),
@@ -111,6 +115,8 @@ class FailurePatternLibrary:
             "min_hits": threshold,
             "routing_application": "deferred",
             "routing_gate_satisfied": False,
+            "shadow_routing": "enabled",
+            "false_positive_review_required": True,
             "candidate_patterns": candidates,
         }
 
@@ -162,6 +168,17 @@ def normalized_failure_class(failure_class: str) -> str:
 
 def normalize_disposition(disposition: str) -> str:
     return str(disposition or "block").strip() or "block"
+
+
+def shadow_routing_candidate(pattern: dict[str, object]) -> dict[str, object]:
+    candidate = dict(pattern)
+    candidate["would_route_to"] = normalize_disposition(str(candidate.get("recommended_disposition", "")))
+    candidate["confidence_inputs"] = {
+        "hit_count": int(candidate.get("hit_count", 0)),
+        "roles": [str(role) for role in candidate.get("roles", [])],
+        "nodes": [str(node) for node in candidate.get("nodes", [])],
+    }
+    return candidate
 
 
 def _append_unique(pattern: dict[str, object], key: str, value: str) -> None:

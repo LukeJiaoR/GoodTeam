@@ -1460,9 +1460,14 @@ def append_worker_triage_action(
         "status": str(result.get("status", "")),
     }
     if pattern_match:
+        would_route_to = str(pattern_match.get("recommended_disposition", ""))
         event["failure_pattern_signature"] = str(pattern_match.get("signature", ""))
         event["failure_pattern_hits"] = str(pattern_match.get("hit_count", ""))
-        event["failure_pattern_disposition"] = str(pattern_match.get("recommended_disposition", ""))
+        event["failure_pattern_disposition"] = would_route_to
+        event["would_route_to"] = would_route_to
+        event["shadow_route_source"] = "failure_pattern"
+        event["shadow_route_hit_count"] = str(pattern_match.get("hit_count", ""))
+        event["deterministic_disposition"] = disposition
     with action_log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event) + "\n")
 
@@ -1550,14 +1555,19 @@ def append_worker_failure_memory_event(
     attempts = int(result.get("attempts", 0) or 0)
     text = (
         f"FAILURE [{failure_class}] node=implementation; role={role}; "
-        f"summary={summary}; attempts={attempts}; disposition={disposition}"
+        f"attempts={attempts}; disposition={disposition}"
     )
     if pattern_match:
+        would_route_to = str(pattern_match.get("recommended_disposition", ""))
         text = (
-            f"{text}; pattern_match={pattern_match.get('signature', '')}; "
+            f"FAILURE [{failure_class}] node=implementation; attempts={attempts}; "
+            f"disposition={disposition}; deterministic_disposition={disposition}; "
+            f"pattern_match={pattern_match.get('signature', '')}; "
             f"pattern_hits={pattern_match.get('hit_count', '')}; "
-            f"pattern_disposition={pattern_match.get('recommended_disposition', '')}"
+            f"pattern_disposition={would_route_to}; "
+            f"would_route_to={would_route_to}"
         )
+    text = f"{text}; summary={summary}"
     source = f"worker_failure:{state.run_id}:implementation:{role}"
     RoleMemoryStore(memory_root).append_memory_event(role, horizon="short-term", text=text, source=source)
 
