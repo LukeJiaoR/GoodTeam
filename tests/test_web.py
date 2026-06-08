@@ -1912,6 +1912,27 @@ def test_workflow_graph_data_hook_is_extracted_from_app_shell():
     assert "/api/workflow/graph" not in app
 
 
+def test_dev_loop_data_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useDevLoopData.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useDevLoopData" in hook_source
+    assert "devLoopRequestSeq" in hook_source
+    assert "/api/devloop" in hook_source
+    assert "fetchDevLoop" in hook_source
+    assert "import { useDevLoopData } from './hooks/useDevLoopData';" in app
+    assert "const { devLoopData, loadingDevLoop, devLoopError, fetchDevLoop } = useDevLoopData();" in app
+    assert "const [devLoopData" not in app
+    assert "const [loadingDevLoop" not in app
+    assert "const [devLoopError" not in app
+    assert "const devLoopRequestSeq" not in app
+    assert "const fetchDevLoop = async" not in app
+    assert "/api/devloop" not in app
+
+
 def test_projects_home_page_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
