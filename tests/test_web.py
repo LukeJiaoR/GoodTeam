@@ -2077,6 +2077,49 @@ def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
         assert semantic_class in dev_loop_page
 
 
+def test_system_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: System */}")
+    end = app.index("</>", start)
+    system_mount = app[start:end]
+
+    assert "<SystemTab" in system_mount
+    assert "startContext.task_backend?.sync?.join" not in system_mount
+
+    system_tab = root / "frontend" / "src" / "components" / "tabs" / "SystemTab.jsx"
+    assert system_tab.exists()
+    system_page = system_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+        "bg-[#",
+        "border-[#",
+    ]
+    assert {snippet: system_page.count(snippet) for snippet in disallowed_snippets if snippet in system_page} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+    ]:
+        assert semantic_class in system_page
+
+
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 

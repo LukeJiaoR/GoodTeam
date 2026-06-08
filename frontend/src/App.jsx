@@ -50,6 +50,7 @@ import SmokeRunsTab from './components/tabs/SmokeRunsTab';
 import WorkersTab from './components/tabs/WorkersTab';
 import ApprovalsTab from './components/tabs/ApprovalsTab';
 import DevLoopTab from './components/tabs/DevLoopTab';
+import SystemTab from './components/tabs/SystemTab';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -4192,77 +4193,11 @@ export default function App() {
 
               {/* Tab: System */}
               {activeTab === 'system' && (
-                <div className="space-y-6">
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">System Information</h2>
-                    <p className="text-xs text-text-muted">Live JSON configuration files, workspaces parameters, and target variables.</p>
-                  </div>
-
-                  {/* Two columns of white cards: STATE / TARGET */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start font-semibold text-xs">
-
-                    {/* STATE Card */}
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-6 space-y-4">
-                      <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
-                        <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">Active Workflow State</h3>
-                        <span className="text-2xs text-text-muted uppercase tracking-wider">state/current.json</span>
-                      </div>
-
-                      {state ? (
-                        <dl className="space-y-3 font-semibold text-zinc-700 dark:text-zinc-300">
-                          {[
-                            { k: 'Run ID', v: state.run_id },
-                            { k: 'Project Key', v: state.project_key },
-                            { k: 'Current Node', v: state.current_node },
-                            { k: 'Next Node', v: state.next_node },
-                            { k: 'Model Profile', v: state.model_profile },
-                            { k: 'Delivery Mode', v: state.delivery_mode },
-                            { k: 'Source Type', v: state.source_type },
-                            { k: 'Source Ref', v: <FilePath path={state.source_ref} segments={2} /> },
-                            { k: 'Context Memory Path', v: <FilePath path={state.context_packet_path} segments={2} /> },
-                            { k: 'Task Ledger File', v: <FilePath path={state.artifacts?.task_ledger} segments={2} /> },
-                          ].map((field, index) => (
-                            <div key={index} className="flex justify-between items-center border-b border-border-subtle dark:border-zinc-900 pb-1.5 last:border-b-0">
-                              <dt className="text-text-muted uppercase text-2xs tracking-wider">{field.k}</dt>
-                              <dd className="font-mono text-[11px] truncate max-w-[200px] text-right font-bold text-zinc-800 dark:text-zinc-200">{field.v}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      ) : (
-                        <p className="text-zinc-400 italic text-center py-6">No run state loaded.</p>
-                      )}
-                    </div>
-
-                    {/* PROJECT TARGET Card */}
-                    <div className="bg-white dark:bg-zinc-950 border-2 border-border-subtle dark:border-zinc-800 shadow-card dark:shadow-card rounded-2xl p-6 space-y-4">
-                      <div className="border-b border-border-subtle pb-2 flex justify-between items-center">
-                        <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200">Project Target Config</h3>
-                        <span className="text-2xs text-text-muted uppercase tracking-wider">Projects environment</span>
-                      </div>
-
-                      <dl className="space-y-3 font-semibold text-zinc-700 dark:text-zinc-300">
-                        {[
-                          { k: 'Workspace Root', v: <FilePath path={startContext.workspace} segments={2} /> },
-                          { k: 'Model Config', v: <FilePath path={startContext.model_config} segments={2} /> },
-                          { k: 'Project Config', v: <FilePath path={startContext.project_config} segments={2} /> },
-                          { k: 'Project Base Folder', v: <FilePath path={startContext.project_base} segments={2} /> },
-                          { k: 'Task Backend Mode', v: startContext.task_backend?.mode },
-                          { k: 'Task Sync Destinations', v: startContext.task_backend?.sync?.join(', ') || 'Local only' },
-                          { k: 'Worker Backend Mode', v: startContext.worker_backend?.mode },
-                          { k: 'Deployment Backend', v: startContext.deployment_backend?.mode || 'None' },
-                          { k: 'Delivery Contract Req', v: startContext.delivery_contract?.required ? 'Yes' : 'No' },
-                          { k: 'Contract Min Gate', v: startContext.delivery_contract?.minimum_evidence || 'n/a' },
-                        ].map((field, index) => (
-                          <div key={index} className="flex justify-between items-center border-b border-border-subtle dark:border-zinc-900 pb-1.5 last:border-b-0">
-                            <dt className="text-text-muted uppercase text-2xs tracking-wider">{field.k}</dt>
-                            <dd className="font-mono text-[11px] truncate max-w-[200px] text-right font-bold text-zinc-800 dark:text-zinc-200">{field.v}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </div>
-
-                  </div>
-                </div>
+                <SystemTab
+                  state={state}
+                  startContext={startContext}
+                  FilePath={FilePath}
+                />
               )}
             </>
           )}
