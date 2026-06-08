@@ -689,11 +689,101 @@ def _parse_gh_pull_requests(output: str, warnings: list[str]) -> list[dict[str, 
     return pull_requests
 
 
-def _land_command_for_pull_request(number: int, head_branch: str, worktrees: list[dict[str, str]]) -> str:
+def _land_command_for_pull_request(
+    number: int,
+    head_branch: str,
+    worktrees: list[dict[str, str]],
+    *,
+    review_rationale_path: str = "",
+) -> str:
     matching_worktree = next((worktree for worktree in worktrees if worktree.get("branch") == head_branch), None)
+    command = f"scripts/land-pr.sh {number}"
     if matching_worktree is None:
-        return f"scripts/land-pr.sh {number}"
-    return f"scripts/land-pr.sh {number} --worktree {matching_worktree['path']}"
+        return command
+    command = f"{command} --worktree {matching_worktree['path']}"
+    if review_rationale_path:
+        command = f"{command} --review-rationale {review_rationale_path}"
+    return command
+
+
+def _review_rationale_path(root: Path, number: int) -> Path:
+    return root / ".goodteam" / "provenance" / f"pr-{number}" / "review-rationale.md"
+
+
+def _non_empty_file_exists(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _worktree_status_for_path(path: str, root: Path, warnings: list[str]) -> str:
+    if not path:
+        return "missing"
+    result = _run_readonly_command(["git", "-C", path, "status", "--short"], root, warnings)
+    if result is None:
+        return "unknown"
+    if result.returncode != 0:
+        warnings.append(f"git status failed for worktree {path}")
+        return "unknown"
+    return "dirty" if result.stdout.strip() else "clean"
+
+
+def build_land_tag_readiness(
+    pull_requests: list[dict[str, object]],
+    pre_review_presence_by_pr: dict[int, bool],
+    worktrees: list[dict[str, str]],
+    worktree_status_by_path: dict[str, str],
+    root: Path,
+) -> dict[str, object]:
+    readiness_items: list[dict[str, object]] = []
+    for pull_request in pull_requests:
+        number = int(pull_request["number"])
+        head_branch = str(pull_request.get("head_branch", ""))
+        ci = str(pull_request.get("ci", "unknown"))
+        pre_review = pre_review_presence_by_pr.get(number, False)
+        matching_worktree = next((worktree for worktree in worktrees if worktree.get("branch") == head_branch), None)
+        worktree_path = str(matching_worktree.get("path", "")) if matching_worktree else ""
+        worktree_status = worktree_status_by_path.get(worktree_path, "missing") if worktree_path else "missing"
+        rationale_path = _review_rationale_path(root, number)
+        review_rationale_present = _non_empty_file_exists(rationale_path)
+        missing: list[str] = []
+        if ci != "pass":
+            missing.append("ci_not_green")
+        if not pre_review:
+            missing.append("missing_pre_review")
+        if matching_worktree is None:
+            missing.append("missing_worktree")
+        elif worktree_status == "dirty":
+            missing.append("dirty_worktree")
+        elif worktree_status != "clean":
+            missing.append("worktree_status_unknown")
+        if not review_rationale_present:
+            missing.append("missing_rationale")
+        readiness_items.append(
+            {
+                "pr": number,
+                "ready": not missing,
+                "missing": missing,
+                "command": _land_command_for_pull_request(
+                    number,
+                    head_branch,
+                    worktrees,
+                    review_rationale_path=str(rationale_path) if review_rationale_present else "",
+                ),
+                "ci": ci,
+                "pre_review": pre_review,
+                "head_branch": head_branch,
+                "worktree": worktree_path,
+                "worktree_status": worktree_status,
+                "review_rationale": review_rationale_present,
+                "review_rationale_path": str(rationale_path),
+            }
+        )
+    return {
+        "server_execution": "disabled_by_default",
+        "pull_requests": readiness_items,
+    }
 
 
 def _release_dir_for_root(root: Path) -> Path:
@@ -746,6 +836,7 @@ def _server_action_capability(
     mode: str,
     reason: str = "",
     command: str = "",
+    readiness: dict[str, object] | None = None,
 ) -> dict[str, object]:
     capability: dict[str, object] = {
         "available": available,
@@ -754,6 +845,8 @@ def _server_action_capability(
     }
     if command:
         capability["command"] = command
+    if readiness is not None:
+        capability["readiness"] = readiness
     return capability
 
 
@@ -761,6 +854,7 @@ def build_server_action_capabilities(
     root: Path | None,
     *,
     release_readiness: dict[str, object] | None = None,
+    land_tag_readiness: dict[str, object] | None = None,
     warnings: list[str] | None = None,
 ) -> dict[str, object]:
     capability_warnings: list[str] = [] if warnings is None else warnings
@@ -783,11 +877,13 @@ def build_server_action_capabilities(
                 available=False,
                 mode="human_command_only",
                 reason="disabled_by_default",
+                readiness=land_tag_readiness,
             ),
             "tag_release": _server_action_capability(
                 available=False,
                 mode="human_command_only",
                 reason="disabled_by_default",
+                readiness=land_tag_readiness,
             ),
             "graduate_release": _server_action_capability(
                 available=False,
@@ -850,6 +946,11 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
             worktrees = _parse_git_worktrees(git_result.stdout)
         else:
             warnings.append("git worktree list failed")
+    worktree_status_by_path = {
+        worktree["path"]: _worktree_status_for_path(worktree["path"], root, warnings)
+        for worktree in worktrees
+        if worktree.get("path")
+    }
 
     gh_result = _run_readonly_command(
         ["gh", "pr", "list", "--json", "number,title,headRefName,url,statusCheckRollup"],
@@ -879,16 +980,43 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
     for pull_request in pull_requests:
         number = int(pull_request["number"])
         head_branch = str(pull_request["head_branch"])
-        pull_request["land_ready"] = pull_request["ci"] == "pass" and pre_review_presence_by_pr.get(number, False)
-        pull_request["land_command"] = _land_command_for_pull_request(number, head_branch, worktrees)
+        matching_worktree = next((worktree for worktree in worktrees if worktree.get("branch") == head_branch), None)
+        worktree_path = str(matching_worktree.get("path", "")) if matching_worktree else ""
+        rationale_path = _review_rationale_path(root, number)
+        rationale_present = _non_empty_file_exists(rationale_path)
+        worktree_status = worktree_status_by_path.get(worktree_path, "missing") if worktree_path else "missing"
+        pull_request["land_ready"] = (
+            pull_request["ci"] == "pass"
+            and pre_review_presence_by_pr.get(number, False)
+            and worktree_status == "clean"
+            and rationale_present
+        )
+        pull_request["land_command"] = _land_command_for_pull_request(
+            number,
+            head_branch,
+            worktrees,
+            review_rationale_path=str(rationale_path) if rationale_present else "",
+        )
 
     release_readiness = build_release_readiness(root, warnings)
+    land_tag_readiness = build_land_tag_readiness(
+        pull_requests,
+        pre_review_presence_by_pr,
+        worktrees,
+        worktree_status_by_path,
+        root,
+    )
     return {
         "worktrees": worktrees,
         "pull_requests": pull_requests,
         "pre_reviews": pre_reviews,
+        "land_tag_readiness": land_tag_readiness,
         "release_readiness": release_readiness,
-        "server_actions": build_server_action_capabilities(root, release_readiness=release_readiness),
+        "server_actions": build_server_action_capabilities(
+            root,
+            release_readiness=release_readiness,
+            land_tag_readiness=land_tag_readiness,
+        ),
         "warnings": warnings,
         "generated_at": datetime.now(UTC).isoformat(),
     }

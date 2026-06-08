@@ -212,12 +212,23 @@ def test_api_server_actions_reports_disabled_destructive_capabilities(tmp_path, 
 
     def fake_build_server_action_capabilities(root):
         received_roots.append(root)
+        readiness = {"server_execution": "disabled_by_default", "pull_requests": []}
         return {
             "actions": {
                 "dispatch_track": {"available": True, "mode": "execute", "reason": ""},
                 "dry_smoke": {"available": True, "mode": "execute", "reason": ""},
-                "land_pr": {"available": False, "mode": "human_command_only", "reason": "disabled_by_default"},
-                "tag_release": {"available": False, "mode": "human_command_only", "reason": "disabled_by_default"},
+                "land_pr": {
+                    "available": False,
+                    "mode": "human_command_only",
+                    "reason": "disabled_by_default",
+                    "readiness": readiness,
+                },
+                "tag_release": {
+                    "available": False,
+                    "mode": "human_command_only",
+                    "reason": "disabled_by_default",
+                    "readiness": readiness,
+                },
                 "graduate_release": {
                     "available": False,
                     "mode": "human_command_only",
@@ -245,8 +256,10 @@ def test_api_server_actions_reports_disabled_destructive_capabilities(tmp_path, 
         "available": False,
         "mode": "human_command_only",
         "reason": "disabled_by_default",
+        "readiness": {"server_execution": "disabled_by_default", "pull_requests": []},
     }
     assert payload["actions"]["tag_release"]["reason"] == "disabled_by_default"
+    assert payload["actions"]["tag_release"]["readiness"]["server_execution"] == "disabled_by_default"
     assert payload["actions"]["graduate_release"]["mode"] == "human_command_only"
 
 
