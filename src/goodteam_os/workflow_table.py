@@ -81,7 +81,7 @@ _GATE_TRANSITIONS = {
     ),
     "rfc": GateTransition(
         gate="rfc",
-        on_approved_next="planner",
+        on_approved_next="security",
         on_changes_requested="revise_rfc",
         on_rejected="rejected",
         advisors=("qa",),

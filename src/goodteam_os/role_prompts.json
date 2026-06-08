@@ -216,6 +216,15 @@
       "summary": "Review architecture, security posture, contract and implementation risks."
     },
     {
+      "key": "security_review",
+      "title": "Security Review",
+      "roles": "Human, Security",
+      "approval": "security",
+      "artifact": "rfc",
+      "node": "security_review_gate",
+      "summary": "Confirm the approved architecture can proceed to implementation from a security-risk perspective."
+    },
+    {
       "key": "planning",
       "title": "Planning",
       "roles": "Planner",
@@ -296,7 +305,7 @@
     "prd": "prd",
     "rfc": "rfc",
     "staging": "staging_report",
-    "security": "review_report",
+    "security": "rfc",
     "release": "release_notes"
   },
   "artifact_contracts": {

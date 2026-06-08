@@ -1378,7 +1378,7 @@ def test_advance_approved_workflow_can_complete_contentops_run(tmp_path, monkeyp
     )
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved", "release": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved", "release": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
 
@@ -1424,6 +1424,27 @@ def test_advance_approved_workflow_can_complete_contentops_run(tmp_path, monkeyp
     assert (runtime_root / "README.md").is_file()
 
 
+def test_advance_approved_workflow_waits_for_security_gate_after_rfc(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "pending"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "security"
+
+    def fail_if_workers_run(self, job_id):
+        raise AssertionError("planner workers must not run before security approval")
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fail_if_workers_run)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.current_node == "security_review_gate"
+    assert result.next_node == "await_security_approval"
+    assert "implementation_handoff" not in result.artifacts
+
+
 def test_release_gate_artifacts_include_worker_evidence_not_placeholders(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state(
@@ -1438,7 +1459,7 @@ def test_release_gate_artifacts_include_worker_evidence_not_placeholders(tmp_pat
         "implementation": {"primary": "codex:gpt-5.3-codex"},
         "qa": {"primary": "codex:gpt-5.3-codex"},
     }
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
 
@@ -1519,7 +1540,7 @@ def test_delivery_workflow_stops_when_codex_worker_fails(tmp_path, monkeypatch):
     )
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
 
@@ -1555,7 +1576,7 @@ def test_delivery_workflow_blocks_when_qa_result_reports_failure(tmp_path, monke
     )
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
 
@@ -1594,7 +1615,7 @@ def test_delivery_failure_uses_declared_on_error_target(tmp_path, monkeypatch):
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
 
@@ -1637,7 +1658,7 @@ def test_retryable_worker_failure_reruns_then_succeeds_without_blocking(tmp_path
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
     calls_by_role: dict[str, int] = {}
@@ -1694,7 +1715,7 @@ def test_retry_exhausted_routes_to_on_error_and_records_blocker(tmp_path, monkey
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
     calls_by_role: dict[str, int] = {}
@@ -1760,7 +1781,7 @@ def test_escalated_worker_failure_writes_scoped_failure_memory_event(tmp_path, m
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
 
@@ -1831,7 +1852,7 @@ def test_worker_failure_triage_records_failure_pattern_match_without_overriding_
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
 
@@ -1872,7 +1893,7 @@ def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
     calls_by_role: dict[str, int] = {}
@@ -1924,7 +1945,7 @@ def test_multi_service_delivery_mode_expands_worker_expected_artifacts(tmp_path,
     state.delivery_mode = "multi_service"
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
     expected_by_role = {}
@@ -2057,7 +2078,7 @@ def test_delivery_workflow_stops_when_ui_worker_fails(tmp_path, monkeypatch):
     )
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
     state.current_node = "rfc_review_gate"
     state.next_node = "planner"
 

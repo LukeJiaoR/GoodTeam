@@ -1544,13 +1544,16 @@ _DASHBOARD_STEPPER_PRESENTATION: dict[str, tuple[dict[str, str], ...]] = {
     "prd": (),
     "architect": ({"label": "RFC", "node": "architect", "artifact": "rfc"},),
     "rfc": ({"label": "Arch Rev", "node": "rfc_review_gate", "approval": "rfc"},),
+    "security": (
+        {"label": "Security", "node": "security_review_gate", "approval": "security", "artifact": "rfc"},
+    ),
     "planner": (
         {"label": "Planning", "node": "planner", "artifact": "task_breakdown"},
         {"label": "UI Design", "node": "ui", "artifact": "ui_spec"},
         {"label": "Impl", "node": "implementation", "artifact": "implementation_handoff"},
         {"label": "QA", "node": "qa", "artifact": "qa_report"},
-        {"label": "Staging", "node": "code_review", "artifact": "code_review"},
-        {"label": "Security", "node": "staging", "approval": "staging", "artifact": "staging_report"},
+        {"label": "Code Review", "node": "code_review", "artifact": "code_review"},
+        {"label": "Staging", "node": "staging", "approval": "staging", "artifact": "staging_report"},
     ),
     "staging": (),
     "release": ({"label": "Release", "node": "release", "approval": "release", "artifact": "release_notes"},),
@@ -1559,19 +1562,7 @@ _DASHBOARD_STEPPER_PRESENTATION: dict[str, tuple[dict[str, str], ...]] = {
 
 
 def _dashboard_stepper_table_order() -> list[str]:
-    order: list[str] = []
-    seen: set[str] = set()
-    for gate, transition in GATE_TRANSITIONS.items():
-        if gate not in seen:
-            if transition.on_approved_next in seen:
-                order.insert(order.index(transition.on_approved_next), gate)
-            else:
-                order.append(gate)
-            seen.add(gate)
-        if transition.on_approved_next not in seen:
-            order.append(transition.on_approved_next)
-            seen.add(transition.on_approved_next)
-    return order
+    return ["takeover", *workflow_execution_plan(WORKFLOW_NODES, gate_transitions=GATE_TRANSITIONS).order]
 
 
 def _dashboard_stepper_steps() -> list[dict[str, str]]:
