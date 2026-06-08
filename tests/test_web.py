@@ -313,6 +313,35 @@ def test_build_dev_loop_reports_release_graduation_readiness_without_mutating(tm
     assert dev_loop["server_actions"]["actions"]["tag_release"]["available"] is False
 
 
+def test_build_server_actions_marks_destructive_actions_available_only_with_env_gate(tmp_path, monkeypatch):
+    disabled = web.build_server_action_capabilities(
+        tmp_path,
+        release_readiness={"graduate_command": "scripts/graduate-release.sh --ref abc1234"},
+        land_tag_readiness={"server_execution": "disabled_by_default", "pull_requests": []},
+    )
+
+    assert disabled["actions"]["land_pr"]["available"] is False
+    assert disabled["actions"]["land_pr"]["mode"] == "human_command_only"
+    assert disabled["actions"]["graduate_release"]["available"] is False
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+
+    enabled = web.build_server_action_capabilities(
+        tmp_path,
+        release_readiness={"graduate_command": "scripts/graduate-release.sh --ref abc1234"},
+        land_tag_readiness={"server_execution": "disabled_by_default", "pull_requests": []},
+    )
+
+    assert enabled["actions"]["land_pr"]["available"] is True
+    assert enabled["actions"]["land_pr"]["mode"] == "guarded_execute"
+    assert enabled["actions"]["land_pr"]["reason"] == ""
+    assert enabled["actions"]["tag_release"]["available"] is False
+    assert enabled["actions"]["tag_release"]["reason"] == "disabled_by_default"
+    assert enabled["actions"]["graduate_release"]["available"] is True
+    assert enabled["actions"]["graduate_release"]["mode"] == "guarded_execute"
+
+
 def test_build_dev_loop_hides_release_graduation_commands_for_non_goodteam_repo(tmp_path, monkeypatch):
     _init_git_repo(tmp_path)
 

@@ -3,6 +3,7 @@ import json
 import threading
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 
 import goodteam_os.web as web
@@ -261,6 +262,366 @@ def test_api_server_actions_reports_disabled_destructive_capabilities(tmp_path, 
     assert payload["actions"]["tag_release"]["reason"] == "disabled_by_default"
     assert payload["actions"]["tag_release"]["readiness"]["server_execution"] == "disabled_by_default"
     assert payload["actions"]["graduate_release"]["mode"] == "human_command_only"
+
+
+def test_api_server_action_run_rejects_until_env_nonce_and_confirmation_pass(tmp_path, monkeypatch):
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "0")
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    disabled = simulate_post(
+        "/api/server-actions/run",
+        {"action": "land_pr"},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 403 in disabled.responses
+    assert "disabled" in json.loads(disabled.wfile.getvalue().decode("utf-8"))["error"]
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+    missing_nonce = simulate_post(
+        "/api/server-actions/run",
+        {"action": "land_pr", "confirm": "LAND PR 57", "pr": 57},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+    assert 403 in missing_nonce.responses
+    assert "nonce" in json.loads(missing_nonce.wfile.getvalue().decode("utf-8"))["error"]
+
+    wrong_confirmation = simulate_post(
+        "/api/server-actions/run",
+        {"action": "land_pr", "nonce": "nonce-123", "confirm": "land pr 57", "pr": 57},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+    assert 400 in wrong_confirmation.responses
+    assert "confirmation" in json.loads(wrong_confirmation.wfile.getvalue().decode("utf-8"))["error"]
+
+    unsafe_action = simulate_post(
+        "/api/server-actions/run",
+        {"action": "tag_release", "nonce": "nonce-123", "confirm": "TAG RELEASE"},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+    assert 400 in unsafe_action.responses
+    assert "Unsupported" in json.loads(unsafe_action.wfile.getvalue().decode("utf-8"))["error"]
+
+
+def test_api_server_action_run_rejects_unsafe_release_refs_before_subprocess(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return web.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+    monkeypatch.setattr("goodteam_os.web.subprocess.run", fake_run)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    for ref in ("../../abc1234", "feature/../main", "--abc1234", "feature//@{abc1234}"):
+        handler = simulate_post(
+            "/api/server-actions/run",
+            {
+                "action": "graduate_release",
+                "nonce": "nonce-123",
+                "confirm": f"GRADUATE RELEASE {ref}",
+                "ref": ref,
+            },
+            headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+        )
+
+        assert 400 in handler.responses
+        assert "ref" in json.loads(handler.wfile.getvalue().decode("utf-8"))["error"]
+
+    assert calls == []
+
+
+def test_api_server_action_run_executes_allowlisted_land_pr_and_writes_audit(tmp_path, monkeypatch):
+    calls = []
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    (report_dir / "pre-review-57-report.md").write_text("reviewed\n", encoding="utf-8")
+    rationale_path = tmp_path / ".goodteam" / "provenance" / "pr-57" / "review-rationale.md"
+    rationale_path.parent.mkdir(parents=True)
+    rationale_path.write_text("Approved because the regression slice covers the change.\n", encoding="utf-8")
+
+    def fake_run(command, **kwargs):
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+        if command[-3:] == ["worktree", "list", "--porcelain"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="""worktree /repo/ready
+HEAD abc1234567890
+branch refs/heads/feat/ready
+
+""",
+                stderr="",
+            )
+        if command[:3] == ["git", "-C", "/repo/ready"] and command[-2:] == ["status", "--short"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:2] == ["gh", "pr"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "number": 57,
+                            "title": "Ready",
+                            "headRefName": "feat/ready",
+                            "url": "https://github.com/org/repo/pull/57",
+                            "statusCheckRollup": [{"conclusion": "SUCCESS", "status": "COMPLETED"}],
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        calls.append((command, kwargs))
+        return web.subprocess.CompletedProcess(command, 0, stdout="merged\n", stderr="")
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+    monkeypatch.setattr(web, "PRE_REVIEW_REPORT_DIR", report_dir)
+    monkeypatch.setattr("goodteam_os.web.subprocess.run", fake_run)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/server-actions/run",
+        {
+            "action": "land_pr",
+            "nonce": "nonce-123",
+            "confirm": "LAND PR 57",
+            "pr": 57,
+            "worktree": "/tmp/spoofed-worktree",
+            "review_rationale": "/tmp/spoofed-rationale.md",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 202 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["action"] == "land_pr"
+    assert payload["argv"] == [
+        "scripts/land-pr.sh",
+        "57",
+        "--worktree",
+        "/repo/ready",
+        "--review-rationale",
+        str(rationale_path),
+    ]
+    assert payload["stdout_tail"] == "merged\n"
+    assert calls == [
+        (
+            payload["argv"],
+            {
+                "cwd": tmp_path,
+                "capture_output": True,
+                "text": True,
+                "timeout": web.SERVER_ACTION_TIMEOUT_SECONDS,
+                "check": False,
+            },
+        )
+    ]
+    audit_files = sorted((tmp_path / ".goodteam" / "server-actions").glob("*.json"))
+    assert len(audit_files) == 1
+    audit = json.loads(audit_files[0].read_text(encoding="utf-8"))
+    assert audit["action"] == "land_pr"
+    assert audit["argv"] == payload["argv"]
+    assert audit["returncode"] == 0
+    assert audit["origin"] == "http://127.0.0.1:8788"
+    assert audit["typed_confirmation"] == "LAND PR 57"
+    assert audit["rollback_hint"] == "Use GitHub PR/release rollback guidance from the audit context; do not rerun blindly."
+
+
+def test_api_server_action_run_derives_land_paths_from_readiness_not_request(tmp_path, monkeypatch):
+    calls = []
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    (report_dir / "pre-review-57-report.md").write_text("reviewed\n", encoding="utf-8")
+    rationale_path = tmp_path / ".goodteam" / "provenance" / "pr-57" / "review-rationale.md"
+    rationale_path.parent.mkdir(parents=True)
+    rationale_path.write_text("Approved because the regression slice covers the change.\n", encoding="utf-8")
+
+    def fake_command(command, **kwargs):
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+        if command[-3:] == ["worktree", "list", "--porcelain"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="""worktree /repo/ready
+HEAD abc1234567890
+branch refs/heads/feat/ready
+
+""",
+                stderr="",
+            )
+        if command[:3] == ["git", "-C", "/repo/ready"] and command[-2:] == ["status", "--short"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:2] == ["gh", "pr"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "number": 57,
+                            "title": "Ready",
+                            "headRefName": "feat/ready",
+                            "url": "https://github.com/org/repo/pull/57",
+                            "statusCheckRollup": [{"conclusion": "SUCCESS", "status": "COMPLETED"}],
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        calls.append((command, kwargs))
+        return web.subprocess.CompletedProcess(command, 0, stdout="merged\n", stderr="")
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+    monkeypatch.setattr(web, "PRE_REVIEW_REPORT_DIR", report_dir)
+    monkeypatch.setattr("goodteam_os.web.subprocess.run", fake_command)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/server-actions/run",
+        {
+            "action": "land_pr",
+            "nonce": "nonce-123",
+            "confirm": "LAND PR 57",
+            "pr": 57,
+            "worktree": "/tmp/spoofed-worktree",
+            "review_rationale": "/tmp/spoofed-rationale.md",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 202 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["argv"] == [
+        "scripts/land-pr.sh",
+        "57",
+        "--worktree",
+        "/repo/ready",
+        "--review-rationale",
+        str(rationale_path),
+    ]
+    assert calls == [
+        (
+            payload["argv"],
+            {
+                "cwd": tmp_path,
+                "capture_output": True,
+                "text": True,
+                "timeout": web.SERVER_ACTION_TIMEOUT_SECONDS,
+                "check": False,
+            },
+        )
+    ]
+
+
+def test_api_server_action_run_executes_graduate_release_non_interactively(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return web.subprocess.CompletedProcess(command, 0, stdout="graduated\n", stderr="")
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+    monkeypatch.setattr("goodteam_os.web.subprocess.run", fake_run)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/server-actions/run",
+        {
+            "action": "graduate_release",
+            "nonce": "nonce-123",
+            "confirm": "GRADUATE RELEASE abc1234",
+            "ref": "abc1234",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 202 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["argv"] == ["scripts/graduate-release.sh", "--ref", "abc1234", "--yes"]
+    assert calls == [
+        (
+            payload["argv"],
+            {
+                "cwd": tmp_path,
+                "capture_output": True,
+                "text": True,
+                "timeout": web.SERVER_ACTION_TIMEOUT_SECONDS,
+                "check": False,
+            },
+        )
+    ]
+
+
+def test_api_server_action_run_writes_audit_when_subprocess_times_out(tmp_path, monkeypatch):
+    def fake_run(command, **kwargs):
+        raise web.subprocess.TimeoutExpired(command, kwargs["timeout"], output="partial\n", stderr="timed out\n")
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+    monkeypatch.setattr("goodteam_os.web.subprocess.run", fake_run)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/server-actions/run",
+        {
+            "action": "graduate_release",
+            "nonce": "nonce-123",
+            "confirm": "GRADUATE RELEASE abc1234",
+            "ref": "abc1234",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 202 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["timed_out"] is True
+    assert payload["stdout_tail"] == "partial\n"
+    assert payload["stderr_tail"] == "timed out\n"
+    audit_files = sorted((tmp_path / ".goodteam" / "server-actions").glob("*.json"))
+    assert len(audit_files) == 1
+    audit = json.loads(audit_files[0].read_text(encoding="utf-8"))
+    assert audit["timed_out"] is True
+    assert audit["returncode"] is None
+    assert audit["argv"] == ["scripts/graduate-release.sh", "--ref", "abc1234", "--yes"]
+
+
+def test_api_server_action_run_resolves_project_root_from_project_config(tmp_path, monkeypatch):
+    target_root = tmp_path / "target"
+    target_root.mkdir()
+    write_project_config(tmp_path, key="REAL", repos={"root": target_root})
+    received_roots = []
+
+    def fake_run_gated_server_action(root, request, **kwargs):
+        received_roots.append(root)
+        return {"status": "completed", "action": request["action"], "audit_path": "/tmp/audit.json"}
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+    monkeypatch.setattr("goodteam_os.web.run_gated_server_action", fake_run_gated_server_action)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/server-actions/run",
+        {
+            "project": "REAL",
+            "action": "graduate_release",
+            "nonce": "nonce-123",
+            "confirm": "GRADUATE RELEASE abc1234",
+            "ref": "abc1234",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 202 in handler.responses
+    assert received_roots == [target_root]
 
 
 def test_api_smoke_run_starts_background_dry_run(tmp_path, monkeypatch):
