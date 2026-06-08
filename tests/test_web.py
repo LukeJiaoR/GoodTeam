@@ -127,10 +127,17 @@ def test_build_dev_loop_pre_reviews_reflect_report_presence(tmp_path, monkeypatc
     report_dir.mkdir()
     (report_dir / "pre-review-57-report.md").write_text("ok", encoding="utf-8")
     (report_dir / "pre-review-59-report.md").write_text("failed ci", encoding="utf-8")
+    rationale_path = tmp_path / ".goodteam" / "provenance" / "pr-57" / "review-rationale.md"
+    rationale_path.parent.mkdir(parents=True)
+    rationale_path.write_text("Approved because the regression slice covers the change.\n", encoding="utf-8")
     monkeypatch.setattr(web, "PRE_REVIEW_REPORT_DIR", report_dir)
     git_output = """worktree /repo/ready
 HEAD abc1234567890
 branch refs/heads/feat/ready
+
+worktree /repo/failing
+HEAD def1234567890
+branch refs/heads/feat/failing
 
 """
     gh_output = json.dumps(
@@ -164,6 +171,10 @@ branch refs/heads/feat/ready
             return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
         if command[-3:] == ["worktree", "list", "--porcelain"]:
             return SimpleNamespace(returncode=0, stdout=git_output, stderr="")
+        if command[:3] == ["git", "-C", "/repo/ready"] and command[-2:] == ["status", "--short"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[:3] == ["git", "-C", "/repo/failing"] and command[-2:] == ["status", "--short"]:
+            return SimpleNamespace(returncode=0, stdout=" M src/goodteam_os/web.py\n", stderr="")
         return SimpleNamespace(returncode=0, stdout=gh_output, stderr="")
 
     monkeypatch.setattr(web.subprocess, "run", fake_run)
@@ -178,7 +189,7 @@ branch refs/heads/feat/ready
             "ci": "pass",
             "url": "https://github.com/org/repo/pull/57",
             "land_ready": True,
-            "land_command": "scripts/land-pr.sh 57 --worktree /repo/ready",
+            "land_command": f"scripts/land-pr.sh 57 --worktree /repo/ready --review-rationale {rationale_path}",
         },
         {
             "number": 58,
@@ -196,7 +207,7 @@ branch refs/heads/feat/ready
             "ci": "fail",
             "url": "https://github.com/org/repo/pull/59",
             "land_ready": False,
-            "land_command": "scripts/land-pr.sh 59",
+            "land_command": "scripts/land-pr.sh 59 --worktree /repo/failing",
         },
     ]
     assert dev_loop["pre_reviews"] == [
@@ -204,6 +215,51 @@ branch refs/heads/feat/ready
         {"pr": 58, "present": False, "report_path": str(report_dir / "pre-review-58-report.md")},
         {"pr": 59, "present": True, "report_path": str(report_dir / "pre-review-59-report.md")},
     ]
+    assert dev_loop["land_tag_readiness"]["server_execution"] == "disabled_by_default"
+    assert dev_loop["land_tag_readiness"]["pull_requests"] == [
+        {
+            "pr": 57,
+            "ready": True,
+            "missing": [],
+            "command": f"scripts/land-pr.sh 57 --worktree /repo/ready --review-rationale {rationale_path}",
+            "ci": "pass",
+            "pre_review": True,
+            "head_branch": "feat/ready",
+            "worktree": "/repo/ready",
+            "worktree_status": "clean",
+            "review_rationale": True,
+            "review_rationale_path": str(rationale_path),
+        },
+        {
+            "pr": 58,
+            "ready": False,
+            "missing": ["ci_not_green", "missing_pre_review", "missing_worktree", "missing_rationale"],
+            "command": "scripts/land-pr.sh 58",
+            "ci": "pending",
+            "pre_review": False,
+            "head_branch": "feat/waiting",
+            "worktree": "",
+            "worktree_status": "missing",
+            "review_rationale": False,
+            "review_rationale_path": str(tmp_path / ".goodteam" / "provenance" / "pr-58" / "review-rationale.md"),
+        },
+        {
+            "pr": 59,
+            "ready": False,
+            "missing": ["ci_not_green", "dirty_worktree", "missing_rationale"],
+            "command": "scripts/land-pr.sh 59 --worktree /repo/failing",
+            "ci": "fail",
+            "pre_review": True,
+            "head_branch": "feat/failing",
+            "worktree": "/repo/failing",
+            "worktree_status": "dirty",
+            "review_rationale": False,
+            "review_rationale_path": str(tmp_path / ".goodteam" / "provenance" / "pr-59" / "review-rationale.md"),
+        },
+    ]
+    assert dev_loop["server_actions"]["actions"]["land_pr"]["readiness"] == dev_loop["land_tag_readiness"]
+    assert dev_loop["server_actions"]["actions"]["land_pr"]["available"] is False
+    assert dev_loop["server_actions"]["actions"]["tag_release"]["available"] is False
 
 
 def test_build_dev_loop_reports_release_graduation_readiness_without_mutating(tmp_path, monkeypatch):

@@ -189,7 +189,7 @@
 
 ### CP6 - Server-Side Land/Tag Readiness Only
 
-**Status:** planned.
+**Status:** completed in branch `feat/land-tag-readiness`.
 
 **Scope:** Surface exact readiness and copyable command data for `land-pr.sh` and `graduate-release.sh` without executing them from the server.
 
@@ -203,6 +203,17 @@
 **Verification:**
 - API tests for ready/not-ready states.
 - UI contract/build if rendered.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_dev_loop_pre_reviews_reflect_report_presence -q` first failed because the readiness projection did not include review rationale command wiring or worktree dirty-state checks.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_dev_loop_pre_reviews_reflect_report_presence -q` -> `1 passed`.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_dev_loop_pre_reviews_reflect_report_presence tests/test_api.py::test_api_server_actions_reports_disabled_destructive_capabilities -q` -> `2 passed`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py tests/test_api.py -q -k 'dev_loop or server_actions or release_readiness or frontend_contract_exposes_release_readiness'` -> `11 passed, 198 deselected`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/web.py tests/test_web.py tests/test_api.py` -> `All checks passed!`.
+- `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `568 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
+- Static endpoint/command scan: `rg -n "gh pr merge|git tag|git checkout|do_POST.*land|land_pr|tag_release|graduate_release|server_execution" src/goodteam_os/web.py tests/test_web.py tests/test_api.py` -> no new land/tag execution handler or destructive command; only disabled capability/readiness fields and tests.
 
 **Rollback:** Revert CP6 PR; manual scripts still work.
 
