@@ -32,6 +32,7 @@ import { useDirectoryPicker } from './hooks/useDirectoryPicker';
 import { useDispatchTrackForm } from './hooks/useDispatchTrackForm';
 import { useNewProjectForm } from './hooks/useNewProjectForm';
 import { useProjectUrl } from './hooks/useProjectUrl';
+import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
 import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';
@@ -251,11 +252,7 @@ export default function App() {
   const [allProjectKeys, setAllProjectKeys] = useState([]);
   const crossSearchRequestSeq = useRef(0);
 
-  // Workflow Graph states
-  const [graphData, setGraphData] = useState(null);
-  const [loadingGraph, setLoadingGraph] = useState(false);
-  const [graphError, setGraphError] = useState(null);
-  const graphRequestSeq = useRef(0);
+  const { graphData, loadingGraph, graphError, fetchWorkflowGraph } = useWorkflowGraphData();
 
   // Dev Loop states
   const [devLoopData, setDevLoopData] = useState(null);
@@ -643,40 +640,12 @@ export default function App() {
     }, 300);
   };
 
-  const fetchWorkflowGraph = async (key) => {
-    const seq = graphRequestSeq.current + 1;
-    graphRequestSeq.current = seq;
-
-    setLoadingGraph(true);
-    setGraphError(null);
-    try {
-      const response = await fetch(`/api/workflow/graph?project=${encodeURIComponent(key)}`);
-      const payload = await response.json().catch(() => ({}));
-
-      if (graphRequestSeq.current !== seq) return;
-
-      if (!response.ok) {
-        throw new Error(payload.error || `Failed to fetch workflow graph (HTTP ${response.status})`);
-      }
-      setGraphData(payload);
-    } catch (err) {
-      if (graphRequestSeq.current === seq) {
-        console.error('Error fetching workflow graph:', err);
-        setGraphError(err.message);
-      }
-    } finally {
-      if (graphRequestSeq.current === seq) {
-        setLoadingGraph(false);
-      }
-    }
-  };
-
   // Lazy fetch workflow graph data when the Workflow Graph tab is opened
   useEffect(() => {
     if (activeTab === 'workflow' && projectKey) {
       fetchWorkflowGraph(projectKey);
     }
-  }, [activeTab, projectKey]);
+  }, [activeTab, fetchWorkflowGraph, projectKey]);
 
   // Lazy fetch memory data when the Memory tab is opened
   useEffect(() => {

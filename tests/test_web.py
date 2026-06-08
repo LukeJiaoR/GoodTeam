@@ -1891,6 +1891,27 @@ def test_clipboard_feedback_hook_is_extracted_from_app_shell():
     assert "document.execCommand('copy')" not in app
 
 
+def test_workflow_graph_data_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useWorkflowGraphData.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useWorkflowGraphData" in hook_source
+    assert "graphRequestSeq" in hook_source
+    assert "/api/workflow/graph" in hook_source
+    assert "fetchWorkflowGraph" in hook_source
+    assert "import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';" in app
+    assert "const { graphData, loadingGraph, graphError, fetchWorkflowGraph } = useWorkflowGraphData();" in app
+    assert "const [graphData" not in app
+    assert "const [loadingGraph" not in app
+    assert "const [graphError" not in app
+    assert "const graphRequestSeq" not in app
+    assert "const fetchWorkflowGraph = async" not in app
+    assert "/api/workflow/graph" not in app
+
+
 def test_projects_home_page_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
