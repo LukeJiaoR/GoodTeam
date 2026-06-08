@@ -2028,6 +2028,58 @@ def test_cross_project_memory_search_hook_is_extracted_from_app_shell():
     assert "/api/memory/cross" not in app
 
 
+def test_approval_editor_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useApprovalEditor.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useApprovalEditor" in hook_source
+    for api_path in [
+        "/api/artifact?project=",
+        "/api/open-questions?",
+        "/api/answer-open-questions",
+        "/api/refine-artifact",
+        "/api/accept-refinement",
+        "/api/discard-refinement",
+    ]:
+        assert api_path in hook_source
+        assert api_path not in app
+    for hook_name in [
+        "handleEditArtifact",
+        "handleOpenQuestionsFromApproval",
+        "handleSaveArtifact",
+        "fetchOpenQuestions",
+        "handleApplyAnswers",
+        "handleRefineArtifact",
+        "handleAcceptRefinement",
+        "handleDiscardRefinement",
+    ]:
+        assert hook_name in hook_source
+    assert "import { useApprovalEditor } from './hooks/useApprovalEditor';" in app
+    assert "const approvalEditor = useApprovalEditor({" in app
+    for state_name in [
+        "editingArtifact",
+        "editorContent",
+        "refineLoading",
+        "proposedRevision",
+        "openQuestions",
+        "openQuestionsAnswers",
+        "fetchingOpenQuestions",
+        "answeringOpenQuestions",
+    ]:
+        assert f"const [{state_name}" not in app
+    assert "const handleEditArtifact = async" not in app
+    assert "const handleOpenQuestionsFromApproval = async" not in app
+    assert "const handleSaveArtifact = async" not in app
+    assert "const fetchOpenQuestions = async" not in app
+    assert "const handleApplyAnswers = async" not in app
+    assert "const handleRefineArtifact = async" not in app
+    assert "const handleAcceptRefinement = async" not in app
+    assert "const handleDiscardRefinement = async" not in app
+
+
 def test_projects_home_page_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
