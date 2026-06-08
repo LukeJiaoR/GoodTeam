@@ -28,6 +28,7 @@ import ProjectsHomePage from './components/ProjectsHomePage';
 import Spinner from './components/Spinner';
 import { useAppearancePreferences } from './hooks/useAppearancePreferences';
 import { useDirectoryPicker } from './hooks/useDirectoryPicker';
+import { useDispatchTrackForm } from './hooks/useDispatchTrackForm';
 import { useNewProjectForm } from './hooks/useNewProjectForm';
 import { useProjectUrl } from './hooks/useProjectUrl';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
@@ -178,18 +179,32 @@ export default function App() {
     setDeliveryContractAcceptance,
   } = newProjectForm;
 
-  // Dispatch track form states
-  const [dispatchName, setDispatchName] = useState('');
-  const [dispatchRole, setDispatchRole] = useState('backend');
-  const [dispatchCustomRole, setDispatchCustomRole] = useState('');
-  const [dispatchAdapter, setDispatchAdapter] = useState('codex');
-  const [dispatchCustomAdapter, setDispatchCustomAdapter] = useState('');
-  const [dispatchTask, setDispatchTask] = useState('');
-  const [dispatchConstraints, setDispatchConstraints] = useState('');
-  const [dispatchVerify, setDispatchVerify] = useState('');
-  const [dispatchLoading, setDispatchLoading] = useState(false);
-  const [dispatchError, setDispatchError] = useState(null);
-  const [dispatchSuccess, setDispatchSuccess] = useState(null);
+  const dispatchTrackForm = useDispatchTrackForm();
+  const {
+    dispatchName,
+    setDispatchName,
+    dispatchRole,
+    setDispatchRole,
+    dispatchCustomRole,
+    setDispatchCustomRole,
+    dispatchAdapter,
+    setDispatchAdapter,
+    dispatchCustomAdapter,
+    setDispatchCustomAdapter,
+    dispatchTask,
+    setDispatchTask,
+    dispatchConstraints,
+    setDispatchConstraints,
+    dispatchVerify,
+    setDispatchVerify,
+    dispatchLoading,
+    setDispatchLoading,
+    dispatchError,
+    setDispatchError,
+    dispatchSuccess,
+    setDispatchSuccess,
+    resetDispatchForm,
+  } = dispatchTrackForm;
 
   // Form submit button loading states
   const [actionLoading, setActionLoading] = useState(false);
@@ -1151,13 +1166,7 @@ export default function App() {
       };
       setDispatchSuccess(successData);
 
-      // Clear form on success
-      setDispatchName('');
-      setDispatchTask('');
-      setDispatchConstraints('');
-      setDispatchVerify('');
-      setDispatchCustomRole('');
-      setDispatchCustomAdapter('');
+      resetDispatchForm();
 
       showToast('Track dispatched successfully!');
 

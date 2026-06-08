@@ -1837,6 +1837,38 @@ def test_new_project_form_hook_is_extracted_from_app_shell():
         assert f"const [{state_name}" not in app
 
 
+def test_dispatch_track_form_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useDispatchTrackForm.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useDispatchTrackForm" in hook_source
+    assert "resetDispatchForm" in hook_source
+    assert "setDispatchName('')" in hook_source
+    assert "setDispatchTask('')" in hook_source
+    assert "setDispatchConstraints('')" in hook_source
+    assert "setDispatchVerify('')" in hook_source
+    assert "import { useDispatchTrackForm } from './hooks/useDispatchTrackForm';" in app
+    assert "const dispatchTrackForm = useDispatchTrackForm();" in app
+    assert "resetDispatchForm();" in app
+    for state_name in [
+        "dispatchName",
+        "dispatchRole",
+        "dispatchCustomRole",
+        "dispatchAdapter",
+        "dispatchCustomAdapter",
+        "dispatchTask",
+        "dispatchConstraints",
+        "dispatchVerify",
+        "dispatchLoading",
+        "dispatchError",
+        "dispatchSuccess",
+    ]:
+        assert f"const [{state_name}" not in app
+
+
 def test_projects_home_page_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
