@@ -2242,6 +2242,27 @@ def test_project_sidebar_is_extracted_from_app_shell_without_theme_changes():
     assert "lg:w-[220px]" not in app
 
 
+def test_project_header_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    header = root / "frontend" / "src" / "components" / "ProjectHeader.jsx"
+
+    assert header.exists()
+    header_source = header.read_text(encoding="utf-8")
+    assert "export default function ProjectHeader" in header_source
+    assert "lg:hidden h-[60px]" in header_source
+    assert "hidden lg:flex h-[60px]" in header_source
+    assert "GoodTeam" in header_source
+    assert "chrome.runId" in header_source
+    assert "status.complete" in header_source
+    assert "getStatusLabel(headerStatus, t)" in header_source
+    assert "mobileMenuOpen ? <X" in header_source
+    assert "import ProjectHeader from './components/ProjectHeader';" in app
+    assert "<ProjectHeader" in app
+    assert "lg:hidden h-[60px]" not in app
+    assert "hidden lg:flex h-[60px]" not in app
+
+
 def test_project_url_hook_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
@@ -3004,6 +3025,7 @@ def test_system_page_is_extracted_and_uses_theme_tokens():
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    project_header = (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8")
     hook = (root / "frontend" / "src" / "hooks" / "useAppearancePreferences.js").read_text(encoding="utf-8")
 
     assert "LANGUAGE_STORAGE_KEY" in hook
@@ -3015,7 +3037,8 @@ def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     assert "navGroups" in app
     assert "t('nav.groups.work')" in app
     assert "t('nav.tabs.overview')" in app
-    assert "t('chrome.dashboard')" in app
+    assert "t('chrome.dashboard')" in project_header
+    assert "t('chrome.runId')" in project_header
     assert "t('approvalBanner.review')" in app
     assert "t('chrome.loading')" in app
     assert "language.useAuto" in app
