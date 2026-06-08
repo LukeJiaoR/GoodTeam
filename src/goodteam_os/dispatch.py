@@ -172,7 +172,7 @@ def dispatch_tracks(
         if len(roles) > 1
     ]
     return {
-        "all_ok": not needs_human,
+        "all_ok": not needs_human and not file_collisions,
         "has_collisions": bool(file_collisions),
         "file_collisions": file_collisions,
         "jobs": jobs,

@@ -851,6 +851,31 @@ def maybe_send_favicon_response(handler: object, path: str) -> bool:
     return True
 
 
+def _allowed_cors_origin(origin: str, *, host: str, port: int) -> str:
+    if not origin:
+        return ""
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"}:
+        return ""
+    hostname = parsed.hostname or ""
+    allowed_hosts = {"localhost", "127.0.0.1", "::1"}
+    if host not in {"0.0.0.0", "::"}:
+        allowed_hosts.add(host)
+    if hostname not in allowed_hosts:
+        return ""
+    expected_port = port if parsed.scheme == "http" else 443
+    if parsed.port not in {None, expected_port}:
+        return ""
+    return origin
+
+
+def _send_cors_headers(handler: object, *, host: str, port: int) -> None:
+    origin = _allowed_cors_origin(str(handler.headers.get("Origin", "")), host=host, port=port)
+    if origin:
+        handler.send_header("Access-Control-Allow-Origin", origin)
+        handler.send_header("Vary", "Origin")
+
+
 def discover_project_directories(base_dir: Path | None = None) -> list[dict[str, str]]:
     base_dir = Path.home() if base_dir is None else base_dir
     if not base_dir.is_dir():
@@ -998,6 +1023,13 @@ def _validate_directory_path(label: str, value: str) -> Path:
     if not path.is_dir():
         raise ValueError(f"{label} path does not exist or is not a directory.")
     return path
+
+
+def _single_line_config_value(label: str, value: str, *, default: str = "") -> str:
+    text = value.strip() or default
+    if "\n" in text or "\r" in text:
+        raise ValueError(f"{label} must be a single line.")
+    return text
 
 
 GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS = 30
@@ -1178,8 +1210,8 @@ def create_local_project_config(
     create_remote: bool = False,
     remote_private: bool = True,
 ) -> dict[str, object]:
-    name = project_name.strip()
-    key = project_key.strip().upper()
+    name = _single_line_config_value("Project name", project_name)
+    key = _single_line_config_value("Project key", project_key).upper()
     if not name:
         raise ValueError("Project name is required.")
     if not key:
@@ -1223,10 +1255,12 @@ def create_local_project_config(
             git_result["warnings"].append(f"git setup skipped: {exc.__class__.__name__}")
 
     path = workspace / "projects" / f"{_slug(key)}.local.yaml"
-    profile = model_profile.strip() or "balanced"
+    profile = _single_line_config_value("Model profile", model_profile, default="balanced")
     mode = normalize_delivery_mode(delivery_mode)
     overrides = {
-        str(role).strip(): str(model).strip()
+        _single_line_config_value("Role model override role", str(role)): _single_line_config_value(
+            "Role model override model", str(model)
+        )
         for role, model in (role_model_overrides or {}).items()
         if str(role).strip() and str(model).strip()
     }
@@ -1247,33 +1281,35 @@ def create_local_project_config(
         "repos:",
     ])
     lines.extend(f"  {repo}: {repo_path}" for repo, repo_path in repos)
-    sync_values = [value for value in (task_sync or []) if value]
+    sync_values = [_single_line_config_value("Task sync value", str(value)) for value in (task_sync or []) if value]
     lines.extend(["task_backend:", "  mode: local", "  sync:"])
     if sync_values:
         lines[-1] = "  sync: " + ",".join(sync_values)
     else:
         lines[-1] = "  sync: "
     plane_config = {
-        "api_host_url": plane_api_host_url.strip(),
-        "workspace_slug": plane_workspace_slug.strip(),
-        "project_id": plane_project_id.strip(),
-        "api_key_env": plane_api_key_env.strip() or "PLANE_API_KEY",
-        "mcp_server": plane_mcp_server.strip() or "plane",
+        "api_host_url": _single_line_config_value("Plane API host URL", plane_api_host_url),
+        "workspace_slug": _single_line_config_value("Plane workspace slug", plane_workspace_slug),
+        "project_id": _single_line_config_value("Plane project ID", plane_project_id),
+        "api_key_env": _single_line_config_value("Plane API key env", plane_api_key_env, default="PLANE_API_KEY"),
+        "mcp_server": _single_line_config_value("Plane MCP server", plane_mcp_server, default="plane"),
     }
     if "plane" in sync_values:
         lines.append("  plane:")
         lines.extend(f"    {key}: {value}" for key, value in plane_config.items() if value)
-    worker_mode = worker_backend_mode.strip() or "codex"
+    worker_mode = _single_line_config_value("Worker backend mode", worker_backend_mode, default="codex")
     lines.extend(["worker_backend:", f"  mode: {worker_mode}"])
     deployment_backend = {
-        "mode": deployment_backend_mode.strip(),
-        "staging_ssh_target": staging_ssh_target.strip(),
-        "staging_remote_dir": staging_remote_dir.strip(),
-        "staging_git_ref": staging_git_ref.strip(),
-        "staging_public_url": staging_public_url.strip(),
-        "staging_deploy_command": staging_deploy_command.strip(),
-        "staging_healthcheck_command": staging_healthcheck_command.strip(),
-        "staging_smoke_command": staging_smoke_command.strip(),
+        "mode": _single_line_config_value("Deployment backend mode", deployment_backend_mode),
+        "staging_ssh_target": _single_line_config_value("Staging SSH target", staging_ssh_target),
+        "staging_remote_dir": _single_line_config_value("Staging remote dir", staging_remote_dir),
+        "staging_git_ref": _single_line_config_value("Staging git ref", staging_git_ref),
+        "staging_public_url": _single_line_config_value("Staging public URL", staging_public_url),
+        "staging_deploy_command": _single_line_config_value("Staging deploy command", staging_deploy_command),
+        "staging_healthcheck_command": _single_line_config_value(
+            "Staging healthcheck command", staging_healthcheck_command
+        ),
+        "staging_smoke_command": _single_line_config_value("Staging smoke command", staging_smoke_command),
     }
     if deployment_backend["mode"]:
         lines.extend(["deployment_backend:", f"  mode: {deployment_backend['mode']}"])
@@ -1326,7 +1362,11 @@ def _delivery_contract_lines(
     fatal_patterns: str,
     acceptance: str,
 ) -> list[str]:
-    pattern_values = [line.strip() for line in fatal_patterns.splitlines() if line.strip()]
+    pattern_values = [
+        _single_line_config_value("Delivery fatal pattern", line)
+        for line in fatal_patterns.splitlines()
+        if line.strip()
+    ]
     checks = []
     for raw_line in acceptance.splitlines():
         line = raw_line.strip()
@@ -1338,10 +1378,20 @@ def _delivery_contract_lines(
         check_id, check_type, command = parts
         if check_type not in {"ssh_command", "local_command"}:
             check_type = "ssh_command"
-        checks.append((check_id, check_type, command))
+        checks.append(
+            (
+                _single_line_config_value("Delivery acceptance check ID", check_id),
+                _single_line_config_value("Delivery acceptance check type", check_type),
+                _single_line_config_value("Delivery acceptance command", command),
+            )
+        )
     if not required and not pattern_values and not checks:
         return []
-    evidence = minimum_evidence.strip() or ("functional" if required else "infrastructure")
+    evidence = _single_line_config_value(
+        "Delivery contract minimum evidence",
+        minimum_evidence,
+        default="functional" if required else "infrastructure",
+    )
     lines = [
         "delivery_contract:",
         f"  required: {'true' if required else 'false'}",
@@ -1983,7 +2033,8 @@ def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
 
 def open_path_in_file_manager(*, workspace: Path, relative_path: str) -> dict[str, object]:
     target_path = (workspace / relative_path).resolve()
-    if not str(target_path).startswith(str(workspace.resolve())):
+    resolved_workspace = workspace.resolve()
+    if not target_path.is_relative_to(resolved_workspace):
         raise ValueError("Access denied: Path is outside workspace.")
 
     if not target_path.exists():
@@ -2221,16 +2272,7 @@ def render_file_path(path: str, artifact_key: str = "") -> str:
 
 
 def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    try:
-        _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
-    except Exception:
-        path = Path(artifact_key).resolve()
-        if not path.is_absolute():
-            path = (workspace / path).resolve()
-        if not str(path).startswith(str(workspace.resolve())) and not str(path).startswith("/Users/luke"):
-            raise ValueError("Access denied: path is outside allowed directories.")
-        if not path.is_file():
-            raise ValueError(f"File not found: {artifact_key}")
+    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
     return {
         "artifact": artifact_key,
         "path": str(path),
@@ -6338,7 +6380,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         self.send_response(200)
                         self.send_header("Content-Type", content_type)
                         self.send_header("Content-Length", str(len(body)))
-                        self.send_header("Access-Control-Allow-Origin", "*")
+                        _send_cors_headers(self, host=host, port=port)
                         self.end_headers()
                         self.wfile.write(body)
                         return
@@ -6357,7 +6399,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            _send_cors_headers(self, host=host, port=port)
             self.end_headers()
             self.wfile.write(body)
 
@@ -6565,7 +6607,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
 
         def do_OPTIONS(self) -> None:
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Origin", "*")
+            _send_cors_headers(self, host=host, port=port)
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.end_headers()
@@ -6575,7 +6617,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            _send_cors_headers(self, host=host, port=port)
             self.end_headers()
             self.wfile.write(body)
             self.wfile.flush()

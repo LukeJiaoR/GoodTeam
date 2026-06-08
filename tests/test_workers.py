@@ -513,6 +513,7 @@ def test_dispatch_tracks_reports_file_collisions_when_tracks_touch_same_file(tmp
     )
 
     assert payload["has_collisions"] is True
+    assert payload["all_ok"] is False
     assert payload["file_collisions"] == [{"path": "src/App.jsx", "roles": ["implementation", "ui"]}]
 
 
