@@ -1280,7 +1280,7 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert "  mode: local" in content
     assert "  sync: plane" in content
     assert "  plane:" in content
-    assert "    api_host_url: https://api.plane.so/" in content
+    assert '    api_host_url: "https://api.plane.so/"' in content
     assert "    workspace_slug: leader_kanban" in content
     assert "    project_id: project-123" in content
     assert "    api_key_env: PLANE_API_KEY" in content
@@ -1296,15 +1296,15 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert "  staging_ssh_target: contentops-staging" in content
     assert "  staging_remote_dir: /srv/contentops" in content
     assert "  staging_git_ref: main" in content
-    assert "  staging_public_url: https://staging.contentops.example.com" in content
+    assert '  staging_public_url: "https://staging.contentops.example.com"' in content
     assert "  staging_deploy_command: docker compose up -d --build" in content
-    assert "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health" in content
-    assert "  staging_smoke_command: curl -fsS https://staging.contentops.example.com/health" in content
+    assert '  staging_healthcheck_command: "curl -fsS http://127.0.0.1:8080/health"' in content
+    assert '  staging_smoke_command: "curl -fsS https://staging.contentops.example.com/health"' in content
     assert "delivery_contract:" in content
     assert "  required: true" in content
     assert "  minimum_evidence: functional" in content
     assert "  fatal_output_patterns:" in content
-    assert "    pattern_1: migrate: executable file not found" in content
+    assert '    pattern_1: "migrate: executable file not found"' in content
     assert "    pattern_2: relation .* does not exist" in content
     assert "  staging_acceptance:" in content
     assert "    check_1:" in content
@@ -1316,7 +1316,7 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert "      type: local_command" in content
     assert "      command: ./scripts/e2e-critical.sh" in content
     assert "role_model_overrides:" in content
-    assert "  architect: codex:gpt-5.5" in content
+    assert '  architect: "codex:gpt-5.5"' in content
     assert payload["worker_backend"] == {"mode": "codex"}
     assert payload["deployment_backend"]["mode"] == "ssh_compose"
     assert payload["delivery_contract"]["required"] is True
@@ -1354,6 +1354,37 @@ def test_create_local_project_config_round_trips_quoted_delivery_contract_values
             "id": "migrations:status",
             "type": "local_command",
             "command": 'bash -lc "echo key: value # keep"',
+        }
+    ]
+
+
+def test_create_local_project_config_preserves_literal_quote_wrapped_values(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+        deployment_backend_mode="ssh_compose",
+        staging_deploy_command='"deploy:prod # safe"',
+        delivery_contract_required=True,
+        delivery_contract_fatal_patterns='"ERROR: quoted"',
+        delivery_contract_acceptance='quoted-check|local_command|"npm run smoke:quoted # keep"',
+    )
+
+    config = Path(payload["project_config"])
+    target = web.load_project_target(config)
+    contract = delivery_contract_config(target)
+
+    assert target["deployment_backend"]["staging_deploy_command"] == '"deploy:prod # safe"'
+    assert contract["fatal_output_patterns"] == ['"ERROR: quoted"']
+    assert contract["staging_acceptance"] == [
+        {
+            "id": "quoted-check",
+            "type": "local_command",
+            "command": '"npm run smoke:quoted # keep"',
         }
     ]
 
