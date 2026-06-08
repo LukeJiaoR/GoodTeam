@@ -1663,6 +1663,7 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
         [
             app,
             (root / "frontend" / "src" / "components" / "ApprovalBanner.jsx").read_text(encoding="utf-8"),
+            (root / "frontend" / "src" / "components" / "GlobalToast.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "GitCreationNotice.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectSidebar.jsx").read_text(encoding="utf-8"),
@@ -2311,6 +2312,28 @@ def test_git_creation_notice_is_extracted_from_app_shell_without_theme_changes()
     assert "<GitCreationNotice" in app
     assert "Git Creation Notice" not in app
     assert "Git Repository Initialized" not in app
+
+
+def test_global_toast_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    toast = root / "frontend" / "src" / "components" / "GlobalToast.jsx"
+
+    assert toast.exists()
+    toast_source = toast.read_text(encoding="utf-8")
+    assert "export default function GlobalToast" in toast_source
+    assert "fixed top-4 right-4 z-50" in toast_source
+    assert "animate-fade-in-down" in toast_source
+    assert "message.isError" in toast_source
+    assert "bg-status-danger-bg text-status-danger-text border-status-danger" in toast_source
+    assert "bg-status-success-bg text-accent-text border-accent" in toast_source
+    assert "AlertTriangle" in toast_source
+    assert "Check" in toast_source
+    assert "message.text" in toast_source
+    assert "import GlobalToast from './components/GlobalToast';" in app
+    assert "<GlobalToast" in app
+    assert "Global Toast" not in app
+    assert "fixed top-4 right-4 z-50" not in app
 
 
 def test_project_url_hook_is_extracted_from_app_shell():

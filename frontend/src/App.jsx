@@ -9,7 +9,6 @@ import {
   Settings,
   X,
   RefreshCw,
-  Check,
   AlertTriangle,
   FileCode,
   MessageSquare,
@@ -43,6 +42,7 @@ import {
   LANGUAGE_PREFERENCE_AUTO,
 } from './i18n';
 import ApprovalBanner from './components/ApprovalBanner';
+import GlobalToast from './components/GlobalToast';
 import GitCreationNotice from './components/GitCreationNotice';
 import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
 import RolesTab from './components/tabs/RolesTab';
@@ -1102,13 +1102,7 @@ export default function App() {
           showGitNotice={showGitNotice}
         />
 
-        {/* Global Toast */}
-        {message && (
-          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border-2 flex items-center space-x-2 animate-fade-in-down ${message.isError ? 'bg-status-danger-bg text-status-danger-text border-status-danger' : 'bg-status-success-bg text-accent-text border-accent'}`}>
-            {message.isError ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
-            <span>{message.text}</span>
-          </div>
-        )}
+        <GlobalToast message={message} />
 
         {memoryEventDetail && (
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
