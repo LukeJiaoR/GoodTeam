@@ -1635,6 +1635,20 @@ def test_status_helpers_are_extracted_from_app_shell():
     assert "import { getBadgeStyle, getStatusLabel } from './utils/status';" in app
 
 
+def test_time_helpers_are_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    time_utils = root / "frontend" / "src" / "utils" / "time.js"
+
+    assert time_utils.exists()
+    utils_source = time_utils.read_text(encoding="utf-8")
+    assert "export function formatHumanTime" in utils_source
+    assert "May 27, 02:44" in utils_source
+    assert "padStart(2, '0')" in utils_source
+    assert "function formatHumanTime" not in app
+    assert "import { formatHumanTime } from './utils/time';" in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
