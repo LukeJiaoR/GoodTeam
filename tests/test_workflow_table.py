@@ -159,6 +159,60 @@ def test_workflow_dag_validation_rejects_unknown_failure_targets():
         raise AssertionError("expected unknown blocked target validation failure")
 
 
+def test_workflow_dag_validation_rejects_node_key_name_mismatch():
+    nodes = {
+        "planner": WorkflowNode(
+            name="delivery_planner",
+            run_guard_gate="rfc",
+            runner_fn="run_delivery_until_release_gate",
+        )
+    }
+    gate_transitions = {
+        "rfc": GateTransition(
+            gate="rfc",
+            on_approved_next="planner",
+            on_changes_requested="revise_rfc",
+            on_rejected="rejected",
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes, gate_transitions=gate_transitions)
+    except ValueError as exc:
+        assert "mapping key" in str(exc)
+        assert "planner" in str(exc)
+        assert "delivery_planner" in str(exc)
+    else:
+        raise AssertionError("expected node mapping key validation failure")
+
+
+def test_workflow_dag_validation_rejects_gate_key_name_mismatch():
+    nodes = {
+        "planner": WorkflowNode(
+            name="planner",
+            run_guard_gate="rfc",
+            runner_fn="run_delivery_until_release_gate",
+        )
+    }
+    gate_transitions = {
+        "rfc": GateTransition(
+            gate="architecture",
+            on_approved_next="planner",
+            on_changes_requested="revise_rfc",
+            on_rejected="rejected",
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes, gate_transitions=gate_transitions)
+    except ValueError as exc:
+        assert "mapping key" in str(exc)
+        assert "rfc" in str(exc)
+        assert "architecture" in str(exc)
+    else:
+        raise AssertionError("expected gate mapping key validation failure")
+
+
 def test_workflow_dag_validation_rejects_unknown_gate_transition_targets():
     nodes = {
         "planner": WorkflowNode(
