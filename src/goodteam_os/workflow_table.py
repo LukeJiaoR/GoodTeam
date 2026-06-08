@@ -139,9 +139,14 @@ def validate_workflow_dag(nodes: Mapping[str, WorkflowNode] | None = None) -> No
     node_table = nodes or WORKFLOW_NODES
     identifiers = set(node_table) | set(GATE_TRANSITIONS) | {"product_requirement", "staging"}
     for node in node_table.values():
+        if node.run_guard_gate not in GATE_TRANSITIONS:
+            raise ValueError(f"Workflow node {node.name!r} has unknown run guard gate {node.run_guard_gate!r}")
         for dependency in node.depends_on:
             if dependency not in identifiers:
                 raise ValueError(f"Workflow node {node.name!r} has unknown dependency {dependency!r}")
+        for label, target in [("error", node.on_error), ("blocked", node.on_blocked)]:
+            if target not in identifiers and target not in {"blocked", "rejected"}:
+                raise ValueError(f"Workflow node {node.name!r} has unknown {label} target {target!r}")
 
     visited: set[str] = set()
     visiting: list[str] = []
