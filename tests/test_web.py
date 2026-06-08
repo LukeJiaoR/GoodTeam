@@ -1590,8 +1590,9 @@ def test_frontend_contract_exposes_open_questions_at_approval_gate():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     approval_utils = (root / "frontend" / "src" / "utils" / "approvals.js").read_text(encoding="utf-8")
+    approval_metrics = (root / "frontend" / "src" / "utils" / "approvalMetrics.js").read_text(encoding="utf-8")
 
-    assert "openQuestionsGateCount" in app
+    assert "openQuestionsGateCount" in approval_metrics
     assert "Questions" in app
     assert "handleOpenQuestionsFromApproval" in app
     assert "export function suggestedAnswersForQuestion" in approval_utils
@@ -1778,6 +1779,33 @@ def test_approval_helpers_are_extracted_from_app_shell():
     assert "function suggestedAnswersForQuestion" not in app
     assert "function computeLineDiff" not in app
     assert "import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';" in app
+
+
+def test_approval_metrics_are_extracted_from_app_shell_without_behavior_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    approval_utils = root / "frontend" / "src" / "utils" / "approvalMetrics.js"
+
+    assert approval_utils.exists()
+    metrics_source = approval_utils.read_text(encoding="utf-8")
+    assert "export function buildApprovalMetrics" in metrics_source
+    assert "approvalReviews.filter(r => r.decision === 'approved').length" in metrics_source
+    assert "approvalReviews.filter(r => r.is_actionable).length" in metrics_source
+    assert "openQuestions.length" in metrics_source
+    assert "approvalReviews.length || 6" in metrics_source
+    assert "Math.min(100, Math.round((approvedCount / totalApprovalsCount) * 100))" in metrics_source
+    assert "approvalBanner.questions" in metrics_source
+    assert "plural: openQuestionsGateCount === 1 ? '' : 's'" in metrics_source
+    assert "approvedCount" in metrics_source
+    assert "actionableCount" in metrics_source
+    assert "approvalProgressPercent" in metrics_source
+    assert "approvalBannerQuestions" in metrics_source
+    assert "import { buildApprovalMetrics } from './utils/approvalMetrics';" in app
+    assert "buildApprovalMetrics({ approvalReviews, openQuestions, t })" in app
+    assert "const approvedCount = approvalReviews.filter" not in app
+    assert "const actionableCount = approvalReviews.filter" not in app
+    assert "approvalReviews.length || 6" not in app
+    assert "approvalBanner.questions" not in app
 
 
 def test_project_nav_groups_are_extracted_from_app_shell_without_chrome_changes():
