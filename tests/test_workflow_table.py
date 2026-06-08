@@ -21,7 +21,7 @@ from goodteam_os.workflow_table import (
 GROUND_TRUTH_APPROVED_NEXT = {
     "takeover": "product_requirement",
     "prd": "architect",
-    "rfc": "planner",
+    "rfc": "security",
     "staging": "release",
     "security": "planner",
     "release": "retro_memory",
@@ -40,6 +40,8 @@ def test_gate_transition_table_matches_ground_truth():
 
 
 def test_security_gate_is_declared_as_human_only_transition():
+    assert gate_transition("rfc").on_approved_next == "security"
+
     transition = gate_transition("security")
 
     assert transition.on_approved_next == "planner"

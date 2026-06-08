@@ -12,8 +12,10 @@ gates that require founder input or validated runtime evidence before
 implementation.
 
 **Gated / external-decision parking lot:**
-- D2b topological executor / parallel level execution — requires a real
-  non-linear fan-in or dynamic-plan consumer and live smoke budget.
+- D3 parallel level execution and deeper dynamic-plan runner ownership — D2b's
+  sequential security dependency gate is now wired; broader fan-in/dynamic-plan
+  execution still requires a real consumer, isolation design, and live smoke
+  budget.
 - Self-hosting graduate/tag controls and any server-side land/merge execution —
   intentionally held behind the human land gate and auth/security design.
 - Applying G3 failure-pattern recommendations to routing — requires validated
@@ -79,13 +81,17 @@ the mechanical half; this captures the document/provenance half).
 
 ## 🟠 GATED / PARKED — Real graph engine: replace the hand-rolled "graph" with a true collaboration DAG  (raised 2026-06-02, charter item — co-equal mainline with the memory engine)
 
-**STATUS 2026-06-07:** no directly actionable backlog project remains here. D2
-DAG-spec foundation is implemented locally: workflow nodes declare dependencies,
-dependency validation rejects unknown/cyclic graphs, topological ordering exists,
-and `/api/workflow/graph` exposes dependency edges. The remaining D2b/D3 work is
-parked until there is a real fan-in/dynamic-plan consumer and live smoke budget;
-replacing the current linear executor without that consumer would add risk without
-a product-visible scheduling need.
+**STATUS 2026-06-08:** D2b has one production runner semantic now: the declared
+`planner` dependency on `security` is enforced sequentially. RFC approval routes
+to a human-only `security_review_gate`; security approval then advances to the
+existing planner runner. D3 parallel level execution and deeper dynamic-plan
+runner ownership remain parked until there is a real fan-in/dynamic-plan consumer,
+worker isolation design, and live smoke budget.
+
+**STATUS 2026-06-07:** no directly actionable backlog project remained here at
+that point. D2 DAG-spec foundation was implemented locally: workflow nodes declare
+dependencies, dependency validation rejects unknown/cyclic graphs, topological
+ordering exists, and `/api/workflow/graph` exposes dependency edges.
 
 **STATUS 2026-06-04:** LANDED — declarative transition table (#36), D1 declarative failure/blocked
 edges + bounded retry (#48), D2a debate-as-advise-only-committee-at-gate (#51/#52/#53), workflow-graph

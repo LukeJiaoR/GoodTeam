@@ -341,12 +341,13 @@ def test_dashboard_stepper_order_follows_workflow_table_happy_path():
         "PRD",
         "RFC",
         "Arch Rev",
+        "Security",
         "Planning",
         "UI Design",
         "Impl",
         "QA",
+        "Code Review",
         "Staging",
-        "Security",
         "Release",
         "Retro",
     ]
@@ -360,17 +361,18 @@ def test_dashboard_stepper_order_follows_workflow_table_happy_path():
         "rfc_review_gate": 5,
         "await_rfc_approval": 5,
         "await_security_approval": 6,
-        "planner": 6,
-        "ui": 7,
-        "implementation": 8,
-        "qa": 9,
-        "code_review": 10,
-        "staging": 11,
-        "await_staging_approval": 11,
-        "release": 12,
-        "await_release_approval": 12,
-        "retro_memory": 13,
-        "complete": 14,
+        "security_review_gate": 6,
+        "planner": 7,
+        "ui": 8,
+        "implementation": 9,
+        "qa": 10,
+        "code_review": 11,
+        "staging": 12,
+        "await_staging_approval": 12,
+        "release": 13,
+        "await_release_approval": 13,
+        "retro_memory": 14,
+        "complete": 15,
     }
 
 
@@ -3633,9 +3635,21 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
     )
 
     assert payload["approvals"]["rfc"] == "approved"
+    assert payload["current_node"] == "security_review_gate"
+    assert payload["next_node"] == "await_security_approval"
+    assert "implementation_handoff" not in payload["artifacts"]
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="security",
+        decision="approved",
+    )
+
+    assert payload["approvals"]["security"] == "approved"
     assert payload["current_node"] == "staging_review_gate"
     assert payload["next_node"] == "await_staging_approval"
-    for artifact in ["review_report", "task_breakdown", "ui_spec", "implementation_handoff", "qa_report", "code_review", "staging_report"]:
+    for artifact in ["task_breakdown", "ui_spec", "implementation_handoff", "qa_report", "code_review", "staging_report"]:
         assert artifact in payload["artifacts"]
         assert Path(payload["artifacts"][artifact]).is_file()
     assert "release_notes" not in payload["artifacts"]
@@ -3648,7 +3662,7 @@ def test_decide_approval_approves_staging_and_generates_release_notes(tmp_path):
     state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
     state.current_node = "staging_review_gate"
     state.next_node = "await_staging_approval"
-    state.approvals.update({"prd": "approved", "rfc": "approved", "staging": "pending"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved", "staging": "pending"})
     state.artifacts["staging_report"] = str(staging_report)
     StateStore(tmp_path).write_project_current(state)
 
@@ -3735,10 +3749,78 @@ def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch)
         decision="approved",
     )
 
+    assert payload["current_node"] == "security_review_gate"
+    assert payload["next_node"] == "await_security_approval"
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="security",
+        decision="approved",
+    )
+
     assert payload["current_node"] == "implementation"
     assert payload["next_node"] == "blocked"
     assert payload["blockers"] == ["staging deploy failed"]
     assert "staging_report" in payload["artifacts"]
+
+
+def test_decide_approval_approves_security_and_runs_planner(tmp_path, monkeypatch):
+    project = tmp_path / "contentops"
+    for repo in ["docs", "backend", "frontend"]:
+        (project / repo).mkdir(parents=True)
+    project_config = tmp_path / "projects" / "contentops.local.yaml"
+    project_config.parent.mkdir()
+    project_config.write_text(
+        "\n".join(
+            [
+                "name: AI Content Studio",
+                "key: CONTENTOPS",
+                "repos:",
+                f"  docs: {project / 'docs'}",
+                f"  backend: {project / 'backend'}",
+                f"  frontend: {project / 'frontend'}",
+                "worker_backend:",
+                "  mode: codex",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "security_review_gate"
+    state.next_node = "await_security_approval"
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "pending"})
+    StateStore(tmp_path).write_project_current(state)
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": job["role"],
+            "adapter": job["adapter"],
+            "status": "completed",
+            "summary": f"{job['role']} completed",
+            "artifacts": [],
+            "changed_files": [],
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="security",
+        decision="approved",
+    )
+
+    assert payload["approvals"]["security"] == "approved"
+    assert payload["current_node"] == "release_review_gate"
+    assert payload["next_node"] == "await_release_approval"
+    assert "implementation_handoff" in payload["artifacts"]
+    assert "release_notes" in payload["artifacts"]
 
 
 def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient(tmp_path, monkeypatch):
@@ -3816,6 +3898,16 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
         workspace=tmp_path,
         project_key="CONTENTOPS",
         approval="rfc",
+        decision="approved",
+    )
+
+    assert payload["current_node"] == "security_review_gate"
+    assert payload["next_node"] == "await_security_approval"
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="security",
         decision="approved",
     )
 
@@ -3919,7 +4011,7 @@ def test_decide_approval_approves_release_and_completes_run(tmp_path):
     state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
     state.current_node = "release_review_gate"
     state.next_node = "await_release_approval"
-    state.approvals.update({"prd": "approved", "rfc": "approved", "release": "pending"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved", "release": "pending"})
     StateStore(tmp_path).write_project_current(state)
 
     payload = decide_approval(
@@ -3982,7 +4074,7 @@ def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeyp
     state.source_ref = str(project_config)
     state.current_node = "implementation"
     state.next_node = "blocked"
-    state.approvals.update({"prd": "approved", "rfc": "approved", "release": "pending"})
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved", "release": "pending"})
     state.blockers = ["implementation worker failed: Codex CLI exited with code 1."]
     StateStore(tmp_path).write_project_current(state)
 

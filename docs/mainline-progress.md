@@ -12,7 +12,7 @@ reference, verification evidence, and follow-up status.
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
 | 4 | Theme/App.jsx productization | Memory event modal extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | MemoryEventDetailModal/toast/git-notice/banner/header/sidebar/i18n/theme contract slice `24 passed`; frontend lint/build passed |
-| 5 | Graph/DAG engine D2 | Execution-plan foundation completed 2026-06-08 | Add deterministic topology levels over declared dependencies and expose them from `/api/workflow/graph` without replacing the linear runner or enabling parallel worker execution. | Focused workflow regression `19 passed`; graph/state regression `22 passed`; ruff/diff clean |
+| 5 | Graph/DAG engine D2b | Sequential dependency-gate runner semantics completed 2026-06-08 | Make declared gate dependencies affect real execution by routing RFC approval through the human-only security gate before planner starts, without enabling D3 parallel execution. | `554 passed`; ruff clean; frontend lint/build passed |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
@@ -22,8 +22,9 @@ reference, verification evidence, and follow-up status.
 ## Active Increment
 
 No active backlog increment remains. Remaining work is parked behind explicit gates
-or deliberate incremental tracks: D2b runner takeover / D3 parallel execution fan-in
-consumer and live-smoke gate, server-side land/tag auth/security design, G3 routing
+or deliberate incremental tracks: D3 parallel execution fan-in consumer and
+live-smoke/isolation gate, deeper dynamic-plan/topological runner ownership beyond
+the now-wired security dependency gate, server-side land/tag auth/security design, G3 routing
 outcome quality, G3 unknown-failure data for LLM triage, external Codex auth
 recovery, shared-worktree edit-collision need, optional full research/review memory
 ingestion, and continued Theme panel/component token cleanup with visual review.
@@ -31,6 +32,55 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-08 — Graph/DAG engine D2b: sequential dependency-gate runner semantics
+
+**Intent:** make the declared DAG gate dependency on `security` affect production
+workflow advancement while staying sequential and avoiding D3 parallel execution.
+
+**Implemented:**
+- Changed the RFC approval transition from `planner` to `security`.
+- Kept `security` as a human-only/no-op workflow node that approves onward to
+  `planner`.
+- Updated `advance_approved_workflow` so a workflow node checks gate dependencies
+  in `depends_on` before running; an unapproved gate dependency routes to that
+  gate's review state instead of starting downstream workers.
+- Mapped the security approval to the existing RFC artifact, making it an
+  explicit security-risk review of the architecture rather than a new generated
+  worker artifact.
+- Updated workflow-step metadata and the legacy dashboard stepper so Security,
+  Code Review, and Staging are distinct steps; the stepper now follows
+  `workflow_execution_plan(...).order` with the adoption-only takeover prefix.
+- Preserved sequential execution only. No dynamic per-run plan, worker fan-out,
+  or parallel level execution was added.
+
+**Verification evidence:**
+- Red/green slice:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py::test_gate_transition_table_matches_ground_truth tests/test_workflow_table.py::test_security_gate_is_declared_as_human_only_transition tests/test_graph_sample.py::test_advance_approved_workflow_waits_for_security_gate_after_rfc tests/test_web.py::test_decide_approval_approves_rfc_and_runs_to_release_gate tests/test_web.py::test_decide_approval_approves_security_and_runs_planner -q`
+  first failed because `rfc` still targeted `planner`, security pending did not
+  move to `security_review_gate`, and RFC approval still ran planner/staging;
+  after implementation it passed with `5 passed`.
+- Related workflow/web/graph regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py tests/test_graph_sample.py tests/test_web.py -q -k 'workflow or approval or security or staging or release or stepper or graph'`
+  -> `138 passed, 105 deselected`.
+- Full backend:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q`
+  -> `554 passed`.
+- Quality gates:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend CI parity:
+  `cd frontend && npm ci && npm run lint && npm run build`
+  -> passed.
+- Whitespace:
+  `git diff --check`
+  -> exit 0.
+
+**Deferred from this increment:**
+- D3 parallel level execution.
+- Dynamic per-run collaboration plans and non-gate fan-in runners.
+- Live worker smoke for parallel scheduling, because no parallel scheduling was
+  introduced.
 
 ### 2026-06-08 — Theme/App.jsx productization: memory event modal extraction
 
@@ -979,6 +1029,12 @@ commits.
 the `Backlog closure / gated parking` increment above. It is no longer an open
 backlog item because the explicit `Refine with AI` workflow, proposal review, and
 approval reset path already exist.
+
+**2026-06-08 follow-up:** D2b is no longer wholly open. The sequential
+security-dependency gate is wired into production runner semantics. The remaining
+graph-engine parking lot is D3 parallel execution plus deeper dynamic-plan runner
+ownership, both still gated on a real fan-in consumer, isolation design, and live
+smoke budget.
 
 **Verification evidence:**
 - Targeted proof command:

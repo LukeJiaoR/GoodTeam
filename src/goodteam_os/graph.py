@@ -950,7 +950,32 @@ def advance_approved_workflow(
     while True:
         before = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
         node = workflow_node(state.next_node)
-        if node is None or str(state.approvals.get(node.run_guard_gate, "")) != "approved":
+        if node is None:
+            return state
+        blocked_gate = next(
+            (
+                dependency
+                for dependency in node.depends_on
+                if dependency in state.approvals
+                and str(state.approvals.get(dependency, "")) != ApprovalDecision.APPROVED
+            ),
+            "",
+        )
+        if blocked_gate:
+            state.current_node = f"{blocked_gate}_review_gate"
+            state.next_node = gate_next_node(
+                state,
+                gate=blocked_gate,
+                approved_next=approved_next_for_gate(blocked_gate),
+            )
+            return state
+        if str(state.approvals.get(node.run_guard_gate, "")) != ApprovalDecision.APPROVED:
+            state.current_node = f"{node.run_guard_gate}_review_gate"
+            state.next_node = gate_next_node(
+                state,
+                gate=node.run_guard_gate,
+                approved_next=approved_next_for_gate(node.run_guard_gate),
+            )
             return state
         state = runners[node.runner_fn](state, workspace, project_config)
         after = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
@@ -964,6 +989,12 @@ def noop_security_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    state.current_node = "security_review_gate"
+    state.next_node = gate_next_node(
+        state,
+        gate="security",
+        approved_next=approved_next_for_gate("security"),
+    )
     return state
 
 
