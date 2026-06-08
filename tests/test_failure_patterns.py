@@ -1,4 +1,4 @@
-from goodteam_os.failure_patterns import FailurePatternLibrary
+from goodteam_os.failure_patterns import FailurePatternLibrary, canary_routing_decision
 
 
 def test_failure_pattern_library_upserts_hits_by_signature(tmp_path):
@@ -109,4 +109,78 @@ def test_failure_pattern_library_reports_routing_readiness_without_applying_patt
         "hit_count": 3,
         "roles": ["implementation"],
         "nodes": ["implementation"],
+    }
+
+
+def test_canary_routing_decision_applies_only_high_confidence_low_risk_patterns():
+    pattern = {
+        "signature": "fail:network",
+        "classifier_hint": "network",
+        "recommended_disposition": "escalate_human",
+        "hit_count": 3,
+    }
+
+    decision = canary_routing_decision(
+        failure_class="unknown",
+        deterministic_disposition="block",
+        pattern_match=pattern,
+        min_hits=3,
+    )
+
+    assert decision == {
+        "applied": True,
+        "disposition": "escalate_human",
+        "reason": "canary_allowed",
+        "source": "failure_pattern",
+    }
+
+    unsafe = canary_routing_decision(
+        failure_class="unknown",
+        deterministic_disposition="block",
+        pattern_match={**pattern, "classifier_hint": "scaffold"},
+        min_hits=3,
+    )
+    low_confidence = canary_routing_decision(
+        failure_class="unknown",
+        deterministic_disposition="block",
+        pattern_match={**pattern, "hit_count": 2},
+        min_hits=3,
+    )
+    ambiguous = canary_routing_decision(
+        failure_class="unknown",
+        deterministic_disposition="block",
+        pattern_match={**pattern, "recommended_disposition": "block"},
+        min_hits=3,
+    )
+    disabled = canary_routing_decision(
+        failure_class="unknown",
+        deterministic_disposition="block",
+        pattern_match=pattern,
+        min_hits=3,
+        enabled=False,
+    )
+
+    assert unsafe == {
+        "applied": False,
+        "disposition": "block",
+        "reason": "class_not_canary_safe",
+        "source": "failure_pattern",
+    }
+    assert low_confidence == {
+        "applied": False,
+        "disposition": "block",
+        "reason": "below_min_hits",
+        "source": "failure_pattern",
+    }
+    assert ambiguous == {
+        "applied": False,
+        "disposition": "block",
+        "reason": "disposition_not_canary_safe",
+        "source": "failure_pattern",
+    }
+    assert disabled == {
+        "applied": False,
+        "disposition": "block",
+        "reason": "disabled",
+        "source": "failure_pattern",
     }

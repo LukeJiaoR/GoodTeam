@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from difflib import unified_diff
 from dataclasses import asdict
@@ -6,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from goodteam_os.artifacts import ArtifactStore
-from goodteam_os.failure_patterns import FailurePatternLibrary
+from goodteam_os.failure_patterns import FailurePatternLibrary, canary_routing_decision
 from goodteam_os.memory import ProjectMemoryStore, RoleMemoryStore, summarize_markdown
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import load_project_target
@@ -1166,6 +1167,8 @@ def run_delivery_until_release_gate(
                 workspace=workspace,
                 project_config=project_config,
             )
+            if result.get("_goodteam_next_node_override"):
+                state.next_node = str(result["_goodteam_next_node_override"])
             state.blockers.append(triaged_worker_blocker_message(result, disposition=disposition))
         handoff_path = store.write_markdown(
             state.run_id,
@@ -1439,6 +1442,8 @@ def append_worker_triage_action(
     disposition: str,
     next_node: str,
     pattern_match: dict[str, object] | None = None,
+    deterministic_disposition: str = "",
+    canary_decision: dict[str, object] | None = None,
 ) -> None:
     if workspace is None:
         return
@@ -1467,7 +1472,10 @@ def append_worker_triage_action(
         event["would_route_to"] = would_route_to
         event["shadow_route_source"] = "failure_pattern"
         event["shadow_route_hit_count"] = str(pattern_match.get("hit_count", ""))
-        event["deterministic_disposition"] = disposition
+        event["deterministic_disposition"] = deterministic_disposition or disposition
+    if canary_decision:
+        event["canary_route_applied"] = str(bool(canary_decision.get("applied", False))).lower()
+        event["canary_route_reason"] = str(canary_decision.get("reason", ""))
     with action_log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event) + "\n")
 
@@ -1481,15 +1489,28 @@ def triage_worker_failure(
     project_config: Path | None,
 ) -> str:
     failure_class = normalized_failure_class(result)
-    disposition = disposition_for_failure_class(failure_class)
+    deterministic_disposition = disposition_for_failure_class(failure_class)
     pattern_match = find_worker_failure_pattern_match(workspace=workspace, result=result)
+    canary_decision = canary_routing_decision(
+        failure_class=failure_class,
+        deterministic_disposition=deterministic_disposition,
+        pattern_match=pattern_match,
+        enabled=g3_canary_routing_enabled(),
+    )
+    disposition = str(canary_decision.get("disposition", deterministic_disposition))
+    effective_next_node = next_node
+    if canary_decision.get("applied") is True:
+        effective_next_node = "failure_triage"
+        result["_goodteam_next_node_override"] = effective_next_node
     append_worker_triage_action(
         workspace=workspace,
         state=state,
         result=result,
         disposition=disposition,
-        next_node=next_node,
+        next_node=effective_next_node,
         pattern_match=pattern_match,
+        deterministic_disposition=deterministic_disposition,
+        canary_decision=canary_decision,
     )
     append_worker_failure_memory_event(
         state=state,
@@ -1497,6 +1518,8 @@ def triage_worker_failure(
         disposition=disposition,
         project_config=project_config,
         pattern_match=pattern_match,
+        deterministic_disposition=deterministic_disposition,
+        canary_decision=canary_decision,
     )
     append_worker_failure_pattern(
         workspace=workspace,
@@ -1505,6 +1528,10 @@ def triage_worker_failure(
         source=f"worker_failure:{state.run_id}:implementation:{str(result.get('role', 'worker')).strip() or 'worker'}",
     )
     return disposition
+
+
+def g3_canary_routing_enabled() -> bool:
+    return os.environ.get("GOODTEAM_G3_CANARY_ROUTING", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def find_worker_failure_pattern_match(
@@ -1545,6 +1572,8 @@ def append_worker_failure_memory_event(
     disposition: str,
     project_config: Path | None,
     pattern_match: dict[str, object] | None = None,
+    deterministic_disposition: str = "",
+    canary_decision: dict[str, object] | None = None,
 ) -> None:
     memory_root = failure_memory_root(project_config)
     if memory_root is None:
@@ -1559,9 +1588,15 @@ def append_worker_failure_memory_event(
     )
     if pattern_match:
         would_route_to = str(pattern_match.get("recommended_disposition", ""))
+        canary_text = ""
+        if canary_decision:
+            canary_text = (
+                f"; canary_route_applied={str(bool(canary_decision.get('applied', False))).lower()}"
+            )
         text = (
-            f"FAILURE [{failure_class}] node=implementation; attempts={attempts}; "
-            f"disposition={disposition}; deterministic_disposition={disposition}; "
+            f"FAILURE [{failure_class}]; "
+            f"disposition={disposition}; deterministic_disposition={deterministic_disposition or disposition}; "
+            f"{canary_text.lstrip('; ')}; "
             f"pattern_match={pattern_match.get('signature', '')}; "
             f"pattern_hits={pattern_match.get('hit_count', '')}; "
             f"pattern_disposition={would_route_to}; "

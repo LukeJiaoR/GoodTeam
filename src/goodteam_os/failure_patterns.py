@@ -11,6 +11,10 @@ SECRETISH_RE = re.compile(
     r"(?i)(api[_-]?key|access[_-]?token|bot[_-]?token|authorization|secret|password)\s*[:=]\s*\S+"
 )
 MAX_SUMMARY_CHARS = 240
+CANARY_SAFE_FAILURE_CLASSES = frozenset(
+    {"auth", "rate_limit", "network", "timeout", "stream_disconnect", "infra"}
+)
+CANARY_SAFE_DISPOSITIONS = frozenset({"escalate_human"})
 
 
 class FailurePatternLibrary:
@@ -179,6 +183,61 @@ def shadow_routing_candidate(pattern: dict[str, object]) -> dict[str, object]:
         "nodes": [str(node) for node in candidate.get("nodes", [])],
     }
     return candidate
+
+
+def canary_routing_decision(
+    *,
+    failure_class: str,
+    deterministic_disposition: str,
+    pattern_match: dict[str, object] | None,
+    min_hits: int = 3,
+    enabled: bool = True,
+) -> dict[str, object]:
+    deterministic = normalize_disposition(deterministic_disposition)
+    if not pattern_match:
+        return {
+            "applied": False,
+            "disposition": deterministic,
+            "reason": "no_pattern_match",
+            "source": "",
+        }
+    if not enabled:
+        return {
+            "applied": False,
+            "disposition": deterministic,
+            "reason": "disabled",
+            "source": "failure_pattern",
+        }
+
+    recommended = normalize_disposition(str(pattern_match.get("recommended_disposition", "")))
+    classifier_hint = normalized_failure_class(str(pattern_match.get("classifier_hint", failure_class)))
+    if int(pattern_match.get("hit_count", 0) or 0) < max(int(min_hits), 1):
+        return {
+            "applied": False,
+            "disposition": deterministic,
+            "reason": "below_min_hits",
+            "source": "failure_pattern",
+        }
+    if classifier_hint not in CANARY_SAFE_FAILURE_CLASSES:
+        return {
+            "applied": False,
+            "disposition": deterministic,
+            "reason": "class_not_canary_safe",
+            "source": "failure_pattern",
+        }
+    if recommended not in CANARY_SAFE_DISPOSITIONS:
+        return {
+            "applied": False,
+            "disposition": deterministic,
+            "reason": "disposition_not_canary_safe",
+            "source": "failure_pattern",
+        }
+    return {
+        "applied": True,
+        "disposition": recommended,
+        "reason": "canary_allowed",
+        "source": "failure_pattern",
+    }
 
 
 def _append_unique(pattern: dict[str, object], key: str, value: str) -> None:

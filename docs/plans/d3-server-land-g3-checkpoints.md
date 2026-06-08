@@ -251,7 +251,7 @@
 
 ### CP8 - G3 Canary Routing
 
-**Status:** planned.
+**Status:** completed in branch `feat/g3-canary-routing`.
 
 **Scope:** Apply pattern recommendations only to high-confidence, low-risk failure classes.
 
@@ -265,6 +265,15 @@
 **Verification:**
 - Tests for threshold failures and allowed canary successes.
 - Regression proving unsafe classes do not route.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_canary_routing_decision_applies_only_high_confidence_low_risk_patterns tests/test_graph_sample.py::test_worker_failure_triage_applies_canary_route_for_high_confidence_network_pattern -q` first failed because `canary_routing_decision` did not exist.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_canary_routing_decision_applies_only_high_confidence_low_risk_patterns tests/test_graph_sample.py::test_worker_failure_triage_applies_canary_route_for_high_confidence_network_pattern tests/test_graph_sample.py::test_worker_failure_triage_can_disable_canary_route_with_env_gate tests/test_graph_sample.py::test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition tests/test_graph_sample.py::test_escalated_worker_failure_writes_scoped_failure_memory_event -q` -> `5 passed`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_graph_sample.py tests/test_cli.py tests/test_workflow_table.py -q -k 'failure_pattern or canary or triage or worker_failure or retry_exhausted or disposition_for_failure_class or failure_patterns_outputs'` -> `16 passed, 105 deselected`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/failure_patterns.py src/goodteam_os/graph.py tests/test_failure_patterns.py tests/test_graph_sample.py` -> `All checks passed!`.
+- `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `573 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
 
 **Rollback:** Turn off canary flag or revert CP8 PR.
 
