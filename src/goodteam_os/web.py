@@ -1032,6 +1032,13 @@ def _single_line_config_value(label: str, value: str, *, default: str = "") -> s
     return text
 
 
+def _config_mapping_key(label: str, value: str) -> str:
+    key = _single_line_config_value(label, value)
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+        raise ValueError(f"{label} may only contain letters, numbers, underscores, and hyphens.")
+    return key
+
+
 GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS = 30
 
 
@@ -1258,7 +1265,7 @@ def create_local_project_config(
     profile = _single_line_config_value("Model profile", model_profile, default="balanced")
     mode = normalize_delivery_mode(delivery_mode)
     overrides = {
-        _single_line_config_value("Role model override role", str(role)): _single_line_config_value(
+        _config_mapping_key("Role model override role", str(role)): _single_line_config_value(
             "Role model override model", str(model)
         )
         for role, model in (role_model_overrides or {}).items()
@@ -1403,10 +1410,11 @@ def _delivery_contract_lines(
             lines.append(f"    pattern_{index}: {pattern}")
     if checks:
         lines.append("  staging_acceptance:")
-        for check_id, check_type, command in checks:
+        for index, (check_id, check_type, command) in enumerate(checks, start=1):
             lines.extend(
                 [
-                    f"    {check_id}:",
+                    f"    check_{index}:",
+                    f"      id: {check_id}",
                     f"      type: {check_type}",
                     f"      command: {command}",
                 ]

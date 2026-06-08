@@ -8,6 +8,7 @@ import pytest
 
 import goodteam_os.web as web
 from goodteam_os.messages import append_message
+from goodteam_os.staging import delivery_contract_config
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
@@ -1286,10 +1287,12 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert "    pattern_1: migrate: executable file not found" in content
     assert "    pattern_2: relation .* does not exist" in content
     assert "  staging_acceptance:" in content
-    assert "    migrations:" in content
+    assert "    check_1:" in content
+    assert "      id: migrations" in content
     assert "      type: ssh_command" in content
     assert "      command: docker compose exec -T backend ./migrate status" in content
-    assert "    critical-user-journey:" in content
+    assert "    check_2:" in content
+    assert "      id: critical-user-journey" in content
     assert "      type: local_command" in content
     assert "      command: ./scripts/e2e-critical.sh" in content
     assert "role_model_overrides:" in content
@@ -1301,6 +1304,52 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert payload["model_profile"] == "cheap"
     assert payload["delivery_mode"] == "multi_service"
     assert payload["role_model_overrides"] == {"architect": "codex:gpt-5.5"}
+
+
+def test_create_local_project_config_round_trips_quoted_delivery_contract_values(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+        deployment_backend_mode="ssh_compose",
+        staging_deploy_command='bash -lc "echo key: value # keep"',
+        delivery_contract_required=True,
+        delivery_contract_minimum_evidence="functional",
+        delivery_contract_fatal_patterns=r"ERROR: relation .* does not exist # fatal",
+        delivery_contract_acceptance='migrations:status|local_command|bash -lc "echo key: value # keep"',
+    )
+
+    config = Path(payload["project_config"])
+    target = web.load_project_target(config)
+    contract = delivery_contract_config(target)
+
+    assert target["deployment_backend"]["staging_deploy_command"] == 'bash -lc "echo key: value # keep"'
+    assert contract["fatal_output_patterns"] == [r"ERROR: relation .* does not exist # fatal"]
+    assert contract["staging_acceptance"] == [
+        {
+            "id": "migrations:status",
+            "type": "local_command",
+            "command": 'bash -lc "echo key: value # keep"',
+        }
+    ]
+
+
+def test_create_local_project_config_rejects_unsafe_role_model_override_keys(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+
+    with pytest.raises(ValueError, match="Role model override role"):
+        create_local_project_config(
+            workspace=tmp_path,
+            project_name="AI Content Studio",
+            project_key="CONTENTOPS",
+            project_root=str(project_root),
+            role_model_overrides={"architect: injected": "codex:gpt-5.5"},
+        )
 
 
 def test_create_local_project_config_writes_single_project_root(tmp_path):

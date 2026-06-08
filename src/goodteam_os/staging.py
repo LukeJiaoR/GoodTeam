@@ -325,7 +325,7 @@ def _normalize_acceptance_checks(value: object) -> list[dict[str, str]]:
             check_type = "ssh_command"
         checks.append(
             {
-                "id": str(check_id),
+                "id": str(raw_check.get("id", "") or check_id),
                 "type": check_type,
                 "command": command,
             }
