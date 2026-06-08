@@ -1967,6 +1967,58 @@ def test_workers_page_is_extracted_and_uses_theme_tokens():
         assert semantic_class in workers_page
 
 
+def test_approvals_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Approvals */}")
+    end = app.index("{/* Tab: Messages */}", start)
+    approvals_mount = app[start:end]
+
+    assert "<ApprovalsTab" in approvals_mount
+    assert "approvalReviews.map" not in approvals_mount
+
+    approvals_tab = root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx"
+    assert approvals_tab.exists()
+    approvals_page = approvals_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+        "bg-[#",
+        "border-[#",
+    ]
+    assert {snippet: approvals_page.count(snippet) for snippet in disallowed_snippets if snippet in approvals_page} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+        "shadow-button",
+        "bg-status-success-bg",
+        "text-status-success-text",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+        "bg-status-info-bg",
+        "text-status-info-text",
+    ]:
+        assert semantic_class in approvals_page
+
+
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 
