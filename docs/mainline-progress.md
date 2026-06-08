@@ -11,7 +11,7 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
-| 4 | Theme/App.jsx productization | Project sidebar extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | ProjectSidebar contract `1 passed`; frontend lint/build passed |
+| 4 | Theme/App.jsx productization | Project header extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | ProjectHeader/sidebar/i18n/theme contract slice `20 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | Execution-plan foundation completed 2026-06-08 | Add deterministic topology levels over declared dependencies and expose them from `/api/workflow/graph` without replacing the linear runner or enabling parallel worker execution. | Focused workflow regression `19 passed`; graph/state regression `22 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
@@ -31,6 +31,35 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-08 — Theme/App.jsx productization: project header extraction
+
+**Intent:** continue shrinking `App.jsx` through a small, reversible shell slice
+without changing the existing UI, theme classes, or header behavior.
+
+**Implemented:**
+- Added `frontend/src/components/ProjectHeader.jsx`.
+- Moved the mobile top bar and desktop project header markup out of `App.jsx`.
+- Preserved the GoodTeam mark, project title fallback, run-id badge, mobile menu
+  toggle, status badge branches, theme token utilities, icon usage, and
+  `updateUrl('')` click behavior.
+- Kept state derivation and handlers in `App.jsx`; the extracted component is a
+  presentational boundary only.
+- Adjusted the i18n chrome contract so dashboard/run-id keys are asserted in the
+  extracted header component.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_project_header_is_extracted_from_app_shell_without_theme_changes -q`
+  first failed because `ProjectHeader.jsx` did not exist.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'project_header or project_sidebar or language_switcher or appearance_preferences or frontend_contract_uses_i18n or theme_tokens'`
+  -> `20 passed, 132 deselected`.
+
+**Deferred from this increment:**
+- Additional App.jsx panel/page extraction.
+- Any visual redesign, theme-token conversion, or i18n expansion outside the
+  moved header chrome.
 
 ### 2026-06-08 — Graph/DAG engine D2b: execution-plan foundation
 
