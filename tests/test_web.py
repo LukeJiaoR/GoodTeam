@@ -1821,6 +1821,25 @@ def test_language_switcher_is_extracted_from_app_shell():
     assert "<LanguageSwitcher" in app
 
 
+def test_project_url_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useProjectUrl.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useProjectUrl" in hook_source
+    assert "URLSearchParams" in hook_source
+    assert "popstate" in hook_source
+    assert "window.history.pushState" in hook_source
+    assert "import { useProjectUrl } from './hooks/useProjectUrl';" in app
+    assert "const { projectKey, updateUrl } = useProjectUrl();" in app
+    assert "const getUrlProject" not in app
+    assert "window.history.pushState" not in app
+    assert "addEventListener('popstate'" not in app
+    assert "removeEventListener('popstate'" not in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
