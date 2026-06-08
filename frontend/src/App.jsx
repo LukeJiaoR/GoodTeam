@@ -38,11 +38,7 @@ import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals'
 import {
   LANGUAGE_PREFERENCE_AUTO,
 } from './i18n';
-import ApprovalBanner from './components/ApprovalBanner';
-import GlobalToast from './components/GlobalToast';
-import GitCreationNotice from './components/GitCreationNotice';
-import MemoryEventDetailModal from './components/MemoryEventDetailModal';
-import ProjectMainPanel from './components/ProjectMainPanel';
+import ProjectContentShell from './components/ProjectContentShell';
 import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
 import RolesTab from './components/tabs/RolesTab';
 import ArtifactsTab from './components/tabs/ArtifactsTab';
@@ -1084,38 +1080,17 @@ export default function App() {
         updateUrl={updateUrl}
       />
 
-      {/* Content wrapper */}
-      <div className="flex-grow flex flex-col min-w-0 min-h-screen">
-
-        <ApprovalBanner
-          actionableCount={actionableCount}
-          approvalBannerQuestions={approvalBannerQuestions}
-          setActiveTab={setActiveTab}
-          t={t}
-        />
-
-        <GitCreationNotice
-          gitRemoteCreated={gitRemoteCreated}
-          gitWarnings={gitWarnings}
-          setShowGitNotice={setShowGitNotice}
-          showGitNotice={showGitNotice}
-        />
-
-        <GlobalToast message={message} />
-
-        <MemoryEventDetailModal
-          hasMemorySupersedeInfo={hasMemorySupersedeInfo}
-          memoryEventDetail={memoryEventDetail}
-          memorySupersededBy={memorySupersededBy}
-          memorySupersedes={memorySupersedes}
-          renderMemoryEventLink={renderMemoryEventLink}
-          setMemoryEventDetail={setMemoryEventDetail}
-        />
-
-        {newProjectModal}
-        {directoryPickerModal}
-
-        <ProjectMainPanel loading={loading} error={error} loadingLabel={t('chrome.loading')}>
+      <ProjectContentShell
+        actionableCount={actionableCount}
+        approvalBannerQuestions={approvalBannerQuestions}
+        directoryPickerModal={directoryPickerModal}
+        error={error}
+        gitRemoteCreated={gitRemoteCreated}
+        gitWarnings={gitWarnings}
+        hasMemorySupersedeInfo={hasMemorySupersedeInfo}
+        loading={loading}
+        loadingLabel={t('chrome.loading')}
+        mainPanelChildren={
           <>
               {/* Tab: Workflow Graph */}
               {activeTab === 'workflow' && (
@@ -1445,8 +1420,19 @@ export default function App() {
                 />
               )}
           </>
-        </ProjectMainPanel>
-      </div>
+        }
+        memoryEventDetail={memoryEventDetail}
+        memorySupersededBy={memorySupersededBy}
+        memorySupersedes={memorySupersedes}
+        message={message}
+        newProjectModal={newProjectModal}
+        renderMemoryEventLink={renderMemoryEventLink}
+        setActiveTab={setActiveTab}
+        setMemoryEventDetail={setMemoryEventDetail}
+        setShowGitNotice={setShowGitNotice}
+        showGitNotice={showGitNotice}
+        t={t}
+      />
     </div>
   );
 }

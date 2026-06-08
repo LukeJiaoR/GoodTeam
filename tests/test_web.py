@@ -1668,6 +1668,7 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
             (root / "frontend" / "src" / "components" / "GlobalToast.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "GitCreationNotice.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "MemoryEventDetailModal.jsx").read_text(encoding="utf-8"),
+            (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectMainPanel.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectSidebar.jsx").read_text(encoding="utf-8"),
@@ -2281,6 +2282,7 @@ def test_project_header_is_extracted_from_app_shell_without_theme_changes():
 def test_approval_banner_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
     banner = root / "frontend" / "src" / "components" / "ApprovalBanner.jsx"
 
     assert banner.exists()
@@ -2291,8 +2293,10 @@ def test_approval_banner_is_extracted_from_app_shell_without_theme_changes():
     assert "approvalBanner.review" in banner_source
     assert "setActiveTab('approvals')" in banner_source
     assert "duo-button-physics text-2xs cursor-pointer" in banner_source
-    assert "import ApprovalBanner from './components/ApprovalBanner';" in app
-    assert "<ApprovalBanner" in app
+    assert "import ApprovalBanner from './ApprovalBanner';" in content_shell
+    assert "<ApprovalBanner" in content_shell
+    assert "import ApprovalBanner from './components/ApprovalBanner';" not in app
+    assert "<ApprovalBanner" not in app
     assert "Persistent Approvals Banner" not in app
     assert "bg-status-warning-bg border-b-2 border-status-warning/30" not in app
 
@@ -2300,6 +2304,7 @@ def test_approval_banner_is_extracted_from_app_shell_without_theme_changes():
 def test_git_creation_notice_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
     notice = root / "frontend" / "src" / "components" / "GitCreationNotice.jsx"
 
     assert notice.exists()
@@ -2312,8 +2317,10 @@ def test_git_creation_notice_is_extracted_from_app_shell_without_theme_changes()
     assert "gitWarnings.map" in notice_source
     assert "setShowGitNotice(false)" in notice_source
     assert "duo-button-physics cursor-pointer shrink-0" in notice_source
-    assert "import GitCreationNotice from './components/GitCreationNotice';" in app
-    assert "<GitCreationNotice" in app
+    assert "import GitCreationNotice from './GitCreationNotice';" in content_shell
+    assert "<GitCreationNotice" in content_shell
+    assert "import GitCreationNotice from './components/GitCreationNotice';" not in app
+    assert "<GitCreationNotice" not in app
     assert "Git Creation Notice" not in app
     assert "Git Repository Initialized" not in app
 
@@ -2321,6 +2328,7 @@ def test_git_creation_notice_is_extracted_from_app_shell_without_theme_changes()
 def test_global_toast_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
     toast = root / "frontend" / "src" / "components" / "GlobalToast.jsx"
 
     assert toast.exists()
@@ -2334,8 +2342,10 @@ def test_global_toast_is_extracted_from_app_shell_without_theme_changes():
     assert "AlertTriangle" in toast_source
     assert "Check" in toast_source
     assert "message.text" in toast_source
-    assert "import GlobalToast from './components/GlobalToast';" in app
-    assert "<GlobalToast" in app
+    assert "import GlobalToast from './GlobalToast';" in content_shell
+    assert "<GlobalToast" in content_shell
+    assert "import GlobalToast from './components/GlobalToast';" not in app
+    assert "<GlobalToast" not in app
     assert "Global Toast" not in app
     assert "fixed top-4 right-4 z-50" not in app
 
@@ -2343,6 +2353,7 @@ def test_global_toast_is_extracted_from_app_shell_without_theme_changes():
 def test_memory_event_detail_modal_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
     modal = root / "frontend" / "src" / "components" / "MemoryEventDetailModal.jsx"
 
     assert modal.exists()
@@ -2358,8 +2369,10 @@ def test_memory_event_detail_modal_is_extracted_from_app_shell_without_theme_cha
     assert "renderMemoryEventLink(memorySupersedes)" in modal_source
     assert "setMemoryEventDetail(null)" in modal_source
     assert "No event text recorded." in modal_source
-    assert "import MemoryEventDetailModal from './components/MemoryEventDetailModal';" in app
-    assert "<MemoryEventDetailModal" in app
+    assert "import MemoryEventDetailModal from './MemoryEventDetailModal';" in content_shell
+    assert "<MemoryEventDetailModal" in content_shell
+    assert "import MemoryEventDetailModal from './components/MemoryEventDetailModal';" not in app
+    assert "<MemoryEventDetailModal" not in app
     assert "memory-event-detail-title" not in app
     assert "fixed inset-0 z-40 flex items-center justify-center" not in app
 
@@ -2367,6 +2380,7 @@ def test_memory_event_detail_modal_is_extracted_from_app_shell_without_theme_cha
 def test_project_main_panel_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
     panel = root / "frontend" / "src" / "components" / "ProjectMainPanel.jsx"
 
     assert panel.exists()
@@ -2378,11 +2392,40 @@ def test_project_main_panel_is_extracted_from_app_shell_without_theme_changes():
     assert "text-status-danger-text flex items-center space-x-3 shadow-xs" in panel_source
     assert "AlertTriangle" in panel_source
     assert "children" in panel_source
-    assert "import ProjectMainPanel from './components/ProjectMainPanel';" in app
-    assert "<ProjectMainPanel" in app
+    assert "import ProjectMainPanel from './ProjectMainPanel';" in content_shell
+    assert "<ProjectMainPanel" in content_shell
+    assert "import ProjectMainPanel from './components/ProjectMainPanel';" not in app
+    assert "<ProjectMainPanel" not in app
     assert "loadingLabel={t('chrome.loading')}" in app
     assert "flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6" not in app
     assert "bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl" not in app
+
+
+def test_project_content_shell_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    shell = root / "frontend" / "src" / "components" / "ProjectContentShell.jsx"
+
+    assert shell.exists()
+    shell_source = shell.read_text(encoding="utf-8")
+    assert "export default function ProjectContentShell" in shell_source
+    assert "flex-grow flex flex-col min-w-0 min-h-screen" in shell_source
+    assert "<ApprovalBanner" in shell_source
+    assert "<GitCreationNotice" in shell_source
+    assert "<GlobalToast" in shell_source
+    assert "<MemoryEventDetailModal" in shell_source
+    assert "<ProjectMainPanel" in shell_source
+    assert "newProjectModal" in shell_source
+    assert "directoryPickerModal" in shell_source
+    assert "mainPanelChildren" in shell_source
+    assert "import ProjectContentShell from './components/ProjectContentShell';" in app
+    assert "<ProjectContentShell" in app
+    assert "mainPanelChildren={" in app
+    assert "flex-grow flex flex-col min-w-0 min-h-screen" not in app
+    assert "<ApprovalBanner" not in app
+    assert "<GitCreationNotice" not in app
+    assert "<GlobalToast" not in app
+    assert "<MemoryEventDetailModal" not in app
 
 
 def test_project_url_hook_is_extracted_from_app_shell():
