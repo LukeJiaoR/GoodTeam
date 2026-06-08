@@ -1755,6 +1755,23 @@ def test_projects_home_page_is_extracted_from_app_shell():
     assert "<ProjectsHomePage" in app
 
 
+def test_language_switcher_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    switcher = root / "frontend" / "src" / "components" / "LanguageSwitcher.jsx"
+
+    assert switcher.exists()
+    switcher_source = switcher.read_text(encoding="utf-8")
+    assert "export default function LanguageSwitcher" in switcher_source
+    assert "aria-label=\"Language\"" in switcher_source
+    assert "options.map" in switcher_source
+    assert "activeValue === option.value" in switcher_source
+    assert "const renderLanguageSwitcher" not in app
+    assert "languageOptions.map" not in app
+    assert "import LanguageSwitcher from './components/LanguageSwitcher';" in app
+    assert "<LanguageSwitcher" in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
