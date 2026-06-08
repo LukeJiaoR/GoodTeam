@@ -1623,7 +1623,7 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
     )
 
     assert "<DevLoopTab" in app
-    assert "copyLandCommand={copyLandCommand}" in app
+    assert "copyLandCommand={copyCommand}" in app
     assert "devLoopData.release_readiness" in dev_loop_tab
     assert "Release Readiness" in dev_loop_tab
     assert "release_up_command" in dev_loop_tab
@@ -1867,6 +1867,28 @@ def test_dispatch_track_form_hook_is_extracted_from_app_shell():
         "dispatchSuccess",
     ]:
         assert f"const [{state_name}" not in app
+
+
+def test_clipboard_feedback_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useClipboardFeedback.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useClipboardFeedback" in hook_source
+    assert "copyCommand" in hook_source
+    assert "navigator.clipboard" in hook_source
+    assert "document.execCommand('copy')" in hook_source
+    assert "setTimeout" in hook_source
+    assert "import { useClipboardFeedback } from './hooks/useClipboardFeedback';" in app
+    assert "const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();" in app
+    assert "const [copiedText" not in app
+    assert "const [copyFailedText" not in app
+    assert "const markLandCommandCopied" not in app
+    assert "const markLandCommandCopyFailed" not in app
+    assert "navigator.clipboard" not in app
+    assert "document.execCommand('copy')" not in app
 
 
 def test_projects_home_page_is_extracted_from_app_shell():
