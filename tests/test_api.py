@@ -207,6 +207,49 @@ def test_api_devloop_route_returns_contract_shape(tmp_path, monkeypatch):
     assert payload["generated_at"]
 
 
+def test_api_server_actions_reports_disabled_destructive_capabilities(tmp_path, monkeypatch):
+    received_roots = []
+
+    def fake_build_server_action_capabilities(root):
+        received_roots.append(root)
+        return {
+            "actions": {
+                "dispatch_track": {"available": True, "mode": "execute", "reason": ""},
+                "dry_smoke": {"available": True, "mode": "execute", "reason": ""},
+                "land_pr": {"available": False, "mode": "human_command_only", "reason": "disabled_by_default"},
+                "tag_release": {"available": False, "mode": "human_command_only", "reason": "disabled_by_default"},
+                "graduate_release": {
+                    "available": False,
+                    "mode": "human_command_only",
+                    "reason": "disabled_by_default",
+                },
+            },
+            "generated_at": "2026-06-08T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(
+        "goodteam_os.web.build_server_action_capabilities",
+        fake_build_server_action_capabilities,
+        raising=False,
+    )
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+
+    handler = simulate_get("/api/server-actions")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert received_roots == [None]
+    assert payload["actions"]["dispatch_track"]["available"] is True
+    assert payload["actions"]["dry_smoke"]["available"] is True
+    assert payload["actions"]["land_pr"] == {
+        "available": False,
+        "mode": "human_command_only",
+        "reason": "disabled_by_default",
+    }
+    assert payload["actions"]["tag_release"]["reason"] == "disabled_by_default"
+    assert payload["actions"]["graduate_release"]["mode"] == "human_command_only"
+
+
 def test_api_smoke_run_starts_background_dry_run(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

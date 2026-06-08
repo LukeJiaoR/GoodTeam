@@ -247,6 +247,14 @@ def test_build_dev_loop_reports_release_graduation_readiness_without_mutating(tm
         "release_up_command": f"GOODTEAM_RELEASE_DIR={release_dir} scripts/release-up.sh --ref devhead123456789",
         "graduate_command": f"GOODTEAM_RELEASE_DIR={release_dir} scripts/graduate-release.sh --ref devhead123456789",
     }
+    assert dev_loop["server_actions"]["actions"]["graduate_release"] == {
+        "available": False,
+        "mode": "human_command_only",
+        "reason": "disabled_by_default",
+        "command": f"GOODTEAM_RELEASE_DIR={release_dir} scripts/graduate-release.sh --ref devhead123456789",
+    }
+    assert dev_loop["server_actions"]["actions"]["land_pr"]["reason"] == "disabled_by_default"
+    assert dev_loop["server_actions"]["actions"]["tag_release"]["available"] is False
 
 
 def test_build_dev_loop_hides_release_graduation_commands_for_non_goodteam_repo(tmp_path, monkeypatch):
@@ -1678,7 +1686,10 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
     assert "<DevLoopTab" in app
     assert "copyLandCommand={copyCommand}" in app
     assert "devLoopData.release_readiness" in dev_loop_tab
+    assert "devLoopData.server_actions" in dev_loop_tab
     assert "Release Readiness" in dev_loop_tab
+    assert "Server Action Capabilities" in dev_loop_tab
+    assert "Destructive actions stay human-command-only" in dev_loop_tab
     assert "release_up_command" in dev_loop_tab
     assert "graduate_command" in dev_loop_tab
     assert "Copy release-up command" in dev_loop_tab
@@ -1688,6 +1699,8 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
     assert "Release Readiness unavailable" not in dev_loop_tab
     assert "Run release-up" not in dev_loop_tab
     assert "Run graduate" not in dev_loop_tab
+    assert "Run land" not in dev_loop_tab
+    assert "Run tag" not in dev_loop_tab
 
 
 def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type():

@@ -733,6 +733,68 @@ def build_release_readiness(root: Path, warnings: list[str]) -> dict[str, object
     }
 
 
+def _server_action_capability(
+    *,
+    available: bool,
+    mode: str,
+    reason: str = "",
+    command: str = "",
+) -> dict[str, object]:
+    capability: dict[str, object] = {
+        "available": available,
+        "mode": mode,
+        "reason": reason,
+    }
+    if command:
+        capability["command"] = command
+    return capability
+
+
+def build_server_action_capabilities(
+    root: Path | None,
+    *,
+    release_readiness: dict[str, object] | None = None,
+    warnings: list[str] | None = None,
+) -> dict[str, object]:
+    capability_warnings: list[str] = [] if warnings is None else warnings
+    if release_readiness is None:
+        release_readiness = (
+            build_release_readiness(root, capability_warnings) if root is not None else {"available": False}
+        )
+    graduate_command = str(release_readiness.get("graduate_command", ""))
+    return {
+        "actions": {
+            "dispatch_track": _server_action_capability(
+                available=True,
+                mode="execute",
+            ),
+            "dry_smoke": _server_action_capability(
+                available=True,
+                mode="execute",
+            ),
+            "land_pr": _server_action_capability(
+                available=False,
+                mode="human_command_only",
+                reason="disabled_by_default",
+            ),
+            "tag_release": _server_action_capability(
+                available=False,
+                mode="human_command_only",
+                reason="disabled_by_default",
+            ),
+            "graduate_release": _server_action_capability(
+                available=False,
+                mode="human_command_only",
+                reason="disabled_by_default",
+                command=graduate_command,
+            ),
+        },
+        "release_readiness": release_readiness,
+        "warnings": capability_warnings,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+
+
 def build_dev_loop(root: Path | None) -> dict[str, object]:
     warnings: list[str] = []
     worktrees: list[dict[str, str]] = []
@@ -813,11 +875,13 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
         pull_request["land_ready"] = pull_request["ci"] == "pass" and pre_review_presence_by_pr.get(number, False)
         pull_request["land_command"] = _land_command_for_pull_request(number, head_branch, worktrees)
 
+    release_readiness = build_release_readiness(root, warnings)
     return {
         "worktrees": worktrees,
         "pull_requests": pull_requests,
         "pre_reviews": pre_reviews,
-        "release_readiness": build_release_readiness(root, warnings),
+        "release_readiness": release_readiness,
+        "server_actions": build_server_action_capabilities(root, release_readiness=release_readiness),
         "warnings": warnings,
         "generated_at": datetime.now(UTC).isoformat(),
     }
@@ -6258,6 +6322,18 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     except Exception:
                         project_root = None
                 self._send_json(200, build_dev_loop(project_root))
+                return
+            if parsed.path == "/api/server-actions":
+                project_root = None
+                if project_key:
+                    try:
+                        project_config = _project_config_for_key(workspace, project_key)
+                        project_root = resolve_project_runtime_root(
+                            dict(load_project_target(project_config).get("repos", {}))
+                        )
+                    except Exception:
+                        project_root = None
+                self._send_json(200, build_server_action_capabilities(project_root))
                 return
             if parsed.path == "/api/fs/list":
                 try:
