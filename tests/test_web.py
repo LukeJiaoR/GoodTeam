@@ -1749,6 +1749,7 @@ def test_directory_picker_modal_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     picker = root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx"
+    hook = root / "frontend" / "src" / "hooks" / "useDirectoryPicker.js"
 
     assert picker.exists()
     picker_source = picker.read_text(encoding="utf-8")
@@ -1761,8 +1762,29 @@ def test_directory_picker_modal_is_extracted_from_app_shell():
     assert "fetchDirectory" not in app
     assert "handleCreateFolder" not in app
     assert "pickerEntries.map" not in app
-    assert "import DirectoryPickerModal from './components/DirectoryPickerModal';" in app
-    assert "<DirectoryPickerModal" in app
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "import DirectoryPickerModal from '../components/DirectoryPickerModal';" in hook_source
+    assert "createElement(DirectoryPickerModal" in hook_source
+
+
+def test_directory_picker_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useDirectoryPicker.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useDirectoryPicker" in hook_source
+    assert "import DirectoryPickerModal from '../components/DirectoryPickerModal';" in hook_source
+    assert "openDirectoryPicker" in hook_source
+    assert "directoryPickerModal" in hook_source
+    assert "import { useDirectoryPicker } from './hooks/useDirectoryPicker';" in app
+    assert "const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);" in app
+    assert "const [pickerOpen" not in app
+    assert "const [pickerInitialPath" not in app
+    assert "const openDirectoryPicker" not in app
+    assert "const directoryPickerModal" not in app
+    assert "import DirectoryPickerModal from './components/DirectoryPickerModal';" not in app
 
 
 def test_new_project_modal_is_extracted_from_app_shell():
