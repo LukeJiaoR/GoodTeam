@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   Users,
@@ -34,6 +34,7 @@ import { useNewProjectForm } from './hooks/useNewProjectForm';
 import { useProjectUrl } from './hooks/useProjectUrl';
 import { useDevLoopData } from './hooks/useDevLoopData';
 import { useMemoryData } from './hooks/useMemoryData';
+import { useCrossProjectMemorySearch } from './hooks/useCrossProjectMemorySearch';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
@@ -234,17 +235,6 @@ export default function App() {
   const [debateRun, setDebateRun] = useState({ key: '', loading: false, error: '' });
   const [messageFeed, setMessageFeed] = useState(EMPTY_MESSAGE_FEED);
 
-  // Cross-project memory search states
-  const [crossRole, setCrossRole] = useState('implementation');
-  const [crossQuery, setCrossQuery] = useState('');
-  const [crossScope, setCrossScope] = useState('all');
-  const [crossLimit, setCrossLimit] = useState(5);
-  const [crossLoading, setCrossLoading] = useState(false);
-  const [crossError, setCrossError] = useState(null);
-  const [crossResults, setCrossResults] = useState(null);
-  const [allProjectKeys, setAllProjectKeys] = useState([]);
-  const crossSearchRequestSeq = useRef(0);
-
   const { graphData, loadingGraph, graphError, fetchWorkflowGraph } = useWorkflowGraphData();
   const { devLoopData, loadingDevLoop, devLoopError, fetchDevLoop } = useDevLoopData();
   const memory = useMemoryData(projectKey);
@@ -260,6 +250,21 @@ export default function App() {
     handleToggleMemoryEvents,
     handleMemoryEventSearchChange,
   } = memory;
+  const crossMemorySearch = useCrossProjectMemorySearch(projectKey, activeTab, agentsMemorySubTab);
+  const {
+    crossRole,
+    setCrossRole,
+    crossQuery,
+    setCrossQuery,
+    crossScope,
+    setCrossScope,
+    crossLimit,
+    setCrossLimit,
+    crossLoading,
+    crossError,
+    crossResults,
+    handleCrossSearch,
+  } = crossMemorySearch;
   const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();
 
   const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);
@@ -508,81 +513,6 @@ export default function App() {
       fetchDevLoop(projectKey);
     }
   }, [activeTab, fetchDevLoop, projectKey]);
-
-  useEffect(() => {
-    if (activeTab === 'memory' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'memory')) {
-      fetch('/api/state')
-        .then((res) => {
-          if (!res.ok) throw new Error('Failed to load project keys');
-          return res.json();
-        })
-        .then((payload) => {
-          if (payload && Array.isArray(payload.project_items)) {
-            const keys = payload.project_items.map((item) => item.project_key).filter(Boolean);
-            setAllProjectKeys(keys);
-          }
-        })
-        .catch((err) => {
-          console.error('Error fetching all project keys:', err);
-        });
-    }
-  }, [activeTab, agentsMemorySubTab]);
-
-  const handleCrossSearch = async (e) => {
-    if (e) e.preventDefault();
-    if (!crossRole.trim() || !crossQuery.trim()) {
-      setCrossError('Role and query are required.');
-      return;
-    }
-
-    const seq = crossSearchRequestSeq.current + 1;
-    crossSearchRequestSeq.current = seq;
-
-    setCrossLoading(true);
-    setCrossError(null);
-    setCrossResults(null);
-
-    try {
-      let scopeVal = crossScope.trim();
-      if (!scopeVal || scopeVal.toLowerCase() === 'all') {
-        if (allProjectKeys.length > 0) {
-          scopeVal = allProjectKeys.join(',');
-        } else if (projectKey) {
-          scopeVal = projectKey;
-        } else {
-          scopeVal = 'all';
-        }
-      }
-
-      const params = new URLSearchParams({
-        role: crossRole.trim(),
-        q: crossQuery.trim(),
-        scope: scopeVal,
-        k: String(crossLimit),
-      });
-
-      const response = await fetch(`/api/memory/cross?${params.toString()}`);
-      const payload = await response.json().catch(() => ({}));
-
-      if (crossSearchRequestSeq.current !== seq) return;
-
-      if (!response.ok) {
-        throw new Error(payload.error || `Failed to fetch cross-project memory (HTTP ${response.status})`);
-      }
-
-      const results = Array.isArray(payload.results) ? payload.results : [];
-      setCrossResults(results);
-    } catch (err) {
-      if (crossSearchRequestSeq.current === seq) {
-        console.error('Error in cross-project memory search:', err);
-        setCrossError(err.message);
-      }
-    } finally {
-      if (crossSearchRequestSeq.current === seq) {
-        setCrossLoading(false);
-      }
-    }
-  };
 
   useEffect(() => {
     if (!targetMessageFeedKey || messageFeed.key === targetMessageFeedKey) return;
