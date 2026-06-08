@@ -11,7 +11,7 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
-| 4 | Theme/App.jsx productization | Global toast extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | GlobalToast/git-notice/banner/header/sidebar/i18n/theme contract slice `23 passed`; frontend lint/build passed |
+| 4 | Theme/App.jsx productization | Memory event modal extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | MemoryEventDetailModal/toast/git-notice/banner/header/sidebar/i18n/theme contract slice `24 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2 | Execution-plan foundation completed 2026-06-08 | Add deterministic topology levels over declared dependencies and expose them from `/api/workflow/graph` without replacing the linear runner or enabling parallel worker execution. | Focused workflow regression `19 passed`; graph/state regression `22 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
@@ -31,6 +31,37 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-08 — Theme/App.jsx productization: memory event modal extraction
+
+**Intent:** reduce `App.jsx` by moving a self-contained overlay while preserving
+the existing memory event detail UI and behavior exactly.
+
+**Implemented:**
+- Added `frontend/src/components/MemoryEventDetailModal.jsx`.
+- Moved the full memory event overlay out of `App.jsx`.
+- Preserved modal shell, loading/error/data branches, supersede/superseded-by
+  section, memory event link rendering, close button behavior, and class names.
+- Kept event fetch state, derived supersede metadata, and link handler in
+  `App.jsx`.
+- Expanded the shell theme-token contract so it scans the modal component with
+  the other extracted shell components.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_memory_event_detail_modal_is_extracted_from_app_shell_without_theme_changes -q`
+  first failed because `MemoryEventDetailModal.jsx` did not exist.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'memory_event_detail_modal or global_toast or git_creation_notice or approval_banner or project_header or project_sidebar or language_switcher or appearance_preferences or frontend_contract_uses_i18n or theme_tokens'`
+  -> `24 passed, 132 deselected`.
+- Frontend checks:
+  `cd frontend && npm ci && npm run lint && npm run build`
+  -> passed.
+
+**Deferred from this increment:**
+- Additional App.jsx panel/page extraction.
+- Any visual redesign, theme-token conversion, or i18n expansion outside the
+  moved memory event modal.
 
 ### 2026-06-08 — Theme/App.jsx productization: global toast extraction
 

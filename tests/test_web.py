@@ -1665,6 +1665,7 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
             (root / "frontend" / "src" / "components" / "ApprovalBanner.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "GlobalToast.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "GitCreationNotice.jsx").read_text(encoding="utf-8"),
+            (root / "frontend" / "src" / "components" / "MemoryEventDetailModal.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectSidebar.jsx").read_text(encoding="utf-8"),
         ]
@@ -2334,6 +2335,30 @@ def test_global_toast_is_extracted_from_app_shell_without_theme_changes():
     assert "<GlobalToast" in app
     assert "Global Toast" not in app
     assert "fixed top-4 right-4 z-50" not in app
+
+
+def test_memory_event_detail_modal_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    modal = root / "frontend" / "src" / "components" / "MemoryEventDetailModal.jsx"
+
+    assert modal.exists()
+    modal_source = modal.read_text(encoding="utf-8")
+    assert "export default function MemoryEventDetailModal" in modal_source
+    assert "memory-event-detail-title" in modal_source
+    assert "fixed inset-0 z-40 flex items-center justify-center" in modal_source
+    assert "Loading full memory event..." in modal_source
+    assert "memoryEventDetail.error" in modal_source
+    assert "memoryEventDetail.data.role" in modal_source
+    assert "hasMemorySupersedeInfo" in modal_source
+    assert "memorySupersededBy.map" in modal_source
+    assert "renderMemoryEventLink(memorySupersedes)" in modal_source
+    assert "setMemoryEventDetail(null)" in modal_source
+    assert "No event text recorded." in modal_source
+    assert "import MemoryEventDetailModal from './components/MemoryEventDetailModal';" in app
+    assert "<MemoryEventDetailModal" in app
+    assert "memory-event-detail-title" not in app
+    assert "fixed inset-0 z-40 flex items-center justify-center" not in app
 
 
 def test_project_url_hook_is_extracted_from_app_shell():
