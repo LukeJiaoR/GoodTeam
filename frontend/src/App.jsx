@@ -32,6 +32,7 @@ import { useDirectoryPicker } from './hooks/useDirectoryPicker';
 import { useDispatchTrackForm } from './hooks/useDispatchTrackForm';
 import { useNewProjectForm } from './hooks/useNewProjectForm';
 import { useProjectUrl } from './hooks/useProjectUrl';
+import { useDevLoopData } from './hooks/useDevLoopData';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
@@ -253,12 +254,7 @@ export default function App() {
   const crossSearchRequestSeq = useRef(0);
 
   const { graphData, loadingGraph, graphError, fetchWorkflowGraph } = useWorkflowGraphData();
-
-  // Dev Loop states
-  const [devLoopData, setDevLoopData] = useState(null);
-  const [loadingDevLoop, setLoadingDevLoop] = useState(false);
-  const [devLoopError, setDevLoopError] = useState(null);
-  const devLoopRequestSeq = useRef(0);
+  const { devLoopData, loadingDevLoop, devLoopError, fetchDevLoop } = useDevLoopData();
   const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();
 
   const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);
@@ -654,41 +650,12 @@ export default function App() {
     }
   }, [activeTab, agentsMemorySubTab, projectKey]);
 
-  const fetchDevLoop = async (key) => {
-    const seq = devLoopRequestSeq.current + 1;
-    devLoopRequestSeq.current = seq;
-
-    setLoadingDevLoop(true);
-    setDevLoopError(null);
-    try {
-      const url = key ? `/api/devloop?project=${encodeURIComponent(key)}` : '/api/devloop';
-      const response = await fetch(url);
-      const payload = await response.json().catch(() => ({}));
-
-      if (devLoopRequestSeq.current !== seq) return;
-
-      if (!response.ok) {
-        throw new Error(payload.error || `Failed to fetch dev loop (HTTP ${response.status})`);
-      }
-      setDevLoopData(payload);
-    } catch (err) {
-      if (devLoopRequestSeq.current === seq) {
-        console.error('Error fetching dev loop:', err);
-        setDevLoopError(err.message);
-      }
-    } finally {
-      if (devLoopRequestSeq.current === seq) {
-        setLoadingDevLoop(false);
-      }
-    }
-  };
-
   // Lazy fetch devloop data when the Dev Loop tab is opened
   useEffect(() => {
     if (activeTab === 'devloop') {
       fetchDevLoop(projectKey);
     }
-  }, [activeTab, projectKey]);
+  }, [activeTab, fetchDevLoop, projectKey]);
 
   useEffect(() => {
     if (activeTab === 'memory' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'memory')) {
