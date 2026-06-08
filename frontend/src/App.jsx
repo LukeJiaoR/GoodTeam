@@ -35,6 +35,7 @@ import { useProjectUrl } from './hooks/useProjectUrl';
 import { useDevLoopData } from './hooks/useDevLoopData';
 import { useMemoryData } from './hooks/useMemoryData';
 import { useCrossProjectMemorySearch } from './hooks/useCrossProjectMemorySearch';
+import { useApprovalEditor } from './hooks/useApprovalEditor';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
@@ -222,15 +223,6 @@ export default function App() {
   const [changesRequestedNote, setChangesRequestedNote] = useState('');
   const [showChangesRequestedNoteKey, setShowChangesRequestedNoteKey] = useState(null);
 
-  // Approval review artifact editor state
-  const [editingArtifact, setEditingArtifact] = useState(null); // { key, content }
-  const [editorContent, setEditorContent] = useState('');
-  const [refineLoading, setRefineLoading] = useState(false);
-  const [proposedRevision, setProposedRevision] = useState(null); // { proposed_path, content, diff_summary }
-  const [openQuestions, setOpenQuestions] = useState([]);
-  const [openQuestionsAnswers, setOpenQuestionsAnswers] = useState({});
-  const [fetchingOpenQuestions, setFetchingOpenQuestions] = useState(false);
-  const [answeringOpenQuestions, setAnsweringOpenQuestions] = useState(null); // string (question text) or null
   const [gateDebate, setGateDebate] = useState(EMPTY_GATE_DEBATE);
   const [debateRun, setDebateRun] = useState({ key: '', loading: false, error: '' });
   const [messageFeed, setMessageFeed] = useState(EMPTY_MESSAGE_FEED);
@@ -404,6 +396,34 @@ export default function App() {
       if (showLoading) setLoading(false);
     }
   };
+
+  const approvalEditor = useApprovalEditor({
+    projectKey,
+    showToast,
+    fetchState,
+    setActiveTab,
+    setActionLoading,
+  });
+  const {
+    editingArtifact,
+    setEditingArtifact,
+    editorContent,
+    setEditorContent,
+    refineLoading,
+    proposedRevision,
+    openQuestions,
+    openQuestionsAnswers,
+    setOpenQuestionsAnswers,
+    fetchingOpenQuestions,
+    answeringOpenQuestions,
+    handleEditArtifact,
+    handleOpenQuestionsFromApproval,
+    handleSaveArtifact,
+    handleApplyAnswers,
+    handleRefineArtifact,
+    handleAcceptRefinement,
+    handleDiscardRefinement,
+  } = approvalEditor;
 
   const fetchGateDebate = async ({ key, runId, gate }) => {
     const debateKey = `${key}:${runId}:${gate}`;
@@ -927,253 +947,6 @@ export default function App() {
       showToast(err.message, true);
     } finally {
       setGeneratingPrd(false);
-    }
-  };
-
-  const handleEditArtifact = async (artifactOrReview) => {
-    const artifactName = typeof artifactOrReview === 'string'
-      ? artifactOrReview
-      : (artifactOrReview?.artifact || '');
-    if (!artifactName) return;
-
-    setActionLoading(true);
-    try {
-      const response = await fetch(`/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(artifactName)}`);
-      const res = await response.json();
-      if (!response.ok) {
-        throw new Error(res.error || '暂无该产物');
-      }
-      setEditingArtifact(artifactName);
-      setEditorContent(res.content || '');
-      setActiveTab('approvals');
-    } catch (err) {
-      const errMsg = err.message.includes('File not found') || err.message.includes('No such file') || err.message.includes('does not exist')
-        ? '暂无该产物'
-        : err.message;
-      showToast(errMsg, true);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleOpenQuestionsFromApproval = async (review) => {
-    await handleEditArtifact(review);
-    if (review?.artifact) {
-      fetchOpenQuestions(projectKey, review.artifact);
-    }
-  };
-
-  const handleSaveArtifact = async () => {
-    if (!editingArtifact) return;
-    setActionLoading(true);
-    try {
-      const response = await fetch('/api/artifact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_key: projectKey,
-          artifact: editingArtifact,
-          content: editorContent,
-        }),
-      });
-      const res = await response.json();
-      if (!response.ok) throw new Error(res.error || 'Failed to save artifact');
-      showToast(`Artifact ${editingArtifact.toUpperCase()} saved successfully`);
-      setEditingArtifact(null);
-      fetchState(projectKey);
-    } catch (err) {
-      showToast(err.message, true);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const fetchOpenQuestions = async (projKey, artKey) => {
-    if (!projKey || !artKey) return;
-    setFetchingOpenQuestions(true);
-    try {
-      const response = await fetch(`/api/open-questions?project=${encodeURIComponent(projKey)}&artifact=${encodeURIComponent(artKey)}`);
-      const res = await response.json();
-      if (response.ok) {
-        setOpenQuestions(res.questions || []);
-        setOpenQuestionsAnswers(prev => {
-          const next = {};
-          (res.questions || []).forEach(q => {
-            next[q] = prev[q] !== undefined ? prev[q] : '';
-          });
-          return next;
-        });
-      } else {
-        console.error(res.error || 'Failed to fetch open questions');
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setFetchingOpenQuestions(false);
-    }
-  };
-
-  const handleApplyAnswers = async (singleQuestion) => {
-    if (!projectKey || !editingArtifact) return;
-    
-    let answersToSend = [];
-    if (singleQuestion) {
-      const ans = openQuestionsAnswers[singleQuestion];
-      if (ans && ans.trim()) {
-        answersToSend = [{ question: singleQuestion, answer: ans }];
-      }
-    } else {
-      answersToSend = Object.entries(openQuestionsAnswers)
-        .filter(([, ans]) => ans && ans.trim())
-        .map(([q, ans]) => ({ question: q, answer: ans }));
-    }
-
-    if (answersToSend.length === 0) return;
-
-    setAnsweringOpenQuestions(singleQuestion || true);
-    try {
-      const response = await fetch('/api/answer-open-questions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_key: projectKey,
-          artifact: editingArtifact,
-          answers: answersToSend,
-        }),
-      });
-      const res = await response.json();
-      if (!response.ok) {
-        throw new Error(res.error || 'Failed to apply answers with AI');
-      }
-
-      // Fetch the proposed content
-      const proposedPath = res.proposed_path;
-      const contentResponse = await fetch(`/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(proposedPath)}`);
-      const contentRes = await contentResponse.json();
-      if (!contentResponse.ok) {
-        throw new Error(contentRes.error || 'Failed to fetch proposed artifact content');
-      }
-
-      setProposedRevision({
-        proposed_path: proposedPath,
-        content: contentRes.content || '',
-        diff_summary: res.diff_summary || { added_lines: 0, removed_lines: 0 }
-      });
-      showToast('Answers applied with AI. Please review the proposed revision.');
-    } catch (err) {
-      showToast(err.message, true);
-    } finally {
-      setAnsweringOpenQuestions(null);
-    }
-  };
-
-  useEffect(() => {
-    if (!editingArtifact || !projectKey) {
-      setOpenQuestions([]);
-      setOpenQuestionsAnswers({});
-      return;
-    }
-    setOpenQuestionsAnswers({});
-    fetchOpenQuestions(projectKey, editingArtifact);
-  }, [editingArtifact, projectKey]);
-
-  const handleRefineArtifact = async () => {
-    if (!editingArtifact || !editorContent) return;
-    setRefineLoading(true);
-    try {
-      const response = await fetch('/api/refine-artifact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_key: projectKey,
-          artifact: editingArtifact,
-          content: editorContent,
-        }),
-      });
-      const res = await response.json();
-      if (!response.ok) {
-        throw new Error(res.error || 'Failed to refine artifact');
-      }
-
-      // Fetch the proposed content
-      const proposedPath = res.proposed_path;
-      const contentResponse = await fetch(`/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(proposedPath)}`);
-      const contentRes = await contentResponse.json();
-      if (!contentResponse.ok) {
-        throw new Error(contentRes.error || 'Failed to fetch proposed artifact content');
-      }
-
-      setProposedRevision({
-        proposed_path: proposedPath,
-        content: contentRes.content || '',
-        diff_summary: res.diff_summary || { added_lines: 0, removed_lines: 0 }
-      });
-      showToast('Refinement generated. Please review the proposal.');
-    } catch (err) {
-      showToast(err.message, true);
-    } finally {
-      setRefineLoading(false);
-    }
-  };
-
-  const handleAcceptRefinement = async () => {
-    if (!editingArtifact || !proposedRevision) return;
-    setRefineLoading(true);
-    try {
-      const response = await fetch('/api/accept-refinement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_key: projectKey,
-          artifact: editingArtifact,
-        }),
-      });
-      const res = await response.json();
-      if (!response.ok) {
-        throw new Error(res.error || 'Failed to accept refinement');
-      }
-
-      showToast(`Refinement accepted. Saved to ${editingArtifact.toUpperCase()}.`);
-      
-      // Load the now-current artifact into the editor
-      setEditorContent(proposedRevision.content);
-      setProposedRevision(null);
-
-      // fetchState to update UI
-      await fetchState(projectKey);
-
-      // Re-fetch open questions
-      await fetchOpenQuestions(projectKey, editingArtifact);
-    } catch (err) {
-      showToast(err.message, true);
-    } finally {
-      setRefineLoading(false);
-    }
-  };
-
-  const handleDiscardRefinement = async () => {
-    if (!editingArtifact || !proposedRevision) return;
-    setRefineLoading(true);
-    try {
-      const response = await fetch('/api/discard-refinement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_key: projectKey,
-          artifact: editingArtifact,
-        }),
-      });
-      const res = await response.json();
-      if (!response.ok) {
-        throw new Error(res.error || 'Failed to discard refinement');
-      }
-
-      showToast('Refinement discarded. Keeping your original edits.');
-      setProposedRevision(null);
-    } catch (err) {
-      showToast(err.message, true);
-    } finally {
-      setRefineLoading(false);
     }
   };
 
