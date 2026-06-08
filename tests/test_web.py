@@ -1806,6 +1806,37 @@ def test_new_project_modal_is_extracted_from_app_shell():
     assert "<NewProjectModal" in app
 
 
+def test_new_project_form_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useNewProjectForm.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useNewProjectForm" in hook_source
+    assert "openNewProjectModal" in hook_source
+    assert "closeNewProjectModal" in hook_source
+    assert "setInitGit(true)" in hook_source
+    assert "setCreateRemote(false)" in hook_source
+    assert "setRemotePrivate(true)" in hook_source
+    assert "const isNewProjectMode = startMode === 'new_project' || startMode === 'new';" in hook_source
+    assert "import { useNewProjectForm } from './hooks/useNewProjectForm';" in app
+    assert "const newProjectForm = useNewProjectForm(setNewProjectModalOpen);" in app
+    for state_name in [
+        "projectName",
+        "startProjectKey",
+        "modelProfile",
+        "deliveryMode",
+        "projectRoot",
+        "taskSync",
+        "initGit",
+        "planeApiHost",
+        "stagingSshTarget",
+        "deliveryContractRequired",
+    ]:
+        assert f"const [{state_name}" not in app
+
+
 def test_projects_home_page_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
