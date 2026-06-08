@@ -1589,6 +1589,21 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
         assert semantic_class in app
 
 
+def test_file_path_component_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    file_path_component = root / "frontend" / "src" / "components" / "FilePath.jsx"
+
+    assert file_path_component.exists()
+    component_source = file_path_component.read_text(encoding="utf-8")
+    assert "export default function FilePath" in component_source
+    assert "segments = 1" in component_source
+    assert "not available" in component_source
+    assert "bottom-full" in component_source
+    assert "function FilePath" not in app
+    assert "import FilePath from './components/FilePath';" in app
+
+
 def test_message_feed_uses_theme_tokens_and_small_type_floor():
     message_feed = (
         Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
