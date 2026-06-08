@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import goodteam_os.web as web
 from goodteam_os.messages import append_message
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
@@ -36,6 +38,7 @@ from goodteam_os.web import (
     save_artifact,
     is_active_run,
     list_directory_for_picker,
+    open_path_in_file_manager,
     start_workflow,
 )
 
@@ -936,6 +939,26 @@ def test_read_artifact_reads_current_run_artifact(tmp_path):
     assert payload["content"] == "# Takeover\n\nReview me"
 
 
+def test_read_artifact_rejects_unregistered_absolute_path(tmp_path):
+    secret = tmp_path / "secret.md"
+    secret.write_text("# Secret\n\nDo not expose this.", encoding="utf-8")
+    state = create_initial_state("run-1", "CONTENTOPS", "Take over the AI content studio")
+    StateStore(tmp_path).write_current(state)
+
+    with pytest.raises(ValueError, match="Artifact is not registered"):
+        read_artifact(workspace=tmp_path, artifact_key=str(secret))
+
+
+def test_open_path_in_file_manager_rejects_sibling_prefix_path(tmp_path):
+    workspace = tmp_path / "app"
+    sibling = tmp_path / "app-other"
+    workspace.mkdir()
+    sibling.mkdir()
+
+    with pytest.raises(ValueError, match="outside workspace"):
+        open_path_in_file_manager(workspace=workspace, relative_path="../app-other")
+
+
 def test_save_artifact_updates_current_run_artifact_and_logs_edit(tmp_path):
     artifact = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
     artifact.parent.mkdir(parents=True)
@@ -1431,6 +1454,19 @@ def test_create_local_project_config_custom_standards_round_trip(tmp_path):
         "standard_0002": "Document rollback.",
     }
     assert payload["delivery_standards"] == ["Run local preview.", "Document rollback."]
+
+
+def test_create_local_project_config_rejects_newlines_in_scalar_values(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+
+    with pytest.raises(ValueError, match="Project name must be a single line"):
+        create_local_project_config(
+            workspace=tmp_path,
+            project_name="AI Content Studio\nrepos:\n  hijack: /tmp/hijack",
+            project_key="CONTENTOPS",
+            project_root=str(project_root),
+        )
 
 
 def test_web_normalize_delivery_mode_accepts_new_presets_and_custom():

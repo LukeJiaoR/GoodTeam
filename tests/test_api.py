@@ -34,13 +34,13 @@ def capture_get_handler(tmp_path, monkeypatch):
     serve(tmp_path, host="127.0.0.1", port=8788)
     assert captured_handler_class is not None
 
-    def simulate_get(path):
+    def simulate_get(path, headers=None):
         class SimulatedHandler(captured_handler_class):
             def __init__(self):
                 self.request = FakeRequest()
                 self.client_address = ("127.0.0.1", 12345)
                 self.server = None
-                self.headers = {}
+                self.headers = headers or {}
                 self.path = path
                 self.wfile = BytesIO()
                 self.rfile = BytesIO()
@@ -150,6 +150,21 @@ def test_api_workflow_graph_route_returns_static_graph_and_project_run(tmp_path,
     assert payload["run"]["run_id"] == "run-graph"
     assert payload["run"]["current_node"] == "rfc_review_gate"
     assert payload["run"]["next_node"] == "planner"
+
+
+def test_api_artifact_route_rejects_unregistered_absolute_path(tmp_path, monkeypatch):
+    secret = tmp_path / "secret.md"
+    secret.write_text("# Secret\n\nDo not expose this.", encoding="utf-8")
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    StateStore(tmp_path).write_project_current(state)
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+
+    handler = simulate_get(f"/api/artifact?project=REAL&key={secret}")
+
+    assert 400 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert "Artifact is not registered" in payload["error"]
+    assert "Do not expose this" not in handler.wfile.getvalue().decode("utf-8")
 
 
 def test_api_devloop_route_returns_contract_shape(tmp_path, monkeypatch):
@@ -397,13 +412,13 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert captured_handler_class is not None
 
     # Helper to simulate a GET request
-    def simulate_get(path):
+    def simulate_get(path, headers=None):
         class SimulatedHandler(captured_handler_class):
             def __init__(self):
                 self.request = FakeRequest()
                 self.client_address = ("127.0.0.1", 12345)
                 self.server = None
-                self.headers = {}
+                self.headers = headers or {}
                 self.path = path
                 self.wfile = BytesIO()
                 self.rfile = BytesIO()
@@ -427,13 +442,13 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
         return handler
 
     # Helper to simulate an OPTIONS request
-    def simulate_options(path):
+    def simulate_options(path, headers=None):
         class SimulatedHandler(captured_handler_class):
             def __init__(self):
                 self.request = FakeRequest()
                 self.client_address = ("127.0.0.1", 12345)
                 self.server = None
-                self.headers = {}
+                self.headers = headers or {}
                 self.path = path
                 self.wfile = BytesIO()
                 self.rfile = BytesIO()
@@ -460,12 +475,20 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert payload["type"] == "overview"
     assert payload["project_items"] == []
     assert payload["legacy_state"] is None
-    assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
+    assert handler.response_headers.get("Access-Control-Allow-Origin") is None
+
+    handler = simulate_get("/api/state", headers={"Origin": "http://127.0.0.1:8788"})
+    assert 200 in handler.responses
+    assert handler.response_headers.get("Access-Control-Allow-Origin") == "http://127.0.0.1:8788"
+
+    handler = simulate_get("/api/state", headers={"Origin": "https://evil.example"})
+    assert 200 in handler.responses
+    assert handler.response_headers.get("Access-Control-Allow-Origin") is None
 
     # 3. Test OPTIONS preflight request
-    handler = simulate_options("/api/state")
+    handler = simulate_options("/api/state", headers={"Origin": "http://localhost:8788"})
     assert 204 in handler.responses
-    assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
+    assert handler.response_headers.get("Access-Control-Allow-Origin") == "http://localhost:8788"
     assert "GET" in handler.response_headers.get("Access-Control-Allow-Methods", "")
 
     # 4. Test GET static files fallback (should fall back to render HTML template and return 200)
@@ -1468,7 +1491,7 @@ def test_api_memory_returns_empty_roles_without_memory(tmp_path, monkeypatch):
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert payload == {"project_key": "REAL", "roles": []}
-    assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
+    assert handler.response_headers.get("Access-Control-Allow-Origin") is None
 
 
 def test_api_agents_returns_discovered_agents(tmp_path, monkeypatch):
@@ -1508,7 +1531,7 @@ def test_api_agents_returns_discovered_agents(tmp_path, monkeypatch):
             }
         ]
     }
-    assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
+    assert handler.response_headers.get("Access-Control-Allow-Origin") is None
 
 
 def test_api_messages_returns_messages_for_run(tmp_path, monkeypatch):
@@ -1538,7 +1561,7 @@ def test_api_messages_returns_messages_for_run(tmp_path, monkeypatch):
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert payload == {"messages": [message]}
-    assert handler.response_headers.get("Access-Control-Allow-Origin") == "*"
+    assert handler.response_headers.get("Access-Control-Allow-Origin") is None
 
 
 def test_api_memory_returns_role_summaries_event_count_and_latest_retrieval(tmp_path, monkeypatch):
