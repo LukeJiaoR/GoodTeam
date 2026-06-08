@@ -36,6 +36,7 @@ import { useDevLoopData } from './hooks/useDevLoopData';
 import { useMemoryData } from './hooks/useMemoryData';
 import { useCrossProjectMemorySearch } from './hooks/useCrossProjectMemorySearch';
 import { useApprovalEditor } from './hooks/useApprovalEditor';
+import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
@@ -59,11 +60,8 @@ import AgentsMemoryTab from './components/tabs/AgentsMemoryTab';
 import MessagesTab from './components/tabs/MessagesTab';
 import {
   DEFAULT_BACKEND_OPTIONS,
-  DEFAULT_WORKER_ROLES,
   FALLBACK_AGENT_MODES,
-  MODEL_UNAVAILABLE_BACKENDS,
   WORKER_ROUTING_BUCKETS,
-  canonicalBackendForOption,
 } from './constants/workers';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
@@ -77,19 +75,6 @@ export default function App() {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
 
-  // Worker backend settings states
-  const [panelGlobalMode, setPanelGlobalMode] = useState('codex');
-  const [panelRoleOverrides, setPanelRoleOverrides] = useState({});
-  const [panelRoleModels, setPanelRoleModels] = useState({});
-  const [workerRoutingMode, setWorkerRoutingMode] = useState('simple');
-  const [simpleRoutingBackends, setSimpleRoutingBackends] = useState({});
-  const [customModelSelected, setCustomModelSelected] = useState({});
-  const [configuringRoles, setConfiguringRoles] = useState({});
-  const [backendsError, setBackendsError] = useState(null);
-  const [backendsSuccess, setBackendsSuccess] = useState(null);
-  const [savingBackends, setSavingBackends] = useState(false);
-  const [discoveredAgents, setDiscoveredAgents] = useState(null);
-  const [loadingDiscoveredAgents, setLoadingDiscoveredAgents] = useState(false);
   const [agentsMemorySubTab, setAgentsMemorySubTab] = useState('roles');
   const [newProjectModalOpen, setNewProjectModalOpen] = useState(false);
 
@@ -332,42 +317,7 @@ export default function App() {
         }
 
         if (showLoading) {
-          setPanelGlobalMode(sc.worker_backend?.mode || 'codex');
-          setPanelRoleOverrides(sc.project_report?.role_worker_backends || {});
-
-          const initialModels = sc.role_model_overrides || {};
-          setPanelRoleModels(initialModels);
-          setBackendsError(null);
-          setBackendsSuccess(null);
-
-          const customSelected = {};
-          if (discoveredAgents) {
-            const agentMap = {};
-            discoveredAgents.forEach(a => {
-              if (a && a.backend) {
-                agentMap[a.backend] = a;
-                if (a.aliases) {
-                  a.aliases.forEach(alias => {
-                    agentMap[alias] = a;
-                  });
-                }
-              }
-            });
-            const roles = sc.worker_roles || DEFAULT_WORKER_ROLES;
-            roles.forEach(role => {
-              const currentModel = initialModels[role];
-              const currentBackend = sc.project_report?.role_worker_backends?.[role] || sc.worker_backend?.mode || 'codex';
-              const fallbackAgent = FALLBACK_AGENT_MODES[currentBackend];
-              const agent = currentBackend ? agentMap[currentBackend] || (fallbackAgent ? { backend: currentBackend, ...fallbackAgent } : null) : null;
-              if (agent && currentModel) {
-                const models = agent.models || FALLBACK_AGENT_MODES[agent.backend]?.models || ["auto"];
-                if (!models.includes(currentModel)) {
-                  customSelected[role] = true;
-                }
-              }
-            });
-          }
-          setCustomModelSelected(customSelected);
+          seedWorkerBackendSettings(sc);
         }
 
         // Delivery Contract
@@ -396,6 +346,45 @@ export default function App() {
       if (showLoading) setLoading(false);
     }
   };
+
+  const workerBackendSettings = useWorkerBackendSettings({
+    activeTab,
+    agentsMemorySubTab,
+    data,
+    projectKey,
+    showToast,
+    fetchState,
+  });
+  const {
+    panelGlobalMode,
+    setPanelGlobalMode,
+    panelRoleOverrides,
+    panelRoleModels,
+    workerRoutingMode,
+    setWorkerRoutingMode,
+    simpleRoutingBackends,
+    setSimpleRoutingBackends,
+    customModelSelected,
+    configuringRoles,
+    setConfiguringRoles,
+    backendsError,
+    backendsSuccess,
+    savingBackends,
+    discoveredAgents,
+    loadingDiscoveredAgents,
+    safeDiscoveredAgents,
+    roleBackendOptions,
+    workerRoles,
+    discoveredAgentByBackend,
+    usedBackends,
+    getBackendOptionLabel,
+    seedWorkerBackendSettings,
+    handleAgentChange,
+    handleApplySimpleRouting,
+    handleModelDropdownChange,
+    handleCustomModelChange,
+    handleSaveWorkerBackends,
+  } = workerBackendSettings;
 
   const approvalEditor = useApprovalEditor({
     projectKey,
@@ -950,191 +939,6 @@ export default function App() {
     }
   };
 
-  const handleAgentChange = (role, newAgent) => {
-    setPanelRoleOverrides(prev => ({
-      ...prev,
-      [role]: newAgent
-    }));
-
-    const effectiveAgent = newAgent || panelGlobalMode;
-
-    if (MODEL_UNAVAILABLE_BACKENDS.includes(effectiveAgent)) {
-      setPanelRoleModels(prev => ({
-        ...prev,
-        [role]: ''
-      }));
-      setCustomModelSelected(prev => ({
-        ...prev,
-        [role]: false
-      }));
-    } else {
-      const agent = discoveredAgentByBackend[effectiveAgent];
-      const defaultModel = agent?.model_default || FALLBACK_AGENT_MODES[effectiveAgent]?.model_default || 'auto';
-      setPanelRoleModels(prev => ({
-        ...prev,
-        [role]: defaultModel
-      }));
-      setCustomModelSelected(prev => ({
-        ...prev,
-        [role]: false
-      }));
-    }
-  };
-
-  const handleApplySimpleRouting = () => {
-    const nextOverrides = { ...panelRoleOverrides };
-    WORKER_ROUTING_BUCKETS.forEach((bucket) => {
-      const backend = simpleRoutingBackends[bucket.key] || '';
-      bucket.roles.forEach((role) => {
-        if (!workerRoles.includes(role)) return;
-        if (backend) {
-          nextOverrides[role] = backend;
-        } else {
-          delete nextOverrides[role];
-        }
-      });
-    });
-    setPanelRoleOverrides(nextOverrides);
-    setWorkerRoutingMode('advanced');
-    setBackendsSuccess('Simple routing applied. Review Advanced roles, then save.');
-  };
-
-  const handleModelDropdownChange = (role, val) => {
-    if (val === '__custom__') {
-      setCustomModelSelected(prev => ({
-        ...prev,
-        [role]: true
-      }));
-      setPanelRoleModels(prev => ({
-        ...prev,
-        [role]: ''
-      }));
-    } else {
-      setCustomModelSelected(prev => ({
-        ...prev,
-        [role]: false
-      }));
-      setPanelRoleModels(prev => ({
-        ...prev,
-        [role]: val
-      }));
-    }
-  };
-
-  const handleCustomModelChange = (role, val) => {
-    setPanelRoleModels(prev => ({
-      ...prev,
-      [role]: val
-    }));
-  };
-
-  useEffect(() => {
-    if (discoveredAgents && data?.start_context?.role_model_overrides) {
-      const roleModels = data.start_context.role_model_overrides;
-      const customSelected = {};
-      const agentMap = {};
-      discoveredAgents.forEach(a => {
-        if (a && a.backend) {
-          agentMap[a.backend] = a;
-          if (a.aliases) {
-            a.aliases.forEach(alias => {
-              agentMap[alias] = a;
-            });
-          }
-        }
-      });
-      const roles = data.start_context.worker_roles || DEFAULT_WORKER_ROLES;
-      roles.forEach(role => {
-        const currentModel = roleModels[role];
-        const currentBackend = panelRoleOverrides[role] || data.start_context.project_report?.role_worker_backends?.[role] || panelGlobalMode;
-        const fallbackAgent = FALLBACK_AGENT_MODES[currentBackend];
-        const agent = currentBackend ? agentMap[currentBackend] || (fallbackAgent ? { backend: currentBackend, ...fallbackAgent } : null) : null;
-        if (agent && currentModel) {
-          const models = agent.models || FALLBACK_AGENT_MODES[agent.backend]?.models || ["auto"];
-          if (!models.includes(currentModel)) {
-            customSelected[role] = true;
-          }
-        }
-      });
-      setCustomModelSelected(prev => ({ ...customSelected, ...prev }));
-    }
-  }, [discoveredAgents, data, panelRoleOverrides, panelGlobalMode]);
-
-  const handleSaveWorkerBackends = async () => {
-    setSavingBackends(true);
-    setBackendsError(null);
-    setBackendsSuccess(null);
-    try {
-      // Build workers object containing ONLY explicit overrides for managed roles (exclude empty strings or "default")
-      const workers = {};
-      const role_models = {};
-      const managedRoles = data?.start_context?.worker_roles || DEFAULT_WORKER_ROLES;
-      managedRoles.forEach((role) => {
-        const backend = panelRoleOverrides[role];
-        if (backend && backend !== 'default' && backend !== '') {
-          workers[role] = backend;
-        }
-
-        const effectiveBackend = backend && backend !== 'default' && backend !== '' ? backend : panelGlobalMode;
-        if (!MODEL_UNAVAILABLE_BACKENDS.includes(effectiveBackend)) {
-          const agent = discoveredAgentByBackend[effectiveBackend];
-          const defaultModel = agent?.model_default || FALLBACK_AGENT_MODES[effectiveBackend]?.model_default || 'auto';
-          const modelVal = panelRoleModels[role];
-          const trimmedModel = modelVal?.trim() || '';
-          if (trimmedModel && trimmedModel !== defaultModel) {
-            role_models[role] = trimmedModel;
-          }
-        }
-      });
-
-      const response = await fetch('/api/project-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project: projectKey,
-          worker_backend_mode: panelGlobalMode,
-          workers: workers,
-          role_models: role_models,
-        }),
-      });
-      const res = await response.json();
-      if (!response.ok) {
-        throw new Error(res.error || 'Failed to save worker backends');
-      }
-      setBackendsSuccess('Configurations saved successfully');
-      showToast('Worker backends updated successfully');
-      await fetchState(projectKey, true); // Fetch state with full screen loader
-    } catch (err) {
-      setBackendsError(err.message);
-      showToast(err.message, true);
-    } finally {
-      setSavingBackends(false);
-    }
-  };
-
-  const fetchDiscoveredAgents = async () => {
-    setLoadingDiscoveredAgents(true);
-    try {
-      const response = await fetch('/api/agents');
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'Failed to fetch agents');
-      setDiscoveredAgents(Array.isArray(payload?.agents) ? payload.agents : []);
-    } catch {
-      setDiscoveredAgents([]);
-    } finally {
-      setLoadingDiscoveredAgents(false);
-    }
-  };
-
-  useEffect(() => {
-    if ((activeTab === 'workers' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'workers')) && discoveredAgents === null && !loadingDiscoveredAgents) {
-      const timer = window.setTimeout(() => {
-        fetchDiscoveredAgents();
-      }, 0);
-      return () => window.clearTimeout(timer);
-    }
-  }, [activeTab, agentsMemorySubTab, discoveredAgents, loadingDiscoveredAgents]);
-
   // Returns first two sentences of the idea prompt for default display
   const getMissionSummary = (text) => {
     if (!text) return '';
@@ -1259,55 +1063,6 @@ export default function App() {
   const state = data?.state;
   const startContext = data?.start_context || {};
   const backendOptions = startContext.worker_backend_options || DEFAULT_BACKEND_OPTIONS;
-  const safeDiscoveredAgents = (discoveredAgents || []).reduce((acc, agent) => {
-    const backend = canonicalBackendForOption(String(agent?.backend || '').trim());
-    if (!backend || acc.seen.has(backend)) return acc;
-    acc.seen.add(backend);
-    acc.items.push({ ...agent, backend });
-    return acc;
-  }, { seen: new Set(), items: [] }).items;
-  const discoveredBackendOptions = Array.from(new Set(
-    safeDiscoveredAgents
-      .map((agent) => agent?.backend)
-      .filter(Boolean)
-  ));
-  const roleBackendOptions = Array.from(
-    [...backendOptions, ...discoveredBackendOptions]
-      .reduce((acc, option) => {
-        const canonical = canonicalBackendForOption(String(option || '').trim());
-        if (canonical) acc.add(canonical);
-        return acc;
-      }, new Set())
-  );
-  const workerRoles = startContext.worker_roles || DEFAULT_WORKER_ROLES;
-  const discoveredAgentByBackend = {};
-  safeDiscoveredAgents.forEach((agent) => {
-    if (agent?.backend) {
-      discoveredAgentByBackend[agent.backend] = agent;
-    }
-    if (Array.isArray(agent?.aliases)) {
-      agent.aliases.forEach((alias) => {
-        if (alias) {
-          discoveredAgentByBackend[alias] = agent;
-          discoveredAgentByBackend[canonicalBackendForOption(alias)] = agent;
-        }
-      });
-    }
-  });
-  const getBackendOptionLabel = (backend) => {
-    const baseLabel = backend === 'codex'
-      ? 'Codex CLI'
-      : backend === 'anthropic' || backend === 'claude'
-        ? 'Claude CLI'
-        : backend;
-    const discovered = discoveredAgentByBackend[backend];
-    if (!discovered) return baseLabel;
-    return `${baseLabel} ${discovered.ready ? '✓ ready' : '⚠ not-ready'}`;
-  };
-  const usedBackends = Array.from(new Set([
-    panelGlobalMode,
-    ...workerRoles.map(role => panelRoleOverrides[role]).filter(b => b && b !== 'default' && b !== '')
-  ])).filter(Boolean);
 
   const activeRun = data?.active_run || false;
   const roleObservations = data?.role_observations || [];
