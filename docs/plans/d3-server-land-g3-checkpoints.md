@@ -219,7 +219,7 @@
 
 ### CP7 - D3 Parallel Read-Only/Fake Execution
 
-**Status:** planned.
+**Status:** completed in branch `feat/d3-parallel-readonly`.
 
 **Scope:** Enable parallel level execution only for read-only advisors, debate nodes, or fake workers with declared disjoint write domains.
 
@@ -234,6 +234,18 @@
 - Fake-worker tests prove parallel level scheduling.
 - Collision tests prove fail-closed behavior.
 - No real worker smoke until isolation strategy is selected.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'parallel_execution_plan'` first failed because `workflow_parallel_execution_plan` did not exist.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'parallel_execution_plan'` -> `2 passed, 26 deselected`.
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges -q` first failed because `workflow_execution_plan_v2` did not expose `parallel_execution_plan`.
+- Targeted green: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges -q` -> `1 passed`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'parallel_execution_plan or execution_plan_v2'` -> `5 passed, 23 deselected`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/workflow_table.py tests/test_workflow_table.py tests/test_web.py` -> `All checks passed!`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py tests/test_web.py tests/test_api.py -q -k 'workflow_graph or workflow_node or workflow_dag or execution_plan or parallel_execution_plan or api_workflow_graph'` -> `23 passed, 214 deselected`.
+- `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `570 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
 
 **Rollback:** Disable the feature flag or revert CP7 PR.
 

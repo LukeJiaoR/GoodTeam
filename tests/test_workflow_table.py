@@ -14,6 +14,7 @@ from goodteam_os.workflow_table import (
     topological_workflow_nodes,
     validate_workflow_dag,
     validate_workflow_execution_plan_v2,
+    workflow_parallel_execution_plan,
     workflow_execution_plan,
     workflow_execution_plan_v2,
     workflow_node,
@@ -280,6 +281,117 @@ def test_workflow_execution_plan_v2_reports_cycles_missing_fanin_and_write_domai
     assert "Workflow DAG cycle detected: a -> b -> a" in errors
     assert "Workflow execution plan v2 has missing fan-in node 'missing_fanin' for 'a'" in errors
     assert "Workflow execution plan v2 write-domain collision repo:shared: a, b" in errors
+
+
+def test_workflow_parallel_execution_plan_allows_fake_readonly_levels_and_preserves_fanin_order():
+    nodes = {
+        "research": WorkflowNode(
+            name="research",
+            run_guard_gate="prd",
+            runner_fn="fake_research_worker",
+            depends_on=("product_requirement",),
+        ),
+        "advisor": WorkflowNode(
+            name="advisor",
+            run_guard_gate="prd",
+            runner_fn="readonly_advisor",
+            depends_on=("product_requirement",),
+        ),
+        "summary": WorkflowNode(
+            name="summary",
+            run_guard_gate="rfc",
+            runner_fn="fake_summary_worker",
+            depends_on=("research", "advisor"),
+        ),
+    }
+    gate_transitions = {
+        "prd": GateTransition(
+            gate="prd",
+            on_approved_next="research",
+            on_changes_requested="revise_prd",
+            on_rejected="rejected",
+        ),
+        "rfc": GateTransition(
+            gate="rfc",
+            on_approved_next="summary",
+            on_changes_requested="revise_rfc",
+            on_rejected="rejected",
+        ),
+    }
+
+    plan = workflow_parallel_execution_plan(
+        nodes,
+        gate_transitions=gate_transitions,
+        runner_kinds={
+            "research": "fake_worker",
+            "advisor": "read_only_advisor",
+            "summary": "fake_worker",
+        },
+        write_domains={
+            "research": ("artifact:research",),
+            "advisor": ("artifact:advisor",),
+            "summary": ("artifact:summary",),
+        },
+    )
+
+    assert plan == {
+        "version": 1,
+        "valid": True,
+        "scheduler": "parallel_levels",
+        "runner_kind": "read_only_fake_projection",
+        "parallel_level_execution": "enabled_for_fake_and_readonly",
+        "validation_errors": [],
+        "batches": [
+            {"level": 1, "nodes": ["research", "advisor"], "mode": "parallel"},
+            {"level": 2, "nodes": ["summary"], "mode": "sequential"},
+        ],
+    }
+
+
+def test_workflow_parallel_execution_plan_fails_closed_for_real_workers_and_write_collisions():
+    nodes = {
+        "implementation": WorkflowNode(
+            name="implementation",
+            run_guard_gate="rfc",
+            runner_fn="run_real_worker",
+            depends_on=("rfc",),
+        ),
+        "qa": WorkflowNode(
+            name="qa",
+            run_guard_gate="rfc",
+            runner_fn="fake_qa_worker",
+            depends_on=("rfc",),
+        ),
+    }
+    gate_transitions = {
+        "rfc": GateTransition(
+            gate="rfc",
+            on_approved_next="implementation",
+            on_changes_requested="revise_rfc",
+            on_rejected="rejected",
+        )
+    }
+
+    plan = workflow_parallel_execution_plan(
+        nodes,
+        gate_transitions=gate_transitions,
+        runner_kinds={
+            "implementation": "sequential_worker",
+            "qa": "fake_worker",
+        },
+        write_domains={
+            "implementation": ("repo:shared",),
+            "qa": ("repo:shared",),
+        },
+    )
+
+    assert plan["valid"] is False
+    assert plan["batches"] == []
+    assert plan["parallel_level_execution"] == "blocked"
+    assert plan["validation_errors"] == [
+        "Workflow execution plan v2 write-domain collision repo:shared: implementation, qa",
+        "Parallel execution refuses runner 'implementation' with kind 'sequential_worker'",
+    ]
 
 
 def test_workflow_dag_validation_rejects_unknown_dependency():
