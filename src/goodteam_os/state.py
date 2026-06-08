@@ -134,9 +134,15 @@ class StateStore:
         directory.mkdir(parents=True, exist_ok=True)
         while True:
             path = self._next_checkpoint_path(directory, state.current_node)
+            sequence = self._checkpoint_sequence(path, state.current_node)
             try:
                 with path.open("x", encoding="utf-8") as file:
-                    json.dump(asdict(state), file, indent=2)
+                    payload = asdict(state)
+                    payload["checkpoint"] = {
+                        "node": state.current_node,
+                        "sequence": sequence,
+                    }
+                    json.dump(payload, file, indent=2)
                 return path
             except FileExistsError:
                 continue
