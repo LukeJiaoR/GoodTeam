@@ -1484,12 +1484,16 @@ def test_frontend_contract_exposes_open_questions_at_approval_gate():
 
 
 def test_frontend_contract_has_simple_advanced_worker_routing_modes():
-    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    workers_tab = (root / "frontend" / "src" / "components" / "tabs" / "WorkersTab.jsx").read_text(
+        encoding="utf-8"
+    )
 
     assert "workerRoutingMode" in app
     assert "WORKER_ROUTING_BUCKETS" in app
-    assert "Apply Simple Routing" in app
-    assert "Advanced" in app
+    assert "Apply Simple Routing" in workers_tab
+    assert "Advanced" in workers_tab
 
 
 def test_frontend_contract_exposes_release_readiness_without_execution_controls():
@@ -1910,6 +1914,57 @@ def test_smoke_runs_page_is_extracted_and_uses_theme_tokens():
         "text-status-success-text",
     ]:
         assert semantic_class in smoke_page
+
+
+def test_workers_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Workers */}")
+    end = app.index("{/* Tab: Approvals */}", start)
+    workers_mount = app[start:end]
+
+    assert "<WorkersTab" in workers_mount
+    assert "workerJobs.map" not in workers_mount
+    assert "workerRoles.map" not in workers_mount
+
+    workers_tab = root / "frontend" / "src" / "components" / "tabs" / "WorkersTab.jsx"
+    assert workers_tab.exists()
+    workers_page = workers_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+    ]
+    assert {snippet: workers_page.count(snippet) for snippet in disallowed_snippets if snippet in workers_page} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "bg-surface-sunken",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+        "shadow-button",
+        "bg-status-success-bg",
+        "text-status-success-text",
+        "bg-status-warning-bg",
+        "text-status-warning-text",
+        "bg-status-danger-bg",
+        "text-status-danger-text",
+        "bg-status-info-bg",
+        "text-status-info-text",
+    ]:
+        assert semantic_class in workers_page
 
 
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
