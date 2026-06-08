@@ -49,6 +49,7 @@ import {
   translate,
 } from './i18n';
 import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
+import RolesTab from './components/tabs/RolesTab';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
@@ -3603,58 +3604,12 @@ export default function App() {
 
               {/* Tab: Roles */}
               {(activeTab === 'roles' || (activeTab === 'agents_memory' && agentsMemorySubTab === 'roles')) && (
-                <div className="space-y-6">
-                  <div className="border-b-2 border-border-subtle dark:border-zinc-800 pb-2">
-                    <h2 className="text-base font-extrabold text-zinc-800 dark:text-zinc-200">Role Observability</h2>
-                    <p className="text-xs text-text-muted">Overview of AI agents configured for this workflow execution loop.</p>
-                  </div>
-
-                  {/* Grid layout for 9 roles: 3 cols wide, 2 cols medium, rounded-2xl white cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {roleObservations.map((role) => {
-                      const badge = getBadgeStyle(role.status);
-                      return (
-                        <div
-                          key={role.name}
-                          className={`bg-white dark:bg-zinc-950 border-2 rounded-2xl shadow-card dark:shadow-card p-5 space-y-4 hover:-translate-y-0.5 hover:shadow-card transition-all duration-200 flex flex-col justify-between ${role.status === 'Waiting for approval' ? 'border-status-warning' : role.status === 'Ready' ? 'border-accent' : 'border-border-subtle dark:border-zinc-800'}`}
-                        >
-                          <div className="space-y-3">
-                            <div className="flex justify-between items-start gap-2">
-                              <h3 className="font-extrabold text-sm text-zinc-800 dark:text-zinc-200 leading-tight">{role.name}</h3>
-                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider shrink-0 ${badge.bg} ${badge.text} ${badge.border}`}>
-                                {getStatusLabel(role.status)}
-                              </span>
-                            </div>
-                            <p className="text-xs font-semibold text-zinc-550 leading-relaxed h-12 overflow-y-auto">{role.description}</p>
-                          </div>
-
-                          <div className="border-t-2 border-border-subtle dark:border-zinc-900 pt-3 space-y-2 text-2xs font-bold">
-                            <div className="grid grid-cols-2 gap-x-2">
-                              <div>
-                                <span className="text-text-muted uppercase tracking-wider text-2xs block mb-0.5">Model</span>
-                                <span className="font-mono text-zinc-700 dark:text-zinc-300 truncate block">{role.model}</span>
-                              </div>
-                              <div>
-                                <span className="text-text-muted uppercase tracking-wider text-2xs block mb-0.5">Mode</span>
-                                <span className="text-zinc-700 dark:text-zinc-300 capitalize">{role.mode}</span>
-                              </div>
-                            </div>
-
-                            {role.artifact && (
-                              <div className="pt-1 flex justify-between items-center gap-2">
-                                <div>
-                                  <span className="text-text-muted uppercase tracking-wider text-2xs block">Target Artifact</span>
-                                  <span className="text-accent uppercase font-extrabold text-2xs">{role.artifact}</span>
-                                </div>
-                                <FilePath path={role.artifact_path} segments={1} />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <RolesTab
+                  roleObservations={roleObservations}
+                  getBadgeStyle={getBadgeStyle}
+                  getStatusLabel={getStatusLabel}
+                  FilePath={FilePath}
+                />
               )}
 
               {/* Tab: Artifacts */}

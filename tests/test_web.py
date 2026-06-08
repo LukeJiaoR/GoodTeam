@@ -1685,6 +1685,49 @@ def test_workflow_graph_page_is_extracted_and_uses_theme_tokens():
         assert semantic_class in workflow_graph
 
 
+def test_roles_page_is_extracted_and_uses_theme_tokens():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    start = app.index("{/* Tab: Roles */}")
+    end = app.index("{/* Tab: Artifacts */}", start)
+    roles_mount = app[start:end]
+
+    assert "<RolesTab" in roles_mount
+    assert "roleObservations.map" not in roles_mount
+
+    roles_tab = root / "frontend" / "src" / "components" / "tabs" / "RolesTab.jsx"
+    assert roles_tab.exists()
+    roles_page = roles_tab.read_text(encoding="utf-8")
+
+    disallowed_snippets = [
+        "bg-white",
+        "bg-zinc",
+        "border-zinc",
+        "text-zinc",
+        "dark:",
+        "text-[11px]",
+        "text-[10px]",
+        "text-[9px]",
+        "text-[8px]",
+        "shadow-[",
+    ]
+    assert {snippet: roles_page.count(snippet) for snippet in disallowed_snippets if snippet in roles_page} == {}
+
+    for semantic_class in [
+        "bg-surface-raised",
+        "border-border-subtle",
+        "text-text-primary",
+        "text-text-secondary",
+        "text-text-muted",
+        "text-2xs",
+        "shadow-card",
+        "border-status-warning",
+        "border-accent",
+        "text-accent",
+    ]:
+        assert semantic_class in roles_page
+
+
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
 
