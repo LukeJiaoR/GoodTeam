@@ -71,7 +71,7 @@
 
 ### CP2 - Server Action Capability Model
 
-**Status:** planned.
+**Status:** completed in branch `feat/server-action-capabilities`.
 
 **Scope:** Add a read-only capability report for server actions. It reports whether dispatch, dry-smoke, land, tag, and graduate actions are available, disabled, or blocked by missing auth/capability gates.
 
@@ -85,6 +85,14 @@
 **Verification:**
 - API contract tests for disabled capabilities.
 - Frontend contract/build if UI is touched.
+
+**Evidence Captured:**
+- `PYTHONPATH=/Users/luke/WorkSpace/codeAi/goodteam-dev-cp2-capabilities/src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py tests/test_web.py -q -k 'server_actions or devloop or release_readiness'` -> `3 passed, 206 deselected`.
+- `PYTHONPATH=/Users/luke/WorkSpace/codeAi/goodteam-dev-cp2-capabilities/src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `561 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `cd frontend && npm run lint` -> exit 0.
+- `cd frontend && npm run build` -> Vite build succeeded.
+- `git diff --check` -> exit 0.
 
 **Rollback:** Revert CP2 PR; existing command-copy workflow remains.
 
