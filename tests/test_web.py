@@ -1506,11 +1506,14 @@ def test_frontend_contract_reads_project_report_repos_from_top_level():
 
 
 def test_frontend_contract_keeps_agy_model_selectable_and_aliases_deduped():
-    app = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    workers_constants = (root / "frontend" / "src" / "constants" / "workers.js").read_text(encoding="utf-8")
 
-    assert 'MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human"]' in app
+    assert 'MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human"]' in workers_constants
     assert "Model is not applicable for Antigravity" not in app
-    assert "canonicalBackendForOption" in app
+    assert "export function canonicalBackendForOption" in workers_constants
+    assert "import {" in app and "canonicalBackendForOption" in app
 
 
 def test_frontend_contract_exposes_open_questions_at_approval_gate():
@@ -1525,14 +1528,39 @@ def test_frontend_contract_exposes_open_questions_at_approval_gate():
 def test_frontend_contract_has_simple_advanced_worker_routing_modes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    workers_constants = (root / "frontend" / "src" / "constants" / "workers.js").read_text(encoding="utf-8")
     workers_tab = (root / "frontend" / "src" / "components" / "tabs" / "WorkersTab.jsx").read_text(
         encoding="utf-8"
     )
 
     assert "workerRoutingMode" in app
-    assert "WORKER_ROUTING_BUCKETS" in app
+    assert "WORKER_ROUTING_BUCKETS" in workers_constants
+    assert "DEFAULT_BACKEND_OPTIONS" in workers_constants
+    assert "FALLBACK_AGENT_MODES" in workers_constants
     assert "Apply Simple Routing" in workers_tab
     assert "Advanced" in workers_tab
+
+
+def test_worker_constants_are_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    workers_constants = root / "frontend" / "src" / "constants" / "workers.js"
+
+    assert workers_constants.exists()
+    constants_source = workers_constants.read_text(encoding="utf-8")
+    for export_name in [
+        "DEFAULT_BACKEND_OPTIONS",
+        "DEFAULT_WORKER_ROLES",
+        "MODEL_UNAVAILABLE_BACKENDS",
+        "WORKER_ROUTING_BUCKETS",
+        "FALLBACK_AGENT_MODES",
+    ]:
+        assert f"export const {export_name}" in constants_source
+        assert f"const {export_name}" not in app
+
+    assert "export function canonicalBackendForOption" in constants_source
+    assert "function canonicalBackendForOption" not in app
+    assert "import {" in app and "FALLBACK_AGENT_MODES" in app
 
 
 def test_frontend_contract_exposes_release_readiness_without_execution_controls():
