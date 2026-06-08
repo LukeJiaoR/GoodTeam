@@ -1933,6 +1933,54 @@ def test_dev_loop_data_hook_is_extracted_from_app_shell():
     assert "/api/devloop" not in app
 
 
+def test_memory_data_hook_is_extracted_from_app_shell():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = root / "frontend" / "src" / "hooks" / "useMemoryData.js"
+
+    assert hook.is_file()
+    hook_source = hook.read_text(encoding="utf-8")
+    assert "export function useMemoryData" in hook_source
+    assert "memoryBrowseTimers" in hook_source
+    assert "memoryBrowseRequestSeq" in hook_source
+    assert "/api/memory?project=" in hook_source
+    assert "/api/memory/event?" in hook_source
+    assert "/api/memory/events?" in hook_source
+    assert "fetchMemory" in hook_source
+    assert "handleOpenMemoryEvent" in hook_source
+    assert "handleToggleMemoryEvents" in hook_source
+    assert "handleMemoryEventSearchChange" in hook_source
+    assert "import { useMemoryData } from './hooks/useMemoryData';" in app
+    assert "const memory = useMemoryData(projectKey);" in app
+    for name in [
+        "memoryData",
+        "loadingMemory",
+        "memoryError",
+        "memoryEventDetail",
+        "memoryEventBrowsers",
+        "fetchMemory",
+        "handleOpenMemoryEvent",
+        "handleToggleMemoryEvents",
+        "handleMemoryEventSearchChange",
+    ]:
+        assert f"{name}," in app
+    assert "const [memoryData" not in app
+    assert "const [loadingMemory" not in app
+    assert "const [memoryError" not in app
+    assert "const [memoryEventDetail" not in app
+    assert "const [memoryEventBrowsers" not in app
+    assert "const memoryBrowseTimers" not in app
+    assert "const memoryBrowseRequestSeq" not in app
+    assert "const fetchMemory = async" not in app
+    assert "const handleOpenMemoryEvent = async" not in app
+    assert "const fetchMemoryEvents = async" not in app
+    assert "const handleToggleMemoryEvents" not in app
+    assert "const handleMemoryEventSearchChange" not in app
+    assert "/api/memory?project=" not in app
+    assert "/api/memory/event?" not in app
+    assert "/api/memory/events?" not in app
+
+
 def test_projects_home_page_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
