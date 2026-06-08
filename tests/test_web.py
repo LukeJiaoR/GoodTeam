@@ -2220,6 +2220,28 @@ def test_language_switcher_is_extracted_from_app_shell():
     assert "<LanguageSwitcher" in app
 
 
+def test_project_sidebar_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    sidebar = root / "frontend" / "src" / "components" / "ProjectSidebar.jsx"
+
+    assert sidebar.exists()
+    sidebar_source = sidebar.read_text(encoding="utf-8")
+    assert "export default function ProjectSidebar" in sidebar_source
+    assert "GoodTeam OS" in sidebar_source
+    assert "lg:w-[220px]" in sidebar_source
+    assert "navGroups.map" in sidebar_source
+    assert "setAgentsMemorySubTab('roles')" in sidebar_source
+    assert "LanguageSwitcher" in sidebar_source
+    assert "theme === 'vivid'" in sidebar_source
+    assert "theme === 'minimal'" in sidebar_source
+    assert "import ProjectSidebar from './components/ProjectSidebar';" in app
+    assert "<ProjectSidebar" in app
+    assert "GoodTeam OS" not in app
+    assert "navGroups.map" not in app
+    assert "lg:w-[220px]" not in app
+
+
 def test_project_url_hook_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
