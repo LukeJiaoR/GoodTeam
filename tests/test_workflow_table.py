@@ -5,6 +5,7 @@ from goodteam_os import web
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.workflow_table import (
     GATE_TRANSITIONS,
+    GateTransition,
     WorkflowNode,
     advisors_for_gate,
     approved_next_for_gate,
@@ -158,14 +159,89 @@ def test_workflow_dag_validation_rejects_unknown_failure_targets():
         raise AssertionError("expected unknown blocked target validation failure")
 
 
+def test_workflow_dag_validation_rejects_unknown_gate_transition_targets():
+    nodes = {
+        "planner": WorkflowNode(
+            name="planner",
+            run_guard_gate="rfc",
+            runner_fn="run_delivery_until_release_gate",
+        )
+    }
+
+    gate_transitions = {
+        "rfc": GateTransition(
+            gate="rfc",
+            on_approved_next="missing_approved_target",
+            on_changes_requested="revise_rfc",
+            on_rejected="rejected",
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes, gate_transitions=gate_transitions)
+    except ValueError as exc:
+        assert "unknown approved target" in str(exc)
+        assert "missing_approved_target" in str(exc)
+    else:
+        raise AssertionError("expected unknown approved target validation failure")
+
+    gate_transitions = {
+        "rfc": GateTransition(
+            gate="rfc",
+            on_approved_next="planner",
+            on_changes_requested="missing_changes_target",
+            on_rejected="missing_rejected_target",
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes, gate_transitions=gate_transitions)
+    except ValueError as exc:
+        assert "unknown changes_requested target" in str(exc)
+        assert "missing_changes_target" in str(exc)
+    else:
+        raise AssertionError("expected unknown changes requested target validation failure")
+
+    gate_transitions = {
+        "rfc": GateTransition(
+            gate="rfc",
+            on_approved_next="planner",
+            on_changes_requested="revise_rfc",
+            on_rejected="missing_rejected_target",
+        )
+    }
+
+    try:
+        validate_workflow_dag(nodes, gate_transitions=gate_transitions)
+    except ValueError as exc:
+        assert "unknown rejected target" in str(exc)
+        assert "missing_rejected_target" in str(exc)
+    else:
+        raise AssertionError("expected unknown rejected target validation failure")
+
+
 def test_workflow_dag_validation_rejects_cycles():
     nodes = {
         "a": WorkflowNode(name="a", run_guard_gate="prd", runner_fn="run_a", depends_on=("b",)),
         "b": WorkflowNode(name="b", run_guard_gate="rfc", runner_fn="run_b", depends_on=("a",)),
     }
+    gate_transitions = {
+        "prd": GateTransition(
+            gate="prd",
+            on_approved_next="a",
+            on_changes_requested="revise_prd",
+            on_rejected="rejected",
+        ),
+        "rfc": GateTransition(
+            gate="rfc",
+            on_approved_next="b",
+            on_changes_requested="revise_rfc",
+            on_rejected="rejected",
+        ),
+    }
 
     try:
-        validate_workflow_dag(nodes)
+        validate_workflow_dag(nodes, gate_transitions=gate_transitions)
     except ValueError as exc:
         assert "cycle" in str(exc).lower()
         assert "a" in str(exc)
