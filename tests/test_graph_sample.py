@@ -1894,6 +1894,105 @@ def test_worker_failure_triage_records_failure_pattern_match_without_overriding_
     assert "deterministic_disposition=block" in failure_events[0]["body"]
 
 
+def test_worker_failure_triage_applies_canary_route_for_high_confidence_network_pattern(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    library = FailurePatternLibrary(tmp_path)
+    for index in range(3):
+        library.record_failure(
+            failure_class="network",
+            summary="network socket closed during package install",
+            disposition="escalate_human",
+            role="implementation",
+            node="implementation",
+            source=f"worker_failure:prior-{index}:implementation:implementation",
+        )
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        role = job["role"]
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": role,
+            "adapter": job["adapter"],
+            "status": "failed" if role == "implementation" else "completed",
+            "summary": "network socket closed during package install",
+            "failure_class": "unknown" if role == "implementation" else "",
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.next_node == "failure_triage"
+    assert any(blocker.startswith("NEEDS HUMAN [unknown]:") for blocker in result.blockers)
+    action_log = tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl"
+    actions = [json.loads(line) for line in action_log.read_text(encoding="utf-8").splitlines()]
+    triage = [action for action in actions if action["action"] == "triage_decided"]
+    assert triage[-1]["decision"] == "escalate_human"
+    assert triage[-1]["deterministic_disposition"] == "block"
+    assert triage[-1]["canary_route_applied"] == "true"
+    assert triage[-1]["canary_route_reason"] == "canary_allowed"
+    assert triage[-1]["would_route_to"] == "escalate_human"
+    memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation")
+    failure_events = [event for event in memory_events if event["source"] == "worker_failure:run-1:implementation:implementation"]
+    assert "disposition=escalate_human" in failure_events[0]["body"]
+    assert "deterministic_disposition=block" in failure_events[0]["body"]
+    assert "canary_route_applied=true" in failure_events[0]["body"]
+
+
+def test_worker_failure_triage_can_disable_canary_route_with_env_gate(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    library = FailurePatternLibrary(tmp_path)
+    for index in range(3):
+        library.record_failure(
+            failure_class="network",
+            summary="network socket closed during package install",
+            disposition="escalate_human",
+            role="implementation",
+            node="implementation",
+            source=f"worker_failure:prior-{index}:implementation:implementation",
+        )
+    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
+    state.current_node = "rfc_review_gate"
+    state.next_node = "planner"
+    monkeypatch.setenv("GOODTEAM_G3_CANARY_ROUTING", "0")
+
+    def fake_run_job(self, job_id):
+        job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
+        role = job["role"]
+        return {
+            "job_id": job_id,
+            "run_id": job["run_id"],
+            "role": role,
+            "adapter": job["adapter"],
+            "status": "failed" if role == "implementation" else "completed",
+            "summary": "network socket closed during package install",
+            "failure_class": "unknown" if role == "implementation" else "",
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
+
+    assert result.next_node == "blocked"
+    action_log = tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl"
+    actions = [json.loads(line) for line in action_log.read_text(encoding="utf-8").splitlines()]
+    triage = [action for action in actions if action["action"] == "triage_decided"]
+    assert triage[-1]["decision"] == "block"
+    assert triage[-1]["canary_route_applied"] == "false"
+    assert triage[-1]["canary_route_reason"] == "disabled"
+
+
 def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
