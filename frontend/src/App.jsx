@@ -30,6 +30,7 @@ import {
 import FilePath from './components/FilePath';
 import Spinner from './components/Spinner';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
+import { formatHumanTime } from './utils/time';
 import {
   LANGUAGE_PREFERENCE_AUTO,
   LANGUAGE_STORAGE_KEY,
@@ -55,22 +56,6 @@ import { DELIVERY_MODE_OPTIONS } from './constants/deliveryModes';
 
 const EMPTY_GATE_DEBATE = { key: '', messages: [], loading: false, error: '' };
 const EMPTY_MESSAGE_FEED = { key: '', messages: [], loading: false, error: '' };
-
-// Humanize datetime strings to "May 27, 02:44"
-function formatHumanTime(timestamp) {
-  if (!timestamp) return '';
-  try {
-    const d = new Date(timestamp);
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const month = months[d.getMonth()];
-    const day = d.getDate();
-    const hour = String(d.getHours()).padStart(2, '0');
-    const minute = String(d.getMinutes()).padStart(2, '0');
-    return `${month} ${day}, ${hour}:${minute}`;
-  } catch {
-    return timestamp;
-  }
-}
 
 const DEFAULT_BACKEND_OPTIONS = ["fake", "codex", "claude", "noop", "human"];
 const DEFAULT_WORKER_ROLES = ["ui", "implementation", "qa"];
