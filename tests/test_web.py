@@ -2263,6 +2263,25 @@ def test_project_header_is_extracted_from_app_shell_without_theme_changes():
     assert "hidden lg:flex h-[60px]" not in app
 
 
+def test_approval_banner_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    banner = root / "frontend" / "src" / "components" / "ApprovalBanner.jsx"
+
+    assert banner.exists()
+    banner_source = banner.read_text(encoding="utf-8")
+    assert "export default function ApprovalBanner" in banner_source
+    assert "bg-status-warning-bg border-b-2 border-status-warning/30" in banner_source
+    assert "approvalBanner.message" in banner_source
+    assert "approvalBanner.review" in banner_source
+    assert "setActiveTab('approvals')" in banner_source
+    assert "duo-button-physics text-2xs cursor-pointer" in banner_source
+    assert "import ApprovalBanner from './components/ApprovalBanner';" in app
+    assert "<ApprovalBanner" in app
+    assert "Persistent Approvals Banner" not in app
+    assert "bg-status-warning-bg border-b-2 border-status-warning/30" not in app
+
+
 def test_project_url_hook_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
@@ -3025,6 +3044,7 @@ def test_system_page_is_extracted_and_uses_theme_tokens():
 def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    approval_banner = (root / "frontend" / "src" / "components" / "ApprovalBanner.jsx").read_text(encoding="utf-8")
     project_header = (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8")
     hook = (root / "frontend" / "src" / "hooks" / "useAppearancePreferences.js").read_text(encoding="utf-8")
 
@@ -3039,7 +3059,8 @@ def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     assert "t('nav.tabs.overview')" in app
     assert "t('chrome.dashboard')" in project_header
     assert "t('chrome.runId')" in project_header
-    assert "t('approvalBanner.review')" in app
+    assert "t('approvalBanner.message'" in approval_banner
+    assert "t('approvalBanner.review')" in approval_banner
     assert "t('chrome.loading')" in app
     assert "language.useAuto" in app
     assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in hook
