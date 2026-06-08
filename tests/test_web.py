@@ -1780,6 +1780,55 @@ def test_approval_helpers_are_extracted_from_app_shell():
     assert "import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';" in app
 
 
+def test_project_nav_groups_are_extracted_from_app_shell_without_chrome_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    navigation_utils = root / "frontend" / "src" / "utils" / "navigation.jsx"
+
+    assert navigation_utils.exists()
+    navigation_source = navigation_utils.read_text(encoding="utf-8")
+    assert "export function buildProjectNavGroups" in navigation_source
+    for icon_name in [
+        "LayoutDashboard",
+        "CheckCircle2",
+        "FileCode",
+        "Activity",
+        "Kanban",
+        "GitBranch",
+        "GitPullRequest",
+        "MessageSquare",
+        "Users",
+        "PlaySquare",
+        "Settings",
+    ]:
+        assert icon_name in navigation_source
+
+    for key in [
+        "nav.groups.work",
+        "nav.groups.observe",
+        "nav.groups.inspect",
+        "nav.groups.system",
+        "nav.tabs.overview",
+        "nav.tabs.approvals",
+        "nav.tabs.artifacts",
+        "nav.tabs.actions",
+        "nav.tabs.board",
+        "nav.tabs.workflow",
+        "nav.tabs.devloop",
+        "nav.tabs.messages",
+        "nav.tabs.agentsMemory",
+        "nav.tabs.smoke",
+        "nav.tabs.system",
+    ]:
+        assert key in navigation_source
+
+    assert "import { buildProjectNavGroups } from './utils/navigation';" in app
+    assert "const navGroups = buildProjectNavGroups(t);" in app
+    assert "const navGroups = [" not in app
+    assert "LayoutDashboard" not in app
+    assert "nav.groups.work" not in app
+
+
 def test_directory_picker_modal_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
@@ -3193,6 +3242,7 @@ def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     approval_banner = (root / "frontend" / "src" / "components" / "ApprovalBanner.jsx").read_text(encoding="utf-8")
     project_header = (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8")
     hook = (root / "frontend" / "src" / "hooks" / "useAppearancePreferences.js").read_text(encoding="utf-8")
+    navigation = (root / "frontend" / "src" / "utils" / "navigation.jsx").read_text(encoding="utf-8")
 
     assert "LANGUAGE_STORAGE_KEY" in hook
     assert "normalizeLanguagePreference" in hook
@@ -3201,8 +3251,9 @@ def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     assert "languagePreference" in app
     assert "setLanguagePreference" in app
     assert "navGroups" in app
-    assert "t('nav.groups.work')" in app
-    assert "t('nav.tabs.overview')" in app
+    assert "buildProjectNavGroups(t)" in app
+    assert "t('nav.groups.work')" in navigation
+    assert "t('nav.tabs.overview')" in navigation
     assert "t('chrome.dashboard')" in project_header
     assert "t('chrome.runId')" in project_header
     assert "t('approvalBanner.message'" in approval_banner

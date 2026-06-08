@@ -11,7 +11,7 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
-| 4 | Theme/App.jsx productization | Project content shell extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | ProjectContentShell/main-panel/modal/toast/git-notice/banner/header/sidebar/i18n/theme contract slice `26 passed`; frontend lint/build passed |
+| 4 | Theme/App.jsx productization | Project nav helper extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | Nav/sidebar/i18n/theme contract slice `18 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2b | Sequential dependency-gate runner semantics completed 2026-06-08 | Make declared gate dependencies affect real execution by routing RFC approval through the human-only security gate before planner starts, without enabling D3 parallel execution. | `554 passed`; ruff clean; frontend lint/build passed |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
@@ -32,6 +32,33 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-08 — Theme/App.jsx productization: project nav helper extraction
+
+**Intent:** reduce `App.jsx` by moving detailed-project sidebar navigation
+construction into a pure helper without changing the rendered sidebar.
+
+**Implemented:**
+- Added `frontend/src/utils/navigation.jsx`.
+- Moved nav group construction into `buildProjectNavGroups(t)`.
+- Preserved the same nav group i18n keys, tab IDs, and lucide icons.
+- Removed the nav icon imports and inline `navGroups` array from `App.jsx`.
+- Updated the dashboard i18n contract to follow the extracted helper.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_project_nav_groups_are_extracted_from_app_shell_without_chrome_changes -q`
+  first failed because `navigation.jsx` did not exist.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'project_nav_groups or project_sidebar or frontend_contract_uses_i18n or theme_tokens'`
+  -> `18 passed, 142 deselected`.
+- Frontend checks:
+  `cd frontend && npm ci && npm run lint && npm run build`
+  -> passed.
+
+**Deferred from this increment:**
+- Additional App.jsx derived-data/helper extraction.
+- Any visual redesign, theme-token conversion, or sidebar behavior changes.
 
 ### 2026-06-08 — Theme/App.jsx productization: project content shell extraction
 

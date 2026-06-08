@@ -1,17 +1,4 @@
 import { useState, useEffect } from 'react';
-import {
-  LayoutDashboard,
-  Users,
-  Activity,
-  Kanban,
-  PlaySquare,
-  CheckCircle2,
-  Settings,
-  FileCode,
-  MessageSquare,
-  GitBranch,
-  GitPullRequest
-} from 'lucide-react';
 import FilePath from './components/FilePath';
 import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModal from './components/NewProjectModal';
@@ -35,6 +22,7 @@ import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
 import { formatHumanTime } from './utils/time';
 import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';
+import { buildProjectNavGroups } from './utils/navigation';
 import {
   LANGUAGE_PREFERENCE_AUTO,
 } from './i18n';
@@ -989,39 +977,7 @@ export default function App() {
       plural: openQuestionsGateCount === 1 ? '' : 's',
     })
     : '';
-  const navGroups = [
-    {
-      title: t('nav.groups.work'),
-      items: [
-        { id: 'overview', label: t('nav.tabs.overview'), icon: LayoutDashboard },
-        { id: 'approvals', label: t('nav.tabs.approvals'), icon: CheckCircle2 },
-        { id: 'artifacts', label: t('nav.tabs.artifacts'), icon: FileCode },
-        { id: 'actions', label: t('nav.tabs.actions'), icon: Activity },
-        { id: 'board', label: t('nav.tabs.board'), icon: Kanban },
-      ],
-    },
-    {
-      title: t('nav.groups.observe'),
-      items: [
-        { id: 'workflow', label: t('nav.tabs.workflow'), icon: GitBranch },
-        { id: 'devloop', label: t('nav.tabs.devloop'), icon: GitPullRequest },
-        { id: 'messages', label: t('nav.tabs.messages'), icon: MessageSquare },
-      ],
-    },
-    {
-      title: t('nav.groups.inspect'),
-      items: [
-        { id: 'agents_memory', label: t('nav.tabs.agentsMemory'), icon: Users },
-        { id: 'smoke', label: t('nav.tabs.smoke'), icon: PlaySquare },
-      ],
-    },
-    {
-      title: t('nav.groups.system'),
-      items: [
-        { id: 'system', label: t('nav.tabs.system'), icon: Settings },
-      ],
-    },
-  ];
+  const navGroups = buildProjectNavGroups(t);
   const currentMemoryEvent = memoryEventDetail?.data || {};
   const memorySupersedes = currentMemoryEvent.supersedes || '';
   const memorySupersededBy = Array.isArray(currentMemoryEvent.superseded_by)
