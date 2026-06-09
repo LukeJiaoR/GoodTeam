@@ -28,8 +28,9 @@ implementation.
   hardening, live-use evidence, UI discipline, and keeping human review as the
   land gate.
 - Expanding G3 failure-pattern routing — CP8 canary routing applies only to
-  high-confidence low-risk classes. Broader route changes still require measured
-  outcome quality and false-positive review.
+  high-confidence low-risk classes. CP17 reports candidate outcome quality and
+  false-positive rates, but broader route changes still require human review of
+  that evidence before routing application moves beyond the canary boundary.
 - G3 LLM triage agent — only for unknown/ambiguous long-tail failures after
   enough data exists to measure it.
 - Codex pre-review account/auth recovery — external Codex account state; local

@@ -604,3 +604,58 @@ merged.
 
 **Rollback:** Revert CP16; D3 remains blocked for real workers by CP11
 readiness, but the detailed isolation strategy report disappears.
+
+### CP17 - G3 Routing Outcome Quality Gate
+
+**Status:** completed in branch `feat/cp17-g3-quality`.
+
+**Scope:** Convert existing G3 routing outcome counters into a machine-readable
+quality gate report. This checkpoint does not expand canary routing and does not
+add LLM triage.
+
+**Entry Gate:** CP12 routing outcome telemetry exists and CP8 canary routing is
+still limited to high-confidence low-risk classes.
+
+**Implementation Notes:**
+- Keep `routing_application=deferred`; the report is evidence for review, not a
+  switch that changes routing.
+- Keep `canary_routing_decision` behavior unchanged.
+- Add `routing_quality` to each candidate pattern with confirmed count,
+  false-positive count, false-positive rate, gate status, and blockers.
+- Add report-level `routing_quality_gate` with configurable `min_confirmed` and
+  `max_false_positive_rate` thresholds.
+- Set `routing_gate_satisfied` from the quality report so operators can see when
+  at least one candidate has enough clean outcome evidence, while still keeping
+  routing application deferred.
+
+**Verification:**
+- Red/green failure-pattern test for satisfied and blocked quality candidates.
+- Related G3/graph/CLI regression proving routing behavior is unchanged.
+- `ruff` on touched Python files.
+- `git diff --check`.
+
+**Evidence Captured:**
+- Targeted red:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_reports_routing_quality_gate_without_expanding_routing -q`
+  first failed because `routing_readiness_report()` had no `min_confirmed`
+  parameter.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py -q`
+  -> `7 passed`.
+- Related regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_graph_sample.py tests/test_cli.py tests/test_workflow_table.py -q -k 'failure_pattern or canary or triage or worker_failure or retry_exhausted or disposition_for_failure_class or failure_patterns_outputs'`
+  -> `18 passed, 105 deselected`.
+- Full backend:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q`
+  -> `594 passed`.
+- Full lint:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend checks:
+  `cd frontend && npm run lint` -> exit 0.
+  `cd frontend && npm run build` -> Vite build succeeded.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Rollback:** Revert CP17; CP12 outcome counters remain, but quality-gate
+summary fields disappear from readiness reports.

@@ -8,7 +8,7 @@ reference, verification evidence, and follow-up status.
 
 | Order | Mainline | Status | Scope For This Pass | Completion Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | G3c global failure-pattern library | Routing outcome telemetry completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, and record shadow/canary routing outcomes without expanding routing. | Related G3 regression `16 passed`; ruff/diff clean |
+| 1 | G3c global failure-pattern library | Routing quality gate report completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, record shadow/canary outcomes, and report outcome quality without expanding routing. | Related G3 regression `18 passed`; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Tag-release safety report completed 2026-06-09 | Keep `tag_release` report-only with explicit safety blockers and future enablement gates while preserving guarded `land_pr` / `graduate_release` behavior. | Server-action regression `31 passed`; ruff/diff clean |
 | 4 | Theme/App.jsx productization | Dev Loop dispatch form extraction completed 2026-06-09 | Keep Vivid and Minimal as permanent themes while shrinking Dev Loop/App shell code through focused component extraction without changing UI/theme styling. | Dev Loop/theme contract `30 passed`; frontend lint/build passed |
@@ -26,14 +26,46 @@ or deliberate incremental tracks: D3 real fan-in execution plus live-smoke
 evidence after the now-explicit worktree-per-worker isolation strategy, deeper
 dynamic-plan/topological runner ownership beyond the now-wired sequential and
 read-only/fake parallel slices, post-CP15 server-action operational hardening and
-live-use evidence, G3 routing outcome quality, G3 unknown-failure data for LLM
-triage, external Codex auth recovery, shared-worktree edit-collision need,
-optional full research/review memory ingestion, and continued Theme
-panel/component token cleanup with visual review.
+live-use evidence, broader G3 routing application after quality review, G3
+unknown-failure data for LLM triage, external Codex auth recovery,
+shared-worktree edit-collision need, optional full research/review memory
+ingestion, and continued Theme panel/component token cleanup with visual review.
 Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — G3 routing outcome quality gate report
+
+**Intent:** make the G3 routing-application gate measurable from recorded
+shadow/canary outcomes without expanding routing behavior.
+
+**Implemented:**
+- Added candidate-level `routing_quality` to failure-pattern readiness reports:
+  confirmed count, false-positive count, false-positive rate, gate status, and
+  blockers.
+- Added report-level `routing_quality_gate` with configurable `min_confirmed`
+  and `max_false_positive_rate`.
+- `routing_gate_satisfied` now reflects whether at least one candidate has enough
+  clean outcome evidence for review.
+- `routing_application` remains `deferred`; canary routing and deterministic
+  triage behavior are unchanged.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_reports_routing_quality_gate_without_expanding_routing -q`
+  first failed because `routing_readiness_report()` had no `min_confirmed`
+  parameter.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py -q`
+  -> `7 passed`.
+- Related G3 regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_graph_sample.py tests/test_cli.py tests/test_workflow_table.py -q -k 'failure_pattern or canary or triage or worker_failure or retry_exhausted or disposition_for_failure_class or failure_patterns_outputs'`
+  -> `18 passed, 105 deselected`.
+
+**Deferred from this increment:**
+- Broader routing application beyond the existing CP8 canary boundary.
+- LLM triage for unknown/ambiguous failures.
 
 ### 2026-06-09 — Graph/DAG D3: worker-isolation strategy evidence
 
