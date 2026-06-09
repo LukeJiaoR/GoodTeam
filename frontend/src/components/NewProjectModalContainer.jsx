@@ -76,6 +76,7 @@ export default function NewProjectModalContainer({
   startMode,
   startProjectKey,
   taskSync,
+  t,
   workerBackendMode,
 }) {
   if (!newProjectModalOpen) {
@@ -158,6 +159,7 @@ export default function NewProjectModalContainer({
       startMode={startMode}
       startProjectKey={startProjectKey}
       taskSync={taskSync}
+      t={t}
       workerBackendMode={workerBackendMode}
     />
   );

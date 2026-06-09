@@ -13,7 +13,7 @@ reference, verification evidence, and follow-up status.
 | 3 | Self-hosting control plane | Execution policy report completed 2026-06-09 | Keep `tag_release` report-only, preserve guarded `land_pr` / `graduate_release`, and expose the server-action execution boundary as read-only policy evidence. | Focused server-action policy `2 passed`; ruff/diff clean |
 | 4 | Theme/App.jsx productization | Dev Loop dispatch form extraction completed 2026-06-09 | Keep Vivid and Minimal as permanent themes while shrinking Dev Loop/App shell code through focused component extraction without changing UI/theme styling. | Dev Loop/theme contract `30 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2b/D3 | Worker-isolation strategy evidence completed 2026-06-09 | Add machine-readable worker-isolation strategy metadata for D3 parallel plans without enabling real parallel workers. | Related D3/workflow regression `26 passed`; ruff/diff clean |
-| 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
+| 6 | i18n | New-project/start-run form slice completed 2026-06-10 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher, dashboard chrome extraction, and first high-frequency form extraction without theme/style changes. | Focused frontend contracts `6 passed`; frontend lint/build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
 | 9 | Dispatch artifacts audit/memory | Audit artifact chain completed 2026-06-07 | Persist dispatch task/constraints/research source paths, write a PR-level archive manifest, and optionally archive/link human review rationale. | `487 passed`; ruff clean; frontend build passed |
@@ -34,6 +34,44 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-10 — i18n rollout: New Project / Start Workflow form slice
+
+**Intent:** continue the lightweight i18n rollout by translating the first
+high-frequency form surface after dashboard chrome: the New Project / Start
+Workflow modal.
+
+**Implemented:**
+- Added `newProject.*` English and Simplified Chinese locale keys for the modal
+  header, mode switch, core project fields, delivery mode labels, project-root
+  picker, Git configuration, launch check, dry-run copy, and primary actions.
+- Passed the existing `t` helper from `App.jsx` through
+  `NewProjectModalContainer` into `NewProjectModal`.
+- Replaced the modal's first-slice hardcoded copy with `t(...)` while preserving
+  existing JSX structure, class names, state wiring, payload values, and theme
+  token classes.
+- Kept `DELIVERY_MODE_OPTIONS` as the value source and only translated rendered
+  option labels, so submitted delivery-mode payloads are unchanged.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_frontend_i18n_localizes_new_project_start_form_slice -q`
+  first failed because `newProject.consoleEyebrow` and related keys were absent
+  from the locale files.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'frontend_i18n or uses_i18n_for_dashboard_chrome or new_project_modal or new_project_form_hook'`
+  -> `6 passed, 175 deselected`.
+- Frontend checks:
+  `npm --prefix frontend run lint` -> exit 0.
+  `npm --prefix frontend run build` -> Vite build succeeded.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Deferred from this increment:**
+- Advanced configuration drawer translation.
+- Approval panels, artifact review controls, Dev Loop, Smoke Runs, Memory,
+  agents, workflow graph, and system diagnostics translations.
+- Any backend/API i18n or translation of user/project/worker-provided data.
 
 ### 2026-06-09 — Server-action execution policy report
 
