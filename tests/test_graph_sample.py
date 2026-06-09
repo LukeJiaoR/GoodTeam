@@ -1837,6 +1837,16 @@ def test_escalated_worker_failure_writes_scoped_failure_memory_event(tmp_path, m
     assert patterns[0]["hit_count"] == 1
     assert patterns[0]["roles"] == ["implementation"]
     assert patterns[0]["sources"] == ["worker_failure:run-1:implementation:implementation"]
+    assert patterns[0]["routing_outcomes"] == {
+        "total": 0,
+        "confirmed": 0,
+        "false_positive": 0,
+        "shadow_only": 0,
+        "last_outcome": "",
+        "last_reason": "",
+        "last_disposition": "",
+        "last_deterministic_disposition": "",
+    }
 
 
 def test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition(tmp_path, monkeypatch):
@@ -1885,6 +1895,11 @@ def test_worker_failure_triage_records_failure_pattern_match_without_overriding_
     assert triage[-1]["shadow_route_source"] == "failure_pattern"
     assert triage[-1]["shadow_route_hit_count"] == "1"
     assert triage[-1]["deterministic_disposition"] == "block"
+    patterns = FailurePatternLibrary(tmp_path).list_patterns()
+    routed_pattern = next(pattern for pattern in patterns if pattern["routing_outcomes"]["total"] == 1)
+    assert routed_pattern["routing_outcomes"]["shadow_only"] == 1
+    assert routed_pattern["routing_outcomes"]["last_reason"] == "below_min_hits"
+    assert routed_pattern["routing_outcomes"]["last_disposition"] == "block"
     memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation")
     failure_events = [event for event in memory_events if event["source"] == "worker_failure:run-1:implementation:implementation"]
     assert "pattern_match=" in failure_events[0]["body"]
@@ -1940,6 +1955,10 @@ def test_worker_failure_triage_applies_canary_route_for_high_confidence_network_
     assert triage[-1]["canary_route_applied"] == "true"
     assert triage[-1]["canary_route_reason"] == "canary_allowed"
     assert triage[-1]["would_route_to"] == "escalate_human"
+    patterns = FailurePatternLibrary(tmp_path).list_patterns()
+    assert patterns[0]["routing_outcomes"]["confirmed"] == 1
+    assert patterns[0]["routing_outcomes"]["last_reason"] == "canary_allowed"
+    assert patterns[0]["routing_outcomes"]["last_disposition"] == "escalate_human"
     memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation")
     failure_events = [event for event in memory_events if event["source"] == "worker_failure:run-1:implementation:implementation"]
     assert "disposition=escalate_human" in failure_events[0]["body"]

@@ -1527,6 +1527,15 @@ def triage_worker_failure(
         disposition=disposition,
         source=f"worker_failure:{state.run_id}:implementation:{str(result.get('role', 'worker')).strip() or 'worker'}",
     )
+    record_worker_failure_routing_outcome(
+        workspace=workspace,
+        state=state,
+        result=result,
+        disposition=disposition,
+        deterministic_disposition=deterministic_disposition,
+        pattern_match=pattern_match,
+        canary_decision=canary_decision,
+    )
     return disposition
 
 
@@ -1562,6 +1571,32 @@ def append_worker_failure_pattern(
         role=role,
         node="implementation",
         source=source,
+    )
+
+
+def record_worker_failure_routing_outcome(
+    *,
+    workspace: Path | None,
+    state: AgileDevState,
+    result: dict[str, object],
+    disposition: str,
+    deterministic_disposition: str,
+    pattern_match: dict[str, object] | None,
+    canary_decision: dict[str, object] | None,
+) -> None:
+    if workspace is None or not pattern_match:
+        return
+    role = str(result.get("role", "worker")).strip() or "worker"
+    applied = bool((canary_decision or {}).get("applied", False))
+    outcome = "confirmed" if applied else "shadow_only"
+    FailurePatternLibrary(workspace).record_routing_outcome(
+        signature=str(pattern_match.get("signature", "")),
+        applied=applied,
+        disposition=disposition,
+        deterministic_disposition=deterministic_disposition,
+        reason=str((canary_decision or {}).get("reason", "shadow_only")),
+        outcome=outcome,
+        source=f"triage_decided:{state.run_id}:implementation:{role}",
     )
 
 
