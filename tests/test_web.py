@@ -1902,6 +1902,32 @@ def test_dev_loop_worktrees_panel_is_extracted_without_theme_changes():
     assert "<DevLoopWorktreesPanel worktrees={devLoopData.worktrees} FilePath={FilePath} />" in dev_loop_tab
 
 
+def test_dev_loop_pull_requests_panel_is_extracted_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
+    pull_requests_panel = root / "frontend" / "src" / "components" / "DevLoopPullRequestsPanel.jsx"
+
+    assert pull_requests_panel.exists()
+    panel_source = pull_requests_panel.read_text(encoding="utf-8")
+    assert "export default function DevLoopPullRequestsPanel" in panel_source
+    assert "function CommandCopyButton" in panel_source
+    assert "Open PRs & CI Status" in panel_source
+    assert "Array.isArray(devLoopData.pull_requests)" in panel_source
+    assert "Copy land command" in panel_source
+    assert "Ready to land" in panel_source
+    assert "pre-reviewed" in panel_source
+    assert "No open pull requests." in panel_source
+    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5" in panel_source
+    assert "bg-status-success-bg text-status-success-text border-status-success/30" in panel_source
+    assert "bg-status-info-bg text-status-info-text border-status-info/30" in panel_source
+    assert "function PullRequestsPanel" not in dev_loop_tab
+    assert "function CommandCopyButton" not in dev_loop_tab
+    assert "import DevLoopPullRequestsPanel from '../DevLoopPullRequestsPanel';" in dev_loop_tab
+    assert "<DevLoopPullRequestsPanel" in dev_loop_tab
+
+
 def test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
@@ -3489,6 +3515,7 @@ def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
 
     dev_loop_files = [
         root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx",
+        root / "frontend" / "src" / "components" / "DevLoopPullRequestsPanel.jsx",
         root / "frontend" / "src" / "components" / "DevLoopWarningsPanel.jsx",
         root / "frontend" / "src" / "components" / "DevLoopWorktreesPanel.jsx",
         root / "frontend" / "src" / "components" / "ReleaseReadinessCard.jsx",
