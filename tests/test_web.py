@@ -1860,6 +1860,26 @@ def test_server_actions_card_is_extracted_from_dev_loop_without_theme_changes():
     assert "<ServerActionsCard serverActions={devLoopData.server_actions} />" in dev_loop_tab
 
 
+def test_dev_loop_warnings_panel_is_extracted_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
+    warnings_panel = root / "frontend" / "src" / "components" / "DevLoopWarningsPanel.jsx"
+
+    assert warnings_panel.exists()
+    panel_source = warnings_panel.read_text(encoding="utf-8")
+    assert "export default function DevLoopWarningsPanel" in panel_source
+    assert "System Warnings" in panel_source
+    assert "Array.isArray(warnings)" in panel_source
+    assert "bg-status-warning-bg border-2 border-status-warning/30" in panel_source
+    assert "text-status-warning-text" in panel_source
+    assert "AlertTriangle" in panel_source
+    assert "function WarningsPanel" not in dev_loop_tab
+    assert "import DevLoopWarningsPanel from '../DevLoopWarningsPanel';" in dev_loop_tab
+    assert "<DevLoopWarningsPanel warnings={devLoopData.warnings} />" in dev_loop_tab
+
+
 def test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
@@ -3445,9 +3465,16 @@ def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
     assert "devLoopData.pull_requests.map" not in dev_loop_mount
     assert "devLoopData.worktrees.map" not in dev_loop_mount
 
-    dev_loop_tab = root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx"
-    assert dev_loop_tab.exists()
-    dev_loop_page = dev_loop_tab.read_text(encoding="utf-8")
+    dev_loop_files = [
+        root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx",
+        root / "frontend" / "src" / "components" / "DevLoopWarningsPanel.jsx",
+        root / "frontend" / "src" / "components" / "ReleaseReadinessCard.jsx",
+        root / "frontend" / "src" / "components" / "ServerActionAuditCard.jsx",
+        root / "frontend" / "src" / "components" / "ServerActionsCard.jsx",
+    ]
+    for dev_loop_file in dev_loop_files:
+        assert dev_loop_file.exists()
+    dev_loop_page = "\n".join(dev_loop_file.read_text(encoding="utf-8") for dev_loop_file in dev_loop_files)
 
     disallowed_snippets = [
         "bg-white",
