@@ -1156,6 +1156,43 @@ def _server_action_capability(
     return capability
 
 
+def build_server_action_execution_policy(root: Path | None) -> dict[str, object]:
+    env_gate_configured = _server_actions_enabled()
+    nonce_configured = bool(_server_action_nonce())
+    destructive_actions_available = bool(root is not None and env_gate_configured and nonce_configured)
+    audit_dir = str(_server_action_audit_dir(root.resolve())) if root is not None else ""
+    blocked_actions: dict[str, list[str]] = {
+        "tag_release": ["tag_release_safety_design_required"],
+    }
+    enabled_actions: list[str] = []
+    if destructive_actions_available:
+        enabled_actions = ["land_pr", "graduate_release"]
+    else:
+        blockers = []
+        if root is None:
+            blockers.append("no_project_selected")
+        if not env_gate_configured:
+            blockers.append("disabled_by_default")
+        if not nonce_configured:
+            blockers.append("missing_nonce")
+        blocked_actions["land_pr"] = blockers
+        blocked_actions["graduate_release"] = blockers
+    return {
+        "status": "guarded_execute" if destructive_actions_available else "disabled",
+        "destructive_actions_available": destructive_actions_available,
+        "env_gate_configured": env_gate_configured,
+        "nonce_configured": nonce_configured,
+        "same_origin_required": True,
+        "typed_confirmation_required": True,
+        "argv_allowlist_required": True,
+        "audit_required": True,
+        "audit_dir": audit_dir,
+        "timeout_seconds": SERVER_ACTION_TIMEOUT_SECONDS,
+        "enabled_actions": enabled_actions,
+        "blocked_actions": blocked_actions,
+    }
+
+
 def build_server_action_capabilities(
     root: Path | None,
     *,
@@ -1201,6 +1238,7 @@ def build_server_action_capabilities(
                 command=graduate_command,
             ),
         },
+        "execution_policy": build_server_action_execution_policy(root),
         "release_readiness": release_readiness,
         "warnings": capability_warnings,
         "generated_at": datetime.now(UTC).isoformat(),

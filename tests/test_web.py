@@ -320,6 +320,24 @@ def test_build_server_actions_marks_destructive_actions_available_only_with_env_
         land_tag_readiness={"server_execution": "disabled_by_default", "pull_requests": []},
     )
 
+    assert disabled["execution_policy"] == {
+        "status": "disabled",
+        "destructive_actions_available": False,
+        "env_gate_configured": False,
+        "nonce_configured": False,
+        "same_origin_required": True,
+        "typed_confirmation_required": True,
+        "argv_allowlist_required": True,
+        "audit_required": True,
+        "audit_dir": str(tmp_path / ".goodteam" / "server-actions"),
+        "timeout_seconds": web.SERVER_ACTION_TIMEOUT_SECONDS,
+        "enabled_actions": [],
+        "blocked_actions": {
+            "land_pr": ["disabled_by_default", "missing_nonce"],
+            "graduate_release": ["disabled_by_default", "missing_nonce"],
+            "tag_release": ["tag_release_safety_design_required"],
+        },
+    }
     assert disabled["actions"]["land_pr"]["available"] is False
     assert disabled["actions"]["land_pr"]["mode"] == "human_command_only"
     assert disabled["actions"]["graduate_release"]["available"] is False
@@ -333,6 +351,22 @@ def test_build_server_actions_marks_destructive_actions_available_only_with_env_
         land_tag_readiness={"server_execution": "disabled_by_default", "pull_requests": []},
     )
 
+    assert enabled["execution_policy"] == {
+        "status": "guarded_execute",
+        "destructive_actions_available": True,
+        "env_gate_configured": True,
+        "nonce_configured": True,
+        "same_origin_required": True,
+        "typed_confirmation_required": True,
+        "argv_allowlist_required": True,
+        "audit_required": True,
+        "audit_dir": str(tmp_path / ".goodteam" / "server-actions"),
+        "timeout_seconds": web.SERVER_ACTION_TIMEOUT_SECONDS,
+        "enabled_actions": ["land_pr", "graduate_release"],
+        "blocked_actions": {
+            "tag_release": ["tag_release_safety_design_required"],
+        },
+    }
     assert enabled["actions"]["land_pr"]["available"] is True
     assert enabled["actions"]["land_pr"]["mode"] == "guarded_execute"
     assert enabled["actions"]["land_pr"]["reason"] == ""

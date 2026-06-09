@@ -24,9 +24,9 @@ implementation.
   same-origin enforcement, allowlisted argv construction, readiness-derived
   inputs, and audit records. CP15 makes `tag_release` a structured report-only
   action with explicit safety blockers and future enablement gates; it still has
-  no server-side `git tag` execution path. The remaining backlog is operational
-  hardening, live-use evidence, UI discipline, and keeping human review as the
-  land gate.
+  no server-side `git tag` execution path. CP19 exposes the guarded execution
+  policy as read-only capability evidence. The remaining backlog is live-use
+  evidence, UI discipline, and keeping human review as the land gate.
 - Expanding G3 failure-pattern routing — CP8 canary routing applies only to
   high-confidence low-risk classes. CP17 reports candidate outcome quality and
   false-positive rates, but broader route changes still require human review of
