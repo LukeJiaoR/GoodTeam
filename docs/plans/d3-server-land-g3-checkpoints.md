@@ -373,3 +373,35 @@ not execute real workers in parallel and does not change workflow advancement.
 
 **Rollback:** Revert CP11; CP7 parallel planning remains disabled for real
 workers and runtime behavior is unaffected.
+
+### CP12 - G3 Routing Outcome Telemetry
+
+**Status:** completed in branch `feat/g3-outcome-telemetry`.
+
+**Scope:** Record outcome counters for G3 shadow/canary routing decisions so
+broader routing and LLM triage gates have measurable evidence. This checkpoint
+does not expand routing rules.
+
+**Entry Gate:** CP8 canary routing exists and CP11 is merged.
+
+**Implementation Notes:**
+- Store routing outcome counters on the existing `FailurePatternLibrary` pattern
+  records rather than creating a second ledger.
+- Initialize new patterns with zero outcome counters for backwards-compatible
+  reporting.
+- Record `shadow_only` when a pattern match is observed but canary routing does
+  not apply.
+- Record `confirmed` when canary routing applies. Manual false-positive review
+  can write `false_positive` later; this checkpoint does not infer it.
+- Include aggregate `routing_outcome_totals` and per-candidate
+  `routing_outcomes` in the readiness report.
+
+**Verification:**
+- Red/green tests for library outcome recording and readiness reporting.
+- Red/green graph tests proving triage records shadow/canary outcomes.
+- Related G3 regression.
+- `ruff` on touched files.
+- `git diff --check`.
+
+**Rollback:** Revert CP12; G3 routing behavior remains at CP8 canary behavior,
+but outcome counters disappear from readiness reports.

@@ -8,7 +8,7 @@ reference, verification evidence, and follow-up status.
 
 | Order | Mainline | Status | Scope For This Pass | Completion Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
+| 1 | G3c global failure-pattern library | Routing outcome telemetry completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, and record shadow/canary routing outcomes without expanding routing. | Related G3 regression `16 passed`; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Guarded server action execution completed 2026-06-08 | CP9 enabled env+nonce+typed-confirmation guarded execution for `land_pr` and `graduate_release`; `tag_release` remains disabled/report-only and human review remains the land gate. | `581 passed`; ruff clean; diff check clean |
 | 4 | Theme/App.jsx productization | Approval metrics helper extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | Approval/nav/i18n/theme contract slice `20 passed`; frontend lint/build passed |
@@ -90,6 +90,47 @@ allowed while real worker parallelism remains blocked.
 - Real worker parallel execution.
 - Worker isolation implementation.
 - Live parallel worker smoke.
+
+### 2026-06-09 — G3 routing outcome telemetry
+
+**Intent:** add measurable outcome evidence before broader pattern-driven routing
+or LLM triage is considered.
+
+**Implemented:**
+- Added `FailurePatternLibrary.record_routing_outcome(...)`.
+- New patterns now carry zeroed `routing_outcomes` counters.
+- `routing_readiness_report()` includes aggregate `routing_outcome_totals`, and
+  each candidate includes its own `routing_outcomes`.
+- Worker failure triage records `shadow_only` when a pattern match is observed
+  but canary routing does not apply, and `confirmed` when canary routing applies.
+- No routing rule was expanded; false-positive recording remains a manual review
+  follow-up.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_records_routing_outcomes_for_quality_review -q`
+  first failed because `record_routing_outcome` did not exist.
+- Focused green:
+  the same command -> `1 passed`.
+- Red graph slice:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_graph_sample.py::test_escalated_worker_failure_writes_scoped_failure_memory_event tests/test_graph_sample.py::test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition tests/test_graph_sample.py::test_worker_failure_triage_applies_canary_route_for_high_confidence_network_pattern -q`
+  first failed because patterns lacked `routing_outcomes` and triage did not
+  record shadow/canary outcomes.
+- Focused green:
+  the same command -> `3 passed`.
+- Related G3 regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_graph_sample.py tests/test_cli.py -q -k 'failure_pattern or canary or triage or worker_failure or retry_exhausted or failure_patterns_outputs'`
+  -> `16 passed, 78 deselected`.
+- Quality gates:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/failure_patterns.py src/goodteam_os/graph.py tests/test_failure_patterns.py tests/test_graph_sample.py`
+  -> `All checks passed!`.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Deferred from this increment:**
+- Broader pattern-driven routing.
+- Automatic false-positive classification.
+- G3 LLM triage for unknown/ambiguous failures.
 
 ### 2026-06-08 — Theme/App.jsx productization: approval metrics helper extraction
 

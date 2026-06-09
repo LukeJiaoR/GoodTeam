@@ -112,6 +112,56 @@ def test_failure_pattern_library_reports_routing_readiness_without_applying_patt
     }
 
 
+def test_failure_pattern_library_records_routing_outcomes_for_quality_review(tmp_path):
+    library = FailurePatternLibrary(tmp_path)
+    pattern = library.record_failure(
+        failure_class="network",
+        summary="503 Service Unavailable from registry.npmmirror.com",
+        disposition="escalate_human",
+        role="implementation",
+        node="implementation",
+        source="worker_failure:run-1:implementation:implementation",
+    )
+
+    library.record_routing_outcome(
+        signature=str(pattern["signature"]),
+        applied=True,
+        disposition="escalate_human",
+        deterministic_disposition="block",
+        reason="canary_allowed",
+        outcome="confirmed",
+        source="triage_decided:run-1:implementation",
+    )
+    library.record_routing_outcome(
+        signature=str(pattern["signature"]),
+        applied=False,
+        disposition="block",
+        deterministic_disposition="block",
+        reason="below_min_hits",
+        outcome="shadow_only",
+        source="triage_decided:run-2:implementation",
+    )
+
+    report = library.routing_readiness_report(min_hits=1)
+
+    assert report["routing_outcome_totals"] == {
+        "total": 2,
+        "confirmed": 1,
+        "false_positive": 0,
+        "shadow_only": 1,
+    }
+    assert report["candidate_patterns"][0]["routing_outcomes"] == {
+        "total": 2,
+        "confirmed": 1,
+        "false_positive": 0,
+        "shadow_only": 1,
+        "last_outcome": "shadow_only",
+        "last_reason": "below_min_hits",
+        "last_disposition": "block",
+        "last_deterministic_disposition": "block",
+    }
+
+
 def test_canary_routing_decision_applies_only_high_confidence_low_risk_patterns():
     pattern = {
         "signature": "fail:network",

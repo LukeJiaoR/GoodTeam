@@ -61,6 +61,7 @@ class FailurePatternLibrary:
                 "sources": [],
                 "first_seen_at": now,
                 "last_seen_at": now,
+                "routing_outcomes": empty_routing_outcome_summary(),
             }
             patterns[signature] = pattern
 
@@ -71,6 +72,37 @@ class FailurePatternLibrary:
         _append_unique(pattern, "roles", role)
         _append_unique(pattern, "nodes", node)
         _append_unique(pattern, "sources", source)
+        self._write_patterns(patterns)
+        return dict(pattern)
+
+    def record_routing_outcome(
+        self,
+        *,
+        signature: str,
+        applied: bool,
+        disposition: str,
+        deterministic_disposition: str,
+        reason: str,
+        outcome: str,
+        source: str,
+    ) -> dict[str, object]:
+        patterns = self._read_patterns()
+        pattern = patterns.get(str(signature))
+        if pattern is None:
+            return {}
+
+        outcomes = routing_outcome_summary(pattern)
+        normalized_outcome = normalize_routing_outcome(outcome)
+        outcomes["total"] = int(outcomes.get("total", 0)) + 1
+        outcomes[normalized_outcome] = int(outcomes.get(normalized_outcome, 0)) + 1
+        outcomes["last_outcome"] = normalized_outcome
+        outcomes["last_reason"] = str(reason or "")
+        outcomes["last_disposition"] = normalize_disposition(disposition)
+        outcomes["last_deterministic_disposition"] = normalize_disposition(deterministic_disposition)
+        outcomes["last_applied"] = bool(applied)
+        outcomes["last_source"] = str(source or "")
+        pattern["routing_outcomes"] = outcomes
+        _append_unique(pattern, "routing_outcome_sources", str(source or ""))
         self._write_patterns(patterns)
         return dict(pattern)
 
@@ -117,6 +149,7 @@ class FailurePatternLibrary:
             "total_hits": sum(int(pattern.get("hit_count", 0)) for pattern in patterns),
             "candidate_count": len(candidates),
             "min_hits": threshold,
+            "routing_outcome_totals": routing_outcome_totals(patterns),
             "routing_application": "deferred",
             "routing_gate_satisfied": False,
             "shadow_routing": "enabled",
@@ -174,6 +207,54 @@ def normalize_disposition(disposition: str) -> str:
     return str(disposition or "block").strip() or "block"
 
 
+def normalize_routing_outcome(outcome: str) -> str:
+    normalized = str(outcome or "shadow_only").strip()
+    if normalized not in {"confirmed", "false_positive", "shadow_only"}:
+        return "shadow_only"
+    return normalized
+
+
+def empty_routing_outcome_summary() -> dict[str, object]:
+    return {
+        "total": 0,
+        "confirmed": 0,
+        "false_positive": 0,
+        "shadow_only": 0,
+        "last_outcome": "",
+        "last_reason": "",
+        "last_disposition": "",
+        "last_deterministic_disposition": "",
+    }
+
+
+def routing_outcome_summary(pattern: dict[str, object]) -> dict[str, object]:
+    raw = pattern.get("routing_outcomes", {})
+    data = dict(raw) if isinstance(raw, dict) else {}
+    summary = empty_routing_outcome_summary()
+    summary.update(
+        {
+            "total": int(data.get("total", 0) or 0),
+            "confirmed": int(data.get("confirmed", 0) or 0),
+            "false_positive": int(data.get("false_positive", 0) or 0),
+            "shadow_only": int(data.get("shadow_only", 0) or 0),
+            "last_outcome": str(data.get("last_outcome", "")),
+            "last_reason": str(data.get("last_reason", "")),
+            "last_disposition": str(data.get("last_disposition", "")),
+            "last_deterministic_disposition": str(data.get("last_deterministic_disposition", "")),
+        }
+    )
+    return summary
+
+
+def routing_outcome_totals(patterns: list[dict[str, object]]) -> dict[str, int]:
+    totals = {"total": 0, "confirmed": 0, "false_positive": 0, "shadow_only": 0}
+    for pattern in patterns:
+        outcomes = routing_outcome_summary(pattern)
+        for key in totals:
+            totals[key] += int(outcomes.get(key, 0) or 0)
+    return totals
+
+
 def shadow_routing_candidate(pattern: dict[str, object]) -> dict[str, object]:
     candidate = dict(pattern)
     candidate["would_route_to"] = normalize_disposition(str(candidate.get("recommended_disposition", "")))
@@ -182,6 +263,7 @@ def shadow_routing_candidate(pattern: dict[str, object]) -> dict[str, object]:
         "roles": [str(role) for role in candidate.get("roles", [])],
         "nodes": [str(node) for node in candidate.get("nodes", [])],
     }
+    candidate["routing_outcomes"] = routing_outcome_summary(candidate)
     return candidate
 
 
