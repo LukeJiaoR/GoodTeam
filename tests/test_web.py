@@ -2232,6 +2232,31 @@ def test_mission_summary_helper_is_extracted_from_app_shell_without_behavior_cha
     assert "const getMissionSummary = (text) =>" not in app
 
 
+def test_role_model_override_helpers_are_extracted_from_app_shell_without_behavior_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    override_utils = root / "frontend" / "src" / "utils" / "roleModelOverrides.js"
+
+    assert override_utils.exists()
+    utils_source = override_utils.read_text(encoding="utf-8")
+    assert "export function parseRoleModelOverridesMap" in utils_source
+    assert "export function parseRoleModelOverrideLines" in utils_source
+    assert ".split('\\n')" in utils_source
+    assert ".map((line) => line.trim())" in utils_source
+    assert ".filter(Boolean)" in utils_source
+    assert ".map((line) => line.split('=', 2))" in utils_source
+    assert ".filter((parts) => parts.length === 2 && parts[0] && parts[1])" in utils_source
+    assert "Object.fromEntries" in utils_source
+    assert (
+        "import { parseRoleModelOverrideLines, parseRoleModelOverridesMap } "
+        "from './utils/roleModelOverrides';"
+    ) in app
+    assert "parseRoleModelOverridesMap(roleModelOverrides)" in app
+    assert "parseRoleModelOverrideLines(roleModelOverrides)" in app
+    assert "const parsedOverrides = Object.fromEntries" not in app
+    assert "const overrides = roleModelOverrides" not in app
+
+
 def test_approval_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")

@@ -17,6 +17,7 @@ import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';
 import { useMessageFeeds } from './hooks/useMessageFeeds';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getMissionSummary } from './utils/missionSummary';
+import { parseRoleModelOverrideLines, parseRoleModelOverridesMap } from './utils/roleModelOverrides';
 import {
   LANGUAGE_PREFERENCE_AUTO,
 } from './i18n';
@@ -477,14 +478,7 @@ export default function App() {
     setActionLoading(true);
     showToast('Creating local project config...');
     try {
-      const parsedOverrides = Object.fromEntries(
-        roleModelOverrides
-          .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line) => line.split('=', 2))
-          .filter((parts) => parts.length === 2 && parts[0] && parts[1])
-      );
+      const parsedOverrides = parseRoleModelOverridesMap(roleModelOverrides);
       const customDeliveryPayload = deliveryMode === 'custom'
         ? { delivery_standards: deliveryStandards }
         : {};
@@ -569,10 +563,7 @@ export default function App() {
     setActionLoading(true);
     showToast('Starting workflow...');
     try {
-      const overrides = roleModelOverrides
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
+      const overrides = parseRoleModelOverrideLines(roleModelOverrides);
       const customDeliveryPayload = deliveryMode === 'custom'
         ? { delivery_standards: deliveryStandards }
         : {};
