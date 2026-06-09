@@ -340,6 +340,14 @@ def test_workflow_parallel_execution_plan_allows_fake_readonly_levels_and_preser
         "scheduler": "parallel_levels",
         "runner_kind": "read_only_fake_projection",
         "parallel_level_execution": "enabled_for_fake_and_readonly",
+        "parallel_readiness": {
+            "status": "ready_for_fake_and_readonly",
+            "safe_runner_kinds": ["fake_worker", "read_only_advisor"],
+            "blocked_runner_kinds": [],
+            "requires_worker_isolation": False,
+            "requires_live_smoke": False,
+            "blockers": [],
+        },
         "validation_errors": [],
         "batches": [
             {"level": 1, "nodes": ["research", "advisor"], "mode": "parallel"},
@@ -388,6 +396,17 @@ def test_workflow_parallel_execution_plan_fails_closed_for_real_workers_and_writ
     assert plan["valid"] is False
     assert plan["batches"] == []
     assert plan["parallel_level_execution"] == "blocked"
+    assert plan["parallel_readiness"] == {
+        "status": "blocked_for_real_workers",
+        "safe_runner_kinds": ["fake_worker", "read_only_advisor"],
+        "blocked_runner_kinds": ["sequential_worker"],
+        "requires_worker_isolation": True,
+        "requires_live_smoke": True,
+        "blockers": [
+            "Workflow execution plan v2 write-domain collision repo:shared: implementation, qa",
+            "Parallel execution refuses runner 'implementation' with kind 'sequential_worker'",
+        ],
+    }
     assert plan["validation_errors"] == [
         "Workflow execution plan v2 write-domain collision repo:shared: implementation, qa",
         "Parallel execution refuses runner 'implementation' with kind 'sequential_worker'",

@@ -415,6 +415,20 @@ def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
         "scheduler": "parallel_levels",
         "runner_kind": "read_only_fake_projection",
         "parallel_level_execution": "blocked",
+        "parallel_readiness": {
+            "status": "blocked_for_real_workers",
+            "safe_runner_kinds": ["fake_worker", "read_only_advisor"],
+            "blocked_runner_kinds": ["human_gate", "sequential_worker"],
+            "requires_worker_isolation": True,
+            "requires_live_smoke": True,
+            "blockers": [
+                "Parallel execution refuses runner 'architect' with kind 'sequential_worker'",
+                "Parallel execution refuses runner 'planner' with kind 'sequential_worker'",
+                "Parallel execution refuses runner 'release' with kind 'sequential_worker'",
+                "Parallel execution refuses runner 'retro_memory' with kind 'sequential_worker'",
+                "Parallel execution refuses runner 'security' with kind 'human_gate'",
+            ],
+        },
         "validation_errors": [
             "Parallel execution refuses runner 'architect' with kind 'sequential_worker'",
             "Parallel execution refuses runner 'planner' with kind 'sequential_worker'",
