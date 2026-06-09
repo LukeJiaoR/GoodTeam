@@ -2053,6 +2053,64 @@ def test_dev_loop_dispatch_form_is_extracted_without_theme_changes():
     assert "<DevLoopDispatchForm" in dev_loop_tab
 
 
+def test_dev_loop_git_init_panel_is_extracted_and_wired_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(encoding="utf-8")
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
+    git_init_hook = (root / "frontend" / "src" / "hooks" / "useGitInitAction.js").read_text(encoding="utf-8")
+    git_init_panel = root / "frontend" / "src" / "components" / "DevLoopGitInitPanel.jsx"
+
+    assert git_init_panel.exists()
+    panel_source = git_init_panel.read_text(encoding="utf-8")
+    assert "export default function DevLoopGitInitPanel" in panel_source
+    assert "Initialize Git repository" in panel_source
+    assert "Create GitHub repository & push" in panel_source
+    assert "Repository Visibility" in panel_source
+    assert "Warnings during Git Init" in panel_source
+    assert "GITHUB_TOKEN" in panel_source
+    assert "remotePrivate" in panel_source
+    assert "setRemotePrivate" in panel_source
+    assert "createRemote" in panel_source
+    assert "setCreateRemote" in panel_source
+    assert "onInitializeGit" in panel_source
+    assert "bg-surface-raised border-2 border-border-subtle shadow-card" in panel_source
+    assert "bg-status-warning-bg border-2 border-status-warning/30" in panel_source
+    assert "bg-accent border-2 border-accent-text shadow-button" in panel_source
+    assert "text-2xs" in panel_source
+
+    assert "import DevLoopGitInitPanel from '../DevLoopGitInitPanel';" in dev_loop_tab
+    assert "<DevLoopGitInitPanel" in dev_loop_tab
+    assert "devLoopData.is_git_repo === false" in dev_loop_tab
+    assert "gitInitWarnings={gitInitWarnings}" in dev_loop_tab
+    assert "onInitializeGit={handleGitInit}" in dev_loop_tab
+
+    for source in [app, dashboard, router]:
+        assert "handleGitInit" in source
+        assert "gitInitLoading" in source
+        assert "gitInitWarnings" in source
+        assert "devLoopCreateRemote" in source
+        assert "devLoopRemotePrivate" in source
+
+    assert "import { useGitInitAction } from './hooks/useGitInitAction';" in app
+    assert "useGitInitAction({" in app
+    assert "projectKey," in app
+    assert "fetchDevLoop," in app
+    assert "showToast," in app
+    assert "/api/git-init" in git_init_hook
+    assert "project_key: projectKey" in git_init_hook
+    assert "create_remote: devLoopCreateRemote" in git_init_hook
+    assert "remote_private: devLoopRemotePrivate" in git_init_hook
+    assert "fetchDevLoop(projectKey)" in git_init_hook
+    assert "showToast('Git repository initialized successfully!')" in git_init_hook
+
+    assert "This project isn't a Git repository yet" not in app
+    assert "Create GitHub repository & push" not in app
+
+
 def test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
@@ -3903,6 +3961,7 @@ def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
     dev_loop_files = [
         root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx",
         root / "frontend" / "src" / "components" / "DevLoopDispatchForm.jsx",
+        root / "frontend" / "src" / "components" / "DevLoopGitInitPanel.jsx",
         root / "frontend" / "src" / "components" / "DevLoopPullRequestsPanel.jsx",
         root / "frontend" / "src" / "components" / "DevLoopWarningsPanel.jsx",
         root / "frontend" / "src" / "components" / "DevLoopWorktreesPanel.jsx",

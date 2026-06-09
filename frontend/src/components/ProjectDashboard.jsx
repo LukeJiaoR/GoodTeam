@@ -49,6 +49,8 @@ export default function ProjectDashboard({
   dispatchSuccess,
   dispatchTask,
   dispatchVerify,
+  devLoopCreateRemote,
+  devLoopRemotePrivate,
   dryRun,
   editingArtifact,
   editorContent,
@@ -62,6 +64,8 @@ export default function ProjectDashboard({
   getResolvingDebateRef,
   gitRemoteCreated,
   gitWarnings,
+  gitInitLoading,
+  gitInitWarnings,
   graphData,
   graphError,
   handleAcceptRefinement,
@@ -75,6 +79,7 @@ export default function ProjectDashboard({
   handleDispatchTrack,
   handleEditArtifact,
   handleGeneratePrd,
+  handleGitInit,
   handleMemoryEventSearchChange,
   handleModelDropdownChange,
   handleOpenMemoryEvent,
@@ -138,6 +143,8 @@ export default function ProjectDashboard({
   setDispatchRole,
   setDispatchTask,
   setDispatchVerify,
+  setDevLoopCreateRemote,
+  setDevLoopRemotePrivate,
   setDryRun,
   setEditingArtifact,
   setEditorContent,
@@ -308,6 +315,8 @@ export default function ProjectDashboard({
             dispatchSuccess={dispatchSuccess}
             dispatchTask={dispatchTask}
             dispatchVerify={dispatchVerify}
+            devLoopCreateRemote={devLoopCreateRemote}
+            devLoopRemotePrivate={devLoopRemotePrivate}
             dryRun={dryRun}
             editingArtifact={editingArtifact}
             editorContent={editorContent}
@@ -318,6 +327,8 @@ export default function ProjectDashboard({
             getBackendOptionLabel={getBackendOptionLabel}
             getMissionSummary={getMissionSummary}
             getResolvingDebateRef={getResolvingDebateRef}
+            gitInitLoading={gitInitLoading}
+            gitInitWarnings={gitInitWarnings}
             graphData={graphData}
             graphError={graphError}
             handleAcceptRefinement={handleAcceptRefinement}
@@ -331,6 +342,7 @@ export default function ProjectDashboard({
             handleDispatchTrack={handleDispatchTrack}
             handleEditArtifact={handleEditArtifact}
             handleGeneratePrd={handleGeneratePrd}
+            handleGitInit={handleGitInit}
             handleMemoryEventSearchChange={handleMemoryEventSearchChange}
             handleModelDropdownChange={handleModelDropdownChange}
             handleOpenMemoryEvent={handleOpenMemoryEvent}
@@ -387,6 +399,8 @@ export default function ProjectDashboard({
             setDispatchRole={setDispatchRole}
             setDispatchTask={setDispatchTask}
             setDispatchVerify={setDispatchVerify}
+            setDevLoopCreateRemote={setDevLoopCreateRemote}
+            setDevLoopRemotePrivate={setDevLoopRemotePrivate}
             setDryRun={setDryRun}
             setEditingArtifact={setEditingArtifact}
             setEditorContent={setEditorContent}
