@@ -129,6 +129,45 @@ def write_project_config(workspace: Path, *, key: str = "REAL", repos: dict[str,
     return config
 
 
+def test_api_git_init_initializes_non_git_project_root(tmp_path, monkeypatch):
+    project_root = tmp_path / "product"
+    project_root.mkdir()
+    write_project_config(tmp_path, repos={"root": project_root})
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/git-init",
+        {"project_key": "REAL", "create_remote": False},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 200 in response.responses
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["initialized"] is True
+    assert payload["remote_created"] is False
+    assert (project_root / ".git").exists()
+
+
+def test_api_git_init_existing_git_project_skips_without_error(tmp_path, monkeypatch):
+    project_root = tmp_path / "product"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    write_project_config(tmp_path, repos={"root": project_root})
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/git-init",
+        {"project_key": "REAL"},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 200 in response.responses
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["initialized"] is False
+    assert payload["remote_created"] is False
+    assert "git init skipped: project root already contains .git" in payload["warnings"]
+
+
 def event_handle(event: dict[str, object]) -> str:
     identity_fields = ("timestamp", "role_key", "horizon", "action", "source", "text")
     payload = json.dumps({key: event.get(key) for key in identity_fields}, sort_keys=True, ensure_ascii=False)

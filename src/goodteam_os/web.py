@@ -1256,6 +1256,7 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
             "worktrees": worktrees,
             "pull_requests": pull_requests,
             "pre_reviews": [],
+            "is_git_repo": False,
             "warnings": warnings,
             "generated_at": datetime.now(UTC).isoformat(),
         }
@@ -1279,6 +1280,7 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
             "worktrees": worktrees,
             "pull_requests": pull_requests,
             "pre_reviews": [],
+            "is_git_repo": False,
             "warnings": warnings,
             "generated_at": datetime.now(UTC).isoformat(),
         }
@@ -1357,6 +1359,7 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
         "worktrees": worktrees,
         "pull_requests": pull_requests,
         "pre_reviews": pre_reviews,
+        "is_git_repo": True,
         "land_tag_readiness": land_tag_readiness,
         "release_readiness": release_readiness,
         "server_actions": build_server_action_capabilities(
@@ -1734,6 +1737,26 @@ def _initialize_project_git(
                     stderr = "" if gh is None else gh.stderr.strip()
                     warnings.append(f"gh repo create failed{f': {stderr}' if stderr else ''}")
     return result
+
+
+def initialize_project_git_for_request(workspace: Path, request: dict[str, object]) -> dict[str, object]:
+    project_key = str(request.get("project_key", "") or "").strip()
+    if not project_key:
+        raise ValueError("project_key is required.")
+    project_config = _project_config_for_key(workspace, project_key)
+    target = load_project_target(project_config)
+    root_path = resolve_project_runtime_root(dict(target.get("repos", {})))
+    if root_path is None:
+        raise ValueError(f"No runtime root found for project: {normalize_project_key(project_key)}")
+    project_name = str(target.get("name", "") or target.get("key", "") or project_key)
+    return _initialize_project_git(
+        root_path=root_path,
+        project_name=project_name,
+        project_key=project_key,
+        init_git=True,
+        create_remote=_request_bool(request.get("create_remote"), False),
+        remote_private=_request_bool(request.get("remote_private"), True),
+    )
 
 
 def create_local_project_config(
@@ -7025,7 +7048,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run"}:
+            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -7161,6 +7184,8 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         workspace=workspace,
                         relative_path=str(request.get("path", "")),
                     )
+                elif normalized_path == "/git-init":
+                    result = initialize_project_git_for_request(workspace, request)
                 elif normalized_path == "/dispatch-track":
                     response_written = threading.Event()
                     result = start_dispatch_track(workspace, request, response_written=response_written)

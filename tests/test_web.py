@@ -54,10 +54,11 @@ def test_build_dev_loop_without_project_returns_empty_note():
     assert dev_loop["worktrees"] == []
     assert dev_loop["pull_requests"] == []
     assert dev_loop["pre_reviews"] == []
+    assert dev_loop["is_git_repo"] is False
     assert dev_loop["warnings"] == ["no project selected"]
 
 
-def test_build_dev_loop_non_git_directory_does_not_use_parent_repo(tmp_path):
+def test_build_dev_loop_non_git_directory_reports_not_git_repo(tmp_path):
     parent_repo = tmp_path / "parent"
     project_root = parent_repo / "scaffold"
     project_root.mkdir(parents=True)
@@ -68,7 +69,26 @@ def test_build_dev_loop_non_git_directory_does_not_use_parent_repo(tmp_path):
     assert dev_loop["worktrees"] == []
     assert dev_loop["pull_requests"] == []
     assert dev_loop["pre_reviews"] == []
+    assert dev_loop["is_git_repo"] is False
     assert dev_loop["warnings"] == ["project repo has no git history yet"]
+
+
+def test_build_dev_loop_git_directory_reports_git_repo(tmp_path, monkeypatch):
+    _init_git_repo(tmp_path)
+
+    def fake_run(command, **kwargs):
+        if command[-2:] == ["rev-parse", "--show-toplevel"]:
+            return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+        if command[-3:] == ["worktree", "list", "--porcelain"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+
+    dev_loop = build_dev_loop(tmp_path)
+
+    assert dev_loop["is_git_repo"] is True
+    assert dev_loop["warnings"] == []
 
 
 def test_build_dev_loop_parses_git_worktrees(tmp_path, monkeypatch):
@@ -98,6 +118,7 @@ branch refs/heads/main
 
     dev_loop = build_dev_loop(tmp_path)
 
+    assert dev_loop["is_git_repo"] is True
     assert dev_loop["worktrees"] == [{"path": str(tmp_path), "branch": "main", "head": "abc1234"}]
     assert dev_loop["pull_requests"] == []
     assert dev_loop["warnings"] == []
