@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModalContainer from './components/NewProjectModalContainer';
 import ProjectDashboard from './components/ProjectDashboard';
@@ -7,6 +7,7 @@ import { useAppearancePreferences } from './hooks/useAppearancePreferences';
 import { useClipboardFeedback } from './hooks/useClipboardFeedback';
 import { useDirectoryPicker } from './hooks/useDirectoryPicker';
 import { useDispatchTrackForm } from './hooks/useDispatchTrackForm';
+import { useGitInitAction } from './hooks/useGitInitAction';
 import { useNewProjectForm } from './hooks/useNewProjectForm';
 import { useProjectUrl } from './hooks/useProjectUrl';
 import { useDevLoopData } from './hooks/useDevLoopData';
@@ -196,6 +197,25 @@ export default function App() {
     crossResults,
     handleCrossSearch,
   } = crossMemorySearch;
+  const showToast = useCallback((msg, isError = false) => {
+    setMessage({ text: msg, isError });
+    setTimeout(() => setMessage(null), 5000);
+  }, []);
+
+  const gitInitAction = useGitInitAction({
+    projectKey,
+    fetchDevLoop,
+    showToast,
+  });
+  const {
+    devLoopCreateRemote,
+    setDevLoopCreateRemote,
+    devLoopRemotePrivate,
+    setDevLoopRemotePrivate,
+    gitInitLoading,
+    gitInitWarnings,
+    handleGitInit,
+  } = gitInitAction;
   const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();
 
   const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);
@@ -215,11 +235,6 @@ export default function App() {
     handleRunDebate,
     getResolvingDebateRef,
   } = messageFeeds;
-
-  const showToast = (msg, isError = false) => {
-    setMessage({ text: msg, isError });
-    setTimeout(() => setMessage(null), 5000);
-  };
 
   const fetchState = async (key, showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -946,6 +961,8 @@ export default function App() {
       dispatchSuccess={dispatchSuccess}
       dispatchTask={dispatchTask}
       dispatchVerify={dispatchVerify}
+      devLoopCreateRemote={devLoopCreateRemote}
+      devLoopRemotePrivate={devLoopRemotePrivate}
       dryRun={dryRun}
       editingArtifact={editingArtifact}
       editorContent={editorContent}
@@ -959,6 +976,8 @@ export default function App() {
       getResolvingDebateRef={getResolvingDebateRef}
       gitRemoteCreated={gitRemoteCreated}
       gitWarnings={gitWarnings}
+      gitInitLoading={gitInitLoading}
+      gitInitWarnings={gitInitWarnings}
       graphData={graphData}
       graphError={graphError}
       handleAcceptRefinement={handleAcceptRefinement}
@@ -972,6 +991,7 @@ export default function App() {
       handleDispatchTrack={handleDispatchTrack}
       handleEditArtifact={handleEditArtifact}
       handleGeneratePrd={handleGeneratePrd}
+      handleGitInit={handleGitInit}
       handleMemoryEventSearchChange={handleMemoryEventSearchChange}
       handleModelDropdownChange={handleModelDropdownChange}
       handleOpenMemoryEvent={handleOpenMemoryEvent}
@@ -1035,6 +1055,8 @@ export default function App() {
       setDispatchRole={setDispatchRole}
       setDispatchTask={setDispatchTask}
       setDispatchVerify={setDispatchVerify}
+      setDevLoopCreateRemote={setDevLoopCreateRemote}
+      setDevLoopRemotePrivate={setDevLoopRemotePrivate}
       setDryRun={setDryRun}
       setEditingArtifact={setEditingArtifact}
       setEditorContent={setEditorContent}

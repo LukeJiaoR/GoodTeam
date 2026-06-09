@@ -65,6 +65,8 @@ export default function ProjectTabRouter({
   dispatchSuccess,
   dispatchTask,
   dispatchVerify,
+  devLoopCreateRemote,
+  devLoopRemotePrivate,
   dryRun,
   editingArtifact,
   editorContent,
@@ -88,6 +90,7 @@ export default function ProjectTabRouter({
   handleDispatchTrack,
   handleEditArtifact,
   handleGeneratePrd,
+  handleGitInit,
   handleMemoryEventSearchChange,
   handleModelDropdownChange,
   handleOpenMemoryEvent,
@@ -103,6 +106,8 @@ export default function ProjectTabRouter({
   headerStatus,
   idea,
   isNewProjectMode,
+  gitInitLoading,
+  gitInitWarnings,
   loadingDevLoop,
   loadingDiscoveredAgents,
   loadingGraph,
@@ -143,6 +148,8 @@ export default function ProjectTabRouter({
   setDispatchRole,
   setDispatchTask,
   setDispatchVerify,
+  setDevLoopCreateRemote,
+  setDevLoopRemotePrivate,
   setDryRun,
   setEditingArtifact,
   setEditorContent,
@@ -471,6 +478,13 @@ export default function ProjectTabRouter({
           FilePath={FilePath}
           dispatchSuccess={dispatchSuccess}
           dispatchError={dispatchError}
+          gitInitLoading={gitInitLoading}
+          gitInitWarnings={gitInitWarnings}
+          handleGitInit={handleGitInit}
+          devLoopCreateRemote={devLoopCreateRemote}
+          setDevLoopCreateRemote={setDevLoopCreateRemote}
+          devLoopRemotePrivate={devLoopRemotePrivate}
+          setDevLoopRemotePrivate={setDevLoopRemotePrivate}
           handleDispatchTrack={handleDispatchTrack}
           dispatchName={dispatchName}
           setDispatchName={setDispatchName}

@@ -3,6 +3,7 @@ import {
 } from 'lucide-react';
 
 import DevLoopDispatchForm from '../DevLoopDispatchForm';
+import DevLoopGitInitPanel from '../DevLoopGitInitPanel';
 import DevLoopPullRequestsPanel from '../DevLoopPullRequestsPanel';
 import DevLoopWarningsPanel from '../DevLoopWarningsPanel';
 import DevLoopWorktreesPanel from '../DevLoopWorktreesPanel';
@@ -31,6 +32,13 @@ export default function DevLoopTab({
   FilePath,
   dispatchSuccess,
   dispatchError,
+  gitInitLoading,
+  gitInitWarnings,
+  handleGitInit,
+  devLoopCreateRemote,
+  setDevLoopCreateRemote,
+  devLoopRemotePrivate,
+  setDevLoopRemotePrivate,
   handleDispatchTrack,
   dispatchName,
   setDispatchName,
@@ -60,7 +68,8 @@ export default function DevLoopTab({
       devLoopData.release_readiness?.available === true ||
       Object.keys(devLoopData.server_actions?.actions || {}).length > 0 ||
       devLoopData.server_action_audit?.available === true ||
-      (Array.isArray(devLoopData.warnings) && devLoopData.warnings.length > 0)
+      (Array.isArray(devLoopData.warnings) && devLoopData.warnings.length > 0) ||
+      devLoopData.is_git_repo === false
     );
 
   return (
@@ -97,6 +106,17 @@ export default function DevLoopTab({
 
           {!loadingDevLoop && !devLoopError && devLoopData && (
             <div className="space-y-6 max-w-4xl">
+              {devLoopData.is_git_repo === false && (
+                <DevLoopGitInitPanel
+                  createRemote={devLoopCreateRemote}
+                  setCreateRemote={setDevLoopCreateRemote}
+                  remotePrivate={devLoopRemotePrivate}
+                  setRemotePrivate={setDevLoopRemotePrivate}
+                  gitInitLoading={gitInitLoading}
+                  gitInitWarnings={gitInitWarnings}
+                  onInitializeGit={handleGitInit}
+                />
+              )}
               <ReleaseReadinessCard
                 releaseReadiness={devLoopData.release_readiness}
                 copyLandCommand={copyLandCommand}
