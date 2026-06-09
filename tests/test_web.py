@@ -1820,14 +1820,17 @@ def test_frontend_contract_keeps_agy_model_selectable_and_aliases_deduped():
 def test_frontend_contract_exposes_open_questions_at_approval_gate():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
     approval_utils = (root / "frontend" / "src" / "utils" / "approvals.js").read_text(encoding="utf-8")
     approval_metrics = (root / "frontend" / "src" / "utils" / "approvalMetrics.js").read_text(encoding="utf-8")
 
     assert "openQuestionsGateCount" in approval_metrics
-    assert "Questions" in app
+    assert "Questions" in router
     assert "handleOpenQuestionsFromApproval" in app
     assert "export function suggestedAnswersForQuestion" in approval_utils
-    assert "suggestedAnswersForQuestion={suggestedAnswersForQuestion}" in app
+    assert "suggestedAnswersForQuestion={suggestedAnswersForQuestion}" in router
 
 
 def test_frontend_contract_has_simple_advanced_worker_routing_modes():
@@ -1849,6 +1852,9 @@ def test_frontend_contract_has_simple_advanced_worker_routing_modes():
 def test_worker_constants_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
     workers_constants = root / "frontend" / "src" / "constants" / "workers.js"
 
     assert workers_constants.exists()
@@ -1865,12 +1871,15 @@ def test_worker_constants_are_extracted_from_app_shell():
 
     assert "export function canonicalBackendForOption" in constants_source
     assert "function canonicalBackendForOption" not in app
-    assert "import {" in app and "FALLBACK_AGENT_MODES" in app
+    assert "import { FALLBACK_AGENT_MODES, WORKER_ROUTING_BUCKETS } from '../constants/workers';" in router
+    assert "FALLBACK_AGENT_MODES" not in app
 
 
 def test_frontend_contract_exposes_release_readiness_without_execution_controls():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
     dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
         encoding="utf-8"
     )
@@ -1881,8 +1890,8 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
         root / "frontend" / "src" / "components" / "ServerActionsCard.jsx"
     ).read_text(encoding="utf-8")
 
-    assert "<DevLoopTab" in app
-    assert "copyLandCommand={copyCommand}" in app
+    assert "<DevLoopTab" in router
+    assert "copyLandCommand={copyCommand}" in router
     assert "devLoopData.release_readiness" in dev_loop_tab
     assert "devLoopData.server_actions" in dev_loop_tab
     assert "Release Readiness" in release_card
@@ -2137,6 +2146,9 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
 def test_file_path_component_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
     file_path_component = root / "frontend" / "src" / "components" / "FilePath.jsx"
 
     assert file_path_component.exists()
@@ -2146,12 +2158,15 @@ def test_file_path_component_is_extracted_from_app_shell():
     assert "not available" in component_source
     assert "bottom-full" in component_source
     assert "function FilePath" not in app
-    assert "import FilePath from './components/FilePath';" in app
+    assert "import FilePath from './FilePath';" in router
 
 
 def test_spinner_component_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
     spinner_component = root / "frontend" / "src" / "components" / "Spinner.jsx"
 
     assert spinner_component.exists()
@@ -2161,7 +2176,7 @@ def test_spinner_component_is_extracted_from_app_shell():
     assert "RefreshCw" in component_source
     assert "sr-only" in component_source
     assert "function Spinner" not in app
-    assert "import Spinner from './components/Spinner';" in app
+    assert "import Spinner from './Spinner';" in router
 
 
 def test_status_helpers_are_extracted_from_app_shell():
@@ -2183,6 +2198,9 @@ def test_status_helpers_are_extracted_from_app_shell():
 def test_time_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
     time_utils = root / "frontend" / "src" / "utils" / "time.js"
 
     assert time_utils.exists()
@@ -2191,12 +2209,15 @@ def test_time_helpers_are_extracted_from_app_shell():
     assert "May 27, 02:44" in utils_source
     assert "padStart(2, '0')" in utils_source
     assert "function formatHumanTime" not in app
-    assert "import { formatHumanTime } from './utils/time';" in app
+    assert "import { formatHumanTime } from '../utils/time';" in router
 
 
 def test_approval_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
     approval_utils = root / "frontend" / "src" / "utils" / "approvals.js"
 
     assert approval_utils.exists()
@@ -2207,7 +2228,7 @@ def test_approval_helpers_are_extracted_from_app_shell():
     assert "new Int32Array" in utils_source
     assert "function suggestedAnswersForQuestion" not in app
     assert "function computeLineDiff" not in app
-    assert "import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';" in app
+    assert "import { computeLineDiff, suggestedAnswersForQuestion } from '../utils/approvals';" in router
 
 
 def test_approval_metrics_are_extracted_from_app_shell_without_behavior_changes():
@@ -2934,6 +2955,42 @@ def test_project_content_shell_is_extracted_from_app_shell_without_theme_changes
     assert "<MemoryEventDetailModal" not in app
 
 
+def test_project_tab_router_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    router = root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx"
+
+    assert router.exists()
+    router_source = router.read_text(encoding="utf-8")
+    assert "export default function ProjectTabRouter" in router_source
+    for tab_component in [
+        "WorkflowGraphTab",
+        "OverviewTab",
+        "AgentsMemoryTab",
+        "RolesTab",
+        "ArtifactsTab",
+        "ActionsTab",
+        "AgileBoardTab",
+        "SmokeRunsTab",
+        "WorkersTab",
+        "ApprovalsTab",
+        "MessagesTab",
+        "MemoryTab",
+        "DevLoopTab",
+        "SystemTab",
+    ]:
+        assert f"<{tab_component}" in router_source
+        assert f"import {tab_component}" in router_source
+        assert f"import {tab_component}" not in app
+
+    assert "import ProjectTabRouter from './components/ProjectTabRouter';" in app
+    assert "<ProjectTabRouter" in app
+    assert "<WorkflowGraphTab" not in app
+    assert "<ApprovalsTab" not in app
+    assert "<DevLoopTab" not in app
+    assert "mainPanelChildren={" in app
+
+
 def test_project_url_hook_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
@@ -3034,10 +3091,12 @@ def test_message_feed_uses_theme_tokens_and_small_type_floor():
 
 def test_memory_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Memory */}")
-    end = app.index("{/* Tab: Dev Loop */}", start)
-    memory_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Memory */}")
+    end = router.index("{/* Tab: Dev Loop */}", start)
+    memory_mount = router[start:end]
 
     assert "<MemoryTab" in memory_mount
     assert "memoryData.roles.map" not in memory_mount
@@ -3091,14 +3150,16 @@ def test_memory_page_is_extracted_and_uses_theme_tokens():
 
 def test_workflow_graph_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Workflow Graph */}")
-    end = app.index("{/* Tab: Overview */}", start)
-    workflow_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Workflow Graph */}")
+    end = router.index("{/* Tab: Overview */}", start)
+    workflow_mount = router[start:end]
 
     assert "<WorkflowGraphTab" in workflow_mount
-    assert "computeGraphLayout" not in app
-    assert "drawEdgePath" not in app
+    assert "computeGraphLayout" not in router
+    assert "drawEdgePath" not in router
 
     workflow_tab = root / "frontend" / "src" / "components" / "tabs" / "WorkflowGraphTab.jsx"
     assert workflow_tab.exists()
@@ -3141,10 +3202,12 @@ def test_workflow_graph_page_is_extracted_and_uses_theme_tokens():
 
 def test_overview_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Overview */}")
-    end = app.index("{activeTab === 'agents_memory'", start)
-    overview_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Overview */}")
+    end = router.index("{activeTab === 'agents_memory'", start)
+    overview_mount = router[start:end]
 
     assert "<OverviewTab" in overview_mount
     assert "Current Mission" not in overview_mount
@@ -3193,10 +3256,12 @@ def test_overview_page_is_extracted_and_uses_theme_tokens():
 
 def test_agents_memory_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{activeTab === 'agents_memory'")
-    end = app.index("{/* Tab: Roles */}", start)
-    agents_memory_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{activeTab === 'agents_memory'")
+    end = router.index("{/* Tab: Roles */}", start)
+    agents_memory_mount = router[start:end]
 
     assert "<AgentsMemoryTab" in agents_memory_mount
     assert "setAgentsMemorySubTab('roles')" not in agents_memory_mount
@@ -3245,10 +3310,12 @@ def test_agents_memory_page_is_extracted_and_uses_theme_tokens():
 
 def test_messages_page_is_extracted_and_uses_message_feed_component():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Messages */}")
-    end = app.index("{/* Tab: Memory */}", start)
-    messages_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Messages */}")
+    end = router.index("{/* Tab: Memory */}", start)
+    messages_mount = router[start:end]
 
     assert "<MessagesTab" in messages_mount
     assert "<MessageFeed" not in messages_mount
@@ -3269,10 +3336,12 @@ def test_messages_page_is_extracted_and_uses_message_feed_component():
 
 def test_roles_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Roles */}")
-    end = app.index("{/* Tab: Artifacts */}", start)
-    roles_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Roles */}")
+    end = router.index("{/* Tab: Artifacts */}", start)
+    roles_mount = router[start:end]
 
     assert "<RolesTab" in roles_mount
     assert "roleObservations.map" not in roles_mount
@@ -3312,10 +3381,12 @@ def test_roles_page_is_extracted_and_uses_theme_tokens():
 
 def test_artifacts_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Artifacts */}")
-    end = app.index("{/* Tab: Actions */}", start)
-    artifacts_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Artifacts */}")
+    end = router.index("{/* Tab: Actions */}", start)
+    artifacts_mount = router[start:end]
 
     assert "<ArtifactsTab" in artifacts_mount
     assert "Object.entries(state.artifacts).map" not in artifacts_mount
@@ -3354,10 +3425,12 @@ def test_artifacts_page_is_extracted_and_uses_theme_tokens():
 
 def test_actions_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Actions */}")
-    end = app.index("{/* Tab: Agile Board */}", start)
-    actions_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Actions */}")
+    end = router.index("{/* Tab: Agile Board */}", start)
+    actions_mount = router[start:end]
 
     assert "<ActionsTab" in actions_mount
     assert "actionItems.map" not in actions_mount
@@ -3400,10 +3473,12 @@ def test_actions_page_is_extracted_and_uses_theme_tokens():
 
 def test_agile_board_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Agile Board */}")
-    end = app.index("{/* Tab: Smoke Runs */}", start)
-    board_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Agile Board */}")
+    end = router.index("{/* Tab: Smoke Runs */}", start)
+    board_mount = router[start:end]
 
     assert "<AgileBoardTab" in board_mount
     assert "agileBoard.columns" not in board_mount
@@ -3449,10 +3524,12 @@ def test_agile_board_page_is_extracted_and_uses_theme_tokens():
 
 def test_smoke_runs_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Smoke Runs */}")
-    end = app.index("{/* Tab: Workers */}", start)
-    smoke_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Smoke Runs */}")
+    end = router.index("{/* Tab: Workers */}", start)
+    smoke_mount = router[start:end]
 
     assert "<SmokeRunsTab" in smoke_mount
     assert "smokeRunItems.map" not in smoke_mount
@@ -3496,10 +3573,12 @@ def test_smoke_runs_page_is_extracted_and_uses_theme_tokens():
 
 def test_workers_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Workers */}")
-    end = app.index("{/* Tab: Approvals */}", start)
-    workers_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Workers */}")
+    end = router.index("{/* Tab: Approvals */}", start)
+    workers_mount = router[start:end]
 
     assert "<WorkersTab" in workers_mount
     assert "workerJobs.map" not in workers_mount
@@ -3547,10 +3626,12 @@ def test_workers_page_is_extracted_and_uses_theme_tokens():
 
 def test_approvals_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Approvals */}")
-    end = app.index("{/* Tab: Messages */}", start)
-    approvals_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Approvals */}")
+    end = router.index("{/* Tab: Messages */}", start)
+    approvals_mount = router[start:end]
 
     assert "<ApprovalsTab" in approvals_mount
     assert "approvalReviews.map" not in approvals_mount
@@ -3599,10 +3680,12 @@ def test_approvals_page_is_extracted_and_uses_theme_tokens():
 
 def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: Dev Loop */}")
-    end = app.index("{/* Tab: System */}", start)
-    dev_loop_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: Dev Loop */}")
+    end = router.index("{/* Tab: System */}", start)
+    dev_loop_mount = router[start:end]
 
     assert "<DevLoopTab" in dev_loop_mount
     assert "devLoopData.pull_requests.map" not in dev_loop_mount
@@ -3662,10 +3745,12 @@ def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
 
 def test_system_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    start = app.index("{/* Tab: System */}")
-    end = app.index("</>", start)
-    system_mount = app[start:end]
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
+        encoding="utf-8"
+    )
+    start = router.index("{/* Tab: System */}")
+    end = router.index("</>", start)
+    system_mount = router[start:end]
 
     assert "<SystemTab" in system_mount
     assert "startContext.task_backend?.sync?.join" not in system_mount
