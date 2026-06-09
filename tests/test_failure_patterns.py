@@ -247,6 +247,101 @@ def test_failure_pattern_library_reports_routing_quality_gate_without_expanding_
     }
 
 
+def test_failure_pattern_library_reports_llm_triage_readiness_without_invoking_models(tmp_path):
+    library = FailurePatternLibrary(tmp_path)
+    for index in range(3):
+        library.record_failure(
+            failure_class="unknown",
+            summary=f"Worker returned unclear failure envelope {index}",
+            disposition="block",
+            role="implementation",
+            node="implementation",
+            source=f"worker_failure:run-unknown-{index}:implementation:implementation",
+        )
+    library.record_failure(
+        failure_class="ambiguous_spec",
+        summary="Task requirements contradicted each other during implementation",
+        disposition="block",
+        role="qa",
+        node="implementation",
+        source="worker_failure:run-ambiguous-1:implementation:qa",
+    )
+    library.record_failure(
+        failure_class="network",
+        summary="503 Service Unavailable from registry.npmmirror.com",
+        disposition="escalate_human",
+        role="implementation",
+        node="implementation",
+        source="worker_failure:run-network:implementation:implementation",
+    )
+
+    report = library.routing_readiness_report(min_hits=1, min_llm_triage_samples=3)
+
+    assert report["llm_triage_readiness"] == {
+        "status": "ready_for_shadow_triage",
+        "triage_application": "not_started",
+        "min_samples": 3,
+        "candidate_failure_classes": ["ambiguous_spec", "unknown"],
+        "candidate_sample_count": 4,
+        "blocked_candidate_count": 0,
+        "blockers": [],
+        "model_invocation": "none",
+    }
+    candidates = report["llm_triage_candidates"]
+    assert len(candidates) == 2
+    assert candidates[0] == {
+        "failure_class": "unknown",
+        "sample_count": 3,
+        "roles": ["implementation"],
+        "nodes": ["implementation"],
+        "sample_signatures": candidates[0]["sample_signatures"],
+        "status": "candidate_for_shadow_triage",
+    }
+    assert len(candidates[0]["sample_signatures"]) == 1
+    assert candidates[0]["sample_signatures"][0].startswith("fail:")
+    assert candidates[1] == {
+        "failure_class": "ambiguous_spec",
+        "sample_count": 1,
+        "roles": ["qa"],
+        "nodes": ["implementation"],
+        "sample_signatures": candidates[1]["sample_signatures"],
+        "status": "candidate_for_shadow_triage",
+    }
+    assert len(candidates[1]["sample_signatures"]) == 1
+    assert candidates[1]["sample_signatures"][0].startswith("fail:")
+    assert [pattern["classifier_hint"] for pattern in report["candidate_patterns"]] == [
+        "unknown",
+        "network",
+        "ambiguous_spec",
+    ]
+
+
+def test_failure_pattern_library_blocks_llm_triage_readiness_without_unknown_samples(tmp_path):
+    library = FailurePatternLibrary(tmp_path)
+    library.record_failure(
+        failure_class="network",
+        summary="503 Service Unavailable from registry.npmmirror.com",
+        disposition="escalate_human",
+        role="implementation",
+        node="implementation",
+        source="worker_failure:run-network:implementation:implementation",
+    )
+
+    report = library.routing_readiness_report(min_hits=1, min_llm_triage_samples=2)
+
+    assert report["llm_triage_readiness"] == {
+        "status": "collect_more_samples",
+        "triage_application": "not_started",
+        "min_samples": 2,
+        "candidate_failure_classes": ["ambiguous_spec", "unknown"],
+        "candidate_sample_count": 0,
+        "blocked_candidate_count": 0,
+        "blockers": ["insufficient_unknown_or_ambiguous_samples"],
+        "model_invocation": "none",
+    }
+    assert report["llm_triage_candidates"] == []
+
+
 def test_canary_routing_decision_applies_only_high_confidence_low_risk_patterns():
     pattern = {
         "signature": "fail:network",

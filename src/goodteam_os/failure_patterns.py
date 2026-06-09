@@ -15,6 +15,7 @@ CANARY_SAFE_FAILURE_CLASSES = frozenset(
     {"auth", "rate_limit", "network", "timeout", "stream_disconnect", "infra"}
 )
 CANARY_SAFE_DISPOSITIONS = frozenset({"escalate_human"})
+LLM_TRIAGE_FAILURE_CLASSES = ("ambiguous_spec", "unknown")
 
 
 class FailurePatternLibrary:
@@ -142,10 +143,12 @@ class FailurePatternLibrary:
         min_hits: int = 3,
         min_confirmed: int = 3,
         max_false_positive_rate: float = 0.0,
+        min_llm_triage_samples: int = 5,
     ) -> dict[str, object]:
         threshold = max(int(min_hits), 1)
         quality_min_confirmed = max(int(min_confirmed), 1)
         quality_max_false_positive_rate = max(float(max_false_positive_rate), 0.0)
+        llm_triage_min_samples = max(int(min_llm_triage_samples), 1)
         patterns = self.list_patterns()
         candidates = [
             shadow_routing_candidate(
@@ -161,6 +164,11 @@ class FailurePatternLibrary:
             min_confirmed=quality_min_confirmed,
             max_false_positive_rate=quality_max_false_positive_rate,
         )
+        llm_triage_candidates = llm_triage_readiness_candidates(patterns)
+        llm_triage_readiness = llm_triage_readiness_summary(
+            llm_triage_candidates,
+            min_samples=llm_triage_min_samples,
+        )
         return {
             "total_patterns": len(patterns),
             "total_hits": sum(int(pattern.get("hit_count", 0)) for pattern in patterns),
@@ -172,6 +180,8 @@ class FailurePatternLibrary:
             "routing_gate_satisfied": bool(quality_gate.get("eligible_candidate_count", 0)),
             "shadow_routing": "enabled",
             "false_positive_review_required": True,
+            "llm_triage_readiness": llm_triage_readiness,
+            "llm_triage_candidates": llm_triage_candidates,
             "candidate_patterns": candidates,
         }
 
@@ -320,6 +330,64 @@ def routing_quality_gate_summary(
         "eligible_candidate_count": len(eligible),
         "blocked_candidate_count": blocked,
         "status": "satisfied_for_review" if eligible else "insufficient_quality_evidence",
+    }
+
+
+def llm_triage_readiness_candidates(patterns: list[dict[str, object]]) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    for pattern in patterns:
+        failure_class = normalized_failure_class(str(pattern.get("classifier_hint", "")))
+        if failure_class not in LLM_TRIAGE_FAILURE_CLASSES:
+            continue
+        candidate = grouped.setdefault(
+            failure_class,
+            {
+                "failure_class": failure_class,
+                "sample_count": 0,
+                "roles": [],
+                "nodes": [],
+                "sample_signatures": [],
+                "status": "candidate_for_shadow_triage",
+            },
+        )
+        candidate["sample_count"] = int(candidate.get("sample_count", 0) or 0) + int(
+            pattern.get("hit_count", 0) or 0
+        )
+        for role in pattern.get("roles", []):
+            _append_unique(candidate, "roles", str(role))
+        for node in pattern.get("nodes", []):
+            _append_unique(candidate, "nodes", str(node))
+        _append_unique(candidate, "sample_signatures", str(pattern.get("signature", "")))
+
+    return sorted(
+        grouped.values(),
+        key=lambda candidate: (
+            int(candidate.get("sample_count", 0) or 0),
+            str(candidate.get("failure_class", "")),
+        ),
+        reverse=True,
+    )
+
+
+def llm_triage_readiness_summary(
+    candidates: list[dict[str, object]],
+    *,
+    min_samples: int,
+) -> dict[str, object]:
+    threshold = max(int(min_samples), 1)
+    candidate_sample_count = sum(int(candidate.get("sample_count", 0) or 0) for candidate in candidates)
+    blockers = []
+    if candidate_sample_count < threshold:
+        blockers.append("insufficient_unknown_or_ambiguous_samples")
+    return {
+        "status": "ready_for_shadow_triage" if not blockers else "collect_more_samples",
+        "triage_application": "not_started",
+        "min_samples": threshold,
+        "candidate_failure_classes": list(LLM_TRIAGE_FAILURE_CLASSES),
+        "candidate_sample_count": candidate_sample_count,
+        "blocked_candidate_count": 0,
+        "blockers": blockers,
+        "model_invocation": "none",
     }
 
 

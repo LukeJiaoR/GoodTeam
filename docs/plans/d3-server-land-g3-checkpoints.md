@@ -659,3 +659,61 @@ still limited to high-confidence low-risk classes.
 
 **Rollback:** Revert CP17; CP12 outcome counters remain, but quality-gate
 summary fields disappear from readiness reports.
+
+### CP18 - G3 LLM Triage Readiness Data
+
+**Status:** completed in branch `feat/cp18-g3-llm-readiness`.
+
+**Scope:** Add a read-only readiness report for future unknown/ambiguous failure
+LLM triage. This checkpoint does not invoke a model, does not add an LLM triage
+agent, and does not change deterministic or canary routing behavior.
+
+**Entry Gate:** CP17 routing outcome quality exists and unknown/ambiguous
+failures remain deterministic/human-gated.
+
+**Implementation Notes:**
+- Keep `triage_application=not_started` and `model_invocation=none`.
+- Treat `unknown` and `ambiguous_spec` as the only future LLM triage candidate
+  classes for this report.
+- Aggregate candidate sample counts from the existing `FailurePatternLibrary`
+  ledger so long-tail unknown failures can be measured before any model is used.
+- Add a CLI threshold parameter so local operators can inspect whether enough
+  unknown/ambiguous samples exist for a later shadow-triage checkpoint.
+- Do not touch `triage_worker_failure`, `canary_routing_decision`, graph routing,
+  worker dispatch, or UI/theme code.
+
+**Verification:**
+- Red/green failure-pattern tests for ready and blocked LLM triage readiness.
+- Red/green CLI test for the threshold parameter.
+- Related G3/graph/CLI regression proving routing behavior is unchanged.
+- `ruff` on touched Python files.
+- `git diff --check`.
+
+**Evidence Captured:**
+- Targeted red:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_reports_llm_triage_readiness_without_invoking_models tests/test_failure_patterns.py::test_failure_pattern_library_blocks_llm_triage_readiness_without_unknown_samples -q`
+  first failed because `routing_readiness_report()` had no
+  `min_llm_triage_samples` parameter.
+- Targeted red:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_cli.py::test_cli_failure_patterns_outputs_llm_triage_readiness_json -q`
+  first failed because `--min-llm-triage-samples` was not recognized.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_cli.py -q -k 'failure_pattern or llm_triage'`
+  -> `11 passed, 18 deselected`.
+- Related regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_cli.py tests/test_graph_sample.py tests/test_workflow_table.py -q -k 'failure_pattern or llm_triage or canary or triage or worker_failure or retry_exhausted or disposition_for_failure_class or failure_patterns_outputs'`
+  -> `21 passed, 105 deselected`.
+- Full backend:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q`
+  -> `597 passed`.
+- Full lint:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend checks:
+  `npm --prefix frontend run lint` -> exit 0.
+  `npm --prefix frontend run build` -> Vite build succeeded.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Rollback:** Revert CP18; CP17 routing quality remains, but future LLM triage
+readiness fields disappear from failure-pattern readiness reports.

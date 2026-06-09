@@ -31,8 +31,10 @@ implementation.
   high-confidence low-risk classes. CP17 reports candidate outcome quality and
   false-positive rates, but broader route changes still require human review of
   that evidence before routing application moves beyond the canary boundary.
-- G3 LLM triage agent — only for unknown/ambiguous long-tail failures after
-  enough data exists to measure it.
+- G3 LLM triage agent — CP18 now reports unknown/ambiguous sample readiness
+  without invoking models. A real LLM triage worker remains gated behind review
+  of that readiness data, shadow-mode design, cost/control policy, and proof that
+  deterministic/canary routing remains authoritative until explicitly changed.
 - Codex pre-review account/auth recovery — external Codex account state; local
   fallback behavior is already implemented.
 - hcom-style edit-collision detection — parked until GoodTeam dispatch uses
