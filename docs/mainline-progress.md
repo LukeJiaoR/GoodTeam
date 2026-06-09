@@ -12,7 +12,7 @@ reference, verification evidence, and follow-up status.
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Tag-release safety report completed 2026-06-09 | Keep `tag_release` report-only with explicit safety blockers and future enablement gates while preserving guarded `land_pr` / `graduate_release` behavior. | Server-action regression `31 passed`; ruff/diff clean |
 | 4 | Theme/App.jsx productization | Dev Loop dispatch form extraction completed 2026-06-09 | Keep Vivid and Minimal as permanent themes while shrinking Dev Loop/App shell code through focused component extraction without changing UI/theme styling. | Dev Loop/theme contract `30 passed`; frontend lint/build passed |
-| 5 | Graph/DAG engine D2b/D3 | D3 parallel readiness evidence completed 2026-06-09 | Surface machine-readable readiness/blocker metadata for fake/read-only parallel planning versus still-blocked real-worker parallel execution. | Related D3/web regression `5 passed` + `6 passed`; ruff/diff clean |
+| 5 | Graph/DAG engine D2b/D3 | Worker-isolation strategy evidence completed 2026-06-09 | Add machine-readable worker-isolation strategy metadata for D3 parallel plans without enabling real parallel workers. | Related D3/workflow regression `26 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
@@ -22,17 +22,52 @@ reference, verification evidence, and follow-up status.
 ## Active Increment
 
 No active backlog increment remains. Remaining work is parked behind explicit gates
-or deliberate incremental tracks: D3 real fan-in execution plus live-smoke and
-worker-isolation evidence, deeper dynamic-plan/topological runner ownership beyond
-the now-wired sequential and read-only/fake parallel slices, post-CP15 server-action
-operational hardening and live-use evidence, G3 routing outcome quality, G3
-unknown-failure data for LLM triage, external Codex auth recovery, shared-worktree
-edit-collision need, optional full research/review memory ingestion, and continued
-Theme panel/component token cleanup with visual review.
+or deliberate incremental tracks: D3 real fan-in execution plus live-smoke
+evidence after the now-explicit worktree-per-worker isolation strategy, deeper
+dynamic-plan/topological runner ownership beyond the now-wired sequential and
+read-only/fake parallel slices, post-CP15 server-action operational hardening and
+live-use evidence, G3 routing outcome quality, G3 unknown-failure data for LLM
+triage, external Codex auth recovery, shared-worktree edit-collision need,
+optional full research/review memory ingestion, and continued Theme
+panel/component token cleanup with visual review.
 Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — Graph/DAG D3: worker-isolation strategy evidence
+
+**Intent:** make the real-parallel-worker gate more concrete by exposing the
+required isolation strategy in the existing read-only/fake parallel plan.
+
+**Implemented:**
+- Added `parallel_readiness.worker_isolation` to
+  `workflow_parallel_execution_plan`.
+- Fake/read-only plans now report `none_required_for_fake_and_readonly`.
+- Blocked real-worker plans now report `required_before_real_parallel_workers`,
+  require `worktree_per_worker`, and explicitly reject `shared_worktree` /
+  `single_runtime_root`.
+- The report lists the evidence needed for a future real-worker checkpoint:
+  per-worker worktree paths outside the repo root, one write-domain owner per
+  worker, a fan-in merge/review step, and live smoke using fake/read-only
+  workers first.
+- Runtime behavior is unchanged: no real workers run in parallel and workflow
+  advancement is unchanged.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py::test_workflow_parallel_execution_plan_allows_fake_readonly_levels_and_preserves_fanin_order tests/test_workflow_table.py::test_workflow_parallel_execution_plan_fails_closed_for_real_workers_and_write_collisions tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges -q`
+  first failed because `parallel_readiness.worker_isolation` was absent.
+- Focused green:
+  the same command -> `3 passed`.
+- Related D3/workflow regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py tests/test_web.py tests/test_api.py -q -k 'workflow_graph or workflow_node or workflow_dag or execution_plan or parallel_execution_plan or api_workflow_graph or topology_runner'`
+  -> `26 passed, 230 deselected`.
+
+**Deferred from this increment:**
+- Real worker fan-out/fan-in execution.
+- Live smoke for real parallel workers.
+- Any UI/theme changes.
 
 ### 2026-06-09 — Self-hosting control plane: tag-release safety report
 

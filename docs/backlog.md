@@ -15,8 +15,10 @@ implementation.
 - D3 real parallel execution and deeper dynamic-plan runner ownership — D2b's
   sequential security dependency gate is wired, CP3/CP4 added plan-v2 validation
   plus a sequential topology runner, and CP7 added read-only/fake parallel plan
-  evidence. Remaining work is real fan-in/dynamic-plan execution with worker
-  isolation, write-domain enforcement, and live smoke evidence.
+  evidence. CP16 now makes the worktree-per-worker isolation strategy explicit
+  and rejects shared-worktree/single-runtime-root strategies for real parallel
+  workers. Remaining work is real fan-in/dynamic-plan execution with live smoke
+  evidence and a merge/review fan-in step.
 - Self-hosting server actions — CP9 now permits guarded `land_pr` and
   `graduate_release` execution only behind env+nonce+typed-confirmation gates,
   same-origin enforcement, allowlisted argv construction, readiness-derived
