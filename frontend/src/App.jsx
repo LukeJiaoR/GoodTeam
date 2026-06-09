@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import LanguageSwitcher from './components/LanguageSwitcher';
-import NewProjectModal from './components/NewProjectModal';
+import NewProjectModalContainer from './components/NewProjectModalContainer';
 import ProjectDashboard from './components/ProjectDashboard';
 import ProjectsHomePage from './components/ProjectsHomePage';
 import { useAppearancePreferences } from './hooks/useAppearancePreferences';
@@ -810,9 +810,10 @@ export default function App() {
     return sentences.slice(0, 2).join(' ');
   };
 
-  const newProjectModal = newProjectModalOpen && (
-    <NewProjectModal
+  const newProjectModal = (
+    <NewProjectModalContainer
       actionLoading={actionLoading}
+      closeNewProjectModal={closeNewProjectModal}
       createRemote={createRemote}
       deliveryContractAcceptance={deliveryContractAcceptance}
       deliveryContractFatalPatterns={deliveryContractFatalPatterns}
@@ -828,7 +829,7 @@ export default function App() {
       initGit={initGit}
       isNewProjectMode={isNewProjectMode}
       modelProfile={modelProfile}
-      onClose={closeNewProjectModal}
+      newProjectModalOpen={newProjectModalOpen}
       openDirectoryPicker={openDirectoryPicker}
       planeApiHost={planeApiHost}
       planeApiKeyEnv={planeApiKeyEnv}
