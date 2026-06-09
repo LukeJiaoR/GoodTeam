@@ -16,6 +16,7 @@ import { useApprovalEditor } from './hooks/useApprovalEditor';
 import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';
 import { useMessageFeeds } from './hooks/useMessageFeeds';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
+import { buildCustomDeliveryPayload } from './utils/deliveryPayload';
 import { getMissionSummary } from './utils/missionSummary';
 import { parseRoleModelOverrideLines, parseRoleModelOverridesMap } from './utils/roleModelOverrides';
 import {
@@ -479,9 +480,7 @@ export default function App() {
     showToast('Creating local project config...');
     try {
       const parsedOverrides = parseRoleModelOverridesMap(roleModelOverrides);
-      const customDeliveryPayload = deliveryMode === 'custom'
-        ? { delivery_standards: deliveryStandards }
-        : {};
+      const customDeliveryPayload = buildCustomDeliveryPayload(deliveryMode, deliveryStandards);
 
       const response = await fetch('/api/project-config', {
         method: 'POST',
@@ -564,9 +563,7 @@ export default function App() {
     showToast('Starting workflow...');
     try {
       const overrides = parseRoleModelOverrideLines(roleModelOverrides);
-      const customDeliveryPayload = deliveryMode === 'custom'
-        ? { delivery_standards: deliveryStandards }
-        : {};
+      const customDeliveryPayload = buildCustomDeliveryPayload(deliveryMode, deliveryStandards);
 
       const response = await fetch('/api/start', {
         method: 'POST',
