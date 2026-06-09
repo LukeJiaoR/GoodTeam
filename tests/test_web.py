@@ -337,7 +337,24 @@ def test_build_server_actions_marks_destructive_actions_available_only_with_env_
     assert enabled["actions"]["land_pr"]["mode"] == "guarded_execute"
     assert enabled["actions"]["land_pr"]["reason"] == ""
     assert enabled["actions"]["tag_release"]["available"] is False
-    assert enabled["actions"]["tag_release"]["reason"] == "disabled_by_default"
+    assert enabled["actions"]["tag_release"]["mode"] == "report_only"
+    assert enabled["actions"]["tag_release"]["reason"] == "tag_release_safety_design_required"
+    assert enabled["actions"]["tag_release"]["readiness"]["server_execution"] == "report_only"
+    assert enabled["actions"]["tag_release"]["readiness"]["blocked_by"] == [
+        "tag_name_policy",
+        "signed_tag_policy",
+        "remote_push_policy",
+        "rollback_policy",
+        "human_release_decision",
+    ]
+    assert enabled["actions"]["tag_release"]["readiness"]["future_enablement_requires"] == [
+        "GOODTEAM_SERVER_ACTIONS=1",
+        "GOODTEAM_SERVER_ACTION_NONCE",
+        "typed confirmation: TAG RELEASE <tag>",
+        "argv allowlist with shell=False",
+        "audit record before any remote push",
+        "human-reviewed release notes and rollback plan",
+    ]
     assert enabled["actions"]["graduate_release"]["available"] is True
     assert enabled["actions"]["graduate_release"]["mode"] == "guarded_execute"
 

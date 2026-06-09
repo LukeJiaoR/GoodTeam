@@ -783,6 +783,46 @@ def _git_safe_ref(value: object, field: str = "ref") -> str:
     return ref
 
 
+def _git_safe_tag(value: object, field: str = "tag") -> str:
+    tag = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,80}", tag):
+        raise ValueError(f"{field} must be a git-safe tag")
+    if tag.startswith(("-", "/", ".")) or tag.endswith(("/", ".")):
+        raise ValueError(f"{field} must be a git-safe tag")
+    if ".." in tag or "//" in tag or "@{" in tag:
+        raise ValueError(f"{field} must be a git-safe tag")
+    for component in tag.split("/"):
+        if (
+            not component
+            or component in {".", ".."}
+            or component.startswith(("-", "."))
+            or component.endswith(".lock")
+        ):
+            raise ValueError(f"{field} must be a git-safe tag")
+    return tag
+
+
+def _tag_release_safety_report() -> dict[str, object]:
+    return {
+        "server_execution": "report_only",
+        "blocked_by": [
+            "tag_name_policy",
+            "signed_tag_policy",
+            "remote_push_policy",
+            "rollback_policy",
+            "human_release_decision",
+        ],
+        "future_enablement_requires": [
+            "GOODTEAM_SERVER_ACTIONS=1",
+            "GOODTEAM_SERVER_ACTION_NONCE",
+            "typed confirmation: TAG RELEASE <tag>",
+            "argv allowlist with shell=False",
+            "audit record before any remote push",
+            "human-reviewed release notes and rollback plan",
+        ],
+    }
+
+
 def _server_action_expected_confirmation(action: str, request: dict[str, object]) -> str:
     if action == "land_pr":
         pr_number = _positive_int(request.get("pr"), "pr")
@@ -790,6 +830,9 @@ def _server_action_expected_confirmation(action: str, request: dict[str, object]
     if action == "graduate_release":
         ref = _git_safe_ref(request.get("ref", ""))
         return f"GRADUATE RELEASE {ref}"
+    if action == "tag_release":
+        tag = _git_safe_tag(request.get("tag", ""), "tag")
+        return f"TAG RELEASE {tag}"
     raise ValueError(f"Unsupported server action: {action}")
 
 
@@ -832,6 +875,8 @@ def _server_action_argv(root: Path, action: str, request: dict[str, object]) -> 
     if action == "graduate_release":
         ref = _git_safe_ref(request.get("ref", ""))
         return ["scripts/graduate-release.sh", "--ref", ref, "--yes"]
+    if action == "tag_release":
+        raise ValueError("tag_release is report-only until tag safety design is complete")
     raise ValueError(f"Unsupported server action: {action}")
 
 
@@ -1145,9 +1190,9 @@ def build_server_action_capabilities(
             ),
             "tag_release": _server_action_capability(
                 available=False,
-                mode="human_command_only",
-                reason="disabled_by_default",
-                readiness=land_tag_readiness,
+                mode="report_only",
+                reason="tag_release_safety_design_required",
+                readiness=_tag_release_safety_report(),
             ),
             "graduate_release": _server_action_capability(
                 available=destructive_actions_available,

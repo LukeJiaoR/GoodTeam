@@ -10,7 +10,7 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | Routing outcome telemetry completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, and record shadow/canary routing outcomes without expanding routing. | Related G3 regression `16 passed`; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Dev Loop audit visibility completed 2026-06-09 | Render bounded read-only CP9 audit records in Dev Loop without expanding land/tag/graduate execution. | Frontend contract `17 passed`; lint/build passed |
+| 3 | Self-hosting control plane | Tag-release safety report completed 2026-06-09 | Keep `tag_release` report-only with explicit safety blockers and future enablement gates while preserving guarded `land_pr` / `graduate_release` behavior. | Server-action regression `31 passed`; ruff/diff clean |
 | 4 | Theme/App.jsx productization | Dev Loop dispatch form extraction completed 2026-06-09 | Keep Vivid and Minimal as permanent themes while shrinking Dev Loop/App shell code through focused component extraction without changing UI/theme styling. | Dev Loop/theme contract `30 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2b/D3 | D3 parallel readiness evidence completed 2026-06-09 | Surface machine-readable readiness/blocker metadata for fake/read-only parallel planning versus still-blocked real-worker parallel execution. | Related D3/web regression `5 passed` + `6 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
@@ -24,15 +24,48 @@ reference, verification evidence, and follow-up status.
 No active backlog increment remains. Remaining work is parked behind explicit gates
 or deliberate incremental tracks: D3 real fan-in execution plus live-smoke and
 worker-isolation evidence, deeper dynamic-plan/topological runner ownership beyond
-the now-wired sequential and read-only/fake parallel slices, post-CP9 server-action
-operational hardening and `tag_release` safety design, G3 routing outcome quality,
-G3 unknown-failure data for LLM triage, external Codex auth recovery, shared-worktree
+the now-wired sequential and read-only/fake parallel slices, post-CP15 server-action
+operational hardening and live-use evidence, G3 routing outcome quality, G3
+unknown-failure data for LLM triage, external Codex auth recovery, shared-worktree
 edit-collision need, optional full research/review memory ingestion, and continued
 Theme panel/component token cleanup with visual review.
 Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — Self-hosting control plane: tag-release safety report
+
+**Intent:** make the remaining `tag_release` boundary explicit and testable
+without adding a server-side tag execution path.
+
+**Implemented:**
+- Added a structured `tag_release` safety report to server-action capabilities.
+- Kept `tag_release.available=false` even when server actions are enabled with
+  env gate and nonce.
+- Reported `mode=report_only`,
+  `reason=tag_release_safety_design_required`, explicit blockers, and future
+  enablement requirements.
+- Accepted `TAG RELEASE <tag>` as a known confirmation shape only so the run
+  route can reject with the report-only boundary.
+- Preserved the no-execution behavior: no argv, no subprocess, no audit record,
+  no `git tag`.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_api_server_action_run_tag_release_stays_report_only_without_subprocess_or_audit tests/test_web.py::test_build_server_actions_marks_destructive_actions_available_only_with_env_gate -q`
+  first failed because `tag_release` returned `Unsupported server action` and
+  capability mode was `human_command_only`.
+- Focused green:
+  the same command -> `2 passed`.
+- Related server-action regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py tests/test_web.py -q -k 'server_action or server_actions or same_origin or dev_loop or release_readiness'`
+  -> `31 passed, 197 deselected`.
+
+**Deferred from this increment:**
+- Any server-side tag creation, tag movement, or remote tag push.
+- Live-use evidence for guarded land/graduate operations.
+- First-class workflow-node sediment for server actions.
 
 ### 2026-06-09 — Theme/App.jsx productization: Dev Loop dispatch form extraction
 
