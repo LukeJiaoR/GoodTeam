@@ -17,7 +17,11 @@
 - Every checkpoint gets its own PR.
 - Every PR updates this file with status, scope, verification, and follow-up notes.
 - Any implementation PR that changes workflow execution, routing, merge/tag behavior, or dashboard security must include a regression test for the old failure mode.
-- Server-side merge/tag remains disabled until the checkpoint explicitly says otherwise and an environment capability gate is present.
+- New or expanded server-side merge/tag execution remains disabled unless a
+  checkpoint explicitly allows it, an environment capability gate is present, and
+  the action has same-origin, nonce, typed-confirmation, argv allowlist, and audit
+  coverage. CP9 is the current exception for `land_pr` and `graduate_release`;
+  `tag_release` remains disabled/report-only.
 - Human review remains the land gate throughout this sequence.
 
 ## Checkpoints
@@ -313,3 +317,30 @@
 - `git diff --check` -> exit 0.
 
 **Rollback:** Remove the env gate or revert CP9 PR; command-copy workflow remains.
+
+### CP10 - Post-CP9 Docs and Backlog Reconciliation
+
+**Status:** completed in branch `feat/post-cp9-docs-audit`.
+
+**Scope:** Reconcile project status docs after CP3-CP9 so backlog and progress
+ledgers no longer describe server-side land/graduate execution, D3, or G3 as
+still wholly parked behind pre-implementation design gates.
+
+**Entry Gate:** CP9 merged. No code, API, UI, runner, routing, merge, tag, or
+release behavior changes are allowed in this checkpoint.
+
+**Implementation Notes:**
+- Keep this docs-only.
+- Preserve the CP9 boundary: guarded execution exists for `land_pr` and
+  `graduate_release`; `tag_release` remains disabled/report-only.
+- Keep D3 remaining work framed around real fan-in, worker isolation,
+  write-domain safety, and live smoke evidence.
+- Keep G3 remaining work framed around outcome-quality measurement and
+  unknown/ambiguous-failure evidence before broader routing or LLM triage.
+
+**Verification:**
+- `git diff --check`.
+- Stale-phrase scan for pre-CP9 server-action wording.
+- Self-review of docs-only diff.
+
+**Rollback:** Revert the docs-only PR; runtime behavior is unaffected.

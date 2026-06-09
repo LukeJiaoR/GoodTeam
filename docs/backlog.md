@@ -3,7 +3,7 @@
 Durable list of feature ideas / follow-ups that aren't on the active plan yet.
 Promote an item to a PRD under `docs/plans/` when it's picked up. Newest first.
 
-## Status 2026-06-07 — actionable backlog cleared
+## Status 2026-06-09 — post-CP9 backlog reconciled
 
 All items that can be completed safely from local repository context in this pass
 are either implemented or reconciled below. The remaining entries are not active
@@ -12,14 +12,20 @@ gates that require founder input or validated runtime evidence before
 implementation.
 
 **Gated / external-decision parking lot:**
-- D3 parallel level execution and deeper dynamic-plan runner ownership — D2b's
-  sequential security dependency gate is now wired; broader fan-in/dynamic-plan
-  execution still requires a real consumer, isolation design, and live smoke
-  budget.
-- Self-hosting graduate/tag controls and any server-side land/merge execution —
-  intentionally held behind the human land gate and auth/security design.
-- Applying G3 failure-pattern recommendations to routing — requires validated
-  outcome quality from the new read-only readiness metrics before route changes.
+- D3 real parallel execution and deeper dynamic-plan runner ownership — D2b's
+  sequential security dependency gate is wired, CP3/CP4 added plan-v2 validation
+  plus a sequential topology runner, and CP7 added read-only/fake parallel plan
+  evidence. Remaining work is real fan-in/dynamic-plan execution with worker
+  isolation, write-domain enforcement, and live smoke evidence.
+- Self-hosting server actions — CP9 now permits guarded `land_pr` and
+  `graduate_release` execution only behind env+nonce+typed-confirmation gates,
+  same-origin enforcement, allowlisted argv construction, readiness-derived
+  inputs, and audit records. `tag_release` remains disabled/report-only. The
+  remaining backlog is operational hardening, live-use evidence, tag safety
+  design, UI discipline, and keeping human review as the land gate.
+- Expanding G3 failure-pattern routing — CP8 canary routing applies only to
+  high-confidence low-risk classes. Broader route changes still require measured
+  outcome quality and false-positive review.
 - G3 LLM triage agent — only for unknown/ambiguous long-tail failures after
   enough data exists to measure it.
 - Codex pre-review account/auth recovery — external Codex account state; local
@@ -80,6 +86,12 @@ engine (grounded citations + retrieval), not a separate silo. Ties to the
 the mechanical half; this captures the document/provenance half).
 
 ## 🟠 GATED / PARKED — Real graph engine: replace the hand-rolled "graph" with a true collaboration DAG  (raised 2026-06-02, charter item — co-equal mainline with the memory engine)
+
+**STATUS 2026-06-09:** CP3/CP4/CP7 moved D3 beyond parked-only design: plan-v2
+validation, a sequential topology runner, and read-only/fake parallel level
+planning are implemented. Real parallel execution remains gated because no live
+multi-worker fan-in consumer has proven isolation, write-domain safety, and smoke
+coverage yet.
 
 **STATUS 2026-06-08:** D2b has one production runner semantic now: the declared
 `planner` dependency on `security` is enforced sequentially. RFC approval routes
@@ -174,11 +186,19 @@ verification is trustworthy" rule from the role-chain charter.
 
 ## 🟠 GATED / PARKED — Self-host the role chain: sediment Claude's manual orchestration into GoodTeam  (raised 2026-06-02, charter item)
 
-**STATUS 2026-06-07:** the safe local slices are implemented: Dev Loop
+**STATUS 2026-06-09:** CP9 moved self-hosting beyond readiness-only for two
+allowlisted actions. The server may execute `land_pr` and `graduate_release` only
+when `GOODTEAM_SERVER_ACTIONS=1`, a non-empty nonce matches, same-origin checks
+pass, typed confirmation matches the readiness-derived target, argv is
+allowlisted, and the action writes an audit record. `tag_release` remains
+disabled/report-only. Do not add broad server-side merge/tag execution from
+backlog cleanup; remaining work is live-use evidence, operator docs, audit UI,
+tag safety, and first-class workflow-node sediment without weakening the human
+review gate.
+
+**STATUS 2026-06-07:** the safe local slices were implemented: Dev Loop
 observability, web dispatch, land-readiness copy commands, dry-smoke action, and
-read-only release/graduation readiness metadata. No server-side merge, land, tag,
-or graduate action should be added from backlog cleanup; those remain behind the
-human land gate plus auth/security design.
+read-only release/graduation readiness metadata.
 
 **STATUS 2026-06-04 (founder priority: "以自我驱动为先"):** mechanical layers sedimented —
 `dispatch-track.sh` (orchestrator), `pre-review.sh` (code_review mechanical half), `land-pr.sh`
@@ -289,12 +309,13 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   (#62/#61).** Default-flow PRD/RFC now generate via the LLM worker when the role's backend is real
   (adapter ∉ BUILTIN_WORKER_MODES), with graceful template fallback (fake/not-ready/worker-failure);
   zero-cred onboarding preserved.
-- **Moat #1 triage / self-correction** — 🟠 **GATED AFTER LOCAL COMPLETION 2026-06-07.**
+- **Moat #1 triage / self-correction** — 🟠 **GATED AFTER LOCAL COMPLETION 2026-06-09.**
   Declarative failure edges + bounded retry (D1), deterministic classify→route
   dispositions, failure capture to memory, global failure-pattern storage, pattern-hit
-  observability, and read-only routing-readiness metrics are implemented. Applying
-  pattern recommendations to routing and adding an LLM triage agent remain gated on
-  measured outcome quality and enough unknown/ambiguous failures to justify them.
+  observability, read-only routing-readiness metrics, CP5 shadow routing, and CP8
+  canary routing for high-confidence low-risk classes are implemented. Expanding
+  pattern-driven routing and adding an LLM triage agent remain gated on measured
+  outcome quality and enough unknown/ambiguous failures to justify them.
 - **Borrow hcom's edit-collision detection** for dispatch's shared-worktree parallel
   tracks (see `docs/prior-art-multi-agent-coordination.md`). 🟠 **PARKED 2026-06-07** —
   no current shared-worktree dispatch consumer exists; parallel tracks use disjoint
@@ -332,26 +353,29 @@ readiness/auth hints inline so a user knows before a run whether their pick will
   → resolves to the actual project-key list to satisfy the endpoint's required non-empty scope;
   ranked project-qualified hits, race-guarded.
 - **Web UI is NOT yet a complete control surface for the self-hosting/orchestration loop** —
-  🟠 **GATED AFTER SAFE SLICES 2026-06-07.**
+  🟠 **GATED AFTER SAFE SLICES 2026-06-09.**
   (UI-coverage audit, 2026-06-03). The end-user product loop (idea→PRD→RFC→impl→staging→release→
   retro) is ~90% web-driven; but GoodTeam's own dev/orchestration toolchain
   (`dispatch-track.sh`, `land-pr.sh`, `graduate-release.sh`, `smoke`) was mostly CLI-only — the
   §6.2 "GoodTeam develops itself from its own UI" endgame. Landed slices: Dev Loop observability,
-  web `Dispatch a track`, land-readiness / copy land command, and `Run Dry Smoke`. Remaining:
-  graduate/tag panel and any server-side land/merge path remain gated; land is intentionally
-  human-invoked.
+  web `Dispatch a track`, land-readiness / copy land command, `Run Dry Smoke`, and CP9 guarded
+  server execution for `land_pr` plus `graduate_release`. Remaining: tag action stays
+  disabled/report-only, execution audit should become easier to inspect, and land remains gated
+  by human review.
 - ~~**G3 pickup filter is slightly over-broad**~~ **RESOLVED 2026-06-04 (#68).**
   Pickup filtering now keys on the `worker_failure:` source marker rather than stripping human
   notes that merely start with `FAILURE [...]`. Covered by
   `tests/test_memory.py::test_pickup_packet_preserves_human_failure_heading_short_term_event`.
 - **G3c — global cross-project failure-pattern library (hit-count)** — ✅ **LIBRARY RESOLVED
-  2026-06-07 (`a93a693`)**, routing-readiness measurement added 2026-06-07.
+  2026-06-07 (`a93a693`)**, routing-readiness measurement added 2026-06-07,
+  shadow/canary application evidence added through CP5/CP8.
   `FailurePatternLibrary` now stores
   signature/classifier/disposition hints, hit count, roles/nodes/sources, timestamps, and
   deterministic lookup; worker failure triage records patterns; `goodteam-os failure-patterns`
-  emits repeated-pattern candidate metrics without changing routing. Applying pattern matches to
-  alter routing remains a separate gate once candidate quality is validated.
-- **G3 LLM triage agent** — 🟠 **GATED 2026-06-07.** G3a ships a DETERMINISTIC classify→route table covering known classes. Add a model-driven triage agent only for the `unknown`/ambiguous long tail, measured against the §12 hit-rate — don't run a model to route failures a table already handles.
+  emits repeated-pattern candidate metrics; canary routing can apply only high-confidence
+  low-risk recommendations. Broader routing expansion remains a separate gate once candidate
+  quality is validated.
+- **G3 LLM triage agent** — 🟠 **GATED 2026-06-09.** G3a ships a DETERMINISTIC classify→route table covering known classes, and CP8 canary routing covers a narrow proven subset. Add a model-driven triage agent only for the `unknown`/ambiguous long tail, measured against the §12 hit-rate — don't run a model to route failures a table already handles.
 - ~~**`land-pr.sh` ff-pull fails when a merged PR touches `workers.py`**~~ **RESOLVED 2026-06-04 (#66).**
   `scripts/land-pr.sh` now stashes/restores local tracked edits around `git pull --ff-only`, with
   trap-based restore on failure.
