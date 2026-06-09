@@ -8,7 +8,7 @@ reference, verification evidence, and follow-up status.
 
 | Order | Mainline | Status | Scope For This Pass | Completion Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | G3c global failure-pattern library | Routing quality gate report completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, record shadow/canary outcomes, and report outcome quality without expanding routing. | Related G3 regression `18 passed`; ruff/diff clean |
+| 1 | G3c global failure-pattern library | LLM triage readiness data completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, record shadow/canary outcomes, report outcome quality, and measure unknown/ambiguous samples for future LLM triage without invoking models. | Focused G3/CLI readiness `11 passed`; ruff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Tag-release safety report completed 2026-06-09 | Keep `tag_release` report-only with explicit safety blockers and future enablement gates while preserving guarded `land_pr` / `graduate_release` behavior. | Server-action regression `31 passed`; ruff/diff clean |
 | 4 | Theme/App.jsx productization | Dev Loop dispatch form extraction completed 2026-06-09 | Keep Vivid and Minimal as permanent themes while shrinking Dev Loop/App shell code through focused component extraction without changing UI/theme styling. | Dev Loop/theme contract `30 passed`; frontend lint/build passed |
@@ -26,14 +26,45 @@ or deliberate incremental tracks: D3 real fan-in execution plus live-smoke
 evidence after the now-explicit worktree-per-worker isolation strategy, deeper
 dynamic-plan/topological runner ownership beyond the now-wired sequential and
 read-only/fake parallel slices, post-CP15 server-action operational hardening and
-live-use evidence, broader G3 routing application after quality review, G3
-unknown-failure data for LLM triage, external Codex auth recovery,
+live-use evidence, broader G3 routing application after quality review, future
+G3 shadow LLM triage after readiness review, external Codex auth recovery,
 shared-worktree edit-collision need, optional full research/review memory
 ingestion, and continued Theme panel/component token cleanup with visual review.
 Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — G3 LLM triage readiness data
+
+**Intent:** make the future unknown/ambiguous-failure LLM triage gate measurable
+without invoking models or changing routing behavior.
+
+**Implemented:**
+- Added `llm_triage_readiness` to failure-pattern readiness reports with
+  `triage_application=not_started`, `model_invocation=none`, threshold,
+  candidate sample count, status, and blockers.
+- Added `llm_triage_candidates`, grouped by `unknown` and `ambiguous_spec`
+  failure classes from the existing `FailurePatternLibrary` ledger.
+- Added `--min-llm-triage-samples` to the CLI `failure-patterns` command.
+- Left `triage_worker_failure`, `canary_routing_decision`, graph routing, worker
+  dispatch, endpoints, UI, and theme behavior unchanged.
+
+**Verification evidence:**
+- Red failure-pattern readiness test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py::test_failure_pattern_library_reports_llm_triage_readiness_without_invoking_models tests/test_failure_patterns.py::test_failure_pattern_library_blocks_llm_triage_readiness_without_unknown_samples -q`
+  first failed because `routing_readiness_report()` had no
+  `min_llm_triage_samples` parameter.
+- Red CLI test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_cli.py::test_cli_failure_patterns_outputs_llm_triage_readiness_json -q`
+  first failed because `--min-llm-triage-samples` was unrecognized.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_failure_patterns.py tests/test_cli.py -q -k 'failure_pattern or llm_triage'`
+  -> `11 passed, 18 deselected`.
+
+**Deferred from this increment:**
+- Any model invocation or LLM triage worker.
+- Any routing change for unknown/ambiguous failures.
 
 ### 2026-06-09 — G3 routing outcome quality gate report
 

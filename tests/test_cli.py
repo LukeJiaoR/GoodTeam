@@ -129,6 +129,42 @@ def test_cli_failure_patterns_outputs_routing_readiness_json(tmp_path, capsys):
     assert payload["candidate_patterns"][0]["classifier_hint"] == "network"
 
 
+def test_cli_failure_patterns_outputs_llm_triage_readiness_json(tmp_path, capsys):
+    from goodteam_os import cli
+    from goodteam_os.failure_patterns import FailurePatternLibrary
+
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    library = FailurePatternLibrary(project_root)
+    for index in range(2):
+        library.record_failure(
+            failure_class="unknown",
+            summary=f"Worker returned unclear failure envelope {index}",
+            disposition="block",
+            role="implementation",
+            node="implementation",
+            source=f"worker_failure:run-unknown-{index}:implementation:implementation",
+        )
+
+    result = cli.main(
+        [
+            "failure-patterns",
+            "--project-root",
+            str(project_root),
+            "--min-hits",
+            "1",
+            "--min-llm-triage-samples",
+            "2",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert payload["llm_triage_readiness"]["status"] == "ready_for_shadow_triage"
+    assert payload["llm_triage_readiness"]["min_samples"] == 2
+    assert payload["llm_triage_readiness"]["model_invocation"] == "none"
+
+
 def test_cli_memory_append_writes_event_jsonl(tmp_path, capsys):
     from goodteam_os import cli
 

@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     failure_patterns = subparsers.add_parser("failure-patterns")
     failure_patterns.add_argument("--project-root", type=Path, required=True)
     failure_patterns.add_argument("--min-hits", type=int, default=3)
+    failure_patterns.add_argument("--min-llm-triage-samples", type=int, default=5)
 
     smoke = subparsers.add_parser("smoke")
     smoke.add_argument("--workspace", type=Path, default=Path("."))
@@ -151,7 +152,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "failure-patterns":
-        payload = FailurePatternLibrary(args.project_root).routing_readiness_report(min_hits=args.min_hits)
+        payload = FailurePatternLibrary(args.project_root).routing_readiness_report(
+            min_hits=args.min_hits,
+            min_llm_triage_samples=args.min_llm_triage_samples,
+        )
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "smoke":
