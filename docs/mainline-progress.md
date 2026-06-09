@@ -12,7 +12,7 @@ reference, verification evidence, and follow-up status.
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Guarded server action execution completed 2026-06-08 | CP9 enabled env+nonce+typed-confirmation guarded execution for `land_pr` and `graduate_release`; `tag_release` remains disabled/report-only and human review remains the land gate. | `581 passed`; ruff clean; diff check clean |
 | 4 | Theme/App.jsx productization | Approval metrics helper extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | Approval/nav/i18n/theme contract slice `20 passed`; frontend lint/build passed |
-| 5 | Graph/DAG engine D2b | Sequential dependency-gate runner semantics completed 2026-06-08 | Make declared gate dependencies affect real execution by routing RFC approval through the human-only security gate before planner starts, without enabling D3 parallel execution. | `554 passed`; ruff clean; frontend lint/build passed |
+| 5 | Graph/DAG engine D2b/D3 | D3 parallel readiness evidence completed 2026-06-09 | Surface machine-readable readiness/blocker metadata for fake/read-only parallel planning versus still-blocked real-worker parallel execution. | Related D3/web regression `5 passed` + `6 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
 | 8 | Backlog status audit | Completed 2026-06-07 | Reconcile stale `docs/backlog.md` open items against shipped code/tests so only real open/gated work remains. | Targeted tests `34 passed`; diff check clean |
@@ -55,6 +55,41 @@ new runtime behavior.
 
 **Deferred from this increment:**
 - Any code, UI, runner, routing, merge, or tag behavior change.
+
+### 2026-06-09 — D3 parallel readiness evidence
+
+**Intent:** make the D3 parallel projection explain why fake/read-only planning is
+allowed while real worker parallelism remains blocked.
+
+**Implemented:**
+- Added `parallel_readiness` to `workflow_parallel_execution_plan`.
+- Reports `safe_runner_kinds`, `blocked_runner_kinds`, `requires_worker_isolation`,
+  `requires_live_smoke`, and the blocker list reused from validation errors.
+- Exposed the same readiness payload through `/api/workflow/graph` via the existing
+  read-only `workflow_execution_plan_v2.parallel_execution_plan`.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py::test_workflow_parallel_execution_plan_allows_fake_readonly_levels_and_preserves_fanin_order tests/test_workflow_table.py::test_workflow_parallel_execution_plan_fails_closed_for_real_workers_and_write_collisions tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges -q`
+  first failed because `parallel_readiness` was absent.
+- Focused green:
+  the same command -> `3 passed`.
+- Related workflow-table regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'parallel_execution_plan or execution_plan_v2'`
+  -> `5 passed, 23 deselected`.
+- Related web/API regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py tests/test_api.py -q -k 'workflow_graph or workflow_node or workflow_dag or execution_plan or parallel_execution_plan or api_workflow_graph'`
+  -> `6 passed, 211 deselected`.
+- Quality gates:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/workflow_table.py tests/test_workflow_table.py tests/test_web.py`
+  -> `All checks passed!`.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Deferred from this increment:**
+- Real worker parallel execution.
+- Worker isolation implementation.
+- Live parallel worker smoke.
 
 ### 2026-06-08 — Theme/App.jsx productization: approval metrics helper extraction
 

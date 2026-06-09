@@ -471,6 +471,24 @@ def workflow_execution_plan_v2(
 PARALLEL_SAFE_RUNNER_KINDS = frozenset({"fake_worker", "read_only_advisor"})
 
 
+def _parallel_readiness(
+    *,
+    validation_errors: Iterable[str],
+    blocked_runner_kinds: Iterable[str],
+) -> dict[str, object]:
+    blockers = list(validation_errors)
+    blocked_kinds = sorted({kind for kind in blocked_runner_kinds if kind})
+    blocked = bool(blockers)
+    return {
+        "status": "blocked_for_real_workers" if blocked else "ready_for_fake_and_readonly",
+        "safe_runner_kinds": sorted(PARALLEL_SAFE_RUNNER_KINDS),
+        "blocked_runner_kinds": blocked_kinds,
+        "requires_worker_isolation": blocked,
+        "requires_live_smoke": blocked,
+        "blockers": blockers,
+    }
+
+
 def workflow_parallel_execution_plan(
     nodes: Mapping[str, WorkflowNode] | None = None,
     *,
@@ -486,11 +504,17 @@ def workflow_parallel_execution_plan(
         write_domains=write_domains,
     )
 
+    blocked_runner_kinds: list[str] = []
     for identifier in node_table:
         runner_kind = str((runner_kinds or {}).get(identifier, "sequential_worker"))
         if runner_kind not in PARALLEL_SAFE_RUNNER_KINDS:
+            blocked_runner_kinds.append(runner_kind)
             validation_errors.append(f"Parallel execution refuses runner {identifier!r} with kind {runner_kind!r}")
 
+    readiness = _parallel_readiness(
+        validation_errors=validation_errors,
+        blocked_runner_kinds=blocked_runner_kinds,
+    )
     if validation_errors:
         return {
             "version": 1,
@@ -498,6 +522,7 @@ def workflow_parallel_execution_plan(
             "scheduler": "parallel_levels",
             "runner_kind": "read_only_fake_projection",
             "parallel_level_execution": "blocked",
+            "parallel_readiness": readiness,
             "validation_errors": validation_errors,
             "batches": [],
         }
@@ -518,6 +543,7 @@ def workflow_parallel_execution_plan(
         "scheduler": "parallel_levels",
         "runner_kind": "read_only_fake_projection",
         "parallel_level_execution": "enabled_for_fake_and_readonly",
+        "parallel_readiness": readiness,
         "validation_errors": [],
         "batches": batches,
     }

@@ -344,3 +344,32 @@ release behavior changes are allowed in this checkpoint.
 - Self-review of docs-only diff.
 
 **Rollback:** Revert the docs-only PR; runtime behavior is unaffected.
+
+### CP11 - D3 Parallel Readiness Evidence
+
+**Status:** completed in branch `feat/d3-parallel-readiness`.
+
+**Scope:** Make the existing parallel-level projection report machine-readable
+readiness for fake/read-only execution versus real-worker execution. This does
+not execute real workers in parallel and does not change workflow advancement.
+
+**Entry Gate:** CP7 read-only/fake parallel plan exists and CP10 docs are merged.
+
+**Implementation Notes:**
+- Add `parallel_readiness` to `workflow_parallel_execution_plan`.
+- Preserve fail-closed behavior for sequential/human/real worker runner kinds.
+- Report safe runner kinds, blocked runner kinds, whether worker isolation and
+  live smoke are still required, and the blockers that prevent real parallel
+  execution.
+- Keep the dashboard workflow graph API read-only; it only exposes the new
+  readiness metadata.
+
+**Verification:**
+- Red/green tests for fake/read-only readiness and blocked real-worker readiness.
+- Workflow graph contract test proves the readiness metadata is surfaced.
+- Related workflow/web regression.
+- `ruff` on touched files.
+- `git diff --check`.
+
+**Rollback:** Revert CP11; CP7 parallel planning remains disabled for real
+workers and runtime behavior is unaffected.
