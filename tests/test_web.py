@@ -2559,11 +2559,16 @@ def test_new_project_modal_is_extracted_from_app_shell():
 
     assert modal.exists()
     modal_source = modal.read_text(encoding="utf-8")
+    en_source = (root / "frontend" / "src" / "i18n" / "locales" / "en.js").read_text(encoding="utf-8")
     assert "export default function NewProjectModal" in modal_source
-    assert "Start Workflow Console" in modal_source
-    assert "Create or Adopt Project" in modal_source
-    assert "Project Location" in modal_source
-    assert "Launch Check" in modal_source
+    assert "newProject.consoleEyebrow" in modal_source
+    assert "newProject.title" in modal_source
+    assert "newProject.projectLocation.title" in modal_source
+    assert "newProject.launchCheck.title" in modal_source
+    assert "Start Workflow Console" in en_source
+    assert "Create or Adopt Project" in en_source
+    assert "Project Location" in en_source
+    assert "Launch Check" in en_source
     assert "DELIVERY_MODE_OPTIONS.map" in modal_source
     assert "Start Workflow Console" not in app
     assert "DELIVERY_MODE_OPTIONS.map" not in app
@@ -4109,6 +4114,65 @@ def test_frontend_i18n_locale_files_exist_and_define_core_chrome_keys():
     ]:
         assert key in en_text
         assert key in zh_text
+
+
+def test_frontend_i18n_localizes_new_project_start_form_slice():
+    root = Path(__file__).resolve().parents[1]
+    en = (root / "frontend" / "src" / "i18n" / "locales" / "en.js").read_text(encoding="utf-8")
+    zh = (root / "frontend" / "src" / "i18n" / "locales" / "zh-CN.js").read_text(encoding="utf-8")
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
+    modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
+
+    keys = [
+        "newProject.consoleEyebrow",
+        "newProject.title",
+        "newProject.mode.adopt",
+        "newProject.mode.new",
+        "newProject.goal.label",
+        "newProject.projectName.label",
+        "newProject.projectKey.label",
+        "newProject.modelProfile.label",
+        "newProject.deliveryMode.label",
+        "newProject.projectLocation.title",
+        "newProject.projectRoot.label",
+        "newProject.projectRoot.browse",
+        "newProject.git.title",
+        "newProject.git.init",
+        "newProject.git.createRemote",
+        "newProject.git.visibility",
+        "newProject.git.private",
+        "newProject.git.public",
+        "newProject.launchCheck.title",
+        "newProject.launchCheck.projectTarget",
+        "newProject.launchCheck.sourceMode",
+        "newProject.launchCheck.modelProfile",
+        "newProject.launchCheck.deliveryMode",
+        "newProject.launchCheck.workerBackend",
+        "newProject.dryRun",
+        "newProject.actions.createConfig",
+        "newProject.actions.starting",
+        "newProject.actions.preview",
+        "newProject.actions.startAdoption",
+        "newProject.actions.startNew",
+        "newProject.startingHint",
+    ]
+    for key in keys:
+        assert key in en
+        assert key in zh
+        assert f"t('{key}" in modal
+
+    assert "t={t}" in app
+    assert "t={t}" in container
+    assert "t = (key) => key" in modal
+    assert "aria-label={t('newProject.closeAria')}" in modal
+    assert "DELIVERY_MODE_OPTIONS.map" in modal
+    assert "const deliveryModeLabel = (option) =>" in modal
+    assert "t(key)" in modal
+    assert "label === key ? option.label : label" in modal
+    assert "{deliveryModeLabel(option)}" in modal
+    assert "newProject.deliveryModes.custom" in en
+    assert "newProject.deliveryModes.custom" in zh
 
 
 def test_frontend_i18n_resolves_auto_language_and_falls_back_to_english():

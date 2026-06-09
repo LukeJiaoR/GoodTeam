@@ -881,6 +881,7 @@ export default function App() {
       startMode={startMode}
       startProjectKey={startProjectKey}
       taskSync={taskSync}
+      t={t}
       workerBackendMode={workerBackendMode}
     />
   );

@@ -82,8 +82,15 @@ export default function NewProjectModal({
   startMode,
   startProjectKey,
   taskSync,
+  t = (key) => key,
   workerBackendMode,
 }) {
+  const deliveryModeLabel = (option) => {
+    const key = `newProject.deliveryModes.${option.value}`;
+    const label = t(key);
+    return label === key ? option.label : label;
+  };
+
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
       <div
@@ -95,16 +102,16 @@ export default function NewProjectModal({
         {/* Header */}
         <div className="px-5 py-4 bg-surface-sunken border-b-2 border-border-subtle flex items-start justify-between gap-4 shrink-0">
           <div>
-            <p className="text-2xs font-bold uppercase tracking-wider text-text-muted">Start Workflow Console</p>
+            <p className="text-2xs font-bold uppercase tracking-wider text-text-muted">{t('newProject.consoleEyebrow')}</p>
             <h3 id="new-project-title" className="text-sm font-bold text-accent-text mt-1">
-              Create or Adopt Project
+              {t('newProject.title')}
             </h3>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle hover:border-status-danger/30 shadow-button text-text-secondary hover:text-status-danger p-2 rounded-xl transition-all duo-button-physics cursor-pointer shrink-0"
-            aria-label="Close start workflow console"
+            aria-label={t('newProject.closeAria')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -120,97 +127,97 @@ export default function NewProjectModal({
                   onClick={() => setStartMode('existing_project')}
                   className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${startMode === 'existing_project' ? 'bg-surface-raised shadow-sm text-accent' : 'text-text-muted hover:text-text-secondary'}`}
                 >
-                  Adopt Existing Project
+                  {t('newProject.mode.adopt')}
                 </button>
                 <button
                   onClick={() => setStartMode('new_project')}
                   className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${isNewProjectMode ? 'bg-surface-raised shadow-sm text-accent' : 'text-text-muted hover:text-text-secondary'}`}
                 >
-                  Start New Project
+                  {t('newProject.mode.new')}
                 </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold">
                 <div className="col-span-2">
-                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Workflow Goal</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.goal.label')}</label>
                   <textarea
                     value={idea}
                     onChange={(e) => setIdea(e.target.value)}
-                    placeholder={startMode === 'existing_project' ? "Enter takeover goal (e.g. audit frontend files)..." : "Describe the new project and desired features..."}
+                    placeholder={startMode === 'existing_project' ? t('newProject.goal.placeholderAdopt') : t('newProject.goal.placeholderNew')}
                     className="w-full h-24 bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl p-4 focus:outline-none focus:border-accent font-mono leading-relaxed transition-colors resize-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Project Name</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.projectName.label')}</label>
                   <input
                     type="text"
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
-                    placeholder="e.g. ContentOps Studio"
+                    placeholder={t('newProject.projectName.placeholder')}
                     className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent transition-colors"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Project Key</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.projectKey.label')}</label>
                   <input
                     type="text"
                     value={startProjectKey}
                     onChange={(e) => setStartProjectKey(e.target.value)}
-                    placeholder="e.g. CONTENTOPS"
+                    placeholder={t('newProject.projectKey.placeholder')}
                     className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent font-mono uppercase transition-colors"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Model Profile</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.modelProfile.label')}</label>
                   <select
                     value={modelProfile}
                     onChange={(e) => setModelProfile(e.target.value)}
                     className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent transition-colors"
                   >
-                    <option value="balanced">Balanced</option>
-                    <option value="cheap">Cheap</option>
-                    <option value="max_quality">Max Quality</option>
+                    <option value="balanced">{t('newProject.modelProfiles.balanced')}</option>
+                    <option value="cheap">{t('newProject.modelProfiles.cheap')}</option>
+                    <option value="max_quality">{t('newProject.modelProfiles.max_quality')}</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Delivery Mode</label>
+                  <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.deliveryMode.label')}</label>
                   <select
                     value={deliveryMode}
                     onChange={(e) => setDeliveryMode(e.target.value)}
                     className="w-full bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl px-4 py-2.5 focus:outline-none focus:border-accent transition-colors"
                   >
                     {DELIVERY_MODE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
+                      <option key={option.value} value={option.value}>{deliveryModeLabel(option)}</option>
                     ))}
                   </select>
                 </div>
 
                 {deliveryMode === 'custom' && (
                   <div className="col-span-2">
-                    <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Delivery Standards</label>
+                    <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.deliveryStandards.label')}</label>
                     <textarea
                       value={deliveryStandards}
                       onChange={(e) => setDeliveryStandards(e.target.value)}
-                      placeholder="每行一条交付标准"
+                      placeholder={t('newProject.deliveryStandards.placeholder')}
                       className="w-full h-24 bg-surface-sunken text-text-primary border-2 border-border-subtle rounded-xl p-4 focus:outline-none focus:border-accent font-mono leading-relaxed transition-colors resize-none"
                     />
                   </div>
                 )}
 
                 <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
-                  <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">Project Location</div>
+                  <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.projectLocation.title')}</div>
                   <div>
-                    <label className="block text-2xs text-text-secondary mb-1 uppercase">Project Root</label>
+                    <label className="block text-2xs text-text-secondary mb-1 uppercase">{t('newProject.projectRoot.label')}</label>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={projectRoot}
                         onChange={(e) => setProjectRoot(e.target.value)}
-                        placeholder="Absolute path to project root"
+                        placeholder={t('newProject.projectRoot.placeholder')}
                         className="flex-1 min-w-0 bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-accent"
                       />
                       <button
@@ -218,7 +225,7 @@ export default function NewProjectModal({
                         onClick={() => openDirectoryPicker(projectRoot)}
                         className="bg-surface-raised hover:bg-surface-sunken border-2 border-border-subtle shadow-button text-text-primary font-bold px-2.5 py-1.5 rounded-lg text-xs transition-all duo-button-physics cursor-pointer"
                       >
-                        Browse…
+                        {t('newProject.projectRoot.browse')}
                       </button>
                     </div>
                   </div>
@@ -226,7 +233,7 @@ export default function NewProjectModal({
 
                 {isNewProjectMode && (
                   <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
-                    <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">Git Repository Configuration</div>
+                    <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.git.title')}</div>
                     <div className="space-y-4">
                       {/* Initialize Git Checkbox */}
                       <div className="flex items-center space-x-2">
@@ -238,7 +245,7 @@ export default function NewProjectModal({
                           className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer"
                         />
                         <label htmlFor="init-git-repo" className="text-xs font-bold text-text-secondary cursor-pointer">
-                          Initialize Git repository
+                          {t('newProject.git.init')}
                         </label>
                       </div>
 
@@ -252,7 +259,7 @@ export default function NewProjectModal({
                           className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer"
                         />
                         <label htmlFor="create-github-repo" className="text-xs font-bold text-text-secondary cursor-pointer">
-                          Create GitHub repo & push
+                          {t('newProject.git.createRemote')}
                         </label>
                       </div>
 
@@ -261,21 +268,21 @@ export default function NewProjectModal({
                         <div className="pl-6 space-y-4 border-l-2 border-accent/30 mt-2">
                           {/* Private / Public Toggle */}
                           <div className="flex items-center space-x-3">
-                            <span className="text-xs font-bold text-text-secondary">Repository Visibility:</span>
+                            <span className="text-xs font-bold text-text-secondary">{t('newProject.git.visibility')}</span>
                             <div className="flex bg-surface-raised p-1 rounded-lg border border-border-subtle select-none">
                               <button
                                 type="button"
                                 onClick={() => setRemotePrivate(true)}
                                 className={`px-3 py-1.5 rounded-md text-2xs font-bold transition-all cursor-pointer ${remotePrivate ? 'bg-accent text-text-inverse shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
                               >
-                                Private
+                                {t('newProject.git.private')}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setRemotePrivate(false)}
                                 className={`px-3 py-1.5 rounded-md text-2xs font-bold transition-all cursor-pointer ${!remotePrivate ? 'bg-accent text-text-inverse shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
                               >
-                                Public
+                                {t('newProject.git.public')}
                               </button>
                             </div>
                           </div>
@@ -284,13 +291,13 @@ export default function NewProjectModal({
                           <div className="bg-surface-raised text-zinc-900 dark:text-zinc-100 p-4 rounded-xl border border-border-subtle text-2xs leading-relaxed space-y-1.5 shadow-sm">
                             <p className="font-extrabold flex items-center gap-1">
                               <Info className="h-3.5 w-3.5 text-accent shrink-0" />
-                              GitHub Authentication Requirement
+                              {t('newProject.git.authTitle')}
                             </p>
                             <p>
-                              Requires a GitHub Personal Access Token in your environment as <strong className="font-bold font-mono">GITHUB_TOKEN</strong> (or <strong className="font-bold font-mono">GH_TOKEN</strong>) before launching GoodTeam.
+                              {t('newProject.git.authToken')} <strong className="font-bold font-mono">GITHUB_TOKEN</strong> (or <strong className="font-bold font-mono">GH_TOKEN</strong>) {t('newProject.git.authBeforeLaunch')}
                             </p>
                             <p>
-                              Token scopes — Classic: <strong className="font-bold font-mono">repo</strong>. Fine-grained: <strong className="font-bold font-mono">Administration: Read & write</strong> + <strong className="font-bold font-mono">Contents: Read & write</strong> (on the target account/org).
+                              {t('newProject.git.authScopes')} <strong className="font-bold font-mono">repo</strong>. {t('newProject.git.authFineGrained')} <strong className="font-bold font-mono">Administration: Read & write</strong> + <strong className="font-bold font-mono">Contents: Read & write</strong> (on the target account/org).
                             </p>
                           </div>
                         </div>
@@ -308,7 +315,7 @@ export default function NewProjectModal({
                     onClick={() => setShowConfigDrawer(!showConfigDrawer)}
                     className="text-xs font-bold text-accent-text hover:text-accent transition-colors flex items-center space-x-1"
                   >
-                    <span>{showConfigDrawer ? 'Hide Advanced Config' : 'Show Advanced Config (Task Backend, Deployment)'}</span>
+                    <span>{showConfigDrawer ? t('newProject.advanced.hide') : t('newProject.advanced.show')}</span>
                     <ChevronDown className={`h-4 w-4 transition-transform ${showConfigDrawer ? 'rotate-180' : ''}`} />
                   </button>
                 </div>
@@ -469,26 +476,26 @@ export default function NewProjectModal({
               {/* Right Status Panel */}
               <div className="bg-surface-sunken border-2 border-border-subtle shadow-card rounded-xl p-5 flex flex-col justify-between h-fit self-start space-y-6">
                 <div>
-                  <h4 className="font-bold text-2xs uppercase tracking-wider text-text-muted mb-4">Launch Check</h4>
+                  <h4 className="font-bold text-2xs uppercase tracking-wider text-text-muted mb-4">{t('newProject.launchCheck.title')}</h4>
                   <div className="space-y-3.5 text-xs font-semibold">
                     <div className="flex justify-between items-center border-b border-border-subtle pb-2">
-                      <span className="text-text-secondary">Project Target</span>
+                      <span className="text-text-secondary">{t('newProject.launchCheck.projectTarget')}</span>
                       <span className="font-mono text-text-primary truncate max-w-[150px] font-bold">{startProjectKey || 'GTO'}</span>
                     </div>
                     <div className="flex justify-between items-center border-b border-border-subtle pb-2">
-                      <span className="text-text-secondary">Source Mode</span>
-                      <span className="font-bold text-accent-text">{startMode === 'existing_project' ? 'Adoption' : 'New Project'}</span>
+                      <span className="text-text-secondary">{t('newProject.launchCheck.sourceMode')}</span>
+                      <span className="font-bold text-accent-text">{startMode === 'existing_project' ? t('newProject.sourceMode.adoption') : t('newProject.sourceMode.newProject')}</span>
                     </div>
                     <div className="flex justify-between items-center border-b border-border-subtle pb-2">
-                      <span className="text-text-secondary">Model Profile</span>
+                      <span className="text-text-secondary">{t('newProject.launchCheck.modelProfile')}</span>
                       <span className="font-bold capitalize">{modelProfile}</span>
                     </div>
                     <div className="flex justify-between items-center border-b border-border-subtle pb-2">
-                      <span className="text-text-secondary">Delivery Mode</span>
+                      <span className="text-text-secondary">{t('newProject.launchCheck.deliveryMode')}</span>
                       <span className="font-mono font-bold text-accent">{deliveryMode}</span>
                     </div>
                     <div className="flex justify-between items-center pb-1">
-                      <span className="text-text-secondary">Worker Backend</span>
+                      <span className="text-text-secondary">{t('newProject.launchCheck.workerBackend')}</span>
                       <span className="font-bold text-text-primary capitalize">{workerBackendMode}</span>
                     </div>
                   </div>
@@ -504,14 +511,14 @@ export default function NewProjectModal({
                       className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer"
                     />
                     <label htmlFor="dry-run" className="text-xs font-bold text-text-secondary cursor-pointer">
-                      Dry run simulation
+                      {t('newProject.dryRun')}
                     </label>
                   </div>
 
                   <div className="bg-surface-sunken text-2xs text-text-secondary font-mono p-3 rounded-lg border-2 border-border-strong leading-relaxed select-all">
                     {startMode === 'existing_project'
-                      ? "Adopt mode reads the project config first and generates takeover-context.md before PRD."
-                      : "New project mode generates standard prd.md inside target artifacts folder."}
+                      ? t('newProject.modeHint.adopt')
+                      : t('newProject.modeHint.new')}
                   </div>
 
                   <div className="flex flex-col space-y-2">
@@ -521,7 +528,7 @@ export default function NewProjectModal({
                       disabled={actionLoading}
                       className="w-full bg-surface-raised hover:bg-accent-bg hover:text-accent-text border-2 border-border-subtle shadow-button text-text-secondary font-bold py-2 rounded-lg text-xs uppercase tracking-wider transition-all duo-button-physics shrink-0 cursor-pointer"
                     >
-                      Create Local Config
+                      {t('newProject.actions.createConfig')}
                     </button>
                     <button
                       type="button"
@@ -534,11 +541,11 @@ export default function NewProjectModal({
                       ) : (
                         <Play className="h-3.5 w-3.5 fill-current" />
                       )}
-                      <span>{startingWorkflow ? 'Starting...' : (dryRun ? 'Preview Workflow' : (startMode === 'existing_project' ? 'Start Adoption' : 'Start New Project'))}</span>
+                      <span>{startingWorkflow ? t('newProject.actions.starting') : (dryRun ? t('newProject.actions.preview') : (startMode === 'existing_project' ? t('newProject.actions.startAdoption') : t('newProject.actions.startNew')))}</span>
                     </button>
                     {startingWorkflow && (
                       <p className="text-2xs text-zinc-500 text-center mt-2 animate-pulse">
-                        Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
+                        {t('newProject.startingHint')}
                       </p>
                     )}
                   </div>
