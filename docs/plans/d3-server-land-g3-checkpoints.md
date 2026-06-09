@@ -405,3 +405,45 @@ does not expand routing rules.
 
 **Rollback:** Revert CP12; G3 routing behavior remains at CP8 canary behavior,
 but outcome counters disappear from readiness reports.
+
+### CP13 - Server Action Audit Read-Only Listing
+
+**Status:** completed in branch `feat/server-action-audit-log`.
+
+**Scope:** Add a read-only API projection for server-action audit records written
+by CP9 so operators can inspect recent guarded `land_pr` / `graduate_release`
+attempts without opening files manually. This checkpoint does not add or expand
+any execution behavior.
+
+**Entry Gate:** CP9 guarded execution is merged and CP10 reconciled the
+post-CP9 docs. Human review remains the land gate.
+
+**Implementation Notes:**
+- Read only `.goodteam/server-actions/*.json` under the selected project root.
+- Return a sanitized field allowlist, newest records first by audit timestamp.
+- Clamp the requested record limit to a bounded range.
+- Ignore malformed audit JSON with warnings instead of failing the route.
+- Resolve the project root from the existing project config path, matching
+  `/api/server-actions` and `/api/devloop`.
+- Do not invoke subprocesses, merge scripts, tag scripts, or server-action run
+  handlers from the listing route.
+
+**Verification:**
+- Red/green tests for audit sorting, limit handling, malformed-record warnings,
+  and safe field projection.
+- Red/green route test proving project-root resolution comes from project config.
+- Related server-action/dev-loop regression.
+- `ruff` on touched Python files.
+- `git diff --check`.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_build_server_action_audit_log_reads_recent_records_without_execution tests/test_api.py::test_api_server_actions_audit_route_resolves_project_root_from_config -q` first failed because `build_server_action_audit_log` and the route did not exist.
+- Targeted green: the same command -> `2 passed`.
+- Related regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py tests/test_web.py -q -k 'server_action or server_actions or dev_loop or release_readiness'` -> `21 passed, 198 deselected`.
+- Full backend: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q` -> `584 passed`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/web.py tests/test_api.py tests/test_web.py` -> `All checks passed!`.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
+
+**Rollback:** Revert CP13; CP9 audit files still exist on disk, but the read-only
+listing endpoint disappears.

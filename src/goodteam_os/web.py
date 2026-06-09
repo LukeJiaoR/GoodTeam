@@ -912,6 +912,72 @@ def run_gated_server_action(
     }
 
 
+SERVER_ACTION_AUDIT_FIELDS = (
+    "id",
+    "timestamp",
+    "started_at",
+    "finished_at",
+    "actor",
+    "origin",
+    "action",
+    "returncode",
+    "timed_out",
+    "argv",
+    "typed_confirmation",
+    "audit_path",
+    "stdout_tail",
+    "stderr_tail",
+    "rollback_hint",
+)
+
+
+def _server_action_audit_limit(limit: object) -> int:
+    try:
+        parsed = int(limit)
+    except (TypeError, ValueError):
+        parsed = 25
+    return min(max(parsed, 1), 100)
+
+
+def _sanitize_server_action_audit_record(record: dict[str, object]) -> dict[str, object]:
+    return {field: record[field] for field in SERVER_ACTION_AUDIT_FIELDS if field in record}
+
+
+def build_server_action_audit_log(root: Path | None, *, limit: int = 25) -> dict[str, object]:
+    warnings: list[str] = []
+    if root is None:
+        return {
+            "available": False,
+            "audit_dir": "",
+            "records": [],
+            "warnings": ["no project selected"],
+            "generated_at": datetime.now(UTC).isoformat(),
+        }
+
+    audit_dir = _server_action_audit_dir(root.resolve())
+    records: list[dict[str, object]] = []
+    if audit_dir.is_dir():
+        for path in sorted(audit_dir.glob("*.json")):
+            try:
+                raw_record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                warnings.append(f"ignored malformed audit record: {path.name}")
+                continue
+            if not isinstance(raw_record, dict):
+                warnings.append(f"ignored malformed audit record: {path.name}")
+                continue
+            records.append(_sanitize_server_action_audit_record(raw_record))
+
+    records.sort(key=lambda record: str(record.get("timestamp", "")), reverse=True)
+    return {
+        "available": True,
+        "audit_dir": str(audit_dir),
+        "records": records[: _server_action_audit_limit(limit)],
+        "warnings": warnings,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+
+
 def _worktree_status_for_path(path: str, root: Path, warnings: list[str]) -> str:
     if not path:
         return "missing"
@@ -6684,6 +6750,24 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     except Exception:
                         project_root = None
                 self._send_json(200, build_server_action_capabilities(project_root))
+                return
+            if parsed.path == "/api/server-actions/audit":
+                project_root = None
+                if project_key:
+                    try:
+                        project_config = _project_config_for_key(workspace, project_key)
+                        project_root = resolve_project_runtime_root(
+                            dict(load_project_target(project_config).get("repos", {}))
+                        )
+                    except Exception:
+                        project_root = None
+                self._send_json(
+                    200,
+                    build_server_action_audit_log(
+                        project_root,
+                        limit=_server_action_audit_limit(query.get("limit", ["25"])[0]),
+                    ),
+                )
                 return
             if parsed.path == "/api/fs/list":
                 try:

@@ -10,7 +10,7 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | Routing outcome telemetry completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, and record shadow/canary routing outcomes without expanding routing. | Related G3 regression `16 passed`; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Guarded server action execution completed 2026-06-08 | CP9 enabled env+nonce+typed-confirmation guarded execution for `land_pr` and `graduate_release`; `tag_release` remains disabled/report-only and human review remains the land gate. | `581 passed`; ruff clean; diff check clean |
+| 3 | Self-hosting control plane | Server-action audit listing completed 2026-06-09 | Add bounded read-only listing of CP9 audit records without expanding land/tag/graduate execution. | `584 passed`; ruff/diff clean |
 | 4 | Theme/App.jsx productization | Approval metrics helper extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | Approval/nav/i18n/theme contract slice `20 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2b/D3 | D3 parallel readiness evidence completed 2026-06-09 | Surface machine-readable readiness/blocker metadata for fake/read-only parallel planning versus still-blocked real-worker parallel execution. | Related D3/web regression `5 passed` + `6 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
@@ -33,6 +33,50 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — Server-action audit read-only listing
+
+**Intent:** expose CP9 server-action audit records as bounded operational
+visibility while keeping server-side land/graduate execution unchanged and
+`tag_release` disabled/report-only.
+
+**Implemented:**
+- Added `build_server_action_audit_log(root, limit=...)`.
+- Reads only `.goodteam/server-actions/*.json` under the selected project root.
+- Sorts records newest first by audit `timestamp`, clamps the requested limit,
+  and returns only the safe audit-summary field allowlist.
+- Ignores malformed audit JSON with route-visible warnings.
+- Added `GET /api/server-actions/audit`, resolving the project root from the
+  existing project config flow.
+- No subprocesses, merge scripts, tag scripts, or server-action run handlers are
+  invoked by the listing route.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_build_server_action_audit_log_reads_recent_records_without_execution tests/test_api.py::test_api_server_actions_audit_route_resolves_project_root_from_config -q`
+  first failed because `build_server_action_audit_log` and the route did not
+  exist.
+- Focused green:
+  the same command -> `2 passed`.
+- Related API/web regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py tests/test_web.py -q -k 'server_action or server_actions or dev_loop or release_readiness'`
+  -> `21 passed, 198 deselected`.
+- Full backend:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q`
+  -> `584 passed`.
+- Quality gates:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/web.py tests/test_api.py tests/test_web.py`
+  -> `All checks passed!`.
+- Full ruff:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Deferred from this increment:**
+- Any new server-side merge/tag/release execution behavior.
+- `tag_release` safety design.
+- UI rendering of audit records.
 
 ### 2026-06-09 — Post-CP9 backlog/status reconciliation
 

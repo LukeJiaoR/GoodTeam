@@ -264,6 +264,102 @@ def test_api_server_actions_reports_disabled_destructive_capabilities(tmp_path, 
     assert payload["actions"]["graduate_release"]["mode"] == "human_command_only"
 
 
+def test_build_server_action_audit_log_reads_recent_records_without_execution(tmp_path):
+    audit_dir = tmp_path / ".goodteam" / "server-actions"
+    audit_dir.mkdir(parents=True)
+    old = audit_dir / "old.json"
+    old.write_text(
+        json.dumps(
+            {
+                "id": "server-action-old",
+                "timestamp": "2026-06-08T00:00:00+00:00",
+                "action": "land_pr",
+                "returncode": 0,
+                "timed_out": False,
+                "argv": ["scripts/land-pr.sh", "1"],
+                "audit_path": str(old),
+                "stdout_tail": "old stdout",
+                "stderr_tail": "",
+                "rollback_hint": "old rollback",
+            }
+        ),
+        encoding="utf-8",
+    )
+    new = audit_dir / "new.json"
+    new.write_text(
+        json.dumps(
+            {
+                "id": "server-action-new",
+                "timestamp": "2026-06-09T00:00:00+00:00",
+                "started_at": "2026-06-08T23:59:59+00:00",
+                "finished_at": "2026-06-09T00:00:00+00:00",
+                "actor": "local-dashboard",
+                "origin": "http://127.0.0.1:8788",
+                "action": "graduate_release",
+                "returncode": None,
+                "timed_out": True,
+                "argv": ["scripts/graduate-release.sh", "--ref", "abc1234", "--yes"],
+                "typed_confirmation": "GRADUATE RELEASE abc1234",
+                "audit_path": str(new),
+                "stdout_tail": "new stdout",
+                "stderr_tail": "new stderr",
+                "rollback_hint": "new rollback",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (audit_dir / "broken.json").write_text("{not json", encoding="utf-8")
+
+    log = web.build_server_action_audit_log(tmp_path, limit=1)
+
+    assert log == {
+        "available": True,
+        "audit_dir": str(audit_dir),
+        "records": [
+            {
+                "id": "server-action-new",
+                "timestamp": "2026-06-09T00:00:00+00:00",
+                "started_at": "2026-06-08T23:59:59+00:00",
+                "finished_at": "2026-06-09T00:00:00+00:00",
+                "actor": "local-dashboard",
+                "origin": "http://127.0.0.1:8788",
+                "action": "graduate_release",
+                "returncode": None,
+                "timed_out": True,
+                "argv": ["scripts/graduate-release.sh", "--ref", "abc1234", "--yes"],
+                "typed_confirmation": "GRADUATE RELEASE abc1234",
+                "audit_path": str(new),
+                "stdout_tail": "new stdout",
+                "stderr_tail": "new stderr",
+                "rollback_hint": "new rollback",
+            }
+        ],
+        "warnings": ["ignored malformed audit record: broken.json"],
+        "generated_at": log["generated_at"],
+    }
+
+
+def test_api_server_actions_audit_route_resolves_project_root_from_config(tmp_path, monkeypatch):
+    target_root = tmp_path / "target"
+    target_root.mkdir()
+    write_project_config(tmp_path, key="REAL", repos={"root": target_root})
+    received_roots = []
+
+    def fake_build_server_action_audit_log(root, *, limit=25):
+        received_roots.append((root, limit))
+        return {"available": True, "audit_dir": "/tmp/audit", "records": [], "warnings": [], "generated_at": "now"}
+
+    monkeypatch.setattr("goodteam_os.web.build_server_action_audit_log", fake_build_server_action_audit_log)
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+
+    handler = simulate_get("/api/server-actions/audit?project=REAL&limit=5")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["available"] is True
+    assert received_roots == [(target_root, 5)]
+
+
 def test_api_server_action_run_rejects_until_env_nonce_and_confirmation_pass(tmp_path, monkeypatch):
     monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "0")
     simulate_post = capture_post_handler(tmp_path, monkeypatch)
