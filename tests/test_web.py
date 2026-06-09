@@ -2257,6 +2257,22 @@ def test_role_model_override_helpers_are_extracted_from_app_shell_without_behavi
     assert "const overrides = roleModelOverrides" not in app
 
 
+def test_custom_delivery_payload_helper_is_extracted_from_app_shell_without_behavior_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    delivery_utils = root / "frontend" / "src" / "utils" / "deliveryPayload.js"
+
+    assert delivery_utils.exists()
+    utils_source = delivery_utils.read_text(encoding="utf-8")
+    assert "export function buildCustomDeliveryPayload" in utils_source
+    assert "deliveryMode === 'custom'" in utils_source
+    assert "{ delivery_standards: deliveryStandards }" in utils_source
+    assert "return {};" in utils_source
+    assert "import { buildCustomDeliveryPayload } from './utils/deliveryPayload';" in app
+    assert "buildCustomDeliveryPayload(deliveryMode, deliveryStandards)" in app
+    assert "const customDeliveryPayload = deliveryMode === 'custom'" not in app
+
+
 def test_approval_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
