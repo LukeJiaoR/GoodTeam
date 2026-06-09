@@ -2108,6 +2108,7 @@ def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type()
             (root / "frontend" / "src" / "components" / "GitCreationNotice.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "MemoryEventDetailModal.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8"),
+            (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectMainPanel.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8"),
             (root / "frontend" / "src" / "components" / "ProjectSidebar.jsx").read_text(encoding="utf-8"),
@@ -2182,6 +2183,9 @@ def test_spinner_component_is_extracted_from_app_shell():
 def test_status_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
+        encoding="utf-8"
+    )
     status_utils = root / "frontend" / "src" / "utils" / "status.jsx"
 
     assert status_utils.exists()
@@ -2192,7 +2196,7 @@ def test_status_helpers_are_extracted_from_app_shell():
     assert "chrome.noActiveRun" in utils_source
     assert "function getBadgeStyle" not in app
     assert "function getStatusLabel" not in app
-    assert "import { getBadgeStyle, getStatusLabel } from './utils/status';" in app
+    assert "import { getBadgeStyle, getStatusLabel } from '../utils/status';" in dashboard
 
 
 def test_time_helpers_are_extracted_from_app_shell():
@@ -2234,6 +2238,9 @@ def test_approval_helpers_are_extracted_from_app_shell():
 def test_approval_metrics_are_extracted_from_app_shell_without_behavior_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
+        encoding="utf-8"
+    )
     approval_utils = root / "frontend" / "src" / "utils" / "approvalMetrics.js"
 
     assert approval_utils.exists()
@@ -2250,8 +2257,8 @@ def test_approval_metrics_are_extracted_from_app_shell_without_behavior_changes(
     assert "actionableCount" in metrics_source
     assert "approvalProgressPercent" in metrics_source
     assert "approvalBannerQuestions" in metrics_source
-    assert "import { buildApprovalMetrics } from './utils/approvalMetrics';" in app
-    assert "buildApprovalMetrics({ approvalReviews, openQuestions, t })" in app
+    assert "import { buildApprovalMetrics } from '../utils/approvalMetrics';" in dashboard
+    assert "buildApprovalMetrics({ approvalReviews, openQuestions, t })" in dashboard
     assert "const approvedCount = approvalReviews.filter" not in app
     assert "const actionableCount = approvalReviews.filter" not in app
     assert "approvalReviews.length || 6" not in app
@@ -2261,6 +2268,9 @@ def test_approval_metrics_are_extracted_from_app_shell_without_behavior_changes(
 def test_project_nav_groups_are_extracted_from_app_shell_without_chrome_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
+        encoding="utf-8"
+    )
     navigation_utils = root / "frontend" / "src" / "utils" / "navigation.jsx"
 
     assert navigation_utils.exists()
@@ -2300,8 +2310,8 @@ def test_project_nav_groups_are_extracted_from_app_shell_without_chrome_changes(
     ]:
         assert key in navigation_source
 
-    assert "import { buildProjectNavGroups } from './utils/navigation';" in app
-    assert "const navGroups = buildProjectNavGroups(t);" in app
+    assert "import { buildProjectNavGroups } from '../utils/navigation';" in dashboard
+    assert "const navGroups = buildProjectNavGroups(t);" in dashboard
     assert "const navGroups = [" not in app
     assert "LayoutDashboard" not in app
     assert "nav.groups.work" not in app
@@ -2766,6 +2776,9 @@ def test_language_switcher_is_extracted_from_app_shell():
 def test_project_sidebar_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
+        encoding="utf-8"
+    )
     sidebar = root / "frontend" / "src" / "components" / "ProjectSidebar.jsx"
 
     assert sidebar.exists()
@@ -2778,8 +2791,10 @@ def test_project_sidebar_is_extracted_from_app_shell_without_theme_changes():
     assert "LanguageSwitcher" in sidebar_source
     assert "theme === 'vivid'" in sidebar_source
     assert "theme === 'minimal'" in sidebar_source
-    assert "import ProjectSidebar from './components/ProjectSidebar';" in app
-    assert "<ProjectSidebar" in app
+    assert "import ProjectSidebar from './ProjectSidebar';" in dashboard
+    assert "<ProjectSidebar" in dashboard
+    assert "import ProjectSidebar from './components/ProjectSidebar';" not in app
+    assert "<ProjectSidebar" not in app
     assert "GoodTeam OS" not in app
     assert "navGroups.map" not in app
     assert "lg:w-[220px]" not in app
@@ -2788,6 +2803,9 @@ def test_project_sidebar_is_extracted_from_app_shell_without_theme_changes():
 def test_project_header_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
+        encoding="utf-8"
+    )
     header = root / "frontend" / "src" / "components" / "ProjectHeader.jsx"
 
     assert header.exists()
@@ -2800,8 +2818,10 @@ def test_project_header_is_extracted_from_app_shell_without_theme_changes():
     assert "status.complete" in header_source
     assert "getStatusLabel(headerStatus, t)" in header_source
     assert "mobileMenuOpen ? <X" in header_source
-    assert "import ProjectHeader from './components/ProjectHeader';" in app
-    assert "<ProjectHeader" in app
+    assert "import ProjectHeader from './ProjectHeader';" in dashboard
+    assert "<ProjectHeader" in dashboard
+    assert "import ProjectHeader from './components/ProjectHeader';" not in app
+    assert "<ProjectHeader" not in app
     assert "lg:hidden h-[60px]" not in app
     assert "hidden lg:flex h-[60px]" not in app
 
@@ -2908,6 +2928,9 @@ def test_project_main_panel_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
+        encoding="utf-8"
+    )
     panel = root / "frontend" / "src" / "components" / "ProjectMainPanel.jsx"
 
     assert panel.exists()
@@ -2923,7 +2946,7 @@ def test_project_main_panel_is_extracted_from_app_shell_without_theme_changes():
     assert "<ProjectMainPanel" in content_shell
     assert "import ProjectMainPanel from './components/ProjectMainPanel';" not in app
     assert "<ProjectMainPanel" not in app
-    assert "loadingLabel={t('chrome.loading')}" in app
+    assert "loadingLabel={t('chrome.loading')}" in dashboard
     assert "flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6" not in app
     assert "bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl" not in app
 
@@ -2931,6 +2954,9 @@ def test_project_main_panel_is_extracted_from_app_shell_without_theme_changes():
 def test_project_content_shell_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
+        encoding="utf-8"
+    )
     shell = root / "frontend" / "src" / "components" / "ProjectContentShell.jsx"
 
     assert shell.exists()
@@ -2945,9 +2971,11 @@ def test_project_content_shell_is_extracted_from_app_shell_without_theme_changes
     assert "newProjectModal" in shell_source
     assert "directoryPickerModal" in shell_source
     assert "mainPanelChildren" in shell_source
-    assert "import ProjectContentShell from './components/ProjectContentShell';" in app
-    assert "<ProjectContentShell" in app
-    assert "mainPanelChildren={" in app
+    assert "import ProjectContentShell from './ProjectContentShell';" in dashboard
+    assert "<ProjectContentShell" in dashboard
+    assert "mainPanelChildren={" in dashboard
+    assert "import ProjectContentShell from './components/ProjectContentShell';" not in app
+    assert "<ProjectContentShell" not in app
     assert "flex-grow flex flex-col min-w-0 min-h-screen" not in app
     assert "<ApprovalBanner" not in app
     assert "<GitCreationNotice" not in app
@@ -2955,9 +2983,40 @@ def test_project_content_shell_is_extracted_from_app_shell_without_theme_changes
     assert "<MemoryEventDetailModal" not in app
 
 
+def test_project_dashboard_is_extracted_from_app_shell_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = root / "frontend" / "src" / "components" / "ProjectDashboard.jsx"
+
+    assert dashboard.exists()
+    dashboard_source = dashboard.read_text(encoding="utf-8")
+    assert "export default function ProjectDashboard" in dashboard_source
+    assert "min-h-screen bg-surface-base text-text-primary transition-colors flex flex-col lg:flex-row font-sans antialiased" in dashboard_source
+    assert "<ProjectSidebar" in dashboard_source
+    assert "<ProjectHeader" in dashboard_source
+    assert "<ProjectContentShell" in dashboard_source
+    assert "<ProjectTabRouter" in dashboard_source
+    assert "buildApprovalMetrics({ approvalReviews, openQuestions, t })" in dashboard_source
+    assert "buildProjectNavGroups(t)" in dashboard_source
+    assert "renderMemoryEventLink" in dashboard_source
+    assert "import ProjectDashboard from './components/ProjectDashboard';" in app
+    assert "<ProjectDashboard" in app
+    assert "import ProjectSidebar from './components/ProjectSidebar';" not in app
+    assert "import ProjectHeader from './components/ProjectHeader';" not in app
+    assert "import ProjectContentShell from './components/ProjectContentShell';" not in app
+    assert "import ProjectTabRouter from './components/ProjectTabRouter';" not in app
+    assert "<ProjectSidebar" not in app
+    assert "<ProjectHeader" not in app
+    assert "<ProjectContentShell" not in app
+    assert "<ProjectTabRouter" not in app
+
+
 def test_project_tab_router_is_extracted_from_app_shell_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
+        encoding="utf-8"
+    )
     router = root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx"
 
     assert router.exists()
@@ -2983,12 +3042,14 @@ def test_project_tab_router_is_extracted_from_app_shell_without_theme_changes():
         assert f"import {tab_component}" in router_source
         assert f"import {tab_component}" not in app
 
-    assert "import ProjectTabRouter from './components/ProjectTabRouter';" in app
-    assert "<ProjectTabRouter" in app
+    assert "import ProjectTabRouter from './ProjectTabRouter';" in dashboard
+    assert "<ProjectTabRouter" in dashboard
+    assert "import ProjectTabRouter from './components/ProjectTabRouter';" not in app
+    assert "<ProjectTabRouter" not in app
     assert "<WorkflowGraphTab" not in app
     assert "<ApprovalsTab" not in app
     assert "<DevLoopTab" not in app
-    assert "mainPanelChildren={" in app
+    assert "mainPanelChildren={" in dashboard
 
 
 def test_project_url_hook_is_extracted_from_app_shell():
@@ -3792,6 +3853,7 @@ def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     approval_banner = (root / "frontend" / "src" / "components" / "ApprovalBanner.jsx").read_text(encoding="utf-8")
+    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(encoding="utf-8")
     project_header = (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8")
     hook = (root / "frontend" / "src" / "hooks" / "useAppearancePreferences.js").read_text(encoding="utf-8")
     navigation = (root / "frontend" / "src" / "utils" / "navigation.jsx").read_text(encoding="utf-8")
@@ -3802,15 +3864,15 @@ def test_frontend_contract_uses_i18n_for_dashboard_chrome():
     assert "translate(language" in hook or "translate(resolvedLanguage" in hook
     assert "languagePreference" in app
     assert "setLanguagePreference" in app
-    assert "navGroups" in app
-    assert "buildProjectNavGroups(t)" in app
+    assert "navGroups" in dashboard
+    assert "buildProjectNavGroups(t)" in dashboard
     assert "t('nav.groups.work')" in navigation
     assert "t('nav.tabs.overview')" in navigation
     assert "t('chrome.dashboard')" in project_header
     assert "t('chrome.runId')" in project_header
     assert "t('approvalBanner.message'" in approval_banner
     assert "t('approvalBanner.review')" in approval_banner
-    assert "t('chrome.loading')" in app
+    assert "t('chrome.loading')" in dashboard
     assert "language.useAuto" in app
     assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in hook
 
