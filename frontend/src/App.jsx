@@ -1,11 +1,9 @@
 import { useState, useEffect } from 'react';
-import FilePath from './components/FilePath';
 import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModal from './components/NewProjectModal';
 import ProjectHeader from './components/ProjectHeader';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectsHomePage from './components/ProjectsHomePage';
-import Spinner from './components/Spinner';
 import { useAppearancePreferences } from './hooks/useAppearancePreferences';
 import { useClipboardFeedback } from './hooks/useClipboardFeedback';
 import { useDirectoryPicker } from './hooks/useDirectoryPicker';
@@ -20,33 +18,14 @@ import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';
 import { useMessageFeeds } from './hooks/useMessageFeeds';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { getBadgeStyle, getStatusLabel } from './utils/status';
-import { formatHumanTime } from './utils/time';
-import { computeLineDiff, suggestedAnswersForQuestion } from './utils/approvals';
 import { buildApprovalMetrics } from './utils/approvalMetrics';
 import { buildProjectNavGroups } from './utils/navigation';
 import {
   LANGUAGE_PREFERENCE_AUTO,
 } from './i18n';
 import ProjectContentShell from './components/ProjectContentShell';
-import WorkflowGraphTab from './components/tabs/WorkflowGraphTab';
-import RolesTab from './components/tabs/RolesTab';
-import ArtifactsTab from './components/tabs/ArtifactsTab';
-import ActionsTab from './components/tabs/ActionsTab';
-import AgileBoardTab from './components/tabs/AgileBoardTab';
-import SmokeRunsTab from './components/tabs/SmokeRunsTab';
-import WorkersTab from './components/tabs/WorkersTab';
-import ApprovalsTab from './components/tabs/ApprovalsTab';
-import DevLoopTab from './components/tabs/DevLoopTab';
-import SystemTab from './components/tabs/SystemTab';
-import MemoryTab from './components/tabs/MemoryTab';
-import OverviewTab from './components/tabs/OverviewTab';
-import AgentsMemoryTab from './components/tabs/AgentsMemoryTab';
-import MessagesTab from './components/tabs/MessagesTab';
-import {
-  DEFAULT_BACKEND_OPTIONS,
-  FALLBACK_AGENT_MODES,
-  WORKER_ROUTING_BUCKETS,
-} from './constants/workers';
+import ProjectTabRouter from './components/ProjectTabRouter';
+import { DEFAULT_BACKEND_OPTIONS } from './constants/workers';
 
 export default function App() {
   const { projectKey, updateUrl } = useProjectUrl();
@@ -1043,335 +1022,160 @@ export default function App() {
         loading={loading}
         loadingLabel={t('chrome.loading')}
         mainPanelChildren={
-          <>
-              {/* Tab: Workflow Graph */}
-              {activeTab === 'workflow' && (
-                <WorkflowGraphTab
-                  loadingGraph={loadingGraph}
-                  graphError={graphError}
-                  graphData={graphData}
-                  Spinner={Spinner}
-                />
-              )}
-
-              {/* Tab: Overview */}
-              {activeTab === 'overview' && (
-                <OverviewTab
-                  state={state}
-                  headerStatus={headerStatus}
-                  roleObservations={roleObservations}
-                  approvedCount={approvedCount}
-                  totalApprovalsCount={totalApprovalsCount}
-                  missionExpanded={missionExpanded}
-                  setMissionExpanded={setMissionExpanded}
-                  getMissionSummary={getMissionSummary}
-                  handleRetryBlocked={handleRetryBlocked}
-                  actionLoading={actionLoading}
-                  updateUrl={updateUrl}
-                  setActiveTab={setActiveTab}
-                  startContext={startContext}
-                  FilePath={FilePath}
-                  activeRun={activeRun}
-                  startMode={startMode}
-                  setStartMode={setStartMode}
-                  isNewProjectMode={isNewProjectMode}
-                  idea={idea}
-                  setIdea={setIdea}
-                  modelProfile={modelProfile}
-                  setModelProfile={setModelProfile}
-                  deliveryMode={deliveryMode}
-                  setDeliveryMode={setDeliveryMode}
-                  deliveryStandards={deliveryStandards}
-                  setDeliveryStandards={setDeliveryStandards}
-                  dryRun={dryRun}
-                  setDryRun={setDryRun}
-                  handleStartWorkflow={handleStartWorkflow}
-                  startingWorkflow={startingWorkflow}
-                  getBadgeStyle={getBadgeStyle}
-                  getStatusLabel={getStatusLabel}
-                />
-              )}
-
-              {activeTab === 'agents_memory' && (
-                <AgentsMemoryTab
-                  agentsMemorySubTab={agentsMemorySubTab}
-                  setAgentsMemorySubTab={setAgentsMemorySubTab}
-                  roleObservations={roleObservations}
-                  getBadgeStyle={getBadgeStyle}
-                  getStatusLabel={getStatusLabel}
-                  FilePath={FilePath}
-                  state={state}
-                  loadingMemory={loadingMemory}
-                  memoryError={memoryError}
-                  memoryData={memoryData}
-                  memoryEventBrowsers={memoryEventBrowsers}
-                  crossRole={crossRole}
-                  setCrossRole={setCrossRole}
-                  crossQuery={crossQuery}
-                  setCrossQuery={setCrossQuery}
-                  crossScope={crossScope}
-                  setCrossScope={setCrossScope}
-                  crossLimit={crossLimit}
-                  setCrossLimit={setCrossLimit}
-                  crossLoading={crossLoading}
-                  crossError={crossError}
-                  crossResults={crossResults}
-                  handleCrossSearch={handleCrossSearch}
-                  handleToggleMemoryEvents={handleToggleMemoryEvents}
-                  handleMemoryEventSearchChange={handleMemoryEventSearchChange}
-                  handleOpenMemoryEvent={handleOpenMemoryEvent}
-                  panelGlobalMode={panelGlobalMode}
-                  setPanelGlobalMode={setPanelGlobalMode}
-                  panelRoleOverrides={panelRoleOverrides}
-                  panelRoleModels={panelRoleModels}
-                  simpleRoutingBackends={simpleRoutingBackends}
-                  setSimpleRoutingBackends={setSimpleRoutingBackends}
-                  configuringRoles={configuringRoles}
-                  setConfiguringRoles={setConfiguringRoles}
-                  savingBackends={savingBackends}
-                  actionLoading={actionLoading}
-                  backendOptions={backendOptions}
-                  roleBackendOptions={roleBackendOptions}
-                  workerRoutingMode={workerRoutingMode}
-                  setWorkerRoutingMode={setWorkerRoutingMode}
-                  workerRoutingBuckets={WORKER_ROUTING_BUCKETS}
-                  workerRoles={workerRoles}
-                  loadingDiscoveredAgents={loadingDiscoveredAgents}
-                  discoveredAgents={discoveredAgents}
-                  safeDiscoveredAgents={safeDiscoveredAgents}
-                  discoveredAgentByBackend={discoveredAgentByBackend}
-                  customModelSelected={customModelSelected}
-                  fallbackAgentModes={FALLBACK_AGENT_MODES}
-                  usedBackends={usedBackends}
-                  startContext={startContext}
-                  workerJobs={workerJobs}
-                  backendsError={backendsError}
-                  backendsSuccess={backendsSuccess}
-                  getBackendOptionLabel={getBackendOptionLabel}
-                  handleAgentChange={handleAgentChange}
-                  handleApplySimpleRouting={handleApplySimpleRouting}
-                  handleModelDropdownChange={handleModelDropdownChange}
-                  handleCustomModelChange={handleCustomModelChange}
-                  handleSaveWorkerBackends={handleSaveWorkerBackends}
-                />
-              )}
-
-              {/* Tab: Roles */}
-              {activeTab === 'roles' && (
-                <RolesTab
-                  roleObservations={roleObservations}
-                  getBadgeStyle={getBadgeStyle}
-                  getStatusLabel={getStatusLabel}
-                  FilePath={FilePath}
-                />
-              )}
-
-              {/* Tab: Artifacts */}
-              {activeTab === 'artifacts' && (
-                <ArtifactsTab
-                  artifacts={state?.artifacts}
-                  handleEditArtifact={handleEditArtifact}
-                  FilePath={FilePath}
-                />
-              )}
-
-              {/* Tab: Actions */}
-              {activeTab === 'actions' && (
-                <ActionsTab
-                  actionItems={actionItems}
-                  formatHumanTime={formatHumanTime}
-                  FilePath={FilePath}
-                />
-              )}
-
-              {/* Tab: Agile Board */}
-              {activeTab === 'board' && (
-                <AgileBoardTab agileBoard={agileBoard} />
-              )}
-
-              {/* Tab: Smoke Runs */}
-              {activeTab === 'smoke' && (
-                <SmokeRunsTab
-                  smokeRunItems={smokeRunItems}
-                  smokeRunLoading={smokeRunLoading}
-                  handleSmokeRun={handleSmokeRun}
-                  getBadgeStyle={getBadgeStyle}
-                  getStatusLabel={getStatusLabel}
-                  FilePath={FilePath}
-                />
-              )}
-
-              {/* Tab: Workers */}
-              {activeTab === 'workers' && (
-                <WorkersTab
-                  panelGlobalMode={panelGlobalMode}
-                  setPanelGlobalMode={setPanelGlobalMode}
-                  panelRoleOverrides={panelRoleOverrides}
-                  panelRoleModels={panelRoleModels}
-                  simpleRoutingBackends={simpleRoutingBackends}
-                  setSimpleRoutingBackends={setSimpleRoutingBackends}
-                  configuringRoles={configuringRoles}
-                  setConfiguringRoles={setConfiguringRoles}
-                  savingBackends={savingBackends}
-                  actionLoading={actionLoading}
-                  backendOptions={backendOptions}
-                  roleBackendOptions={roleBackendOptions}
-                  workerRoutingMode={workerRoutingMode}
-                  setWorkerRoutingMode={setWorkerRoutingMode}
-                  workerRoutingBuckets={WORKER_ROUTING_BUCKETS}
-                  workerRoles={workerRoles}
-                  loadingDiscoveredAgents={loadingDiscoveredAgents}
-                  discoveredAgents={discoveredAgents}
-                  safeDiscoveredAgents={safeDiscoveredAgents}
-                  discoveredAgentByBackend={discoveredAgentByBackend}
-                  customModelSelected={customModelSelected}
-                  fallbackAgentModes={FALLBACK_AGENT_MODES}
-                  usedBackends={usedBackends}
-                  startContext={startContext}
-                  workerJobs={workerJobs}
-                  backendsError={backendsError}
-                  backendsSuccess={backendsSuccess}
-                  getBadgeStyle={getBadgeStyle}
-                  getBackendOptionLabel={getBackendOptionLabel}
-                  handleAgentChange={handleAgentChange}
-                  handleApplySimpleRouting={handleApplySimpleRouting}
-                  handleModelDropdownChange={handleModelDropdownChange}
-                  handleCustomModelChange={handleCustomModelChange}
-                  handleSaveWorkerBackends={handleSaveWorkerBackends}
-                />
-              )}
-
-              {/* Tab: Approvals */}
-              {activeTab === 'approvals' && (
-                <ApprovalsTab
-                  approvedCount={approvedCount}
-                  totalApprovalsCount={totalApprovalsCount}
-                  approvalProgressPercent={approvalProgressPercent}
-                  approvalReviews={approvalReviews}
-                  approvingAction={approvingAction}
-                  actionLoading={actionLoading}
-                  generatingPrd={generatingPrd}
-                  editingArtifact={editingArtifact}
-                  proposedRevision={proposedRevision}
-                  editorContent={editorContent}
-                  setEditorContent={setEditorContent}
-                  openQuestions={openQuestions}
-                  fetchingOpenQuestions={fetchingOpenQuestions}
-                  openQuestionsAnswers={openQuestionsAnswers}
-                  setOpenQuestionsAnswers={setOpenQuestionsAnswers}
-                  answeringOpenQuestions={answeringOpenQuestions}
-                  visibleGateDebate={visibleGateDebate}
-                  gateDebateProjectKey={gateDebateProjectKey}
-                  gateDebateRunId={gateDebateRunId}
-                  debateRun={debateRun}
-                  refineLoading={refineLoading}
-                  selectedReviewNoteKey={showChangesRequestedNoteKey}
-                  changesRequestedNote={changesRequestedNote}
-                  setChangesRequestedNote={setChangesRequestedNote}
-                  setShowChangesRequestedNoteKey={setShowChangesRequestedNoteKey}
-                  FilePath={FilePath}
-                  getBadgeStyle={getBadgeStyle}
-                  getStatusLabel={getStatusLabel}
-                  handleEditArtifact={handleEditArtifact}
-                  handleGeneratePrd={handleGeneratePrd}
-                  handleOpenQuestionsFromApproval={handleOpenQuestionsFromApproval}
-                  handleApproveDecision={handleApproveDecision}
-                  getResolvingDebateRef={getResolvingDebateRef}
-                  computeLineDiff={computeLineDiff}
-                  handleDiscardRefinement={handleDiscardRefinement}
-                  handleAcceptRefinement={handleAcceptRefinement}
-                  setEditingArtifact={setEditingArtifact}
-                  handleRefineArtifact={handleRefineArtifact}
-                  handleSaveArtifact={handleSaveArtifact}
-                  suggestedAnswersForQuestion={suggestedAnswersForQuestion}
-                  handleApplyAnswers={handleApplyAnswers}
-                  handleRunDebate={handleRunDebate}
-                />
-              )}
-
-              {/* Tab: Messages */}
-              {activeTab === 'messages' && (
-                <MessagesTab
-                  messageFeedProjectKey={messageFeedProjectKey}
-                  messageFeedRunId={messageFeedRunId}
-                  messageFeed={messageFeed}
-                  targetMessageFeedKey={targetMessageFeedKey}
-                />
-              )}
-
-              {/* Tab: Memory */}
-              {activeTab === 'memory' && (
-                <MemoryTab
-                  state={state}
-                  loadingMemory={loadingMemory}
-                  memoryError={memoryError}
-                  memoryData={memoryData}
-                  memoryEventBrowsers={memoryEventBrowsers}
-                  crossRole={crossRole}
-                  setCrossRole={setCrossRole}
-                  crossQuery={crossQuery}
-                  setCrossQuery={setCrossQuery}
-                  crossScope={crossScope}
-                  setCrossScope={setCrossScope}
-                  crossLimit={crossLimit}
-                  setCrossLimit={setCrossLimit}
-                  crossLoading={crossLoading}
-                  crossError={crossError}
-                  crossResults={crossResults}
-                  handleCrossSearch={handleCrossSearch}
-                  handleToggleMemoryEvents={handleToggleMemoryEvents}
-                  handleMemoryEventSearchChange={handleMemoryEventSearchChange}
-                  handleOpenMemoryEvent={handleOpenMemoryEvent}
-                />
-              )}
-
-              {/* Tab: Dev Loop */}
-              {activeTab === 'devloop' && (
-                <DevLoopTab
-                  devLoopData={devLoopData}
-                  loadingDevLoop={loadingDevLoop}
-                  devLoopError={devLoopError}
-                  formatHumanTime={formatHumanTime}
-                  Spinner={Spinner}
-                  getBadgeStyle={getBadgeStyle}
-                  copyLandCommand={copyCommand}
-                  copiedText={copiedText}
-                  copyFailedText={copyFailedText}
-                  FilePath={FilePath}
-                  dispatchSuccess={dispatchSuccess}
-                  dispatchError={dispatchError}
-                  handleDispatchTrack={handleDispatchTrack}
-                  dispatchName={dispatchName}
-                  setDispatchName={setDispatchName}
-                  dispatchRole={dispatchRole}
-                  setDispatchRole={setDispatchRole}
-                  dispatchCustomRole={dispatchCustomRole}
-                  setDispatchCustomRole={setDispatchCustomRole}
-                  dispatchAdapter={dispatchAdapter}
-                  setDispatchAdapter={setDispatchAdapter}
-                  dispatchCustomAdapter={dispatchCustomAdapter}
-                  setDispatchCustomAdapter={setDispatchCustomAdapter}
-                  dispatchTask={dispatchTask}
-                  setDispatchTask={setDispatchTask}
-                  dispatchConstraints={dispatchConstraints}
-                  setDispatchConstraints={setDispatchConstraints}
-                  dispatchVerify={dispatchVerify}
-                  setDispatchVerify={setDispatchVerify}
-                  dispatchLoading={dispatchLoading}
-                  workerRoles={workerRoles}
-                  roleBackendOptions={roleBackendOptions}
-                />
-              )}
-
-              {/* Tab: System */}
-              {activeTab === 'system' && (
-                <SystemTab
-                  state={state}
-                  startContext={startContext}
-                  FilePath={FilePath}
-                />
-              )}
-          </>
+          <ProjectTabRouter
+            activeRun={activeRun}
+            activeTab={activeTab}
+            actionItems={actionItems}
+            actionLoading={actionLoading}
+            agentsMemorySubTab={agentsMemorySubTab}
+            agileBoard={agileBoard}
+            answeringOpenQuestions={answeringOpenQuestions}
+            approvalProgressPercent={approvalProgressPercent}
+            approvalReviews={approvalReviews}
+            approvedCount={approvedCount}
+            approvingAction={approvingAction}
+            backendOptions={backendOptions}
+            backendsError={backendsError}
+            backendsSuccess={backendsSuccess}
+            changesRequestedNote={changesRequestedNote}
+            configuringRoles={configuringRoles}
+            copiedText={copiedText}
+            copyCommand={copyCommand}
+            copyFailedText={copyFailedText}
+            crossError={crossError}
+            crossLimit={crossLimit}
+            crossLoading={crossLoading}
+            crossQuery={crossQuery}
+            crossResults={crossResults}
+            crossRole={crossRole}
+            crossScope={crossScope}
+            customModelSelected={customModelSelected}
+            debateRun={debateRun}
+            deliveryMode={deliveryMode}
+            deliveryStandards={deliveryStandards}
+            devLoopData={devLoopData}
+            devLoopError={devLoopError}
+            discoveredAgentByBackend={discoveredAgentByBackend}
+            discoveredAgents={discoveredAgents}
+            dispatchAdapter={dispatchAdapter}
+            dispatchConstraints={dispatchConstraints}
+            dispatchCustomAdapter={dispatchCustomAdapter}
+            dispatchCustomRole={dispatchCustomRole}
+            dispatchError={dispatchError}
+            dispatchLoading={dispatchLoading}
+            dispatchName={dispatchName}
+            dispatchRole={dispatchRole}
+            dispatchSuccess={dispatchSuccess}
+            dispatchTask={dispatchTask}
+            dispatchVerify={dispatchVerify}
+            dryRun={dryRun}
+            editingArtifact={editingArtifact}
+            editorContent={editorContent}
+            fetchingOpenQuestions={fetchingOpenQuestions}
+            gateDebateProjectKey={gateDebateProjectKey}
+            gateDebateRunId={gateDebateRunId}
+            generatingPrd={generatingPrd}
+            getBackendOptionLabel={getBackendOptionLabel}
+            getMissionSummary={getMissionSummary}
+            getResolvingDebateRef={getResolvingDebateRef}
+            graphData={graphData}
+            graphError={graphError}
+            handleAcceptRefinement={handleAcceptRefinement}
+            handleAgentChange={handleAgentChange}
+            handleApplyAnswers={handleApplyAnswers}
+            handleApplySimpleRouting={handleApplySimpleRouting}
+            handleApproveDecision={handleApproveDecision}
+            handleCrossSearch={handleCrossSearch}
+            handleCustomModelChange={handleCustomModelChange}
+            handleDiscardRefinement={handleDiscardRefinement}
+            handleDispatchTrack={handleDispatchTrack}
+            handleEditArtifact={handleEditArtifact}
+            handleGeneratePrd={handleGeneratePrd}
+            handleMemoryEventSearchChange={handleMemoryEventSearchChange}
+            handleModelDropdownChange={handleModelDropdownChange}
+            handleOpenMemoryEvent={handleOpenMemoryEvent}
+            handleOpenQuestionsFromApproval={handleOpenQuestionsFromApproval}
+            handleRefineArtifact={handleRefineArtifact}
+            handleRetryBlocked={handleRetryBlocked}
+            handleRunDebate={handleRunDebate}
+            handleSaveArtifact={handleSaveArtifact}
+            handleSaveWorkerBackends={handleSaveWorkerBackends}
+            handleSmokeRun={handleSmokeRun}
+            handleStartWorkflow={handleStartWorkflow}
+            handleToggleMemoryEvents={handleToggleMemoryEvents}
+            headerStatus={headerStatus}
+            idea={idea}
+            isNewProjectMode={isNewProjectMode}
+            loadingDevLoop={loadingDevLoop}
+            loadingDiscoveredAgents={loadingDiscoveredAgents}
+            loadingGraph={loadingGraph}
+            loadingMemory={loadingMemory}
+            memoryData={memoryData}
+            memoryError={memoryError}
+            memoryEventBrowsers={memoryEventBrowsers}
+            messageFeed={messageFeed}
+            messageFeedProjectKey={messageFeedProjectKey}
+            messageFeedRunId={messageFeedRunId}
+            missionExpanded={missionExpanded}
+            modelProfile={modelProfile}
+            openQuestions={openQuestions}
+            openQuestionsAnswers={openQuestionsAnswers}
+            panelGlobalMode={panelGlobalMode}
+            panelRoleModels={panelRoleModels}
+            panelRoleOverrides={panelRoleOverrides}
+            proposedRevision={proposedRevision}
+            refineLoading={refineLoading}
+            roleBackendOptions={roleBackendOptions}
+            roleObservations={roleObservations}
+            safeDiscoveredAgents={safeDiscoveredAgents}
+            savingBackends={savingBackends}
+            setActiveTab={setActiveTab}
+            setAgentsMemorySubTab={setAgentsMemorySubTab}
+            setChangesRequestedNote={setChangesRequestedNote}
+            setConfiguringRoles={setConfiguringRoles}
+            setCrossLimit={setCrossLimit}
+            setCrossQuery={setCrossQuery}
+            setCrossRole={setCrossRole}
+            setCrossScope={setCrossScope}
+            setDeliveryMode={setDeliveryMode}
+            setDeliveryStandards={setDeliveryStandards}
+            setDispatchAdapter={setDispatchAdapter}
+            setDispatchConstraints={setDispatchConstraints}
+            setDispatchCustomAdapter={setDispatchCustomAdapter}
+            setDispatchCustomRole={setDispatchCustomRole}
+            setDispatchName={setDispatchName}
+            setDispatchRole={setDispatchRole}
+            setDispatchTask={setDispatchTask}
+            setDispatchVerify={setDispatchVerify}
+            setDryRun={setDryRun}
+            setEditingArtifact={setEditingArtifact}
+            setEditorContent={setEditorContent}
+            setIdea={setIdea}
+            setMissionExpanded={setMissionExpanded}
+            setModelProfile={setModelProfile}
+            setOpenQuestionsAnswers={setOpenQuestionsAnswers}
+            setPanelGlobalMode={setPanelGlobalMode}
+            setShowChangesRequestedNoteKey={setShowChangesRequestedNoteKey}
+            setSimpleRoutingBackends={setSimpleRoutingBackends}
+            setStartMode={setStartMode}
+            setWorkerRoutingMode={setWorkerRoutingMode}
+            showChangesRequestedNoteKey={showChangesRequestedNoteKey}
+            simpleRoutingBackends={simpleRoutingBackends}
+            smokeRunItems={smokeRunItems}
+            smokeRunLoading={smokeRunLoading}
+            startContext={startContext}
+            startingWorkflow={startingWorkflow}
+            startMode={startMode}
+            state={state}
+            targetMessageFeedKey={targetMessageFeedKey}
+            totalApprovalsCount={totalApprovalsCount}
+            updateUrl={updateUrl}
+            usedBackends={usedBackends}
+            visibleGateDebate={visibleGateDebate}
+            workerJobs={workerJobs}
+            workerRoles={workerRoles}
+            workerRoutingMode={workerRoutingMode}
+          />
         }
         memoryEventDetail={memoryEventDetail}
         memorySupersededBy={memorySupersededBy}
