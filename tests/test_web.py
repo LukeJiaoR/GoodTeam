@@ -1928,6 +1928,38 @@ def test_dev_loop_pull_requests_panel_is_extracted_without_theme_changes():
     assert "<DevLoopPullRequestsPanel" in dev_loop_tab
 
 
+def test_dev_loop_dispatch_form_is_extracted_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
+    dispatch_form = root / "frontend" / "src" / "components" / "DevLoopDispatchForm.jsx"
+
+    assert dispatch_form.exists()
+    form_source = dispatch_form.read_text(encoding="utf-8")
+    assert "export default function DevLoopDispatchForm" in form_source
+    assert "Dispatch a Track" in form_source
+    assert "Track started asynchronously!" in form_source
+    assert "Track Name" in form_source
+    assert "Custom Role Name" in form_source
+    assert "Custom Adapter Name" in form_source
+    assert "Task Details" in form_source
+    assert "Verification Command (Optional)" in form_source
+    assert "Dispatching..." in form_source
+    assert "const textInputClass" in form_source
+    assert "const textAreaClass" in form_source
+    assert "visibleRoles" in form_source
+    assert "roleBackendOptions.map" in form_source
+    assert "bg-surface-raised border-2 border-border-subtle shadow-card p-5 rounded-2xl space-y-4" in form_source
+    assert "bg-status-success-bg border-2 border-status-success/30" in form_source
+    assert "bg-status-danger-bg border-2 border-status-danger/30" in form_source
+    assert "function DispatchForm" not in dev_loop_tab
+    assert "const textInputClass" not in dev_loop_tab
+    assert "const textAreaClass" not in dev_loop_tab
+    assert "import DevLoopDispatchForm from '../DevLoopDispatchForm';" in dev_loop_tab
+    assert "<DevLoopDispatchForm" in dev_loop_tab
+
+
 def test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
@@ -3515,6 +3547,7 @@ def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
 
     dev_loop_files = [
         root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx",
+        root / "frontend" / "src" / "components" / "DevLoopDispatchForm.jsx",
         root / "frontend" / "src" / "components" / "DevLoopPullRequestsPanel.jsx",
         root / "frontend" / "src" / "components" / "DevLoopWarningsPanel.jsx",
         root / "frontend" / "src" / "components" / "DevLoopWorktreesPanel.jsx",
