@@ -2273,6 +2273,28 @@ def test_custom_delivery_payload_helper_is_extracted_from_app_shell_without_beha
     assert "const customDeliveryPayload = deliveryMode === 'custom'" not in app
 
 
+def test_project_root_resolver_is_extracted_from_app_shell_without_behavior_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    project_utils = root / "frontend" / "src" / "utils" / "projectRoot.js"
+
+    assert project_utils.exists()
+    utils_source = project_utils.read_text(encoding="utf-8")
+    assert "export function resolveProjectRootFromRepos" in utils_source
+    assert "repos.root?.path" in utils_source
+    assert "repos.docs?.path" in utils_source
+    assert "repos.backend?.path" in utils_source
+    assert "repos.frontend?.path" in utils_source
+    assert "Object.values(repos)[0]?.path" in utils_source
+    assert "|| ''" in utils_source
+    assert "import { resolveProjectRootFromRepos } from './utils/projectRoot';" in app
+    assert "setProjectRoot(resolveProjectRootFromRepos(repos));" in app
+    assert (
+        "setProjectRoot(repos.root?.path || repos.docs?.path || "
+        "repos.backend?.path || repos.frontend?.path || Object.values(repos)[0]?.path || '');"
+    ) not in app
+
+
 def test_approval_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")

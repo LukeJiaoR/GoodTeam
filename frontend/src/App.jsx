@@ -18,6 +18,7 @@ import { useMessageFeeds } from './hooks/useMessageFeeds';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { buildCustomDeliveryPayload } from './utils/deliveryPayload';
 import { getMissionSummary } from './utils/missionSummary';
+import { resolveProjectRootFromRepos } from './utils/projectRoot';
 import { parseRoleModelOverrideLines, parseRoleModelOverridesMap } from './utils/roleModelOverrides';
 import {
   LANGUAGE_PREFERENCE_AUTO,
@@ -243,7 +244,7 @@ export default function App() {
         setWorkerBackendMode(sc.worker_backend?.mode || 'codex');
 
         const repos = sc.project_report?.repos || {};
-        setProjectRoot(repos.root?.path || repos.docs?.path || repos.backend?.path || repos.frontend?.path || Object.values(repos)[0]?.path || '');
+        setProjectRoot(resolveProjectRootFromRepos(repos));
 
         // Task backend
         const tb = sc.task_backend || {};
