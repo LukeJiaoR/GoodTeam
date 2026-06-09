@@ -2363,6 +2363,7 @@ def test_new_project_modal_is_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     modal = root / "frontend" / "src" / "components" / "NewProjectModal.jsx"
+    container = root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx"
 
     assert modal.exists()
     modal_source = modal.read_text(encoding="utf-8")
@@ -2374,8 +2375,21 @@ def test_new_project_modal_is_extracted_from_app_shell():
     assert "DELIVERY_MODE_OPTIONS.map" in modal_source
     assert "Start Workflow Console" not in app
     assert "DELIVERY_MODE_OPTIONS.map" not in app
-    assert "import NewProjectModal from './components/NewProjectModal';" in app
-    assert "<NewProjectModal" in app
+    assert container.exists()
+    container_source = container.read_text(encoding="utf-8")
+    assert "export default function NewProjectModalContainer" in container_source
+    assert "import NewProjectModal from './NewProjectModal';" in container_source
+    assert "<NewProjectModal" in container_source
+    assert "newProjectModalOpen" in container_source
+    assert "onClose={closeNewProjectModal}" in container_source
+    assert "handleCreateConfig={handleCreateConfig}" in container_source
+    assert "handleStartWorkflow={handleStartWorkflow}" in container_source
+    assert "import NewProjectModalContainer from './components/NewProjectModalContainer';" in app
+    assert "<NewProjectModalContainer" in app
+    assert "import NewProjectModal from './components/NewProjectModal';" not in app
+    assert "<NewProjectModal\n" not in app
+    assert "<NewProjectModal " not in app
+    assert "const newProjectModal = newProjectModalOpen &&" not in app
 
 
 def test_new_project_form_hook_is_extracted_from_app_shell():
