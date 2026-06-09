@@ -10,7 +10,7 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | Routing outcome telemetry completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, and record shadow/canary routing outcomes without expanding routing. | Related G3 regression `16 passed`; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Server-action audit listing completed 2026-06-09 | Add bounded read-only listing of CP9 audit records without expanding land/tag/graduate execution. | `584 passed`; ruff/diff clean |
+| 3 | Self-hosting control plane | Dev Loop audit visibility completed 2026-06-09 | Render bounded read-only CP9 audit records in Dev Loop without expanding land/tag/graduate execution. | Frontend contract `17 passed`; lint/build passed |
 | 4 | Theme/App.jsx productization | Approval metrics helper extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | Approval/nav/i18n/theme contract slice `20 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2b/D3 | D3 parallel readiness evidence completed 2026-06-09 | Surface machine-readable readiness/blocker metadata for fake/read-only parallel planning versus still-blocked real-worker parallel execution. | Related D3/web regression `5 passed` + `6 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
@@ -33,6 +33,45 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — Dev Loop server-action audit visibility
+
+**Intent:** make CP13 audit records visible from the existing Dev Loop panel while
+keeping server-side action execution unchanged.
+
+**Implemented:**
+- `useDevLoopData` fetches `/api/server-actions/audit` alongside `/api/devloop`
+  and attaches the result as `devLoopData.server_action_audit`.
+- Audit fetch failures degrade into audit warnings instead of blocking the Dev
+  Loop panel.
+- `DevLoopTab` renders a compact `Server Action Audit` card with recent records,
+  return code/status, audit path, stdout/stderr tails, and audit warnings.
+- The card reuses existing surface/status theme tokens and does not add any
+  execution control.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_frontend_contract_exposes_server_action_audit_without_execution_controls -q`
+  first failed because `/api/server-actions/audit` was absent from
+  `useDevLoopData.js`.
+- Focused green:
+  the same command -> `1 passed`.
+- Related frontend contract regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'server_action_audit or release_readiness or dev_loop or devloop or frontend_contract'`
+  -> `17 passed, 147 deselected`.
+- Frontend checks:
+  `cd frontend && npm run lint` -> exit 0.
+  `cd frontend && npm run build` -> Vite build succeeded.
+- Quality gates:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check tests/test_web.py`
+  -> `All checks passed!`.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Deferred from this increment:**
+- Any new server-side merge/tag/release execution behavior.
+- Any audit execution/retry UI control.
+- Any theme redesign or token-system change.
 
 ### 2026-06-09 — Server-action audit read-only listing
 

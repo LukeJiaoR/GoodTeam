@@ -447,3 +447,43 @@ post-CP9 docs. Human review remains the land gate.
 
 **Rollback:** Revert CP13; CP9 audit files still exist on disk, but the read-only
 listing endpoint disappears.
+
+### CP14 - Dev Loop Server Action Audit Visibility
+
+**Status:** completed in branch `feat/server-action-audit-ui`.
+
+**Scope:** Render the CP13 read-only server-action audit projection in the
+existing Dev Loop panel so operators can inspect recent guarded action records
+without leaving the dashboard. This checkpoint does not add any execution
+control.
+
+**Entry Gate:** CP13 audit listing API is merged.
+
+**Implementation Notes:**
+- Fetch `/api/server-actions/audit` alongside `/api/devloop` and attach the
+  payload to `devLoopData.server_action_audit`.
+- Audit fetch failures degrade into audit warnings and do not prevent the main
+  Dev Loop data from rendering.
+- Render only recent sanitized audit records and warnings.
+- Reuse the existing Dev Loop card structure and theme token classes.
+- Do not add Run/Retry audit controls or any new server-action POST path.
+
+**Verification:**
+- Red/green frontend contract proving the hook fetches the audit API and the tab
+  renders audit records without execution controls.
+- Related Dev Loop/release/frontend contract regression.
+- Frontend lint and build.
+- `ruff` on touched tests.
+- `git diff --check`.
+
+**Evidence Captured:**
+- Targeted red: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_frontend_contract_exposes_server_action_audit_without_execution_controls -q` first failed because `/api/server-actions/audit` was absent from `useDevLoopData.js`.
+- Targeted green: the same command -> `1 passed`.
+- Related frontend contract regression: `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'server_action_audit or release_readiness or dev_loop or devloop or frontend_contract'` -> `17 passed, 147 deselected`.
+- `cd frontend && npm run lint` -> exit 0.
+- `cd frontend && npm run build` -> Vite build succeeded.
+- `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check tests/test_web.py` -> `All checks passed!`.
+- `git diff --check` -> exit 0.
+
+**Rollback:** Revert CP14; CP13 audit API remains available, but the Dev Loop UI
+stops rendering it.

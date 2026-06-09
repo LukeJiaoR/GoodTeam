@@ -1832,6 +1832,26 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
     assert "Run tag" not in dev_loop_tab
 
 
+def test_frontend_contract_exposes_server_action_audit_without_execution_controls():
+    root = Path(__file__).resolve().parents[1]
+    dev_loop_hook = (root / "frontend" / "src" / "hooks" / "useDevLoopData.js").read_text(encoding="utf-8")
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "/api/server-actions/audit" in dev_loop_hook
+    assert "server_action_audit" in dev_loop_hook
+    assert "server_action_audit" in dev_loop_tab
+    assert "Server Action Audit" in dev_loop_tab
+    assert "audit.records" in dev_loop_tab
+    assert "audit.warnings" in dev_loop_tab
+    assert "returncode" in dev_loop_tab
+    assert "stdout_tail" in dev_loop_tab
+    assert "Run audit" not in dev_loop_tab
+    assert "Retry audit" not in dev_loop_tab
+    assert "POST /api/server-actions/audit" not in dev_loop_hook
+
+
 def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
