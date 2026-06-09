@@ -19,7 +19,7 @@ import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
 import { buildCustomDeliveryPayload } from './utils/deliveryPayload';
 import { getMissionSummary } from './utils/missionSummary';
 import { resolveProjectRootFromRepos } from './utils/projectRoot';
-import { parseRoleModelOverrideLines, parseRoleModelOverridesMap } from './utils/roleModelOverrides';
+import { formatRoleModelOverridesText, parseRoleModelOverrideLines, parseRoleModelOverridesMap } from './utils/roleModelOverrides';
 import {
   LANGUAGE_PREFERENCE_AUTO,
 } from './i18n';
@@ -291,8 +291,7 @@ export default function App() {
 
         // Role model overrides text
         if (sc.role_model_overrides) {
-          const lines = Object.entries(sc.role_model_overrides).map(([role, model]) => `${role}=${model}`).join('\n');
-          setRoleModelOverrides(lines);
+          setRoleModelOverrides(formatRoleModelOverridesText(sc.role_model_overrides));
         }
       }
     } catch (err) {

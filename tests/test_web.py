@@ -2241,20 +2241,25 @@ def test_role_model_override_helpers_are_extracted_from_app_shell_without_behavi
     utils_source = override_utils.read_text(encoding="utf-8")
     assert "export function parseRoleModelOverridesMap" in utils_source
     assert "export function parseRoleModelOverrideLines" in utils_source
+    assert "export function formatRoleModelOverridesText" in utils_source
     assert ".split('\\n')" in utils_source
     assert ".map((line) => line.trim())" in utils_source
     assert ".filter(Boolean)" in utils_source
     assert ".map((line) => line.split('=', 2))" in utils_source
     assert ".filter((parts) => parts.length === 2 && parts[0] && parts[1])" in utils_source
+    assert "Object.entries(roleModelOverrides)" in utils_source
+    assert "`${role}=${model}`" in utils_source
     assert "Object.fromEntries" in utils_source
     assert (
-        "import { parseRoleModelOverrideLines, parseRoleModelOverridesMap } "
+        "import { formatRoleModelOverridesText, parseRoleModelOverrideLines, parseRoleModelOverridesMap } "
         "from './utils/roleModelOverrides';"
     ) in app
     assert "parseRoleModelOverridesMap(roleModelOverrides)" in app
     assert "parseRoleModelOverrideLines(roleModelOverrides)" in app
+    assert "setRoleModelOverrides(formatRoleModelOverridesText(sc.role_model_overrides));" in app
     assert "const parsedOverrides = Object.fromEntries" not in app
     assert "const overrides = roleModelOverrides" not in app
+    assert "Object.entries(sc.role_model_overrides).map" not in app
 
 
 def test_custom_delivery_payload_helper_is_extracted_from_app_shell_without_behavior_changes():
