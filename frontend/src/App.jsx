@@ -16,6 +16,7 @@ import { useApprovalEditor } from './hooks/useApprovalEditor';
 import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';
 import { useMessageFeeds } from './hooks/useMessageFeeds';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
+import { formatDeliveryContractAcceptance, formatDeliveryContractFatalPatterns } from './utils/deliveryContract';
 import { buildCustomDeliveryPayload } from './utils/deliveryPayload';
 import { getMissionSummary } from './utils/missionSummary';
 import { resolveProjectRootFromRepos } from './utils/projectRoot';
@@ -281,12 +282,9 @@ export default function App() {
           setDeliveryContractRequired(dc.required || false);
           setDeliveryContractMinEvidence(dc.minimum_evidence || 'infrastructure');
           // Format fatal patterns
-          const fp = sc.project_report?.project?.delivery_contract?.fatal_output_patterns || {};
-          setDeliveryContractFatalPatterns(Object.values(fp).join('\n'));
+          setDeliveryContractFatalPatterns(formatDeliveryContractFatalPatterns(sc.project_report?.project?.delivery_contract?.fatal_output_patterns || {}));
           // Format staging acceptance
-          const sa = sc.project_report?.project?.delivery_contract?.staging_acceptance || {};
-          const saLines = Object.entries(sa).map(([id, item]) => `${id}|${item.type}|${item.command}`).join('\n');
-          setDeliveryContractAcceptance(saLines);
+          setDeliveryContractAcceptance(formatDeliveryContractAcceptance(sc.project_report?.project?.delivery_contract?.staging_acceptance || {}));
         }
 
         // Role model overrides text

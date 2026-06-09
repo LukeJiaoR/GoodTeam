@@ -2278,6 +2278,35 @@ def test_custom_delivery_payload_helper_is_extracted_from_app_shell_without_beha
     assert "const customDeliveryPayload = deliveryMode === 'custom'" not in app
 
 
+def test_delivery_contract_formatters_are_extracted_from_app_shell_without_behavior_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    delivery_contract_utils = root / "frontend" / "src" / "utils" / "deliveryContract.js"
+
+    assert delivery_contract_utils.exists()
+    utils_source = delivery_contract_utils.read_text(encoding="utf-8")
+    assert "export function formatDeliveryContractFatalPatterns" in utils_source
+    assert "export function formatDeliveryContractAcceptance" in utils_source
+    assert "Object.values(fatalOutputPatterns).join('\\n')" in utils_source
+    assert "Object.entries(stagingAcceptance)" in utils_source
+    assert "`${id}|${item.type}|${item.command}`" in utils_source
+    assert ".join('\\n')" in utils_source
+    assert (
+        "import { formatDeliveryContractAcceptance, formatDeliveryContractFatalPatterns } "
+        "from './utils/deliveryContract';"
+    ) in app
+    assert (
+        "formatDeliveryContractFatalPatterns(sc.project_report?.project?.delivery_contract?.fatal_output_patterns || {})"
+        in app
+    )
+    assert (
+        "formatDeliveryContractAcceptance(sc.project_report?.project?.delivery_contract?.staging_acceptance || {})"
+        in app
+    )
+    assert "Object.values(fp).join('\\n')" not in app
+    assert "Object.entries(sa).map" not in app
+
+
 def test_project_root_resolver_is_extracted_from_app_shell_without_behavior_changes():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
