@@ -10,7 +10,7 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | Routing-readiness measurement completed 2026-06-07 | Add deterministic global store, record worker failures, surface best-match evidence, and expose read-only routing-readiness metrics without changing routing. | `11 passed` related regression; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Release-readiness unavailable-state polish completed 2026-06-07 | Add web-visible dry-smoke action plus read-only release/graduation readiness API and React panel; keep merge/tag/graduate actions human-invoked. | `483 passed`; ruff clean; frontend build passed |
+| 3 | Self-hosting control plane | Guarded server action execution completed 2026-06-08 | CP9 enabled env+nonce+typed-confirmation guarded execution for `land_pr` and `graduate_release`; `tag_release` remains disabled/report-only and human review remains the land gate. | `581 passed`; ruff clean; diff check clean |
 | 4 | Theme/App.jsx productization | Approval metrics helper extraction completed 2026-06-08 | Keep Vivid and Minimal as permanent themes while shrinking App.jsx through focused component extraction without changing UI/theme styling. | Approval/nav/i18n/theme contract slice `20 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2b | Sequential dependency-gate runner semantics completed 2026-06-08 | Make declared gate dependencies affect real execution by routing RFC approval through the human-only security gate before planner starts, without enabling D3 parallel execution. | `554 passed`; ruff clean; frontend lint/build passed |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
@@ -22,16 +22,39 @@ reference, verification evidence, and follow-up status.
 ## Active Increment
 
 No active backlog increment remains. Remaining work is parked behind explicit gates
-or deliberate incremental tracks: D3 parallel execution fan-in consumer and
-live-smoke/isolation gate, deeper dynamic-plan/topological runner ownership beyond
-the now-wired security dependency gate, server-side land/tag auth/security design, G3 routing
-outcome quality, G3 unknown-failure data for LLM triage, external Codex auth
-recovery, shared-worktree edit-collision need, optional full research/review memory
-ingestion, and continued Theme panel/component token cleanup with visual review.
+or deliberate incremental tracks: D3 real fan-in execution plus live-smoke and
+worker-isolation evidence, deeper dynamic-plan/topological runner ownership beyond
+the now-wired sequential and read-only/fake parallel slices, post-CP9 server-action
+operational hardening and `tag_release` safety design, G3 routing outcome quality,
+G3 unknown-failure data for LLM triage, external Codex auth recovery, shared-worktree
+edit-collision need, optional full research/review memory ingestion, and continued
+Theme panel/component token cleanup with visual review.
 Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — Post-CP9 backlog/status reconciliation
+
+**Intent:** keep the project ledger accurate after CP3-CP9 landed, without adding
+new runtime behavior.
+
+**Implemented:**
+- Reconciled `docs/backlog.md` so D3, G3, and self-hosting server-action sections
+  reflect the merged CP3-CP9 state.
+- Clarified that `land_pr` and `graduate_release` now have guarded server
+  execution, while `tag_release` remains disabled/report-only.
+- Kept the remaining work framed as operational hardening, live evidence,
+  outcome-quality measurement, unknown-failure triage data, and UI/theme
+  productization.
+
+**Verification evidence:**
+- Docs-only diff.
+- `git diff --check`.
+- Stale-phrase scan for pre-CP9 server-action wording.
+
+**Deferred from this increment:**
+- Any code, UI, runner, routing, merge, or tag behavior change.
 
 ### 2026-06-08 — Theme/App.jsx productization: approval metrics helper extraction
 
@@ -470,6 +493,9 @@ tasks.
   gate, Codex auth recovery, shared-worktree edit-collision detection, optional
   full research/review memory ingestion, and focused Theme panel/component token
   cleanup with visual review.
+- Later update: CP9 superseded the server-action part of this 2026-06-07 status
+  by adding guarded `land_pr` and `graduate_release` execution. `tag_release`
+  remains disabled/report-only.
 - The stale PRD edit -> LLM deepen -> re-review backlog item is marked resolved by
   the existing explicit refinement workflow: `Refine with AI`, proposed revision
   review, accept/discard, open-question answer application, and approval reset on
@@ -1145,6 +1171,11 @@ commits.
 - Full research/review document ingestion into role memory, if wanted, as a
   retrieval-budget-aware follow-up. The durable dispatch audit chain itself is now
   complete.
+
+**2026-06-09 follow-up:** CP9 superseded the server-action line above by adding
+guarded `land_pr` and `graduate_release` execution. `tag_release` remains
+disabled/report-only, and broader server-action hardening stays gated on live
+evidence and human-review discipline.
 
 **2026-06-07 follow-up:** the PRD edit/deepen/re-review item was later reconciled in
 the `Backlog closure / gated parking` increment above. It is no longer an open
