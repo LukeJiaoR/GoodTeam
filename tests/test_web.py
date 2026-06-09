@@ -1814,14 +1814,17 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
     release_card = (root / "frontend" / "src" / "components" / "ReleaseReadinessCard.jsx").read_text(
         encoding="utf-8"
     )
+    server_actions_card = (
+        root / "frontend" / "src" / "components" / "ServerActionsCard.jsx"
+    ).read_text(encoding="utf-8")
 
     assert "<DevLoopTab" in app
     assert "copyLandCommand={copyCommand}" in app
     assert "devLoopData.release_readiness" in dev_loop_tab
     assert "devLoopData.server_actions" in dev_loop_tab
     assert "Release Readiness" in release_card
-    assert "Server Action Capabilities" in dev_loop_tab
-    assert "Destructive actions stay human-command-only" in dev_loop_tab
+    assert "Server Action Capabilities" in server_actions_card
+    assert "Destructive actions stay human-command-only" in server_actions_card
     assert "release_up_command" in release_card
     assert "graduate_command" in release_card
     assert "Copy release-up command" in release_card
@@ -1833,6 +1836,28 @@ def test_frontend_contract_exposes_release_readiness_without_execution_controls(
     assert "Run graduate" not in dev_loop_tab + release_card
     assert "Run land" not in dev_loop_tab
     assert "Run tag" not in dev_loop_tab
+
+
+def test_server_actions_card_is_extracted_from_dev_loop_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
+    server_actions_card = root / "frontend" / "src" / "components" / "ServerActionsCard.jsx"
+
+    assert server_actions_card.exists()
+    card_source = server_actions_card.read_text(encoding="utf-8")
+    assert "export default function ServerActionsCard" in card_source
+    assert "Server Action Capabilities" in card_source
+    assert "Read-only capability report. Destructive actions stay human-command-only." in card_source
+    assert "serverActions?.actions" in card_source
+    assert "name.replaceAll('_', ' ')" in card_source
+    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5 space-y-4" in card_source
+    assert "bg-status-success-bg text-status-success-text border-status-success/30" in card_source
+    assert "bg-surface-raised text-text-muted border-border-subtle" in card_source
+    assert "function ServerActionsCard" not in dev_loop_tab
+    assert "import ServerActionsCard from '../ServerActionsCard';" in dev_loop_tab
+    assert "<ServerActionsCard serverActions={devLoopData.server_actions} />" in dev_loop_tab
 
 
 def test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes():
