@@ -397,7 +397,36 @@ def test_api_server_action_run_rejects_until_env_nonce_and_confirmation_pass(tmp
         headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
     )
     assert 400 in unsafe_action.responses
-    assert "Unsupported" in json.loads(unsafe_action.wfile.getvalue().decode("utf-8"))["error"]
+    assert "tag" in json.loads(unsafe_action.wfile.getvalue().decode("utf-8"))["error"]
+
+
+def test_api_server_action_run_tag_release_stays_report_only_without_subprocess_or_audit(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return web.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
+    monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
+    monkeypatch.setattr("goodteam_os.web.subprocess.run", fake_run)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/server-actions/run",
+        {
+            "action": "tag_release",
+            "nonce": "nonce-123",
+            "confirm": "TAG RELEASE v1.2.3",
+            "tag": "v1.2.3",
+        },
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 400 in handler.responses
+    assert "report-only" in json.loads(handler.wfile.getvalue().decode("utf-8"))["error"]
+    assert calls == []
+    assert not list((tmp_path / ".goodteam" / "server-actions").glob("*.json"))
 
 
 def test_api_server_action_run_rejects_unsafe_release_refs_before_subprocess(tmp_path, monkeypatch):

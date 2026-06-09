@@ -487,3 +487,62 @@ control.
 
 **Rollback:** Revert CP14; CP13 audit API remains available, but the Dev Loop UI
 stops rendering it.
+
+### CP15 - Tag Release Safety Report
+
+**Status:** completed in branch `feat/cp15-tag-safety`.
+
+**Scope:** Make `tag_release` a first-class report-only server action with a
+structured safety report. This checkpoint does not execute `git tag`, move tags,
+push tags, or add a server-side tag endpoint.
+
+**Entry Gate:** CP9 guarded execution and CP13/CP14 audit visibility are merged.
+Human review remains the land/release gate.
+
+**Implementation Notes:**
+- Keep `tag_release.available=false` even when `GOODTEAM_SERVER_ACTIONS=1` and
+  `GOODTEAM_SERVER_ACTION_NONCE` are configured.
+- Report `mode=report_only` and `reason=tag_release_safety_design_required`.
+- Include explicit blockers: tag naming policy, signed-tag policy, remote-push
+  policy, rollback policy, and human release decision.
+- Include future enablement requirements: env gate, nonce, typed confirmation,
+  argv allowlist with `shell=False`, audit record before any remote push, and
+  human-reviewed release notes plus rollback plan.
+- Accept `TAG RELEASE <tag>` as a known typed-confirmation shape only so the
+  route can reject with the report-only boundary instead of treating the action
+  as unknown.
+- Do not produce argv, invoke subprocesses, or write audit records for
+  `tag_release`.
+
+**Verification:**
+- Red/green API test proving `tag_release` remains report-only and does not
+  call subprocesses or write audit files.
+- Red/green capability test proving the structured safety report is present.
+- Related server-action/dev-loop regression.
+- `ruff` on touched Python tests.
+- `git diff --check`.
+
+**Evidence Captured:**
+- Targeted red:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py::test_api_server_action_run_tag_release_stays_report_only_without_subprocess_or_audit tests/test_web.py::test_build_server_actions_marks_destructive_actions_available_only_with_env_gate -q`
+  first failed because `tag_release` returned `Unsupported server action` and
+  the capability mode was `human_command_only`.
+- Focused green:
+  the same command -> `2 passed`.
+- Related regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py tests/test_web.py -q -k 'server_action or server_actions or same_origin or dev_loop or release_readiness'`
+  -> `31 passed, 197 deselected`.
+- Full backend:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q`
+  -> `593 passed`.
+- Full lint:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend checks:
+  `cd frontend && npm run lint` -> exit 0.
+  `cd frontend && npm run build` -> Vite build succeeded.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Rollback:** Revert CP15; `tag_release` returns to the generic unsupported /
+disabled behavior and still has no execution path.

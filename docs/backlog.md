@@ -20,9 +20,11 @@ implementation.
 - Self-hosting server actions — CP9 now permits guarded `land_pr` and
   `graduate_release` execution only behind env+nonce+typed-confirmation gates,
   same-origin enforcement, allowlisted argv construction, readiness-derived
-  inputs, and audit records. `tag_release` remains disabled/report-only. The
-  remaining backlog is operational hardening, live-use evidence, tag safety
-  design, UI discipline, and keeping human review as the land gate.
+  inputs, and audit records. CP15 makes `tag_release` a structured report-only
+  action with explicit safety blockers and future enablement gates; it still has
+  no server-side `git tag` execution path. The remaining backlog is operational
+  hardening, live-use evidence, UI discipline, and keeping human review as the
+  land gate.
 - Expanding G3 failure-pattern routing — CP8 canary routing applies only to
   high-confidence low-risk classes. Broader route changes still require measured
   outcome quality and false-positive review.
