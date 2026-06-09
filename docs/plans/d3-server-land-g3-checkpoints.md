@@ -717,3 +717,58 @@ failures remain deterministic/human-gated.
 
 **Rollback:** Revert CP18; CP17 routing quality remains, but future LLM triage
 readiness fields disappear from failure-pattern readiness reports.
+
+### CP19 - Server Action Execution Policy Report
+
+**Status:** completed in branch `feat/cp19-server-action-hardening`.
+
+**Scope:** Add a machine-readable execution policy report to existing server
+action capabilities so the dashboard/API can show the current guarded-execution
+boundary without expanding execution.
+
+**Entry Gate:** CP9 guarded `land_pr` / `graduate_release` execution exists,
+CP13/CP14 audit visibility exists, and CP15 keeps `tag_release` report-only.
+
+**Implementation Notes:**
+- Add top-level `execution_policy` to `build_server_action_capabilities()`.
+- Report whether the env gate and nonce are configured without exposing the
+  nonce value.
+- Report the invariant controls required for destructive actions: same-origin,
+  typed confirmation, argv allowlist, audit record, timeout, and audit path.
+- Report enabled actions and blocked actions. `tag_release` remains blocked by
+  `tag_release_safety_design_required` even when `land_pr` and
+  `graduate_release` are available.
+- Do not change `/api/server-actions/run`, argv construction, subprocess
+  execution, audit writing, UI/theme code, or any action availability logic.
+
+**Verification:**
+- Red/green capability tests for disabled and enabled execution policy reports.
+- API route contract proving the policy is exposed through `/api/server-actions`.
+- Related server-action/dev-loop regression.
+- `ruff` on touched Python files.
+- `git diff --check`.
+
+**Evidence Captured:**
+- Targeted red:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_server_actions_marks_destructive_actions_available_only_with_env_gate tests/test_api.py::test_api_server_actions_reports_disabled_destructive_capabilities -q`
+  first failed because `execution_policy` was absent from server-action
+  capabilities.
+- Focused green:
+  the same command -> `2 passed`.
+- Related regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_api.py tests/test_web.py -q -k 'server_action or server_actions or same_origin or dev_loop or release_readiness'`
+  -> `31 passed, 197 deselected`.
+- Full backend:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q`
+  -> `597 passed`.
+- Full lint:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend checks:
+  `npm --prefix frontend run lint` -> exit 0.
+  `npm --prefix frontend run build` -> Vite build succeeded.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Rollback:** Revert CP19; guarded execution remains as CP9/CP15 defined, but the
+read-only execution policy report disappears.

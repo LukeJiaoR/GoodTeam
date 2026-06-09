@@ -236,6 +236,24 @@ def test_api_server_actions_reports_disabled_destructive_capabilities(tmp_path, 
                     "reason": "disabled_by_default",
                 },
             },
+            "execution_policy": {
+                "status": "disabled",
+                "destructive_actions_available": False,
+                "env_gate_configured": False,
+                "nonce_configured": False,
+                "same_origin_required": True,
+                "typed_confirmation_required": True,
+                "argv_allowlist_required": True,
+                "audit_required": True,
+                "audit_dir": str(tmp_path / ".goodteam" / "server-actions"),
+                "timeout_seconds": web.SERVER_ACTION_TIMEOUT_SECONDS,
+                "enabled_actions": [],
+                "blocked_actions": {
+                    "land_pr": ["disabled_by_default"],
+                    "graduate_release": ["disabled_by_default"],
+                    "tag_release": ["tag_release_safety_design_required"],
+                },
+            },
             "generated_at": "2026-06-08T00:00:00+00:00",
         }
 
@@ -262,6 +280,8 @@ def test_api_server_actions_reports_disabled_destructive_capabilities(tmp_path, 
     assert payload["actions"]["tag_release"]["reason"] == "disabled_by_default"
     assert payload["actions"]["tag_release"]["readiness"]["server_execution"] == "disabled_by_default"
     assert payload["actions"]["graduate_release"]["mode"] == "human_command_only"
+    assert payload["execution_policy"]["same_origin_required"] is True
+    assert payload["execution_policy"]["audit_dir"] == str(tmp_path / ".goodteam" / "server-actions")
 
 
 def test_build_server_action_audit_log_reads_recent_records_without_execution(tmp_path):

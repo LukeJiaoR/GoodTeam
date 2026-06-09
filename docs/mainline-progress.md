@@ -10,7 +10,7 @@ reference, verification evidence, and follow-up status.
 | --- | --- | --- | --- | --- |
 | 1 | G3c global failure-pattern library | LLM triage readiness data completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, record shadow/canary outcomes, report outcome quality, and measure unknown/ambiguous samples for future LLM triage without invoking models. | Focused G3/CLI readiness `11 passed`; ruff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
-| 3 | Self-hosting control plane | Tag-release safety report completed 2026-06-09 | Keep `tag_release` report-only with explicit safety blockers and future enablement gates while preserving guarded `land_pr` / `graduate_release` behavior. | Server-action regression `31 passed`; ruff/diff clean |
+| 3 | Self-hosting control plane | Execution policy report completed 2026-06-09 | Keep `tag_release` report-only, preserve guarded `land_pr` / `graduate_release`, and expose the server-action execution boundary as read-only policy evidence. | Focused server-action policy `2 passed`; ruff/diff clean |
 | 4 | Theme/App.jsx productization | Dev Loop dispatch form extraction completed 2026-06-09 | Keep Vivid and Minimal as permanent themes while shrinking Dev Loop/App shell code through focused component extraction without changing UI/theme styling. | Dev Loop/theme contract `30 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2b/D3 | Worker-isolation strategy evidence completed 2026-06-09 | Add machine-readable worker-isolation strategy metadata for D3 parallel plans without enabling real parallel workers. | Related D3/workflow regression `26 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
@@ -25,8 +25,8 @@ No active backlog increment remains. Remaining work is parked behind explicit ga
 or deliberate incremental tracks: D3 real fan-in execution plus live-smoke
 evidence after the now-explicit worktree-per-worker isolation strategy, deeper
 dynamic-plan/topological runner ownership beyond the now-wired sequential and
-read-only/fake parallel slices, post-CP15 server-action operational hardening and
-live-use evidence, broader G3 routing application after quality review, future
+read-only/fake parallel slices, server-action live-use evidence after the CP19
+execution-policy report, broader G3 routing application after quality review, future
 G3 shadow LLM triage after readiness review, external Codex auth recovery,
 shared-worktree edit-collision need, optional full research/review memory
 ingestion, and continued Theme panel/component token cleanup with visual review.
@@ -34,6 +34,35 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — Server-action execution policy report
+
+**Intent:** make the guarded server-action boundary reviewable from the existing
+capability API without adding or expanding execution behavior.
+
+**Implemented:**
+- Added `execution_policy` to `build_server_action_capabilities()` and
+  `/api/server-actions`.
+- Reports env gate and nonce presence without exposing the nonce value.
+- Reports invariant controls for destructive actions: same-origin, typed
+  confirmation, argv allowlist, audit record, audit dir, and timeout.
+- Reports enabled actions and blocked actions; `tag_release` remains blocked by
+  `tag_release_safety_design_required`.
+- Left `/api/server-actions/run`, argv construction, subprocess execution, audit
+  writing, action availability logic, UI, and theme behavior unchanged.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_build_server_actions_marks_destructive_actions_available_only_with_env_gate tests/test_api.py::test_api_server_actions_reports_disabled_destructive_capabilities -q`
+  first failed because `execution_policy` was absent from server-action
+  capabilities.
+- Focused green:
+  the same command -> `2 passed`.
+
+**Deferred from this increment:**
+- Any new server-action endpoint or execution path.
+- Server-side `tag_release` execution.
+- Live-use evidence collection.
 
 ### 2026-06-09 — G3 LLM triage readiness data
 
