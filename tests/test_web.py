@@ -1838,18 +1838,42 @@ def test_frontend_contract_exposes_server_action_audit_without_execution_control
     dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
         encoding="utf-8"
     )
+    audit_card = (root / "frontend" / "src" / "components" / "ServerActionAuditCard.jsx").read_text(
+        encoding="utf-8"
+    )
 
     assert "/api/server-actions/audit" in dev_loop_hook
     assert "server_action_audit" in dev_loop_hook
     assert "server_action_audit" in dev_loop_tab
-    assert "Server Action Audit" in dev_loop_tab
-    assert "audit.records" in dev_loop_tab
-    assert "audit.warnings" in dev_loop_tab
-    assert "returncode" in dev_loop_tab
-    assert "stdout_tail" in dev_loop_tab
-    assert "Run audit" not in dev_loop_tab
-    assert "Retry audit" not in dev_loop_tab
+    assert "Server Action Audit" in audit_card
+    assert "audit.records" in audit_card
+    assert "audit.warnings" in audit_card
+    assert "returncode" in audit_card
+    assert "stdout_tail" in audit_card
+    assert "Run audit" not in dev_loop_tab + audit_card
+    assert "Retry audit" not in dev_loop_tab + audit_card
     assert "POST /api/server-actions/audit" not in dev_loop_hook
+
+
+def test_server_action_audit_card_is_extracted_from_dev_loop_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
+    audit_card = root / "frontend" / "src" / "components" / "ServerActionAuditCard.jsx"
+
+    assert audit_card.exists()
+    audit_card_source = audit_card.read_text(encoding="utf-8")
+    assert "export default function ServerActionAuditCard" in audit_card_source
+    assert "Server Action Audit" in audit_card_source
+    assert "audit.records" in audit_card_source
+    assert "audit.warnings" in audit_card_source
+    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5 space-y-4" in audit_card_source
+    assert "bg-status-danger-bg text-status-danger-text border-status-danger/30" in audit_card_source
+    assert "bg-status-success-bg text-status-success-text border-status-success/30" in audit_card_source
+    assert "function ServerActionAuditCard" not in dev_loop_tab
+    assert "import ServerActionAuditCard from '../ServerActionAuditCard';" in dev_loop_tab
+    assert "<ServerActionAuditCard audit={devLoopData.server_action_audit} />" in dev_loop_tab
 
 
 def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type():
