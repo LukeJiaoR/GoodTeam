@@ -546,3 +546,61 @@ Human review remains the land/release gate.
 
 **Rollback:** Revert CP15; `tag_release` returns to the generic unsupported /
 disabled behavior and still has no execution path.
+
+### CP16 - D3 Worker Isolation Strategy Evidence
+
+**Status:** completed in branch `feat/cp16-worker-isolation`.
+
+**Scope:** Add machine-readable worker-isolation strategy metadata to the
+existing read-only/fake parallel execution plan. This checkpoint does not execute
+real workers in parallel and does not change workflow advancement.
+
+**Entry Gate:** CP11 parallel readiness exists and CP15 server-action boundary is
+merged.
+
+**Implementation Notes:**
+- Keep `parallel_level_execution=enabled_for_fake_and_readonly` only for
+  `fake_worker` and `read_only_advisor` plans with valid write domains.
+- For fake/read-only plans, report `worker_isolation.status` as
+  `none_required_for_fake_and_readonly`.
+- For blocked real-worker plans, report `worker_isolation.status` as
+  `required_before_real_parallel_workers` and `required_strategy` as
+  `worktree_per_worker`.
+- Explicitly reject `shared_worktree` and `single_runtime_root` for real parallel
+  workers.
+- List the evidence required before a later checkpoint may run real workers:
+  per-worker worktree path outside the repo root, one write domain owner per
+  worker, fan-in merge/review step, and live smoke with fake/read-only workers.
+
+**Verification:**
+- Red/green workflow-table tests proving fake/read-only plans and blocked
+  real-worker plans include the worker isolation report.
+- Red/green workflow-graph contract proving `/api/workflow/graph` surfaces the
+  same metadata.
+- Related workflow/API regression.
+- `ruff` on touched Python files.
+- `git diff --check`.
+
+**Evidence Captured:**
+- Targeted red:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py::test_workflow_parallel_execution_plan_allows_fake_readonly_levels_and_preserves_fanin_order tests/test_workflow_table.py::test_workflow_parallel_execution_plan_fails_closed_for_real_workers_and_write_collisions tests/test_web.py::test_build_workflow_graph_static_nodes_and_edges -q`
+  first failed because `parallel_readiness.worker_isolation` was absent.
+- Focused green:
+  the same command -> `3 passed`.
+- Related regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_workflow_table.py tests/test_web.py tests/test_api.py -q -k 'workflow_graph or workflow_node or workflow_dag or execution_plan or parallel_execution_plan or api_workflow_graph or topology_runner'`
+  -> `26 passed, 230 deselected`.
+- Full backend:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests -q`
+  -> `593 passed`.
+- Full lint:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check src/goodteam_os/ tests/`
+  -> `All checks passed!`.
+- Frontend checks:
+  `cd frontend && npm run lint` -> exit 0.
+  `cd frontend && npm run build` -> Vite build succeeded.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Rollback:** Revert CP16; D3 remains blocked for real workers by CP11
+readiness, but the detailed isolation strategy report disappears.

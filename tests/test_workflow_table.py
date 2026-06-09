@@ -346,6 +346,13 @@ def test_workflow_parallel_execution_plan_allows_fake_readonly_levels_and_preser
             "blocked_runner_kinds": [],
             "requires_worker_isolation": False,
             "requires_live_smoke": False,
+            "worker_isolation": {
+                "status": "none_required_for_fake_and_readonly",
+                "required_strategy": "",
+                "allowed_strategies": ["none"],
+                "rejected_strategies": [],
+                "evidence_required": [],
+            },
             "blockers": [],
         },
         "validation_errors": [],
@@ -402,6 +409,18 @@ def test_workflow_parallel_execution_plan_fails_closed_for_real_workers_and_writ
         "blocked_runner_kinds": ["sequential_worker"],
         "requires_worker_isolation": True,
         "requires_live_smoke": True,
+        "worker_isolation": {
+            "status": "required_before_real_parallel_workers",
+            "required_strategy": "worktree_per_worker",
+            "allowed_strategies": ["worktree_per_worker"],
+            "rejected_strategies": ["shared_worktree", "single_runtime_root"],
+            "evidence_required": [
+                "per-worker worktree path outside repository root",
+                "declared write domains mapped to one worker each",
+                "fan-in merge or review step after all workers finish",
+                "live smoke run using fake/read-only workers before real workers",
+            ],
+        },
         "blockers": [
             "Workflow execution plan v2 write-domain collision repo:shared: implementation, qa",
             "Parallel execution refuses runner 'implementation' with kind 'sequential_worker'",

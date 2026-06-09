@@ -438,6 +438,18 @@ def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
             "blocked_runner_kinds": ["human_gate", "sequential_worker"],
             "requires_worker_isolation": True,
             "requires_live_smoke": True,
+            "worker_isolation": {
+                "status": "required_before_real_parallel_workers",
+                "required_strategy": "worktree_per_worker",
+                "allowed_strategies": ["worktree_per_worker"],
+                "rejected_strategies": ["shared_worktree", "single_runtime_root"],
+                "evidence_required": [
+                    "per-worker worktree path outside repository root",
+                    "declared write domains mapped to one worker each",
+                    "fan-in merge or review step after all workers finish",
+                    "live smoke run using fake/read-only workers before real workers",
+                ],
+            },
             "blockers": [
                 "Parallel execution refuses runner 'architect' with kind 'sequential_worker'",
                 "Parallel execution refuses runner 'planner' with kind 'sequential_worker'",

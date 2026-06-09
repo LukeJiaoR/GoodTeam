@@ -471,6 +471,29 @@ def workflow_execution_plan_v2(
 PARALLEL_SAFE_RUNNER_KINDS = frozenset({"fake_worker", "read_only_advisor"})
 
 
+def _worker_isolation_readiness(*, required: bool) -> dict[str, object]:
+    if not required:
+        return {
+            "status": "none_required_for_fake_and_readonly",
+            "required_strategy": "",
+            "allowed_strategies": ["none"],
+            "rejected_strategies": [],
+            "evidence_required": [],
+        }
+    return {
+        "status": "required_before_real_parallel_workers",
+        "required_strategy": "worktree_per_worker",
+        "allowed_strategies": ["worktree_per_worker"],
+        "rejected_strategies": ["shared_worktree", "single_runtime_root"],
+        "evidence_required": [
+            "per-worker worktree path outside repository root",
+            "declared write domains mapped to one worker each",
+            "fan-in merge or review step after all workers finish",
+            "live smoke run using fake/read-only workers before real workers",
+        ],
+    }
+
+
 def _parallel_readiness(
     *,
     validation_errors: Iterable[str],
@@ -485,6 +508,7 @@ def _parallel_readiness(
         "blocked_runner_kinds": blocked_kinds,
         "requires_worker_isolation": blocked,
         "requires_live_smoke": blocked,
+        "worker_isolation": _worker_isolation_readiness(required=blocked),
         "blockers": blockers,
     }
 
