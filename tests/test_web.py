@@ -1880,6 +1880,28 @@ def test_dev_loop_warnings_panel_is_extracted_without_theme_changes():
     assert "<DevLoopWarningsPanel warnings={devLoopData.warnings} />" in dev_loop_tab
 
 
+def test_dev_loop_worktrees_panel_is_extracted_without_theme_changes():
+    root = Path(__file__).resolve().parents[1]
+    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
+        encoding="utf-8"
+    )
+    worktrees_panel = root / "frontend" / "src" / "components" / "DevLoopWorktreesPanel.jsx"
+
+    assert worktrees_panel.exists()
+    panel_source = worktrees_panel.read_text(encoding="utf-8")
+    assert "export default function DevLoopWorktreesPanel" in panel_source
+    assert "Active Worktrees" in panel_source
+    assert "Array.isArray(worktrees)" in panel_source
+    assert "No active git worktrees." in panel_source
+    assert "FilePath path={worktree?.path} segments={2}" in panel_source
+    assert "worktree.head.slice(0, 7)" in panel_source
+    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl overflow-hidden" in panel_source
+    assert "bg-surface-sunken border-b-2 border-border-subtle" in panel_source
+    assert "function WorktreesPanel" not in dev_loop_tab
+    assert "import DevLoopWorktreesPanel from '../DevLoopWorktreesPanel';" in dev_loop_tab
+    assert "<DevLoopWorktreesPanel worktrees={devLoopData.worktrees} FilePath={FilePath} />" in dev_loop_tab
+
+
 def test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes():
     root = Path(__file__).resolve().parents[1]
     dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
@@ -3468,6 +3490,7 @@ def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
     dev_loop_files = [
         root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx",
         root / "frontend" / "src" / "components" / "DevLoopWarningsPanel.jsx",
+        root / "frontend" / "src" / "components" / "DevLoopWorktreesPanel.jsx",
         root / "frontend" / "src" / "components" / "ReleaseReadinessCard.jsx",
         root / "frontend" / "src" / "components" / "ServerActionAuditCard.jsx",
         root / "frontend" / "src" / "components" / "ServerActionsCard.jsx",
