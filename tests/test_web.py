@@ -2216,6 +2216,22 @@ def test_time_helpers_are_extracted_from_app_shell():
     assert "import { formatHumanTime } from '../utils/time';" in router
 
 
+def test_mission_summary_helper_is_extracted_from_app_shell_without_behavior_changes():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    mission_utils = root / "frontend" / "src" / "utils" / "missionSummary.js"
+
+    assert mission_utils.exists()
+    utils_source = mission_utils.read_text(encoding="utf-8")
+    assert "export function getMissionSummary" in utils_source
+    assert "if (!text) return '';" in utils_source
+    assert "text.match(/[^.!?]+[.!?]+/g) || [text]" in utils_source
+    assert "sentences.length <= 2" in utils_source
+    assert "sentences.slice(0, 2).join(' ')" in utils_source
+    assert "import { getMissionSummary } from './utils/missionSummary';" in app
+    assert "const getMissionSummary = (text) =>" not in app
+
+
 def test_approval_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")

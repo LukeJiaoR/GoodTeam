@@ -16,6 +16,7 @@ import { useApprovalEditor } from './hooks/useApprovalEditor';
 import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';
 import { useMessageFeeds } from './hooks/useMessageFeeds';
 import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';
+import { getMissionSummary } from './utils/missionSummary';
 import {
   LANGUAGE_PREFERENCE_AUTO,
 } from './i18n';
@@ -800,14 +801,6 @@ export default function App() {
     } finally {
       setGeneratingPrd(false);
     }
-  };
-
-  // Returns first two sentences of the idea prompt for default display
-  const getMissionSummary = (text) => {
-    if (!text) return '';
-    const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-    if (sentences.length <= 2) return text;
-    return sentences.slice(0, 2).join(' ');
   };
 
   const newProjectModal = (
