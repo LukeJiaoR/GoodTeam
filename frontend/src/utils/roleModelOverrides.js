@@ -12,3 +12,9 @@ export function parseRoleModelOverridesMap(roleModelOverrides) {
       .filter((parts) => parts.length === 2 && parts[0] && parts[1])
   );
 }
+
+export function formatRoleModelOverridesText(roleModelOverrides) {
+  return Object.entries(roleModelOverrides)
+    .map(([role, model]) => `${role}=${model}`)
+    .join('\n');
+}
