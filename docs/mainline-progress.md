@@ -11,7 +11,7 @@ reference, verification evidence, and follow-up status.
 | 1 | G3c global failure-pattern library | Routing outcome telemetry completed 2026-06-09 | Add deterministic global store, record worker failures, surface best-match evidence, expose readiness metrics, and record shadow/canary routing outcomes without expanding routing. | Related G3 regression `16 passed`; ruff/diff clean |
 | 2 | Dispatch provenance depth | Completed 2026-06-07 | Persist durable pre-review report capture and first-class review/land decision records beyond the existing air-drop land event. | `467 passed`; ruff clean; frontend build passed |
 | 3 | Self-hosting control plane | Dev Loop audit visibility completed 2026-06-09 | Render bounded read-only CP9 audit records in Dev Loop without expanding land/tag/graduate execution. | Frontend contract `17 passed`; lint/build passed |
-| 4 | Theme/App.jsx productization | Dev Loop audit card extraction completed 2026-06-09 | Keep Vivid and Minimal as permanent themes while shrinking Dev Loop/App shell code through focused component extraction without changing UI/theme styling. | Dev Loop/theme contract `23 passed`; frontend lint/build passed |
+| 4 | Theme/App.jsx productization | Dev Loop release readiness card extraction completed 2026-06-09 | Keep Vivid and Minimal as permanent themes while shrinking Dev Loop/App shell code through focused component extraction without changing UI/theme styling. | Dev Loop/theme contract `23 passed`; frontend lint/build passed |
 | 5 | Graph/DAG engine D2b/D3 | D3 parallel readiness evidence completed 2026-06-09 | Surface machine-readable readiness/blocker metadata for fake/read-only parallel planning versus still-blocked real-worker parallel execution. | Related D3/web regression `5 passed` + `6 passed`; ruff/diff clean |
 | 6 | i18n | Lightweight foundation completed 2026-06-07 | Browser/system auto mode plus persisted `auto` / `en` / `zh-CN` switcher and first dashboard chrome extraction. | `9 passed` focused frontend contracts; frontend build passed |
 | 7 | Backlog cleanup: pre-review report binding | Completed 2026-06-07 | Bind pre-review report/status selection to the current script invocation so concurrent or back-to-back code_review jobs cannot copy/fallback against another run's report. | `476 passed`; ruff clean; frontend build passed |
@@ -33,6 +33,45 @@ Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-06-09 — Theme/App.jsx productization: release readiness card extraction
+
+**Intent:** continue shrinking Dev Loop frontend surfaces by moving release
+readiness display into its own component without changing UI behavior, theme
+styling, or release execution semantics.
+
+**Implemented:**
+- Added `frontend/src/components/ReleaseReadinessCard.jsx`.
+- Moved the `Release Readiness` card out of `DevLoopTab.jsx`.
+- Preserved manual-copy `release_up_command` and `graduate_command` controls,
+  status badge branches, Dev/Release HEAD display, and existing surface/status
+  theme token classes.
+- Kept `DevLoopTab` responsible for Dev Loop data ownership and PR land-command
+  copy behavior; it now imports and mounts the extracted release readiness card.
+
+**Verification evidence:**
+- Red test:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes -q`
+  first failed because `ReleaseReadinessCard.jsx` did not exist.
+- Focused green:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py::test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes tests/test_web.py::test_frontend_contract_exposes_release_readiness_without_execution_controls -q`
+  -> `2 passed`.
+- Related Dev Loop/theme/frontend contract regression:
+  `PYTHONPATH=src /Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/python -m pytest tests/test_web.py -q -k 'release_readiness or dev_loop_page or theme_tokens or frontend_contract'`
+  -> `23 passed, 143 deselected`.
+- Frontend checks:
+  `cd frontend && npm run lint` -> exit 0.
+  `cd frontend && npm run build` -> Vite build succeeded.
+- Quality gates:
+  `/Users/luke/WorkSpace/codeAi/GoodTeam/.venv/bin/ruff check tests/test_web.py`
+  -> `All checks passed!`.
+- Whitespace:
+  `git diff --check` -> exit 0.
+
+**Deferred from this increment:**
+- Further Dev Loop card extraction.
+- Any visual redesign, theme-token conversion, or behavior change.
+- Any server-side release-up/graduate/tag execution change.
 
 ### 2026-06-09 — Theme/App.jsx productization: Dev Loop audit card extraction
 
