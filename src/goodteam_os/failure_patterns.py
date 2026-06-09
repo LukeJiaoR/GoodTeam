@@ -136,22 +136,40 @@ class FailurePatternLibrary:
             reverse=True,
         )
 
-    def routing_readiness_report(self, *, min_hits: int = 3) -> dict[str, object]:
+    def routing_readiness_report(
+        self,
+        *,
+        min_hits: int = 3,
+        min_confirmed: int = 3,
+        max_false_positive_rate: float = 0.0,
+    ) -> dict[str, object]:
         threshold = max(int(min_hits), 1)
+        quality_min_confirmed = max(int(min_confirmed), 1)
+        quality_max_false_positive_rate = max(float(max_false_positive_rate), 0.0)
         patterns = self.list_patterns()
         candidates = [
-            shadow_routing_candidate(pattern)
+            shadow_routing_candidate(
+                pattern,
+                min_confirmed=quality_min_confirmed,
+                max_false_positive_rate=quality_max_false_positive_rate,
+            )
             for pattern in patterns
             if int(pattern.get("hit_count", 0)) >= threshold
         ]
+        quality_gate = routing_quality_gate_summary(
+            candidates,
+            min_confirmed=quality_min_confirmed,
+            max_false_positive_rate=quality_max_false_positive_rate,
+        )
         return {
             "total_patterns": len(patterns),
             "total_hits": sum(int(pattern.get("hit_count", 0)) for pattern in patterns),
             "candidate_count": len(candidates),
             "min_hits": threshold,
             "routing_outcome_totals": routing_outcome_totals(patterns),
+            "routing_quality_gate": quality_gate,
             "routing_application": "deferred",
-            "routing_gate_satisfied": False,
+            "routing_gate_satisfied": bool(quality_gate.get("eligible_candidate_count", 0)),
             "shadow_routing": "enabled",
             "false_positive_review_required": True,
             "candidate_patterns": candidates,
@@ -255,7 +273,62 @@ def routing_outcome_totals(patterns: list[dict[str, object]]) -> dict[str, int]:
     return totals
 
 
-def shadow_routing_candidate(pattern: dict[str, object]) -> dict[str, object]:
+def routing_quality_summary(
+    pattern: dict[str, object],
+    *,
+    min_confirmed: int,
+    max_false_positive_rate: float,
+) -> dict[str, object]:
+    outcomes = routing_outcome_summary(pattern)
+    confirmed = int(outcomes.get("confirmed", 0) or 0)
+    false_positive = int(outcomes.get("false_positive", 0) or 0)
+    reviewed_total = confirmed + false_positive
+    false_positive_rate = false_positive / reviewed_total if reviewed_total else 0.0
+    blockers: list[str] = []
+    if confirmed < max(int(min_confirmed), 1):
+        blockers.append("confirmed_outcomes_below_minimum")
+    if false_positive_rate > max(float(max_false_positive_rate), 0.0):
+        blockers.append("false_positive_rate_above_maximum")
+    return {
+        "confirmed": confirmed,
+        "false_positive": false_positive,
+        "false_positive_rate": false_positive_rate,
+        "quality_gate_satisfied": not blockers,
+        "quality_gate_blockers": blockers,
+    }
+
+
+def routing_quality_gate_summary(
+    candidates: list[dict[str, object]],
+    *,
+    min_confirmed: int,
+    max_false_positive_rate: float,
+) -> dict[str, object]:
+    eligible = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate.get("routing_quality"), dict)
+        and bool(candidate["routing_quality"].get("quality_gate_satisfied", False))
+    ]
+    blocked = len(candidates) - len(eligible)
+    totals = routing_outcome_totals(candidates)
+    return {
+        "min_confirmed": max(int(min_confirmed), 1),
+        "max_false_positive_rate": max(float(max_false_positive_rate), 0.0),
+        "confirmed": totals["confirmed"],
+        "false_positive": totals["false_positive"],
+        "eligible_candidate_count": len(eligible),
+        "blocked_candidate_count": blocked,
+        "status": "satisfied_for_review" if eligible else "insufficient_quality_evidence",
+    }
+
+
+def shadow_routing_candidate(
+    pattern: dict[str, object],
+    *,
+    min_confirmed: int = 3,
+    max_false_positive_rate: float = 0.0,
+) -> dict[str, object]:
     candidate = dict(pattern)
     candidate["would_route_to"] = normalize_disposition(str(candidate.get("recommended_disposition", "")))
     candidate["confidence_inputs"] = {
@@ -264,6 +337,11 @@ def shadow_routing_candidate(pattern: dict[str, object]) -> dict[str, object]:
         "nodes": [str(node) for node in candidate.get("nodes", [])],
     }
     candidate["routing_outcomes"] = routing_outcome_summary(candidate)
+    candidate["routing_quality"] = routing_quality_summary(
+        candidate,
+        min_confirmed=min_confirmed,
+        max_false_positive_rate=max_false_positive_rate,
+    )
     return candidate
 
 

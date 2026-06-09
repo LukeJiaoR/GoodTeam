@@ -162,6 +162,91 @@ def test_failure_pattern_library_records_routing_outcomes_for_quality_review(tmp
     }
 
 
+def test_failure_pattern_library_reports_routing_quality_gate_without_expanding_routing(tmp_path):
+    library = FailurePatternLibrary(tmp_path)
+    stable = library.record_failure(
+        failure_class="network",
+        summary="503 Service Unavailable from registry.npmmirror.com",
+        disposition="escalate_human",
+        role="implementation",
+        node="implementation",
+        source="worker_failure:run-stable-1:implementation:implementation",
+    )
+    for index in range(3):
+        library.record_routing_outcome(
+            signature=str(stable["signature"]),
+            applied=True,
+            disposition="escalate_human",
+            deterministic_disposition="block",
+            reason="canary_allowed",
+            outcome="confirmed",
+            source=f"triage_decided:stable-{index}:implementation",
+        )
+
+    noisy = library.record_failure(
+        failure_class="timeout",
+        summary="Codex CLI timed out after 1800 seconds",
+        disposition="escalate_human",
+        role="qa",
+        node="implementation",
+        source="worker_failure:run-noisy-1:implementation:qa",
+    )
+    library.record_routing_outcome(
+        signature=str(noisy["signature"]),
+        applied=True,
+        disposition="escalate_human",
+        deterministic_disposition="block",
+        reason="canary_allowed",
+        outcome="confirmed",
+        source="triage_decided:noisy-1:implementation",
+    )
+    library.record_routing_outcome(
+        signature=str(noisy["signature"]),
+        applied=True,
+        disposition="escalate_human",
+        deterministic_disposition="block",
+        reason="manual_review_rejected",
+        outcome="false_positive",
+        source="triage_decided:noisy-2:implementation",
+    )
+
+    report = library.routing_readiness_report(
+        min_hits=1,
+        min_confirmed=3,
+        max_false_positive_rate=0.0,
+    )
+
+    assert report["routing_application"] == "deferred"
+    assert report["routing_gate_satisfied"] is True
+    assert report["routing_quality_gate"] == {
+        "min_confirmed": 3,
+        "max_false_positive_rate": 0.0,
+        "confirmed": 4,
+        "false_positive": 1,
+        "eligible_candidate_count": 1,
+        "blocked_candidate_count": 1,
+        "status": "satisfied_for_review",
+    }
+    candidates = {pattern["classifier_hint"]: pattern for pattern in report["candidate_patterns"]}
+    assert candidates["network"]["routing_quality"] == {
+        "confirmed": 3,
+        "false_positive": 0,
+        "false_positive_rate": 0.0,
+        "quality_gate_satisfied": True,
+        "quality_gate_blockers": [],
+    }
+    assert candidates["timeout"]["routing_quality"] == {
+        "confirmed": 1,
+        "false_positive": 1,
+        "false_positive_rate": 0.5,
+        "quality_gate_satisfied": False,
+        "quality_gate_blockers": [
+            "confirmed_outcomes_below_minimum",
+            "false_positive_rate_above_maximum",
+        ],
+    }
+
+
 def test_canary_routing_decision_applies_only_high_confidence_low_risk_patterns():
     pattern = {
         "signature": "fail:network",
