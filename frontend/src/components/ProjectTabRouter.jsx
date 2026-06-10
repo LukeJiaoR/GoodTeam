@@ -383,6 +383,7 @@ export default function ProjectTabRouter({
       {/* Tab: Approvals */}
       {activeTab === 'approvals' && (
         <ApprovalsTab
+          actionItems={actionItems}
           approvedCount={approvedCount}
           totalApprovalsCount={totalApprovalsCount}
           approvalProgressPercent={approvalProgressPercent}

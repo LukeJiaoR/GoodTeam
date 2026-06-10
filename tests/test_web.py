@@ -2260,6 +2260,29 @@ def test_spinner_component_is_extracted_from_app_shell():
     assert "import Spinner from './Spinner';" in router
 
 
+def test_frontend_contract_approvals_tab_audit_and_evidence():
+    root = Path(__file__).resolve().parents[1]
+    approvals_tab = (root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(encoding="utf-8")
+
+    # Assert ApprovalsTab is mounted in ProjectTabRouter with actionItems prop
+    assert "actionItems={actionItems}" in router
+
+    # Assert ApprovalsTab filters actionItems for approval_decided
+    assert "action === 'approval_decided'" in approvals_tab or 'action === "approval_decided"' in approvals_tab
+
+    # Assert ApprovalsTab renders audit panel and origin badges
+    assert "Approval Audit Trail" in approvals_tab
+    assert "getOriginBadgeStyle" in approvals_tab
+
+    # Assert ApprovalsTab renders evidence matrix and missing-evidence callouts
+    assert "Evidence Matrix" in approvals_tab
+    assert "MISSING-EVIDENCE" in approvals_tab
+
+    # Assert Submit Request is disabled on empty note
+    assert "changesRequestedNote.trim() === ''" in approvals_tab
+
+
 def test_status_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")

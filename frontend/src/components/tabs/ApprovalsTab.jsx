@@ -8,8 +8,10 @@ import {
   Sparkles,
   Unlock,
 } from 'lucide-react';
+import { formatHumanTime } from '../../utils/time';
 
 export default function ApprovalsTab({
+  actionItems = [],
   approvedCount,
   totalApprovalsCount,
   approvalProgressPercent,
@@ -483,241 +485,486 @@ export default function ApprovalsTab({
                           const isApproveLoading = approvingAction === `${selectedReview.approval}:approved`;
                           const isSelectedApprovalLoading = isRejectLoading || isRequestChangesLoading || isApproveLoading;
                           return (
-                            <div className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
-                              <div className="px-6 py-4 bg-surface-sunken border-b-2 border-border-subtle flex justify-between items-center">
-                                <div>
-                                  <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">Preview Panel</span>
-                                  <h3 className="font-extrabold text-sm text-text-secondary mt-0.5">{selectedReview.artifact.toUpperCase()} Review Details</h3>
-                                </div>
-                                <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>{selectedReview.decision.replace('_', ' ')}</span>
-                              </div>
+                             <>
+                               <div className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl overflow-hidden flex flex-col min-h-[500px]">
+                                 <div className="px-6 py-4 bg-surface-sunken border-b-2 border-border-subtle flex justify-between items-center">
+                                   <div>
+                                     <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">Preview Panel</span>
+                                     <h3 className="font-extrabold text-sm text-text-secondary mt-0.5">{selectedReview.artifact.toUpperCase()} Review Details</h3>
+                                   </div>
+                                   <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>{selectedReview.decision.replace('_', ' ')}</span>
+                                 </div>
 
-                              <div className="p-6 flex-grow space-y-6">
-                                {/* Role reviewers info list */}
-                                {selectedReview.review_roles && selectedReview.review_roles.length > 0 && (
-                                  <div className="border-2 border-border-subtle rounded-2xl p-4 bg-surface-base font-bold">
-                                    <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-2.5">Assigned Review Roles</h4>
-                                    <div className="flex flex-wrap gap-2">
-                                      {selectedReview.review_roles.map((role) => (
-                                        <span key={role} className="bg-surface-raised text-text-secondary text-2xs px-2.5 py-1 rounded-lg border border-border-subtle">{role}</span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
+                                 <div className="p-6 flex-grow space-y-6">
+                                   {/* Role reviewers info list */}
+                                   {selectedReview.review_roles && selectedReview.review_roles.length > 0 && (
+                                     <div className="border-2 border-border-subtle rounded-2xl p-4 bg-surface-base font-bold">
+                                       <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted mb-2.5">Assigned Review Roles</h4>
+                                       <div className="flex flex-wrap gap-2">
+                                         {selectedReview.review_roles.map((role) => (
+                                           <span key={role} className="bg-surface-raised text-text-secondary text-2xs px-2.5 py-1 rounded-lg border border-border-subtle">{role}</span>
+                                         ))}
+                                       </div>
+                                     </div>
+                                   )}
 
-                                {selectedReview.is_actionable && committee && (
-                                  <div className="border-2 border-dashed border-border-subtle rounded-2xl p-4 bg-status-warning-bg space-y-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                      <div>
-                                        <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Committee</h4>
-                                        {needsCommitteeDebate && (
-                                          <p className="text-2xs font-bold text-text-muted mt-1">Committee declared. Run debate to convene it.</p>
-                                        )}
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        {committee.convened && (
-                                          <span className="text-2xs font-extrabold uppercase tracking-wider text-accent-text">Convened</span>
-                                        )}
-                                        {needsCommitteeDebate && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleRunDebate(selectedReview.approval)}
-                                            disabled={isRunningDebate}
-                                            className="bg-surface-raised hover:bg-surface-base disabled:opacity-60 disabled:cursor-not-allowed border-2 border-border-subtle shadow-button text-text-secondary font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
-                                          >
-                                            <RefreshCw className={`h-3 w-3 ${isRunningDebate ? 'animate-spin' : ''}`} />
-                                            <span>{isRunningDebate ? 'Running debate...' : 'Run debate'}</span>
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                    {runDebateError && (
-                                      <div className="text-2xs font-bold text-status-danger">Debate run failed: {runDebateError}</div>
-                                    )}
-                                    {committeeAdvisors.length > 0 && (
-                                      <div className="flex flex-wrap gap-2">
-                                        {committeeAdvisors.map((role) => (
-                                          <span key={role} className="bg-surface-raised text-text-secondary text-2xs px-2.5 py-1 rounded-lg border border-border-subtle">{role}</span>
-                                        ))}
-                                      </div>
-                                    )}
-                                    {hasCommitteeMessages && (
-                                      <div className="space-y-2">
-                                        {committeeRootMessages.map(({ item, index }) => {
-                                          const parentKey = item.id || String(index);
-                                          return (
-                                            <div key={parentKey} className="space-y-2">
-                                              {renderDebateMessage(item)}
-                                              {(committeeRepliesByParent[item.id] || []).map(({ item: reply }) => renderDebateMessage(reply, 'ml-8'))}
-                                            </div>
-                                          );
-                                        })}
-                                        {committeeMessages.length > committeeRootMessages.length && committeeRootMessages.length === 0 && (
-                                          committeeMessages.map((message, index) => renderDebateMessage(message, index > 0 ? 'ml-8' : ''))
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
+                                   {/* Evidence Matrix */}
+                                   <div className="border-2 border-border-subtle rounded-2xl p-5 bg-surface-base space-y-4">
+                                     <div className="border-b border-border-subtle pb-2">
+                                       <h4 className="text-xs font-extrabold uppercase tracking-wider text-text-primary">Evidence Matrix</h4>
+                                       <p className="text-2xs text-text-muted">Verification artifacts and run checks for this gate.</p>
+                                     </div>
 
-                                {selectedReview.is_actionable && !committee && (
-                                  <div className="border-2 border-dashed border-border-subtle rounded-2xl p-4 bg-status-warning-bg space-y-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                      <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Gate Debate & Consensus</h4>
-                                      <div className="flex items-center gap-2">
-                                        {challengerMessages.length > 0 && (
-                                          <span className="text-2xs font-extrabold uppercase tracking-wider text-status-warning-text">{challengerMessages.length} Objections</span>
-                                        )}
-                                        <button
-                                          type="button"
-                                          onClick={() => handleRunDebate(selectedReview.approval)}
-                                          disabled={isRunningDebate}
-                                          className="bg-surface-raised hover:bg-surface-base disabled:opacity-60 disabled:cursor-not-allowed border-2 border-border-subtle shadow-button text-text-secondary font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
-                                        >
-                                          <RefreshCw className={`h-3 w-3 ${isRunningDebate ? 'animate-spin' : ''}`} />
-                                          <span>{isRunningDebate ? 'Running debate...' : 'Run debate'}</span>
-                                        </button>
-                                      </div>
-                                    </div>
-                                    {runDebateError && (
-                                      <div className="text-2xs font-bold text-status-danger">Debate run failed: {runDebateError}</div>
-                                    )}
-                                    {visibleGateDebate.loading && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
-                                      <div className="text-2xs font-bold text-text-muted">Loading debate...</div>
-                                    ) : visibleGateDebate.error && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
-                                      <div className="text-2xs font-bold text-status-danger">Debate unavailable.</div>
-                                    ) : debateMessages.length === 0 ? (
-                                      <div className="text-2xs font-bold text-text-muted">No debate recorded for this gate.</div>
-                                    ) : (
-                                      <div className="space-y-2">
-                                        {challengerMessages.map((message) => (
-                                          <div key={message.id} className="space-y-2">
-                                            {renderDebateMessage(message)}
-                                            {(ownerRepliesByParent[message.id] || []).map((reply) => renderDebateMessage(reply, 'ml-8'))}
-                                          </div>
-                                        ))}
-                                        {orphanOwnerReplies.map((message) => renderDebateMessage(message, 'ml-8'))}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
+                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                       {/* Slot: Artifact */}
+                                       <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
+                                         <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">Artifact</span>
+                                         {selectedReview.artifact_path ? (
+                                           <div className="space-y-1">
+                                             <span className="text-2xs font-bold text-status-success-text bg-status-success-bg px-2 py-0.5 rounded-full border border-status-success/30">Available</span>
+                                             <div className="text-2xs text-text-secondary mt-1">
+                                               <FilePath path={selectedReview.artifact_path} segments={1} />
+                                             </div>
+                                           </div>
+                                         ) : (
+                                           <span className="text-2xs font-bold text-status-danger-text bg-status-danger-bg px-2 py-0.5 rounded-full border border-status-danger/30 uppercase tracking-wider self-start">⚠️ Missing Evidence</span>
+                                         )}
+                                       </div>
 
-                                {/* Markdown artifact preview */}
-                                {selectedReview.note && (
-                                  <div className="bg-status-warning-bg border-2 border-status-warning/30 p-4 rounded-2xl space-y-1">
-                                    <div className="text-2xs font-extrabold uppercase tracking-wider text-status-warning-text font-sans">Reviewer Feedback Note</div>
-                                    <div className="text-xs text-text-secondary whitespace-pre-wrap font-mono leading-relaxed">{selectedReview.note}</div>
-                                  </div>
-                                )}
-                                <div className="space-y-2">
-                                  <h4 className="text-2xs font-bold uppercase tracking-wider text-text-muted">Content Preview</h4>
-                                  {selectedReview.content ? (
-                                    <div
-                                      className="prose prose-zinc max-w-none text-xs leading-relaxed font-mono bg-surface-base p-4 border border-border-subtle rounded-2xl max-h-96 overflow-y-auto whitespace-pre-wrap select-all select-text"
-                                    >
-                                      {selectedReview.content}
-                                    </div>
-                                  ) : (
-                                    <div className="text-center py-12 bg-surface-sunken border border-border-subtle rounded-xl text-text-secondary italic text-xs">
-                                      No artifact preview content available.
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
+                                       {/* Slot: Blockers */}
+                                       <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
+                                         <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">Blockers</span>
+                                         <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                       </div>
 
-                              {selectedReview.is_actionable && (
-                                <div className="bg-surface-base px-6 py-4 border-t-2 border-border-subtle flex flex-col items-stretch space-y-4">
-                                  {showChangesRequestedNoteKey === selectedReview.approval && (
-                                    <div className="flex flex-col space-y-2">
-                                      <label className="text-xs font-bold text-text-secondary">
-                                        What needs to change? The PRD will be revised to address this.
-                                      </label>
-                                      <textarea
-                                        value={changesRequestedNote}
-                                        onChange={(e) => setChangesRequestedNote(e.target.value)}
-                                        placeholder="Type feedback here..."
-                                        rows={3}
-                                        className="w-full p-3 border border-border-subtle bg-surface-raised text-text-secondary rounded-xl text-xs focus:ring-2 focus:ring-status-warning outline-none resize-none font-sans"
-                                      />
-                                      {changesRequestedNote.trim() === '' && (
-                                        <div className="text-status-warning-text text-2xs font-bold">
-                                          ⚠️ Feedback note is empty. Please provide detail so the model knows what to revise.
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  <div className="flex flex-col items-end space-y-2">
-                                    <div className="flex justify-end space-x-2">
-                                      {showChangesRequestedNoteKey === selectedReview.approval && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setShowChangesRequestedNoteKey(null);
-                                            setChangesRequestedNote('');
-                                          }}
-                                          disabled={actionLoading}
-                                          className="bg-surface-raised border-2 border-border-subtle shadow-button text-text-secondary font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
-                                        >
-                                          Cancel
-                                        </button>
-                                      )}
-                                      {showChangesRequestedNoteKey !== selectedReview.approval && (
-                                        <button
-                                          type="button"
-                                          onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
-                                          disabled={actionLoading}
-                                          className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle shadow-button text-status-danger font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                        >
-                                          {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
-                                          <span>{isRejectLoading ? 'Rejecting...' : 'Reject'}</span>
-                                        </button>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          if (showChangesRequestedNoteKey === selectedReview.approval) {
-                                            handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef, changesRequestedNote);
-                                          } else {
-                                            setShowChangesRequestedNoteKey(selectedReview.approval);
-                                          }
-                                        }}
-                                        disabled={actionLoading}
-                                        className="bg-surface-raised hover:bg-status-warning-bg border-2 border-border-subtle shadow-button text-status-warning font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                      >
-                                        {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
-                                        <span>
-                                          {showChangesRequestedNoteKey === selectedReview.approval
-                                            ? (isRequestChangesLoading ? 'Submitting...' : 'Submit Request')
-                                            : (isRequestChangesLoading ? 'Requesting...' : 'Request Changes')
-                                          }
-                                        </span>
-                                      </button>
-                                      {showChangesRequestedNoteKey !== selectedReview.approval && (
-                                        <button
-                                          type="button"
-                                          onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
-                                          disabled={actionLoading}
-                                          className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                        >
-                                          {isApproveLoading ? (
-                                            <RefreshCw className="h-4 w-4 animate-spin" />
-                                          ) : (
-                                            <Check className="h-4 w-4" />
-                                          )}
-                                          <span>{isApproveLoading ? 'Submitting...' : 'Approve Gate'}</span>
-                                        </button>
-                                      )}
-                                    </div>
-                                    {isSelectedApprovalLoading && (
-                                      <span className="text-2xs text-text-secondary animate-pulse text-right">
-                                        Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
+                                       {/* Slot: Debate */}
+                                       <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
+                                         <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">Gate Debate</span>
+                                         {debateMessages.length > 0 ? (
+                                           <span className="text-2xs font-bold text-status-info-text bg-status-info-bg px-2 py-0.5 rounded-full border border-status-info/30 uppercase tracking-wider self-start">
+                                             {debateMessages.length} Messages
+                                           </span>
+                                         ) : (
+                                           <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">None</span>
+                                         )}
+                                       </div>
+
+                                       {/* Slot: CI Status */}
+                                       <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
+                                         <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">CI Status</span>
+                                         <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                       </div>
+
+                                       {/* Slot: Smoke Status */}
+                                       <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
+                                         <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">Smoke Tests</span>
+                                         <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                       </div>
+
+                                       {/* Slot: QA Status */}
+                                       <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
+                                         <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">QA Verification</span>
+                                         <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                       </div>
+                                     </div>
+
+                                     {/* Missing Evidence Callouts */}
+                                     <div className="space-y-2">
+                                       {!selectedReview.artifact_path && (
+                                         <div className="bg-status-danger-bg text-status-danger-text border border-status-danger/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
+                                           <span>⚠️</span>
+                                           <span>MISSING-EVIDENCE: Artifact path is empty or unavailable. Review cannot proceed without target content.</span>
+                                         </div>
+                                       )}
+                                       <div className="bg-status-warning-bg text-status-warning-text border border-status-warning/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
+                                         <span>⚠️</span>
+                                         <span>MISSING-EVIDENCE: CI status is unknown. Build verification is recommended before gate approval.</span>
+                                       </div>
+                                       <div className="bg-status-warning-bg text-status-warning-text border border-status-warning/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
+                                         <span>⚠️</span>
+                                         <span>MISSING-EVIDENCE: Smoke tests status is unknown. Deployment smoke testing is recommended before gate approval.</span>
+                                       </div>
+                                       <div className="bg-status-warning-bg text-status-warning-text border border-status-warning/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
+                                         <span>⚠️</span>
+                                         <span>MISSING-EVIDENCE: QA verification status is unknown. QA checks are recommended before gate approval.</span>
+                                       </div>
+                                     </div>
+                                   </div>
+
+                                   {selectedReview.is_actionable && committee && (
+                                     <div className="border-2 border-dashed border-border-subtle rounded-2xl p-4 bg-status-warning-bg space-y-3">
+                                       <div className="flex items-center justify-between gap-3">
+                                         <div>
+                                           <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Committee</h4>
+                                           {needsCommitteeDebate && (
+                                             <p className="text-2xs font-bold text-text-muted mt-1">Committee declared. Run debate to convene it.</p>
+                                           )}
+                                         </div>
+                                         <div className="flex items-center gap-2">
+                                           {committee.convened && (
+                                             <span className="text-2xs font-extrabold uppercase tracking-wider text-accent-text">Convened</span>
+                                           )}
+                                           {needsCommitteeDebate && (
+                                             <button
+                                               type="button"
+                                               onClick={() => handleRunDebate(selectedReview.approval)}
+                                               disabled={isRunningDebate}
+                                               className="bg-surface-raised hover:bg-surface-base disabled:opacity-60 disabled:cursor-not-allowed border-2 border-border-subtle shadow-button text-text-secondary font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
+                                             >
+                                               <RefreshCw className={`h-3 w-3 ${isRunningDebate ? 'animate-spin' : ''}`} />
+                                               <span>{isRunningDebate ? 'Running debate...' : 'Run debate'}</span>
+                                             </button>
+                                           )}
+                                         </div>
+                                       </div>
+                                       {runDebateError && (
+                                         <div className="text-2xs font-bold text-status-danger">Debate run failed: {runDebateError}</div>
+                                       )}
+                                       {committeeAdvisors.length > 0 && (
+                                         <div className="flex flex-wrap gap-2">
+                                           {committeeAdvisors.map((role) => (
+                                             <span key={role} className="bg-surface-raised text-text-secondary text-2xs px-2.5 py-1 rounded-lg border border-border-subtle">{role}</span>
+                                           ))}
+                                         </div>
+                                       )}
+                                       {hasCommitteeMessages && (
+                                         <div className="space-y-2">
+                                           {committeeRootMessages.map(({ item, index }) => {
+                                             const parentKey = item.id || String(index);
+                                             return (
+                                               <div key={parentKey} className="space-y-2">
+                                                 {renderDebateMessage(item)}
+                                                 {(committeeRepliesByParent[item.id] || []).map(({ item: reply }) => renderDebateMessage(reply, 'ml-8'))}
+                                               </div>
+                                             );
+                                           })}
+                                           {committeeMessages.length > committeeRootMessages.length && committeeRootMessages.length === 0 && (
+                                             committeeMessages.map((message, index) => renderDebateMessage(message, index > 0 ? 'ml-8' : ''))
+                                           )}
+                                         </div>
+                                       )}
+                                     </div>
+                                   )}
+
+                                   {selectedReview.is_actionable && !committee && (
+                                     <div className="border-2 border-dashed border-border-subtle rounded-2xl p-4 bg-status-warning-bg space-y-3">
+                                       <div className="flex items-center justify-between gap-3">
+                                         <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Gate Debate & Consensus</h4>
+                                         <div className="flex items-center gap-2">
+                                           {challengerMessages.length > 0 && (
+                                             <span className="text-2xs font-extrabold uppercase tracking-wider text-status-warning-text">{challengerMessages.length} Objections</span>
+                                           )}
+                                           <button
+                                             type="button"
+                                             onClick={() => handleRunDebate(selectedReview.approval)}
+                                             disabled={isRunningDebate}
+                                             className="bg-surface-raised hover:bg-surface-base disabled:opacity-60 disabled:cursor-not-allowed border-2 border-border-subtle shadow-button text-text-secondary font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1.5"
+                                           >
+                                             <RefreshCw className={`h-3 w-3 ${isRunningDebate ? 'animate-spin' : ''}`} />
+                                             <span>{isRunningDebate ? 'Running debate...' : 'Run debate'}</span>
+                                           </button>
+                                         </div>
+                                       </div>
+                                       {runDebateError && (
+                                         <div className="text-2xs font-bold text-status-danger">Debate run failed: {runDebateError}</div>
+                                       )}
+                                       {visibleGateDebate.loading && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
+                                         <div className="text-2xs font-bold text-text-muted">Loading debate...</div>
+                                       ) : visibleGateDebate.error && visibleGateDebate.key.endsWith(`:${selectedReview.approval}`) ? (
+                                         <div className="text-2xs font-bold text-status-danger">Debate unavailable.</div>
+                                       ) : debateMessages.length === 0 ? (
+                                         <div className="text-2xs font-bold text-text-muted">No debate recorded for this gate.</div>
+                                       ) : (
+                                         <div className="space-y-2">
+                                           {challengerMessages.map((message) => (
+                                             <div key={message.id} className="space-y-2">
+                                               {renderDebateMessage(message)}
+                                               {(ownerRepliesByParent[message.id] || []).map((reply) => renderDebateMessage(reply, 'ml-8'))}
+                                             </div>
+                                           ))}
+                                           {orphanOwnerReplies.map((message) => renderDebateMessage(message, 'ml-8'))}
+                                         </div>
+                                       )}
+                                     </div>
+                                   )}
+
+                                   {/* Markdown artifact preview */}
+                                   {selectedReview.note && (
+                                     <div className="bg-status-warning-bg border-2 border-status-warning/30 p-4 rounded-2xl space-y-1">
+                                       <div className="text-2xs font-extrabold uppercase tracking-wider text-status-warning-text font-sans">Reviewer Feedback Note</div>
+                                       <div className="text-xs text-text-secondary whitespace-pre-wrap font-mono leading-relaxed">{selectedReview.note}</div>
+                                     </div>
+                                   )}
+                                   <div className="space-y-2">
+                                     <h4 className="text-2xs font-bold uppercase tracking-wider text-text-muted">Content Preview</h4>
+                                     {selectedReview.content ? (
+                                       <div
+                                         className="prose prose-zinc max-w-none text-xs leading-relaxed font-mono bg-surface-base p-4 border border-border-subtle rounded-2xl max-h-96 overflow-y-auto whitespace-pre-wrap select-all select-text"
+                                       >
+                                         {selectedReview.content}
+                                       </div>
+                                     ) : (
+                                       <div className="text-center py-12 bg-surface-sunken border border-border-subtle rounded-xl text-text-secondary italic text-xs">
+                                         No artifact preview content available.
+                                       </div>
+                                     )}
+                                   </div>
+                                 </div>
+
+                                 {selectedReview.is_actionable && (
+                                   <div className="bg-surface-base px-6 py-4 border-t-2 border-border-subtle flex flex-col items-stretch space-y-4">
+                                     {showChangesRequestedNoteKey === selectedReview.approval && (
+                                       <div className="flex flex-col space-y-2">
+                                         <label className="text-xs font-bold text-text-secondary">
+                                           What needs to change? The PRD will be revised to address this.
+                                         </label>
+                                         <textarea
+                                           value={changesRequestedNote}
+                                           onChange={(e) => setChangesRequestedNote(e.target.value)}
+                                           placeholder="Type feedback here..."
+                                           rows={3}
+                                           className="w-full p-3 border border-border-subtle bg-surface-raised text-text-secondary rounded-xl text-xs focus:ring-2 focus:ring-status-warning outline-none resize-none font-sans"
+                                         />
+                                         {changesRequestedNote.trim() === '' && (
+                                           <div className="text-status-warning-text text-2xs font-bold">
+                                             ⚠️ Feedback note is empty. Please provide detail so the model knows what to revise.
+                                           </div>
+                                         )}
+                                       </div>
+                                     )}
+                                     <div className="flex flex-col items-end space-y-2">
+                                       <div className="flex justify-end space-x-2">
+                                         {showChangesRequestedNoteKey === selectedReview.approval && (
+                                           <button
+                                             type="button"
+                                             onClick={() => {
+                                               setShowChangesRequestedNoteKey(null);
+                                               setChangesRequestedNote('');
+                                             }}
+                                             disabled={actionLoading}
+                                             className="bg-surface-raised border-2 border-border-subtle shadow-button text-text-secondary font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
+                                           >
+                                             Cancel
+                                           </button>
+                                         )}
+                                         {showChangesRequestedNoteKey !== selectedReview.approval && (
+                                           <button
+                                             type="button"
+                                             onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
+                                             disabled={actionLoading}
+                                             className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle shadow-button text-status-danger font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                           >
+                                             {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                             <span>{isRejectLoading ? 'Rejecting...' : 'Reject'}</span>
+                                           </button>
+                                         )}
+                                         <button
+                                           type="button"
+                                           onClick={() => {
+                                             if (showChangesRequestedNoteKey === selectedReview.approval) {
+                                               handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef, changesRequestedNote);
+                                             } else {
+                                               setShowChangesRequestedNoteKey(selectedReview.approval);
+                                             }
+                                           }}
+                                           disabled={actionLoading || (showChangesRequestedNoteKey === selectedReview.approval && changesRequestedNote.trim() === '')}
+                                           className="bg-surface-raised hover:bg-status-warning-bg border-2 border-border-subtle shadow-button text-status-warning font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                         >
+                                           {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                           <span>
+                                             {showChangesRequestedNoteKey === selectedReview.approval
+                                               ? (isRequestChangesLoading ? 'Submitting...' : 'Submit Request')
+                                               : (isRequestChangesLoading ? 'Requesting...' : 'Request Changes')
+                                             }
+                                           </span>
+                                         </button>
+                                         {showChangesRequestedNoteKey !== selectedReview.approval && (
+                                           <button
+                                             type="button"
+                                             onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
+                                             disabled={actionLoading}
+                                             className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                           >
+                                             {isApproveLoading ? (
+                                               <RefreshCw className="h-4 w-4 animate-spin" />
+                                             ) : (
+                                               <Check className="h-4 w-4" />
+                                             )}
+                                             <span>{isApproveLoading ? 'Submitting...' : 'Approve Gate'}</span>
+                                           </button>
+                                         )}
+                                       </div>
+                                       {isSelectedApprovalLoading && (
+                                         <span className="text-2xs text-text-secondary animate-pulse text-right">
+                                           Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
+                                         </span>
+                                       )}
+                                     </div>
+                                   </div>
+                                 )}
+                               </div>
+
+                               {/* Approval Audit Panel */}
+                               {(() => {
+                                 const filteredAudit = (actionItems || [])
+                                   .filter(item => {
+                                     const matchesGate = item.gate === selectedReview?.approval;
+                                     const matchesRun = !gateDebateRunId || !item.run_id || item.run_id === gateDebateRunId;
+                                     return item.action === 'approval_decided' && matchesGate && matchesRun;
+                                   });
+
+                                 function getOriginBadgeStyle(origin) {
+                                   switch (origin?.toLowerCase()) {
+                                     case 'web':
+                                       return 'bg-status-success-bg text-status-success-text border-status-success/30';
+                                     case 'telegram':
+                                       return 'bg-status-info-bg text-status-info-text border-status-info/30';
+                                     case 'cli':
+                                     case 'api':
+                                       return 'bg-surface-raised text-text-primary border-border-subtle';
+                                     case 'system':
+                                       return 'bg-status-warning-bg text-status-warning-text border-status-warning/30';
+                                     default:
+                                       return 'bg-surface-sunken text-text-muted border-border-subtle';
+                                   }
+                                 }
+
+                                 function getOriginLabel(origin) {
+                                   switch (origin?.toLowerCase()) {
+                                     case 'web': return 'Web';
+                                     case 'telegram': return 'Telegram';
+                                     case 'cli': return 'CLI·API';
+                                     case 'api': return 'CLI·API';
+                                     case 'system': return 'System';
+                                     default: return 'Unknown';
+                                   }
+                                 }
+
+                                 return (
+                                   <section className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5 space-y-4">
+                                     <div className="border-b-2 border-border-subtle pb-2">
+                                       <h3 className="font-extrabold text-sm text-text-primary uppercase tracking-wider">Approval Audit Trail</h3>
+                                       <p className="text-2xs text-text-muted">Historical decisions for the {selectedReview.approval} gate.</p>
+                                     </div>
+                                     {filteredAudit.length === 0 ? (
+                                       <div className="text-center py-6 text-text-secondary italic text-2xs">
+                                         No decisions recorded for this gate.
+                                       </div>
+                                     ) : (
+                                       <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
+                                         {filteredAudit.map((item, idx) => {
+                                           const origin = item.decision_origin || '';
+                                           const badgeStyle = getOriginBadgeStyle(origin);
+                                           const label = getOriginLabel(origin);
+                                           const isApproved = item.decision === 'approved';
+                                           const decisionBadge = isApproved
+                                             ? 'bg-status-success-bg text-status-success-text border-status-success/30'
+                                             : 'bg-status-danger-bg text-status-danger-text border-status-danger/30';
+
+                                           let reviewItems = item.review_items;
+                                           if (typeof reviewItems === 'string' && reviewItems.trim()) {
+                                             try {
+                                               reviewItems = JSON.parse(reviewItems);
+                                             } catch {
+                                               reviewItems = null;
+                                             }
+                                           }
+                                           if (!Array.isArray(reviewItems)) reviewItems = null;
+
+                                           let evidenceSnapshot = item.evidence_snapshot;
+                                           if (typeof evidenceSnapshot === 'string' && evidenceSnapshot.trim()) {
+                                             try {
+                                               evidenceSnapshot = JSON.parse(evidenceSnapshot);
+                                             } catch {
+                                               evidenceSnapshot = null;
+                                             }
+                                           }
+                                           if (typeof evidenceSnapshot !== 'object') evidenceSnapshot = null;
+
+                                           return (
+                                             <div key={idx} className="border border-border-subtle rounded-xl p-4 bg-surface-base space-y-2.5">
+                                               <div className="flex flex-wrap items-center justify-between gap-2">
+                                                 <div className="flex items-center space-x-2">
+                                                   <span className={`px-2 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${badgeStyle}`}>
+                                                     {label}
+                                                   </span>
+                                                   <span className={`px-2 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${decisionBadge}`}>
+                                                     {item.decision}
+                                                   </span>
+                                                 </div>
+                                                 <span className="text-2xs font-mono font-bold text-text-muted">
+                                                   {item.timestamp ? formatHumanTime(item.timestamp) : item.created_at ? formatHumanTime(item.created_at) : ''}
+                                                 </span>
+                                               </div>
+
+                                               <div className="grid grid-cols-2 gap-2 text-2xs text-text-secondary font-bold uppercase tracking-wider">
+                                                 {item.actor_ref && (
+                                                   <div>
+                                                     <span className="text-text-muted">Actor:</span> <span className="text-text-primary font-mono lowercase">{item.actor_ref}</span>
+                                                   </div>
+                                                 )}
+                                                 {item.review_mode && (
+                                                   <div>
+                                                     <span className="text-text-muted">Mode:</span> <span className="text-text-primary">{item.review_mode.replace(/_/g, ' ')}</span>
+                                                   </div>
+                                                 )}
+                                               </div>
+
+                                               {evidenceSnapshot && (
+                                                 <div className="text-2xs bg-surface-sunken p-2.5 rounded-lg border border-border-subtle space-y-1 text-text-secondary font-bold">
+                                                   <div className="uppercase tracking-wider text-text-muted mb-1">Evidence Snapshot</div>
+                                                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-2xs">
+                                                     <div>Artifacts: <span className="text-text-primary">{Array.isArray(evidenceSnapshot.artifact_refs) ? evidenceSnapshot.artifact_refs.length : 0}</span></div>
+                                                     <div>Blockers: <span className="text-text-primary">{evidenceSnapshot.blocker_count ?? 0}</span></div>
+                                                     <div>CI Status: <span className={`text-text-primary ${evidenceSnapshot.ci_status === 'passed' ? 'text-status-success-text' : evidenceSnapshot.ci_status === 'failed' ? 'text-status-danger-text' : ''}`}>{evidenceSnapshot.ci_status || 'unknown'}</span></div>
+                                                     <div>Smoke Status: <span className={`text-text-primary ${evidenceSnapshot.smoke_status === 'passed' ? 'text-status-success-text' : evidenceSnapshot.smoke_status === 'failed' ? 'text-status-danger-text' : ''}`}>{evidenceSnapshot.smoke_status || 'unknown'}</span></div>
+                                                     <div>QA Status: <span className={`text-text-primary ${evidenceSnapshot.qa_status === 'passed' ? 'text-status-success-text' : evidenceSnapshot.qa_status === 'failed' ? 'text-status-danger-text' : ''}`}>{evidenceSnapshot.qa_status || 'unknown'}</span></div>
+                                                   </div>
+                                                 </div>
+                                               )}
+
+                                               {reviewItems && reviewItems.length > 0 && (
+                                                 <div className="text-2xs space-y-2">
+                                                   <div className="uppercase tracking-wider text-text-muted font-bold">Item-Level Reviews</div>
+                                                   <div className="space-y-2 pl-2 border-l-2 border-border-subtle">
+                                                     {reviewItems.map((rItem, rIdx) => {
+                                                       const isOk = rItem.state === 'ok';
+                                                       const isFlagged = rItem.state === 'flagged';
+                                                       const stateDot = isOk ? 'bg-status-success' : isFlagged ? 'bg-status-danger' : 'bg-text-muted';
+                                                       const stateText = isOk ? 'text-status-success-text' : isFlagged ? 'text-status-danger-text' : 'text-text-muted';
+                                                       return (
+                                                         <div key={rIdx} className="space-y-1">
+                                                           <div className="flex items-center space-x-1.5 font-bold">
+                                                             <span className={`h-1.5 w-1.5 rounded-full ${stateDot}`} />
+                                                             <span className="text-text-primary">{rItem.title || rItem.id}</span>
+                                                             <span className={`capitalize ${stateText}`}>({rItem.state || 'unknown'})</span>
+                                                           </div>
+                                                           {rItem.note && (
+                                                             <p className="text-text-secondary pl-3 italic font-sans font-medium">{rItem.note}</p>
+                                                           )}
+                                                         </div>
+                                                       );
+                                                     })}
+                                                   </div>
+                                                 </div>
+                                               )}
+
+                                               {item.note && (
+                                                 <div className="pt-2 border-t border-border-subtle">
+                                                   <div className="text-2xs uppercase tracking-wider text-text-muted font-bold mb-1">Feedback Note</div>
+                                                   <p className="text-xs text-text-secondary whitespace-pre-wrap font-mono leading-relaxed bg-surface-sunken p-2.5 rounded-lg border border-border-subtle">{item.note}</p>
+                                                 </div>
+                                               )}
+                                             </div>
+                                           );
+                                         })}
+                                       </div>
+                                     )}
+                                   </section>
+                                 );
+                               })()}
+                             </>
+                           );
                         })()
                       ) : (
                         <div className="bg-surface-raised border border-border-subtle p-12 text-center text-text-secondary italic text-xs min-h-[500px] flex items-center justify-center rounded-2xl">
