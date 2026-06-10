@@ -1,12 +1,12 @@
 import json
 import os
 import re
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 from uuid import uuid4
+
+from telebot import apihelper
 
 
 TOKEN_ENV = "GOODTEAM_TG_BOT_TOKEN"
@@ -1317,12 +1317,53 @@ def decide_approval(**kwargs) -> dict[str, object]:
 
 
 def _telegram_request(token: str, method: str, params: dict[str, object]) -> dict[str, object]:
-    encoded = urllib.parse.urlencode(
-        {key: json.dumps(value) if isinstance(value, (dict, list)) else value for key, value in params.items()}
-    ).encode("utf-8")
-    request = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=encoded, method="POST")
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        if method == "sendMessage":
+            result = apihelper.send_message(
+                token,
+                chat_id=params["chat_id"],
+                text=params["text"],
+                parse_mode=params.get("parse_mode"),
+                reply_markup=_telegram_reply_markup(params.get("reply_markup")),
+            )
+        elif method == "editMessageText":
+            result = apihelper.edit_message_text(
+                token,
+                text=params["text"],
+                chat_id=params.get("chat_id"),
+                message_id=params.get("message_id"),
+                parse_mode=params.get("parse_mode"),
+                reply_markup=_telegram_reply_markup(params.get("reply_markup")),
+            )
+        elif method == "deleteMessage":
+            result = apihelper.delete_message(
+                token,
+                chat_id=params["chat_id"],
+                message_id=params["message_id"],
+            )
+        elif method == "answerCallbackQuery":
+            result = apihelper.answer_callback_query(
+                token,
+                callback_query_id=params["callback_query_id"],
+                text=params.get("text"),
+            )
+        elif method == "getUpdates":
+            result = apihelper.get_updates(
+                token,
+                offset=params.get("offset"),
+                timeout=params.get("timeout"),
+            )
+        else:
+            raise ValueError(f"Unsupported Telegram Bot API method: {method}")
+    except Exception as exc:
+        return {"ok": False, "description": str(exc)}
+    return {"ok": True, "result": result}
+
+
+def _telegram_reply_markup(value: object) -> object:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return value
 
 
 def _safe_part(value: str) -> str:
