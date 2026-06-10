@@ -106,6 +106,69 @@ def test_approval_keyboard_uses_inline_decision_buttons():
     assert keyboard["inline_keyboard"][0][1]["text"] == "Request changes"
 
 
+def test_telegram_request_uses_telebot_apihelper_and_preserves_raw_response_contract(monkeypatch):
+    calls = []
+
+    def fake_make_request(token, method_name, method="get", params=None, files=None):
+        calls.append(
+            {
+                "token": token,
+                "method_name": method_name,
+                "method": method,
+                "params": dict(params or {}),
+                "files": files,
+            }
+        )
+        if method_name == "sendMessage":
+            return {"message_id": 42, "chat": {"id": 12345}, "text": params["text"]}
+        if method_name == "getUpdates":
+            return [{"update_id": 7, "message": {"text": "/gt status"}}]
+        raise AssertionError(f"unexpected method {method_name}")
+
+    reply_markup = {"inline_keyboard": [[{"text": "Approve", "callback_data": "ok"}]]}
+    monkeypatch.setattr("telebot.apihelper._make_request", fake_make_request)
+
+    send_payload = telegram._telegram_request(
+        "secret-token",
+        "sendMessage",
+        {
+            "chat_id": "12345",
+            "text": "hello",
+            "parse_mode": "Markdown",
+            "reply_markup": reply_markup,
+        },
+    )
+    updates_payload = telegram._telegram_request("secret-token", "getUpdates", {"offset": 8, "timeout": 20})
+
+    assert send_payload == {"ok": True, "result": {"message_id": 42, "chat": {"id": 12345}, "text": "hello"}}
+    assert updates_payload == {"ok": True, "result": [{"update_id": 7, "message": {"text": "/gt status"}}]}
+    assert calls == [
+        {
+            "token": "secret-token",
+            "method_name": "sendMessage",
+            "method": "post",
+            "params": {
+                "chat_id": "12345",
+                "text": "hello",
+                "parse_mode": "Markdown",
+                "reply_markup": json.dumps(reply_markup),
+            },
+            "files": None,
+        },
+        {
+            "token": "secret-token",
+            "method_name": "getUpdates",
+            "method": "get",
+            "params": {
+                "offset": 8,
+                "timeout": 20,
+                "long_polling_timeout": 10,
+            },
+            "files": None,
+        },
+    ]
+
+
 def test_send_approval_notification_posts_message_with_inline_keyboard(monkeypatch):
     calls = []
 

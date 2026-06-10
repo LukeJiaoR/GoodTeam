@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Local-first control layer for AI software delivery"
 requires-python = ">=3.11"
 dependencies = [
+  "pyTelegramBotAPI>=4.0",
   "rank-bm25>=0.2.2",
 ]
 
