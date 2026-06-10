@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, UTC, timedelta
 
 from goodteam_os.telegram import (
@@ -314,6 +315,24 @@ def test_final_decision_approves_workflow(tmp_path, monkeypatch):
     # StateStore shows approved
     current_state = StateStore(tmp_path).read_project_current("CONTENTOPS")
     assert current_state.approvals["staging"] == ApprovalDecision.APPROVED
+
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    approval_action = next(action for action in actions if action["action"] == "approval_decided")
+    assert approval_action["decision_origin"] == "telegram"
+    assert approval_action["actor_ref"] == "telegram:user:111"
+    assert approval_action["review_mode"] == "step_by_step"
+    assert approval_action["review_session_id"] == session_id
+    assert approval_action["client_context"] == {
+        "telegram_chat_id": "12345",
+        "telegram_message_id": "9999",
+        "telegram_user_id": "111",
+    }
+    assert approval_action["review_items"] == [
+        {"id": "acceptance", "title": "验收", "state": "ok", "note": ""}
+    ]
 
 
 def test_sync_web_decision_updates_telegram(tmp_path, monkeypatch):

@@ -116,6 +116,13 @@ def append_action(
     artifact_path: str = "",
     debate_ref: str = "",
     note: str = "",
+    decision_origin: str = "",
+    actor_ref: str = "",
+    review_mode: str = "",
+    review_session_id: str = "",
+    client_context: dict[str, object] | None = None,
+    evidence_snapshot: dict[str, object] | None = None,
+    review_items: list[dict[str, object]] | None = None,
 ) -> None:
     action_log = _action_log_path(workspace, project_key)
     action_log.parent.mkdir(parents=True, exist_ok=True)
@@ -135,6 +142,20 @@ def append_action(
         event["debate_ref"] = debate_ref
     if note:
         event["note"] = note
+    if decision_origin:
+        event["decision_origin"] = decision_origin
+    if actor_ref:
+        event["actor_ref"] = actor_ref
+    if review_mode:
+        event["review_mode"] = review_mode
+    if review_session_id:
+        event["review_session_id"] = review_session_id
+    if client_context:
+        event["client_context"] = client_context
+    if evidence_snapshot:
+        event["evidence_snapshot"] = evidence_snapshot
+    if review_items:
+        event["review_items"] = review_items
     with action_log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event) + "\n")
 
@@ -169,6 +190,96 @@ def current_approval_gate(state: AgileDevState | None) -> str:
     return gate
 
 
+def build_approval_evidence_snapshot(
+    *,
+    state: AgileDevState | object | None,
+    workspace: Path,
+    project_key: str,
+    debate_ref: str = "",
+) -> dict[str, object]:
+    snapshot: dict[str, object] = {
+        "artifact_refs": [],
+        "worker_job_refs": [],
+        "ci_status": "unknown",
+        "smoke_status": "unknown",
+        "qa_status": "unknown",
+        "screenshot_refs": [],
+        "debate_refs": [debate_ref] if debate_ref else [],
+        "blocker_count": 0,
+        "provenance_refs": [],
+    }
+    try:
+        artifacts = getattr(state, "artifacts", {}) if state is not None else {}
+        approvals = getattr(state, "approvals", {}) if state is not None else {}
+        artifact_refs: set[str] = set()
+        if isinstance(artifacts, dict):
+            artifact_refs.update(str(key) for key, value in artifacts.items() if str(key).strip() and str(value).strip())
+        if isinstance(approvals, dict):
+            approval_map = approval_artifact_map()
+            artifact_refs.update(
+                str(approval_map.get(str(gate), str(gate)))
+                for gate in approvals
+                if isinstance(artifacts, dict) and str(approval_map.get(str(gate), str(gate))) in artifacts
+            )
+        snapshot["artifact_refs"] = sorted(artifact_refs)
+    except Exception:
+        snapshot["artifact_refs"] = []
+
+    try:
+        blockers = getattr(state, "blockers", []) if state is not None else []
+        snapshot["blocker_count"] = len(blockers) if isinstance(blockers, list) else 0
+    except Exception:
+        snapshot["blocker_count"] = 0
+
+    try:
+        run_id = str(getattr(state, "run_id", "") or "")
+        project_roots: list[Path] = []
+        source_ref = str(getattr(state, "source_ref", "") or "") if state is not None else ""
+        if source_ref and source_ref != "manual":
+            source_path = Path(source_ref)
+            if source_path.is_file():
+                try:
+                    target = load_project_target(source_path)
+                    repos = target.get("repos", {})
+                    if isinstance(repos, dict) and repos:
+                        project_roots.append(
+                            resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()})
+                        )
+                    else:
+                        project_roots.append(source_path.parent)
+                except Exception:
+                    project_roots.append(source_path.parent)
+        try:
+            config_path = _project_config_for_key(workspace, project_key)
+            target = load_project_target(config_path)
+            repos = target.get("repos", {})
+            if isinstance(repos, dict) and repos:
+                project_roots.append(resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()}))
+            else:
+                project_roots.append(config_path.parent)
+        except Exception:
+            project_roots.append(workspace)
+
+        seen_roots: set[Path] = set()
+        worker_refs: set[str] = set()
+        for root in project_roots:
+            resolved = root.resolve()
+            if resolved in seen_roots:
+                continue
+            seen_roots.add(resolved)
+            for job in WorkerJobStore(resolved).list_jobs():
+                if run_id and str(job.get("run_id", "")) != run_id:
+                    continue
+                job_id = str(job.get("id", "") or job.get("job_id", ""))
+                if job_id:
+                    worker_refs.add(job_id)
+        snapshot["worker_job_refs"] = sorted(worker_refs)
+    except Exception:
+        snapshot["worker_job_refs"] = []
+
+    return snapshot
+
+
 def _action_log_path(workspace: Path, project_key: str = "") -> Path:
     if project_key:
         return StateStore(workspace).project_state_dir(project_key) / "action-log.jsonl"
@@ -199,7 +310,7 @@ def build_action_title(action: dict[str, str]) -> str:
     return f"{actor} {action_type.replace('_', ' ')}".strip()
 
 
-def build_action_items(workspace: Path, project_key: str = "") -> list[dict[str, str]]:
+def build_action_items(workspace: Path, project_key: str = "") -> list[dict[str, object]]:
     action_log = _action_log_path(workspace, project_key)
     if not action_log.is_file():
         return []
@@ -211,7 +322,10 @@ def build_action_items(workspace: Path, project_key: str = "") -> list[dict[str,
             raw = json.loads(line)
         except json.JSONDecodeError:
             continue
-        action = {key: str(value) for key, value in raw.items()}
+        action = {
+            key: value if key in {"client_context", "evidence_snapshot", "review_items"} else str(value)
+            for key, value in raw.items()
+        }
         before_node = action.get("before_node", "")
         after_node = action.get("after_node", "")
         action["title"] = build_action_title(action)
@@ -2287,6 +2401,12 @@ def decide_approval(
     project_key: str = "",
     debate_ref: str = "",
     note: str = "",
+    decision_origin: str = "web",
+    actor_ref: str = "",
+    review_mode: str = "",
+    review_session_id: str = "",
+    client_context: dict[str, object] | None = None,
+    review_items: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     approved_next = approved_next_for_gate(approval)
 
@@ -2305,6 +2425,15 @@ def decide_approval(
     if state.next_node != f"await_{approval}_approval":
         raise ValueError(f"Approval gate is not currently actionable: {approval}")
 
+    resolved_actor_ref = actor_ref
+    if not resolved_actor_ref and decision_origin == "web":
+        resolved_actor_ref = os.getenv("GOODTEAM_OPERATOR_REF") or "web:local"
+    evidence_snapshot = build_approval_evidence_snapshot(
+        state=state,
+        workspace=workspace,
+        project_key=key,
+        debate_ref=debate_ref,
+    )
     before_node = state.next_node
     state.approvals[approval] = approval_decision
     state.current_node = f"{approval}_review_gate"
@@ -2322,6 +2451,14 @@ def decide_approval(
         artifact=approval_artifact_map().get(approval, approval),
         artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
         debate_ref=debate_ref,
+        note=note.strip(),
+        decision_origin=decision_origin,
+        actor_ref=resolved_actor_ref,
+        review_mode=review_mode,
+        review_session_id=review_session_id,
+        client_context=client_context,
+        evidence_snapshot=evidence_snapshot,
+        review_items=review_items,
     )
     if approval == "takeover" and approval_decision == ApprovalDecision.APPROVED:
         regenerate_before_node = state.next_node

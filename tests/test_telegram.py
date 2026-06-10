@@ -181,6 +181,14 @@ def test_process_telegram_update_enforces_allowlist_and_idempotency(tmp_path, mo
     assert denied["status"] == "ignored"
     assert len(calls) == 1
     assert calls[0]["project_key"] == "CONTENTOPS"
+    assert calls[0]["decision_origin"] == "telegram"
+    assert calls[0]["actor_ref"] == "telegram:user:111"
+    assert calls[0]["review_mode"] == "quick"
+    assert calls[0]["client_context"] == {
+        "telegram_chat_id": "",
+        "telegram_message_id": "",
+        "telegram_user_id": "111",
+    }
 
 
 def test_legacy_callback_rejects_stale_run(tmp_path, monkeypatch):
@@ -352,6 +360,16 @@ def test_legacy_callback_current_actionable_gate_applies_decision(tmp_path, monk
             "project_key": "CONTENTOPS",
             "approval": "prd",
             "decision": "approved",
+            "decision_origin": "telegram",
+            "actor_ref": "telegram:user:111",
+            "review_mode": "quick",
+            "review_session_id": "",
+            "client_context": {
+                "telegram_chat_id": "",
+                "telegram_message_id": "",
+                "telegram_user_id": "111",
+            },
+            "review_items": [],
         }
     ]
     assert telegram_requests == []
