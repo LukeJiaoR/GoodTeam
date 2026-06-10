@@ -89,6 +89,62 @@ def mask_sensitive_data(text: str) -> str:
     return text
 
 
+def _telegram_client_context(*, chat_id: object = "", message_id: object = "", user_id: object = "") -> dict[str, str]:
+    return {
+        "telegram_chat_id": str(chat_id) if chat_id else "",
+        "telegram_message_id": str(message_id) if message_id else "",
+        "telegram_user_id": str(user_id) if user_id else "",
+    }
+
+
+def _session_review_items(session: dict[str, object]) -> list[dict[str, str]]:
+    review_items = []
+    items = session.get("items", [])
+    if not isinstance(items, list):
+        return review_items
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        state = str(item.get("state", "") or "")
+        if state not in {"ok", "flagged", "skipped"}:
+            state = "not_reviewed"
+        review_items.append(
+            {
+                "id": str(item.get("id", "")),
+                "title": str(item.get("title", "")),
+                "state": state,
+                "note": mask_sensitive_data(str(item.get("note", "") or "")),
+            }
+        )
+    return review_items
+
+
+def _session_was_reviewed(session: dict[str, object]) -> bool:
+    items = session.get("items", [])
+    return isinstance(items, list) and any(
+        isinstance(item, dict) and str(item.get("state", "")) in {"ok", "flagged", "skipped"} for item in items
+    )
+
+
+def _telegram_decision_audit_kwargs(
+    *,
+    user_id: str,
+    chat_id: object = "",
+    message_id: object = "",
+    review_mode: str,
+    review_session_id: str = "",
+    review_items: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
+    return {
+        "decision_origin": "telegram",
+        "actor_ref": f"telegram:user:{user_id}",
+        "review_mode": review_mode,
+        "review_session_id": review_session_id,
+        "client_context": _telegram_client_context(chat_id=chat_id, message_id=message_id, user_id=user_id),
+        "review_items": review_items or [],
+    }
+
+
 def split_artifact_into_review_items(gate: str, content: str) -> list[dict[str, str]]:
     if not content:
         return _default_items_for_gate(gate)
@@ -739,11 +795,20 @@ def process_telegram_update(
         message_id = int(callback.get("message", {}).get("message_id", 0))
 
         if action == "A":
+            review_mode = "step_by_step" if _session_was_reviewed(session) else "quick"
             decide_approval(
                 workspace=workspace,
                 project_key=str(session["project_key"]),
                 approval=str(session["gate"]),
                 decision="approved",
+                **_telegram_decision_audit_kwargs(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    review_mode=review_mode,
+                    review_session_id=session_id,
+                    review_items=_session_review_items(session) if review_mode == "step_by_step" else [],
+                ),
             )
             session["decided"] = True
             store.save(session_id, session)
@@ -766,6 +831,14 @@ def process_telegram_update(
                 project_key=str(session["project_key"]),
                 approval=str(session["gate"]),
                 decision="changes_requested",
+                **_telegram_decision_audit_kwargs(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    review_mode="request_changes_with_notes",
+                    review_session_id=session_id,
+                    review_items=_session_review_items(session),
+                ),
             )
             session["decided"] = True
             store.save(session_id, session)
@@ -808,6 +881,14 @@ def process_telegram_update(
                 project_key=str(session["project_key"]),
                 approval=str(session["gate"]),
                 decision="rejected",
+                **_telegram_decision_audit_kwargs(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    review_mode="reject_confirmed",
+                    review_session_id=session_id,
+                    review_items=_session_review_items(session),
+                ),
             )
             session["decided"] = True
             store.save(session_id, session)
@@ -968,6 +1049,10 @@ def process_telegram_update(
         project_key=approval.project_key,
         approval=approval.gate,
         decision=approval.decision,
+        **_telegram_decision_audit_kwargs(
+            user_id=user_id,
+            review_mode="quick",
+        ),
     )
     processed_callbacks.add(callback_id)
     return {"status": "processed", "callback_id": callback_id}

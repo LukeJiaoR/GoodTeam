@@ -13,6 +13,7 @@ from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
 from goodteam_os.web import (
+    build_approval_evidence_snapshot,
     build_action_items,
     build_agile_board,
     build_dev_loop,
@@ -5280,6 +5281,130 @@ def test_decide_approval_can_request_changes(tmp_path):
     assert payload["next_node"] == "await_prd_approval"
     assert Path(payload["artifacts"]["prd"]).is_file()
     assert "prd" not in payload["change_requests"]
+
+
+def test_decide_approval_writes_default_web_audit_metadata(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOODTEAM_OPERATOR_REF", raising=False)
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    state.artifacts["prd"] = "/tmp/prd.md"
+    state.blockers = ["missing acceptance evidence"]
+    StateStore(tmp_path).write_project_current(state)
+
+    decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="prd",
+        decision="changes_requested",
+        debate_ref="debate-1",
+    )
+
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    approval_action = actions[0]
+    assert approval_action["action"] == "approval_decided"
+    assert approval_action["decision_origin"] == "web"
+    assert approval_action["actor_ref"] == "web:local"
+    assert approval_action["evidence_snapshot"] == {
+        "artifact_refs": ["prd"],
+        "worker_job_refs": [],
+        "ci_status": "unknown",
+        "smoke_status": "unknown",
+        "qa_status": "unknown",
+        "screenshot_refs": [],
+        "debate_refs": ["debate-1"],
+        "blocker_count": 1,
+        "provenance_refs": [],
+    }
+
+    items = build_action_items(tmp_path, project_key="CONTENTOPS")
+    approval_item = next(item for item in items if item["action"] == "approval_decided")
+    assert approval_item["decision_origin"] == "web"
+    assert approval_item["actor_ref"] == "web:local"
+    assert approval_item["evidence_snapshot"]["debate_refs"] == ["debate-1"]
+
+
+def test_decide_approval_uses_operator_ref_env_for_web_actor(tmp_path, monkeypatch):
+    monkeypatch.setenv("GOODTEAM_OPERATOR_REF", "web:user:luke")
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    StateStore(tmp_path).write_project_current(state)
+
+    decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="prd",
+        decision="changes_requested",
+    )
+
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert actions[0]["decision_origin"] == "web"
+    assert actions[0]["actor_ref"] == "web:user:luke"
+
+
+def test_decide_approval_accepts_existing_metadata_less_callers(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    StateStore(tmp_path).write_project_current(state)
+
+    payload = decide_approval(workspace=tmp_path, project_key="CONTENTOPS", approval="prd", decision="changes_requested")
+
+    assert payload["approvals"]["prd"] == "pending"
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert actions[0]["actor_ref"] == "web:local"
+
+
+def test_build_approval_evidence_snapshot_skips_worker_jobs_without_run_id(tmp_path):
+    job = WorkerJobStore(tmp_path).create_job(
+        run_id="run-other",
+        role="qa",
+        adapter="noop",
+        task="Verify another run",
+        context="Context",
+    )
+    state = create_initial_state("", "CONTENTOPS", "Existing AI content studio run")
+
+    snapshot = build_approval_evidence_snapshot(
+        state=state,
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        debate_ref="",
+    )
+
+    assert job["id"]
+    assert snapshot["worker_job_refs"] == []
+
+
+def test_build_approval_evidence_snapshot_is_failure_safe_on_missing_data(tmp_path):
+    snapshot = build_approval_evidence_snapshot(
+        state=object(),
+        workspace=tmp_path / "missing-workspace",
+        project_key="MISSING",
+        debate_ref="",
+    )
+
+    assert snapshot == {
+        "artifact_refs": [],
+        "worker_job_refs": [],
+        "ci_status": "unknown",
+        "smoke_status": "unknown",
+        "qa_status": "unknown",
+        "screenshot_refs": [],
+        "debate_refs": [],
+        "blocker_count": 0,
+        "provenance_refs": [],
+    }
 
 
 def test_decide_approval_rejects_prd_by_regenerating_for_review(tmp_path):
