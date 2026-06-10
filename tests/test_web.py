@@ -1234,6 +1234,27 @@ def test_build_approval_recommendation_never_raises_on_missing_data(tmp_path):
 
 
 def test_build_approval_reviews_actionable_review_carries_recommendation(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    config_dir = tmp_path / "projects"
+    config_dir.mkdir()
+    (config_dir / "gto.local.yaml").write_text(
+        f"name: GoodTeam\nkey: GTO\nrepos:\n  app: {project_root}\n",
+        encoding="utf-8",
+    )
+    manifest_dir = project_root / ".goodteam" / "provenance" / "pr-42"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "pr": 42,
+                "branch": "feat/provenance",
+                "ci_status": "passed",
+                "squash_merge_sha": "abc123",
+            }
+        ),
+        encoding="utf-8",
+    )
     prd = tmp_path / "prd.md"
     prd.write_text("# PRD\n\nReady.", encoding="utf-8")
     state = create_initial_state("run-1", "GTO", "Build AI Team OS")
@@ -1245,6 +1266,9 @@ def test_build_approval_reviews_actionable_review_carries_recommendation(tmp_pat
     prd_review = next(review for review in reviews if review["approval"] == "prd")
     rfc_review = next(review for review in reviews if review["approval"] == "rfc")
     assert isinstance(prd_review["recommendation"], dict)
+    assert isinstance(prd_review["evidence_snapshot"]["provenance_refs"], list)
+    assert prd_review["evidence_snapshot"]["provenance_refs"][0]["pr"] == "42"
+    assert prd_review["evidence_snapshot"]["provenance_refs"][0]["branch"] == "feat/provenance"
     assert "recommendation" not in rfc_review
 
 

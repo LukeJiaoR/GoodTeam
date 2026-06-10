@@ -3320,6 +3320,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
                 workspace=workspace,
                 project_key=state.project_key,
             )
+            review["evidence_snapshot"] = evidence_snapshot
             review["recommendation"] = build_approval_recommendation(
                 state=state,
                 review=review,
