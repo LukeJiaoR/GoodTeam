@@ -1,4 +1,6 @@
 import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 import goodteam_os.telegram as telegram
@@ -7,6 +9,7 @@ from goodteam_os.telegram import (
     build_approval_keyboard,
     decode_callback_data,
     encode_callback_data,
+    poll_telegram_approvals,
     process_telegram_update,
     telegram_config_from_env,
 )
@@ -25,6 +28,37 @@ def write_project_state(
         state.approvals.update(approvals)
     StateStore(tmp_path).write_project_current(state)
     return state
+
+
+def write_project_config(tmp_path, project_root: Path) -> Path:
+    project_root.mkdir(parents=True, exist_ok=True)
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    config_path = projects_dir / "contentops.local.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "name: AI Content Studio",
+                "key: CONTENTOPS",
+                "repos:",
+                f"  app: {project_root}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def telegram_text_update(text: str, *, user_id: int = 111, chat_id: int = 12345, message_id: int = 10):
+    return {
+        "message": {
+            "message_id": message_id,
+            "from": {"id": user_id},
+            "chat": {"id": chat_id},
+            "text": text,
+        }
+    }
 
 
 def test_telegram_config_reads_only_env_metadata(monkeypatch):
@@ -373,3 +407,254 @@ def test_legacy_callback_current_actionable_gate_applies_decision(tmp_path, monk
         }
     ]
     assert telegram_requests == []
+
+
+def test_poll_telegram_approvals_still_processes_approval_callback(tmp_path, monkeypatch):
+    decisions = []
+    telegram_requests = []
+    write_project_state(tmp_path)
+
+    def fake_decide_approval(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    def fake_telegram_request(token, method, params):
+        telegram_requests.append({"token": token, "method": method, "params": params})
+        if method == "getUpdates":
+            return {
+                "ok": True,
+                "result": [
+                    {
+                        "update_id": 7,
+                        "callback_query": {
+                            "id": "callback-poll",
+                            "from": {"id": 111},
+                            "data": "gt:CONTENTOPS:run-1:prd:approved",
+                        },
+                    }
+                ],
+            }
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.setenv("GOODTEAM_TG_ALLOWED_USERS", "111")
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide_approval)
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = poll_telegram_approvals(workspace=tmp_path, project_key="CONTENTOPS", once=True)
+
+    assert result == {"processed": 1, "offset": 8}
+    assert decisions[0]["decision"] == "approved"
+    assert decisions[0]["decision_origin"] == "telegram"
+    assert telegram_requests[-1] == {
+        "token": "secret-token",
+        "method": "answerCallbackQuery",
+        "params": {
+            "callback_query_id": "callback-poll",
+            "text": "GoodTeam approval recorded.",
+        },
+    }
+
+
+def test_gt_status_command_sends_masked_active_run_summary(tmp_path, monkeypatch):
+    calls = []
+    project_root = tmp_path / "runtime"
+    write_project_config(tmp_path, project_root)
+    state = write_project_state(tmp_path)
+    state.current_node = "architect"
+    state.blockers = ["needs staging evidence", "waiting on qa"]
+    StateStore(tmp_path).write_project_current(state)
+    now = datetime.now(UTC)
+    job_root = project_root / ".goodteam" / "workers" / "jobs" / "job-1"
+    job_root.mkdir(parents=True)
+    (job_root / "job.json").write_text(
+        json.dumps(
+            {
+                "id": "job-1",
+                "run_id": "run-1",
+                "role": "qa",
+                "status": "running",
+                "created_at": (now - timedelta(minutes=4)).isoformat(),
+                "updated_at": now.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (job_root / "status.json").write_text(
+        json.dumps({"job_id": "job-1", "run_id": "run-1", "role": "qa", "status": "running"}),
+        encoding="utf-8",
+    )
+
+    def fake_telegram_request(token, method, params):
+        calls.append({"token": token, "method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt status"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "status"}
+    assert calls[0]["method"] == "sendMessage"
+    text = calls[0]["params"]["text"]
+    assert "Project: CONTENTOPS" in text
+    assert "Run: run-1" in text
+    assert "Current node: architect" in text
+    assert "Pending gate: prd" in text
+    assert "Active workers: 1" in text
+    assert "Blockers: 2" in text
+
+
+def test_gt_command_rejects_unauthorized_user(tmp_path):
+    write_project_state(tmp_path)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt status", user_id=999),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "ignored", "reason": "unauthorized user"}
+
+
+def test_gt_workers_masks_worker_error_paths_and_ips(tmp_path, monkeypatch):
+    calls = []
+    project_root = tmp_path / "runtime"
+    write_project_config(tmp_path, project_root)
+    write_project_state(tmp_path)
+    now = datetime.now(UTC)
+    job_root = project_root / ".goodteam" / "workers" / "jobs" / "job-secret"
+    job_root.mkdir(parents=True)
+    stderr_path = job_root / "stderr.txt"
+    stderr_path.write_text("failed opening /Users/luke/private/app on 10.1.2.3\n", encoding="utf-8")
+    (job_root / "job.json").write_text(
+        json.dumps(
+            {
+                "id": "job-secret",
+                "run_id": "run-1",
+                "role": "implementation",
+                "status": "failed",
+                "created_at": (now - timedelta(seconds=90)).isoformat(),
+                "updated_at": now.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (job_root / "status.json").write_text(
+        json.dumps(
+            {
+                "job_id": "job-secret",
+                "run_id": "run-1",
+                "role": "implementation",
+                "status": "failed",
+                "stderr_path": str(stderr_path),
+                "summary": "failed opening /Users/luke/private/app on 10.1.2.3",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_telegram_request(token, method, params):
+        calls.append({"token": token, "method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt workers"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "workers"}
+    text = calls[0]["params"]["text"]
+    assert "job-secret" in text
+    assert "implementation" in text
+    assert "failed" in text
+    assert "local-workspace-dir" in text
+    assert "staging-ip" in text
+    assert "/Users/luke/private/app" not in text
+    assert "10.1.2.3" not in text
+
+
+def test_gt_evidence_command_uses_unknown_when_data_is_missing(tmp_path, monkeypatch):
+    calls = []
+    write_project_state(tmp_path)
+
+    def fake_telegram_request(token, method, params):
+        calls.append({"token": token, "method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt evidence"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "evidence"}
+    text = calls[0]["params"]["text"]
+    assert "CI: unknown" in text
+    assert "Smoke: unknown" in text
+    assert "QA: unknown" in text
+    assert "Release readiness: unknown" in text
+    assert "Blockers: 0" in text
+
+
+def test_gt_approvals_command_sends_pending_gate_with_quick_decision_buttons(tmp_path, monkeypatch):
+    calls = []
+    write_project_state(tmp_path)
+
+    def fake_telegram_request(token, method, params):
+        calls.append({"token": token, "method": method, "params": params})
+        return {"ok": True, "result": {"message_id": 42}}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt approvals"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "approvals"}
+    assert calls[0]["method"] == "sendMessage"
+    assert "*Gate*: PRD" in calls[0]["params"]["text"]
+    keyboard = calls[0]["params"]["reply_markup"]["inline_keyboard"]
+    assert keyboard[0][0]["callback_data"].startswith("v1:A:")
+    assert keyboard[0][1]["callback_data"].startswith("v1:R:")
+    assert keyboard[1][0]["callback_data"].startswith("v1:J:")
+
+
+def test_plain_non_reply_non_command_message_still_ignored(tmp_path):
+    write_project_state(tmp_path)
+
+    result = process_telegram_update(
+        telegram_text_update("hello goodteam"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "ignored", "reason": "not a reply message"}
