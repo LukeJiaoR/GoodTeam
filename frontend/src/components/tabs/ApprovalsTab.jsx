@@ -58,6 +58,20 @@ export default function ApprovalsTab({
 }) {
   const showChangesRequestedNoteKey = selectedReviewNoteKey;
 
+  const getVerdictBadgeStyle = (verdict) => {
+    switch (verdict?.toLowerCase()) {
+      case 'approve':
+        return 'bg-status-success-bg text-status-success-text border-status-success/30';
+      case 'caution':
+      case 'request_changes':
+        return 'bg-status-warning-bg text-status-warning-text border-status-warning/30';
+      case 'reject':
+        return 'bg-status-danger-bg text-status-danger-text border-status-danger/30';
+      default:
+        return 'bg-surface-sunken text-text-muted border-border-subtle';
+    }
+  };
+
   return (
                 <div className="space-y-6">
                   <div className="border-b-2 border-border-subtle pb-2">
@@ -591,6 +605,112 @@ export default function ApprovalsTab({
                                      </div>
                                    </div>
 
+                                    {/* Provenance Section */}
+                                    {(() => {
+                                      const evidenceSnapshot = selectedReview.evidence_snapshot && typeof selectedReview.evidence_snapshot === 'string'
+                                        ? (() => { try { return JSON.parse(selectedReview.evidence_snapshot); } catch { return null; } })()
+                                        : selectedReview.evidence_snapshot;
+
+                                      const provenanceRefs = Array.isArray(selectedReview.provenance_refs)
+                                        ? selectedReview.provenance_refs
+                                        : Array.isArray(evidenceSnapshot?.provenance_refs)
+                                          ? evidenceSnapshot.provenance_refs
+                                          : [];
+
+                                      if (provenanceRefs.length === 0) return null;
+
+                                      return (
+                                        <div className="border-2 border-border-subtle rounded-2xl p-5 bg-surface-base space-y-4">
+                                          <div className="border-b border-border-subtle pb-2">
+                                            <h4 className="text-xs font-extrabold uppercase tracking-wider text-text-primary">Provenance</h4>
+                                            <p className="text-2xs text-text-muted">Verification provenance and build pipeline references.</p>
+                                          </div>
+                                          <div className="space-y-4">
+                                            {provenanceRefs.map((ref, idx) => {
+                                              const archivedPaths = [];
+                                              Object.entries(ref || {}).forEach(([key, val]) => {
+                                                if (typeof val === 'string' && (key.endsWith('_path') || key.endsWith('_artifact') || key === 'pre_review_report' || key === 'review_rationale')) {
+                                                  archivedPaths.push(val);
+                                                }
+                                              });
+                                              if (Array.isArray(ref?.jobs)) {
+                                                ref.jobs.forEach(job => {
+                                                  Object.entries(job || {}).forEach(([k, v]) => {
+                                                    if (typeof v === 'string' && (k.endsWith('_path') || k.endsWith('_artifact'))) {
+                                                      archivedPaths.push(v);
+                                                    }
+                                                  });
+                                                });
+                                              }
+                                              if (Array.isArray(ref?.paths)) {
+                                                ref.paths.forEach(p => {
+                                                  if (typeof p === 'string') archivedPaths.push(p);
+                                                });
+                                              }
+                                              const uniquePaths = Array.from(new Set(archivedPaths));
+
+                                              return (
+                                                <div key={idx} className="border border-border-subtle rounded-xl p-3 bg-surface-raised space-y-2.5">
+                                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <div className="flex items-center space-x-2">
+                                                      {ref.pr !== undefined && (
+                                                        <span className="bg-accent/10 text-accent border border-accent/20 px-2 py-0.5 rounded-full text-2xs font-extrabold uppercase tracking-wider leading-none">
+                                                          PR #{ref.pr}
+                                                        </span>
+                                                      )}
+                                                      {ref.branch && (
+                                                        <span className="bg-surface-sunken text-text-secondary border border-border-subtle px-2 py-0.5 rounded-full text-2xs font-mono font-bold leading-none">
+                                                          {ref.branch}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                    {ref.ci_status && (
+                                                      <span className={`inline-block px-2 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${
+                                                        ref.ci_status === 'passed' || ref.ci_status === 'pass'
+                                                          ? 'bg-status-success-bg text-status-success-text border-status-success/30'
+                                                          : 'bg-status-danger-bg text-status-danger-text border-status-danger/30'
+                                                      }`}>
+                                                        CI: {ref.ci_status}
+                                                      </span>
+                                                    )}
+                                                  </div>
+
+                                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-2xs text-text-secondary font-bold">
+                                                    {ref.merge_sha && (
+                                                      <div>
+                                                        <span className="text-text-muted uppercase tracking-wider">Merge SHA:</span>{' '}
+                                                        <span className="text-text-primary font-mono">{ref.merge_sha}</span>
+                                                      </div>
+                                                    )}
+                                                    {ref.squash_merge_sha && (
+                                                      <div>
+                                                        <span className="text-text-muted uppercase tracking-wider">Squash Merge SHA:</span>{' '}
+                                                        <span className="text-text-primary font-mono">{ref.squash_merge_sha}</span>
+                                                      </div>
+                                                    )}
+                                                  </div>
+
+                                                  {uniquePaths.length > 0 && (
+                                                    <div className="space-y-1.5 pt-2 border-t border-border-subtle">
+                                                      <span className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Archived Artifacts</span>
+                                                      <div className="space-y-1 pl-2 border-l-2 border-border-subtle">
+                                                        {uniquePaths.map((path, pIdx) => (
+                                                          <div key={pIdx} className="text-2xs font-medium font-sans text-text-secondary flex items-center">
+                                                            <span className="h-1.5 w-1.5 rounded-full bg-accent mr-2 shrink-0" />
+                                                            <FilePath path={path} segments={1} />
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+
                                    {selectedReview.is_actionable && committee && (
                                      <div className="border-2 border-dashed border-border-subtle rounded-2xl p-4 bg-status-warning-bg space-y-3">
                                        <div className="flex items-center justify-between gap-3">
@@ -713,6 +833,69 @@ export default function ApprovalsTab({
 
                                  {selectedReview.is_actionable && (
                                    <div className="bg-surface-base px-6 py-4 border-t-2 border-border-subtle flex flex-col items-stretch space-y-4">
+                                     {selectedReview.recommendation && (
+                                       <div className="bg-surface-raised border border-border-subtle rounded-2xl p-4 space-y-3 shadow-card">
+                                         <div className="flex items-center justify-between">
+                                           <div className="flex flex-col">
+                                             <span className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Recommendation · you decide</span>
+                                             <div className="flex items-center space-x-2 mt-1">
+                                               <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${getVerdictBadgeStyle(selectedReview.recommendation.verdict)}`}>
+                                                 {selectedReview.recommendation.verdict?.replace('_', ' ')}
+                                               </span>
+                                               {selectedReview.recommendation.confidence && (
+                                                 <span className="text-2xs text-text-secondary font-bold">
+                                                   Confidence: <span className="text-text-primary capitalize">{selectedReview.recommendation.confidence}</span>
+                                                 </span>
+                                               )}
+                                             </div>
+                                           </div>
+                                           {selectedReview.recommendation.blocking_count !== undefined && (
+                                             <span className="text-2xs text-text-secondary font-bold bg-surface-sunken px-2 py-0.5 rounded-lg border border-border-subtle uppercase tracking-wider">
+                                               Blockers: <span className="text-text-primary">{selectedReview.recommendation.blocking_count}</span>
+                                             </span>
+                                           )}
+                                         </div>
+
+                                         {/* Reasons List */}
+                                         {selectedReview.recommendation.reasons && selectedReview.recommendation.reasons.length > 0 && (
+                                           <div className="space-y-2.5 pt-2 border-t border-border-subtle">
+                                             {(() => {
+                                               const grouped = (selectedReview.recommendation.reasons || []).reduce((acc, r) => {
+                                                 const kind = r.kind || 'clean';
+                                                 if (!acc[kind]) acc[kind] = [];
+                                                 acc[kind].push(r.text);
+                                                 return acc;
+                                               }, {});
+
+                                               const kindLabels = {
+                                                 blocker: { label: 'Blockers', dot: 'bg-status-danger', textClass: 'text-status-danger-text' },
+                                                 missing_evidence: { label: 'Missing Evidence', dot: 'bg-status-warning', textClass: 'text-status-warning-text' },
+                                                 open_objection: { label: 'Open Objections', dot: 'bg-status-warning', textClass: 'text-status-warning-text' },
+                                                 clean: { label: 'Clean Checks', dot: 'bg-status-success', textClass: 'text-status-success-text' }
+                                               };
+
+                                               return Object.entries(kindLabels).map(([kind, config]) => {
+                                                 const items = grouped[kind];
+                                                 if (!items || items.length === 0) return null;
+                                                 return (
+                                                   <div key={kind} className="space-y-1">
+                                                     <span className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">{config.label}</span>
+                                                     <ul className="space-y-1 pl-2 border-l-2 border-border-subtle">
+                                                       {items.map((text, i) => (
+                                                         <li key={i} className="flex items-start space-x-1.5 text-2xs leading-relaxed font-sans text-text-secondary font-medium">
+                                                           <span className={`h-1.5 w-1.5 rounded-full mt-1.5 shrink-0 ${config.dot}`} />
+                                                           <span>{text}</span>
+                                                         </li>
+                                                       ))}
+                                                     </ul>
+                                                   </div>
+                                                 );
+                                               });
+                                             })()}
+                                           </div>
+                                         )}
+                                       </div>
+                                     )}
                                      {showChangesRequestedNoteKey === selectedReview.approval && (
                                        <div className="flex flex-col space-y-2">
                                          <label className="text-xs font-bold text-text-secondary">

@@ -2283,6 +2283,41 @@ def test_frontend_contract_approvals_tab_audit_and_evidence():
     assert "changesRequestedNote.trim() === ''" in approvals_tab
 
 
+def test_frontend_contract_approvals_tab_recommendation_and_provenance():
+    root = Path(__file__).resolve().parents[1]
+    approvals_tab = (root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx").read_text(encoding="utf-8")
+
+    # Assert Recommendation card and eyebrow are rendered when recommendation is present
+    assert "selectedReview.recommendation" in approvals_tab
+    assert "Recommendation · you decide" in approvals_tab
+
+    # Assert Recommendation card badge is styled appropriately based on verdict
+    assert "getVerdictBadgeStyle(selectedReview.recommendation.verdict)" in approvals_tab
+
+    # Assert confidence and blockers are rendered
+    assert "selectedReview.recommendation.confidence" in approvals_tab
+    assert "selectedReview.recommendation.blocking_count" in approvals_tab
+
+    # Assert reasons list is grouped by kind
+    assert "selectedReview.recommendation.reasons" in approvals_tab
+    assert "kindLabels" in approvals_tab
+    assert "blocker" in approvals_tab
+    assert "missing_evidence" in approvals_tab
+    assert "open_objection" in approvals_tab
+    assert "clean" in approvals_tab
+
+    # Assert Provenance section is rendered when provenance_refs are present
+    assert "provenanceRefs" in approvals_tab
+    assert "selectedReview.provenance_refs" in approvals_tab
+    assert "evidenceSnapshot?.provenance_refs" in approvals_tab
+    assert "uniquePaths" in approvals_tab
+    assert "<FilePath path={path}" in approvals_tab
+
+    # Assert both degrade cleanly (sections omitted when missing)
+    assert "recommendation && (" in approvals_tab
+    assert "provenanceRefs.length === 0" in approvals_tab
+
+
 def test_status_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
