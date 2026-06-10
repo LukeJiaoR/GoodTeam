@@ -190,6 +190,213 @@ def current_approval_gate(state: AgileDevState | None) -> str:
     return gate
 
 
+def _mask_advisory_text(text: object) -> str:
+    try:
+        from goodteam_os.telegram import mask_sensitive_data
+
+        return mask_sensitive_data(str(text))
+    except Exception:
+        return str(text)
+
+
+def _project_runtime_roots_for_state(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[Path]:
+    project_roots: list[Path] = []
+    source_ref = str(getattr(state, "source_ref", "") or "") if state is not None else ""
+    if source_ref and source_ref != "manual":
+        source_path = Path(source_ref)
+        if source_path.is_file():
+            try:
+                target = load_project_target(source_path)
+                repos = target.get("repos", {})
+                if isinstance(repos, dict) and repos:
+                    project_roots.append(resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()}))
+                else:
+                    project_roots.append(source_path.parent)
+            except Exception:
+                project_roots.append(source_path.parent)
+    try:
+        config_path = _project_config_for_key(workspace, project_key)
+        target = load_project_target(config_path)
+        repos = target.get("repos", {})
+        if isinstance(repos, dict) and repos:
+            project_roots.append(resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()}))
+        else:
+            project_roots.append(config_path.parent)
+    except Exception:
+        project_roots.append(workspace)
+
+    roots: list[Path] = []
+    seen_roots: set[Path] = set()
+    for root in project_roots:
+        try:
+            resolved = root.resolve()
+        except Exception:
+            resolved = root
+        if resolved in seen_roots:
+            continue
+        seen_roots.add(resolved)
+        roots.append(resolved)
+    return roots
+
+
+def build_provenance_refs(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
+    try:
+        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
+        seen_manifests: set[Path] = set()
+        for root in roots:
+            provenance_root = root / ".goodteam" / "provenance"
+            if not provenance_root.is_dir():
+                continue
+            for manifest_path in sorted(provenance_root.glob("pr-*/manifest.json")):
+                try:
+                    resolved_manifest = manifest_path.resolve()
+                except Exception:
+                    resolved_manifest = manifest_path
+                if resolved_manifest in seen_manifests:
+                    continue
+                seen_manifests.add(resolved_manifest)
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(manifest, dict):
+                    continue
+                archive_paths = manifest.get("archive_paths", {})
+                archive_paths = archive_paths if isinstance(archive_paths, dict) else {}
+                pr_ref = manifest.get("pr", manifest.get("pr_number", manifest.get("number", "")))
+                if not pr_ref:
+                    pr_ref = manifest_path.parent.name.removeprefix("pr-")
+                refs.append(
+                    {
+                        "pr": _mask_advisory_text(pr_ref),
+                        "branch": _mask_advisory_text(manifest.get("branch", "")),
+                        "ci_status": _mask_advisory_text(manifest.get("ci_status", "")),
+                        "merge_sha": _mask_advisory_text(
+                            manifest.get("merge_sha", manifest.get("squash_merge_sha", manifest.get("squash_sha", "")))
+                        ),
+                        "job_ref": _mask_advisory_text(manifest.get("job_ref", archive_paths.get("job", ""))),
+                        "contract_ref": _mask_advisory_text(
+                            manifest.get("contract_ref", archive_paths.get("contract", archive_paths.get("task_contract", "")))
+                        ),
+                        "pre_review_ref": _mask_advisory_text(
+                            manifest.get(
+                                "pre_review_ref",
+                                manifest.get("pre-review_ref", archive_paths.get("pre_review", archive_paths.get("pre-review", ""))),
+                            )
+                        ),
+                    }
+                )
+    except Exception:
+        return []
+    return refs
+
+
+def build_approval_recommendation(
+    *,
+    state: AgileDevState | object | None,
+    review: dict[str, object] | object,
+    evidence_snapshot: dict[str, object] | object,
+    workspace: Path,
+) -> dict[str, object]:
+    del workspace
+    recommendation: dict[str, object] = {
+        "verdict": "caution",
+        "confidence": "low",
+        "blocking_count": 0,
+        "reasons": [],
+    }
+    try:
+        review_dict = review if isinstance(review, dict) else {}
+        evidence = evidence_snapshot if isinstance(evidence_snapshot, dict) else {}
+        reasons: list[dict[str, str]] = []
+        blockers = getattr(state, "blockers", []) if state is not None else []
+        blockers = blockers if isinstance(blockers, list) else []
+        for blocker in blockers:
+            reasons.append({"kind": "blocker", "text": _mask_advisory_text(blocker)})
+
+        evidence_blocker_count = 0
+        try:
+            evidence_blocker_count = int(evidence.get("blocker_count", 0) or 0)
+        except Exception:
+            evidence_blocker_count = 0
+        approval = str(review_dict.get("approval", "") or "")
+        status_values = [
+            str(evidence.get("ci_status", "unknown") or "unknown"),
+            str(evidence.get("smoke_status", "unknown") or "unknown"),
+            str(evidence.get("qa_status", "unknown") or "unknown"),
+        ]
+        unknown_count = sum(1 for status in status_values if status == "unknown")
+        release_stage = approval in {"staging", "release"}
+        if evidence_blocker_count > 0 and not blockers:
+            reasons.append({"kind": "missing_evidence", "text": "Evidence snapshot reports blockers without blocker details."})
+        if release_stage and unknown_count:
+            reasons.append({"kind": "missing_evidence", "text": "Release-stage gate has unknown CI, smoke, or QA evidence."})
+
+        messages = {}
+        raw_messages = {}
+        committee = review_dict.get("committee", {})
+        committee = committee if isinstance(committee, dict) else {}
+        message_list = committee.get("messages", [])
+        message_list = message_list if isinstance(message_list, list) else []
+        for index, raw_message in enumerate(message_list):
+            if not isinstance(raw_message, dict):
+                continue
+            message_id = str(raw_message.get("id", "") or "")
+            if not message_id:
+                continue
+            messages[message_id] = index
+            raw_messages[message_id] = raw_message
+        for message_id, raw_message in raw_messages.items():
+            if str(raw_message.get("kind", "")) not in {"ask", "reject"}:
+                continue
+            message_index = messages.get(message_id, -1)
+            has_owner_reply = False
+            for later in message_list[message_index + 1 :]:
+                if not isinstance(later, dict):
+                    continue
+                if str(later.get("in_reply_to", "")) == message_id and str(later.get("kind", "")) in {"assert", "propose"}:
+                    has_owner_reply = True
+                    break
+            if not has_owner_reply:
+                body = str(raw_message.get("body", "") or "Committee objection is still unresolved.")
+                reasons.append({"kind": "open_objection", "text": _mask_advisory_text(body)})
+
+        content = str(review_dict.get("content", "") or "")
+        blocking_count = len(blockers)
+        if blockers:
+            verdict = "request_changes"
+        elif any(reason["kind"] in {"missing_evidence", "open_objection"} for reason in reasons):
+            verdict = "caution"
+        elif content.strip():
+            verdict = "approve"
+            reasons.append({"kind": "clean", "text": "Artifact content is present and no blocking signals were found."})
+        else:
+            verdict = "caution"
+            reasons.append({"kind": "missing_evidence", "text": "No artifact content is available for review."})
+
+        if blockers:
+            confidence = "low"
+        elif len(reasons) > 1 and any(reason["kind"] != "clean" for reason in reasons):
+            confidence = "low"
+        elif any(reason["kind"] in {"missing_evidence", "open_objection"} for reason in reasons):
+            confidence = "medium"
+        elif unknown_count:
+            confidence = "medium"
+        else:
+            confidence = "high"
+
+        recommendation = {
+            "verdict": verdict,
+            "confidence": confidence,
+            "blocking_count": blocking_count,
+            "reasons": reasons,
+        }
+    except Exception:
+        return recommendation
+    return recommendation
+
+
 def build_approval_evidence_snapshot(
     *,
     state: AgileDevState | object | None,
@@ -232,44 +439,18 @@ def build_approval_evidence_snapshot(
         snapshot["blocker_count"] = 0
 
     try:
+        snapshot["provenance_refs"] = build_provenance_refs(state=state, workspace=workspace, project_key=project_key)
+    except Exception:
+        snapshot["provenance_refs"] = []
+
+    try:
         run_id = str(getattr(state, "run_id", "") or "")
         if not run_id:
             return snapshot
-        project_roots: list[Path] = []
-        source_ref = str(getattr(state, "source_ref", "") or "") if state is not None else ""
-        if source_ref and source_ref != "manual":
-            source_path = Path(source_ref)
-            if source_path.is_file():
-                try:
-                    target = load_project_target(source_path)
-                    repos = target.get("repos", {})
-                    if isinstance(repos, dict) and repos:
-                        project_roots.append(
-                            resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()})
-                        )
-                    else:
-                        project_roots.append(source_path.parent)
-                except Exception:
-                    project_roots.append(source_path.parent)
-        try:
-            config_path = _project_config_for_key(workspace, project_key)
-            target = load_project_target(config_path)
-            repos = target.get("repos", {})
-            if isinstance(repos, dict) and repos:
-                project_roots.append(resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()}))
-            else:
-                project_roots.append(config_path.parent)
-        except Exception:
-            project_roots.append(workspace)
-
-        seen_roots: set[Path] = set()
+        project_roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
         worker_refs: set[str] = set()
         for root in project_roots:
-            resolved = root.resolve()
-            if resolved in seen_roots:
-                continue
-            seen_roots.add(resolved)
-            for job in WorkerJobStore(resolved).list_jobs():
+            for job in WorkerJobStore(root).list_jobs():
                 if str(job.get("run_id", "")) != run_id:
                     continue
                 job_id = str(job.get("id", "") or job.get("job_id", ""))
@@ -3133,6 +3314,18 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
                 "convened": bool(messages),
                 "messages": messages,
             }
+        if review["is_actionable"]:
+            evidence_snapshot = build_approval_evidence_snapshot(
+                state=state,
+                workspace=workspace,
+                project_key=state.project_key,
+            )
+            review["recommendation"] = build_approval_recommendation(
+                state=state,
+                review=review,
+                evidence_snapshot=evidence_snapshot,
+                workspace=workspace,
+            )
         reviews.append(review)
     return reviews
 

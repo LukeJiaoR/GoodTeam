@@ -14,9 +14,11 @@ from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
 from goodteam_os.web import (
     build_approval_evidence_snapshot,
+    build_approval_recommendation,
     build_action_items,
     build_agile_board,
     build_dev_loop,
+    build_provenance_refs,
     build_workflow_graph,
     build_project_overview_items,
     build_role_observations,
@@ -1129,6 +1131,173 @@ def test_build_approval_reviews_includes_rfc_committee_messages(tmp_path):
     assert projected_challenge["id"]
     assert projected_rebuttal["id"]
     assert projected_rebuttal["in_reply_to"] == projected_challenge["id"]
+
+
+def test_build_approval_recommendation_requests_changes_for_blockers_and_masks_text(tmp_path):
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.blockers = ["Fix /Users/luke/private/app.py before hitting 10.0.0.5"]
+    review = {"approval": "prd", "content": "# PRD"}
+    evidence = {
+        "blocker_count": 1,
+        "ci_status": "passed",
+        "smoke_status": "passed",
+        "qa_status": "passed",
+    }
+
+    recommendation = build_approval_recommendation(
+        state=state,
+        review=review,
+        evidence_snapshot=evidence,
+        workspace=tmp_path,
+    )
+
+    assert recommendation["verdict"] == "request_changes"
+    assert recommendation["blocking_count"] >= 1
+    assert any(reason["kind"] == "blocker" for reason in recommendation["reasons"])
+    reason_text = " ".join(reason["text"] for reason in recommendation["reasons"])
+    assert "/Users/luke/private/app.py" not in reason_text
+    assert "10.0.0.5" not in reason_text
+
+
+def test_build_approval_recommendation_cautions_for_unresolved_committee_objection(tmp_path):
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    review = {
+        "approval": "rfc",
+        "content": "# RFC",
+        "committee": {
+            "messages": [
+                {
+                    "id": "msg-1",
+                    "kind": "ask",
+                    "from_role": "qa",
+                    "body": "Who owns the rollback evidence?",
+                    "in_reply_to": "",
+                }
+            ]
+        },
+    }
+    evidence = {
+        "blocker_count": 0,
+        "ci_status": "passed",
+        "smoke_status": "passed",
+        "qa_status": "passed",
+    }
+
+    recommendation = build_approval_recommendation(
+        state=state,
+        review=review,
+        evidence_snapshot=evidence,
+        workspace=tmp_path,
+    )
+
+    assert recommendation["verdict"] in {"caution", "request_changes", "reject"}
+    assert any(reason["kind"] == "open_objection" for reason in recommendation["reasons"])
+
+
+def test_build_approval_recommendation_approves_clean_review_with_known_evidence(tmp_path):
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    review = {"approval": "prd", "content": "# PRD\n\nReady."}
+    evidence = {
+        "blocker_count": 0,
+        "ci_status": "passed",
+        "smoke_status": "passed",
+        "qa_status": "passed",
+    }
+
+    recommendation = build_approval_recommendation(
+        state=state,
+        review=review,
+        evidence_snapshot=evidence,
+        workspace=tmp_path,
+    )
+
+    assert recommendation == {
+        "verdict": "approve",
+        "confidence": "high",
+        "blocking_count": 0,
+        "reasons": [{"kind": "clean", "text": "Artifact content is present and no blocking signals were found."}],
+    }
+
+
+def test_build_approval_recommendation_never_raises_on_missing_data(tmp_path):
+    recommendation = build_approval_recommendation(
+        state=object(),
+        review=object(),
+        evidence_snapshot=object(),
+        workspace=tmp_path,
+    )
+
+    assert recommendation["verdict"] in {"approve", "request_changes", "reject", "caution"}
+    assert recommendation["confidence"] in {"high", "medium", "low"}
+    assert isinstance(recommendation["blocking_count"], int)
+    assert isinstance(recommendation["reasons"], list)
+
+
+def test_build_approval_reviews_actionable_review_carries_recommendation(tmp_path):
+    prd = tmp_path / "prd.md"
+    prd.write_text("# PRD\n\nReady.", encoding="utf-8")
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+    state.artifacts["prd"] = str(prd)
+    state.next_node = "await_prd_approval"
+
+    reviews = build_approval_reviews(state, workspace=tmp_path)
+
+    prd_review = next(review for review in reviews if review["approval"] == "prd")
+    rfc_review = next(review for review in reviews if review["approval"] == "rfc")
+    assert isinstance(prd_review["recommendation"], dict)
+    assert "recommendation" not in rfc_review
+
+
+def test_build_provenance_refs_returns_empty_without_manifests(tmp_path):
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+
+    assert build_provenance_refs(state=state, workspace=tmp_path, project_key="GTO") == []
+
+
+def test_build_provenance_refs_parses_manifest_and_masks_paths(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    config_dir = tmp_path / "projects"
+    config_dir.mkdir()
+    (config_dir / "gto.local.yaml").write_text(
+        f"name: GoodTeam\nkey: GTO\nrepos:\n  app: {project_root}\n",
+        encoding="utf-8",
+    )
+    manifest_dir = project_root / ".goodteam" / "provenance" / "pr-42"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "pr": 42,
+                "branch": "feat/secret",
+                "ci_status": "passed",
+                "squash_merge_sha": "abc123",
+                "job_ref": "/Users/luke/private/jobs/job-1.json",
+                "contract_ref": "/Users/luke/private/contracts/contract.json",
+                "pre_review_ref": "/Users/luke/private/reviews/pre-review.md",
+                "archive_paths": {
+                    "job": "/Users/luke/private/jobs/job-1.json",
+                    "contract": "/Users/luke/private/contracts/contract.json",
+                    "pre_review": "/Users/luke/private/reviews/pre-review.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
+
+    refs = build_provenance_refs(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert refs[0]["pr"] == "42"
+    assert refs[0]["branch"] == "feat/secret"
+    assert refs[0]["ci_status"] == "passed"
+    assert refs[0]["merge_sha"] == "abc123"
+    for key in ["job_ref", "contract_ref", "pre_review_ref"]:
+        assert "local-workspace-dir" in refs[0][key]
+        assert "/Users/luke/private" not in refs[0][key]
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+    assert snapshot["provenance_refs"] == refs
 
 
 def test_render_dashboard_renders_markdown_artifact_preview(tmp_path):
