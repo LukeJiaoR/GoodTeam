@@ -504,6 +504,243 @@ def telegram_config_from_env() -> dict[str, object]:
     }
 
 
+def _parse_telegram_command(text: str) -> str:
+    parts = text.strip().split()
+    if not parts:
+        return ""
+    head = parts[0].split("@", 1)[0].lower()
+    if head == "/gt" and len(parts) >= 2:
+        command = parts[1].split("@", 1)[0].lower()
+    elif head.startswith("/"):
+        command = head[1:]
+    else:
+        return ""
+    return command if command in {"status", "approvals", "workers", "evidence"} else ""
+
+
+def _send_masked_telegram_message(*, token: str, chat_id: object, text: str) -> None:
+    _telegram_request(
+        token,
+        "sendMessage",
+        {
+            "chat_id": str(chat_id),
+            "text": mask_sensitive_data(text),
+        },
+    )
+
+
+def _project_runtime_root(workspace: Path, project_key: str, state: object | None = None) -> Path | None:
+    from goodteam_os.graph import resolve_project_runtime_root
+    from goodteam_os.projects import load_project_target
+    from goodteam_os.state import normalize_project_key
+
+    candidates: list[Path] = []
+    source_ref = str(getattr(state, "source_ref", "") or "") if state is not None else ""
+    if source_ref and source_ref != "manual":
+        candidates.append(Path(source_ref))
+
+    projects_dir = workspace / "projects"
+    key = normalize_project_key(project_key)
+    try:
+        for config_path in sorted(projects_dir.glob("*.local.yaml")):
+            target = load_project_target(config_path)
+            if normalize_project_key(str(target.get("key", config_path.stem))) == key:
+                candidates.append(config_path)
+                break
+    except Exception:
+        pass
+    candidates.append(projects_dir / f"{key.lower()}.local.yaml")
+
+    for config_path in candidates:
+        try:
+            if not config_path.is_file():
+                continue
+            target = load_project_target(config_path)
+            repos = target.get("repos", {})
+            if isinstance(repos, dict) and repos:
+                root = resolve_project_runtime_root({str(k): Path(str(v)) for k, v in repos.items()})
+                if root is not None:
+                    return root
+            return config_path.parent
+        except Exception:
+            continue
+    return None
+
+
+def _read_command_state(workspace: Path, project_key: str):
+    from goodteam_os.state import StateStore
+
+    try:
+        return StateStore(workspace).read_project_current(project_key) if project_key else StateStore(workspace).read_current()
+    except Exception:
+        return None
+
+
+def _jobs_for_run(root: Path | None, run_id: str) -> list[dict[str, object]]:
+    if root is None or not run_id:
+        return []
+    try:
+        from goodteam_os.workers import WorkerJobStore
+
+        return [job for job in WorkerJobStore(root).list_jobs() if str(job.get("run_id", "")) == run_id]
+    except Exception:
+        return []
+
+
+def _elapsed_label(job: dict[str, object]) -> str:
+    def parse_time(value: object) -> datetime | None:
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    start = parse_time(job.get("created_at"))
+    if start is None:
+        return "unknown"
+    end = datetime.now(UTC) if str(job.get("status", "")) == "running" else parse_time(job.get("updated_at")) or datetime.now(UTC)
+    seconds = max(0, int((end - start).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    return f"{minutes // 60}h{minutes % 60:02d}m"
+
+
+def _worker_error_excerpt(job: dict[str, object]) -> str:
+    for key in ("last_error", "error"):
+        value = str(job.get(key, "") or "").strip()
+        if value:
+            return truncate_text(value, 120)
+    stderr_path = str(job.get("stderr_path", "") or "").strip()
+    if stderr_path:
+        try:
+            content = Path(stderr_path).read_text(encoding="utf-8", errors="replace")
+            if content.strip():
+                return truncate_text(content, 120)
+        except Exception:
+            pass
+    summary = str(job.get("summary", "") or "").strip()
+    return truncate_text(summary, 120) if summary else ""
+
+
+def _format_status_command(*, workspace: Path, project_key: str) -> str:
+    state = _read_command_state(workspace, project_key)
+    if state is None:
+        return f"GoodTeam status\nProject: {project_key or 'unknown'}\nNo active run."
+    from goodteam_os.web import current_approval_gate
+
+    root = _project_runtime_root(workspace, project_key or str(getattr(state, "project_key", "")), state)
+    jobs = _jobs_for_run(root, str(getattr(state, "run_id", "") or ""))
+    active_workers = sum(1 for job in jobs if str(job.get("status", "")) == "running")
+    blockers = getattr(state, "blockers", [])
+    blocker_count = len(blockers) if isinstance(blockers, list) else 0
+    gate = current_approval_gate(state) or "none"
+    return "\n".join(
+        [
+            "GoodTeam status",
+            f"Project: {getattr(state, 'project_key', project_key or 'unknown')}",
+            f"Run: {getattr(state, 'run_id', 'unknown') or 'unknown'}",
+            f"Current node: {getattr(state, 'current_node', '') or getattr(state, 'next_node', '') or 'unknown'}",
+            f"Pending gate: {gate}",
+            f"Active workers: {active_workers}",
+            f"Blockers: {blocker_count}",
+        ]
+    )
+
+
+def _format_workers_command(*, workspace: Path, project_key: str) -> str:
+    state = _read_command_state(workspace, project_key)
+    if state is None:
+        return "GoodTeam workers\nNo active run."
+    root = _project_runtime_root(workspace, project_key or str(getattr(state, "project_key", "")), state)
+    jobs = _jobs_for_run(root, str(getattr(state, "run_id", "") or ""))
+    if not jobs:
+        return "GoodTeam workers\nNo worker jobs."
+    lines = ["GoodTeam workers"]
+    for job in sorted(jobs, key=lambda item: str(item.get("updated_at", "")), reverse=True)[:5]:
+        job_id = str(job.get("id", "") or job.get("job_id", "") or "unknown")
+        role = str(job.get("role", "") or "unknown")
+        status = str(job.get("status", "") or "unknown")
+        error = _worker_error_excerpt(job)
+        line = f"- {job_id} | {role} | {status} | elapsed {_elapsed_label(job)}"
+        if error:
+            line += f" | last error: {error}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _release_readiness_status(dev_loop: dict[str, object]) -> str:
+    readiness = dev_loop.get("release_readiness", {})
+    if not isinstance(readiness, dict):
+        return "unknown"
+    if "up_to_date" in readiness:
+        return "ready" if readiness.get("up_to_date") else "not ready"
+    if "available" in readiness:
+        return "available" if readiness.get("available") else "unknown"
+    return "unknown"
+
+
+def _format_evidence_command(*, workspace: Path, project_key: str) -> str:
+    state = _read_command_state(workspace, project_key)
+    root = _project_runtime_root(workspace, project_key, state)
+    try:
+        from goodteam_os.web import build_approval_evidence_snapshot, build_dev_loop
+
+        snapshot = build_approval_evidence_snapshot(state=state, workspace=workspace, project_key=project_key)
+        dev_loop = build_dev_loop(root)
+    except Exception:
+        snapshot = {}
+        dev_loop = {}
+    return "\n".join(
+        [
+            "GoodTeam evidence",
+            f"CI: {snapshot.get('ci_status', 'unknown')}",
+            f"Smoke: {snapshot.get('smoke_status', 'unknown')}",
+            f"QA: {snapshot.get('qa_status', 'unknown')}",
+            f"Release readiness: {_release_readiness_status(dev_loop)}",
+            f"Blockers: {snapshot.get('blocker_count', 0)}",
+        ]
+    )
+
+
+def _process_telegram_command(
+    command: str,
+    *,
+    token: str,
+    chat_id: object,
+    workspace: Path,
+    project_key: str,
+) -> dict[str, object]:
+    if command == "approvals":
+        state = _read_command_state(workspace, project_key)
+        if state is None:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text="GoodTeam approvals\nNo active run.")
+            return {"status": "processed", "command": command}
+        from goodteam_os.web import current_approval_gate
+
+        gate = current_approval_gate(state)
+        if not gate:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text="GoodTeam approvals\nNo pending approvals.")
+            return {"status": "processed", "command": command}
+        send_approval_notification(
+            project_key=str(getattr(state, "project_key", project_key)),
+            run_id=str(getattr(state, "run_id", "")),
+            gate=gate,
+            summary=f"GoodTeam is waiting for {gate.upper()} approval on {getattr(state, 'project_key', project_key)}.",
+            workspace=workspace,
+        )
+        return {"status": "processed", "command": command}
+
+    text = {
+        "status": _format_status_command,
+        "workers": _format_workers_command,
+        "evidence": _format_evidence_command,
+    }[command](workspace=workspace, project_key=project_key)
+    _send_masked_telegram_message(token=token, chat_id=chat_id, text=text)
+    return {"status": "processed", "command": command}
+
+
 def encode_callback_data(approval: TelegramApproval) -> str:
     return ":".join(
         [
@@ -756,6 +993,21 @@ def process_telegram_update(
                     pass
 
                 return {"status": "processed", "callback_id": f"msg_{message.get('message_id')}"}
+
+        command = _parse_telegram_command(str(message.get("text", "") or ""))
+        if command:
+            user = dict(message.get("from", {}) or {})
+            user_id = str(user.get("id", ""))
+            if allowed_users and user_id not in allowed_users:
+                return {"status": "ignored", "reason": "unauthorized user"}
+            chat_id = int(message.get("chat", {}).get("id", 0))
+            return _process_telegram_command(
+                command,
+                token=token,
+                chat_id=chat_id,
+                workspace=workspace,
+                project_key=project_key,
+            )
 
         return {"status": "ignored", "reason": "not a reply message"}
 
