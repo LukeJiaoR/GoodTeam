@@ -323,55 +323,55 @@ export default function NewProjectModal({
                 {showConfigDrawer && (
                   <>
                     <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
-                      <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">Services Backend</div>
+                      <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.servicesBackend')}</div>
                       <div>
-                        <label className="block text-2xs text-text-secondary mb-1 uppercase">Task Sync</label>
+                        <label className="block text-2xs text-text-secondary mb-1 uppercase">{t('newProject.advanced.taskSync')}</label>
                         <select
                           value={taskSync}
                           onChange={(e) => setTaskSync(e.target.value)}
                           className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
                         >
-                          <option value="">Local only</option>
-                          <option value="plane">Plane Workspace</option>
-                          <option value="linear">Linear Workspace</option>
-                          <option value="github_issues">GitHub Issues</option>
+                          <option value="">{t('newProject.advanced.taskSyncLocal')}</option>
+                          <option value="plane">{t('newProject.advanced.taskSyncPlane')}</option>
+                          <option value="linear">{t('newProject.advanced.taskSyncLinear')}</option>
+                          <option value="github_issues">{t('newProject.advanced.taskSyncGithubIssues')}</option>
                         </select>
                       </div>
 
                       <div>
-                        <label className="block text-2xs text-text-secondary mb-1 uppercase">Worker Execution</label>
+                        <label className="block text-2xs text-text-secondary mb-1 uppercase">{t('newProject.advanced.workerExecution')}</label>
                         <select
                           value={workerBackendMode}
                           onChange={(e) => setWorkerBackendMode(e.target.value)}
                           className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
                         >
-                          <option value="codex">Codex CLI / Autopilot</option>
-                          <option value="manual">Human Interactive</option>
-                          <option value="noop">Dry-run only</option>
+                          <option value="codex">{t('newProject.advanced.workerExecutionCodex')}</option>
+                          <option value="manual">{t('newProject.advanced.workerExecutionManual')}</option>
+                          <option value="noop">{t('newProject.advanced.workerExecutionNoop')}</option>
                         </select>
                       </div>
 
                       {taskSync === 'plane' && (
                         <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-border-subtle p-4 rounded-xl bg-surface-raised mt-2">
-                          <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">Plane Credentials</div>
+                          <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.planeCredentials')}</div>
                           <div className="col-span-2">
-                            <label className="block text-2xs text-text-muted mb-1">API Host</label>
+                            <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.planeApiHost')}</label>
                             <input type="text" value={planeApiHost} onChange={(e) => setPlaneApiHost(e.target.value)} className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-muted mb-1">Workspace Slug</label>
+                            <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.planeWorkspaceSlug')}</label>
                             <input type="text" value={planeWorkspaceSlug} onChange={(e) => setPlaneWorkspaceSlug(e.target.value)} placeholder="e.g. leader_kanban" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-muted mb-1">Project ID</label>
+                            <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.planeProjectId')}</label>
                             <input type="text" value={planeProjectId} onChange={(e) => setPlaneProjectId(e.target.value)} placeholder="uuid" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-muted mb-1">API Key Env</label>
+                            <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.planeApiKeyEnv')}</label>
                             <input type="text" value={planeApiKeyEnv} onChange={(e) => setPlaneApiKeyEnv(e.target.value)} className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-muted mb-1">MCP Server</label>
+                            <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.planeMcpServer')}</label>
                             <input type="text" value={planeMcpServer} onChange={(e) => setPlaneMcpServer(e.target.value)} className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
                         </div>
@@ -379,48 +379,48 @@ export default function NewProjectModal({
                     </div>
 
                     <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
-                      <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">Deployment & Evidence Contract</div>
+                      <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.deploymentContract')}</div>
                       <div className="col-span-2">
-                        <label className="block text-2xs text-text-secondary mb-1.5 uppercase">Deployment Backend</label>
+                        <label className="block text-2xs text-text-secondary mb-1.5 uppercase">{t('newProject.advanced.deploymentBackend')}</label>
                         <select
                           value={deploymentBackendMode}
                           onChange={(e) => setDeploymentBackendMode(e.target.value)}
                           className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs font-semibold focus:outline-none focus:border-accent"
                         >
-                          <option value="">None (skip automated deployments)</option>
-                          <option value="ssh_compose">Docker Compose via SSH</option>
+                          <option value="">{t('newProject.advanced.deploymentNone')}</option>
+                          <option value="ssh_compose">{t('newProject.advanced.deploymentSshCompose')}</option>
                         </select>
                       </div>
 
                       {deploymentBackendMode === 'ssh_compose' && (
                         <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-border-subtle p-4 rounded-xl bg-surface-raised mt-2 text-xs">
-                          <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">SSH Deploy Configuration</div>
+                          <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.sshDeployConfig')}</div>
                           <div>
-                            <label className="block text-2xs text-text-secondary mb-1">Staging SSH Target</label>
+                            <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.stagingSshTarget')}</label>
                             <input type="text" value={stagingSshTarget} onChange={(e) => setStagingSshTarget(e.target.value)} placeholder="user@host" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-secondary mb-1">Staging Remote Dir</label>
+                            <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.stagingRemoteDir')}</label>
                             <input type="text" value={stagingRemoteDir} onChange={(e) => setStagingRemoteDir(e.target.value)} placeholder="/srv/app" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-secondary mb-1">Staging Git Ref</label>
+                            <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.stagingGitRef')}</label>
                             <input type="text" value={stagingGitRef} onChange={(e) => setStagingGitRef(e.target.value)} placeholder="main" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-secondary mb-1">Staging Public URL</label>
+                            <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.stagingPublicUrl')}</label>
                             <input type="text" value={stagingPublicUrl} onChange={(e) => setStagingPublicUrl(e.target.value)} placeholder="http://url:port" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-2xs text-text-secondary mb-1">Deploy Command</label>
+                            <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.deployCommand')}</label>
                             <input type="text" value={stagingDeployCommand} onChange={(e) => setStagingDeployCommand(e.target.value)} placeholder="docker compose up -d" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-secondary mb-1">Healthcheck Command</label>
+                            <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.healthcheckCommand')}</label>
                             <input type="text" value={stagingHealthcheckCommand} onChange={(e) => setStagingHealthcheckCommand(e.target.value)} placeholder="curl -f /health" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
                           <div>
-                            <label className="block text-2xs text-text-secondary mb-1">Smoke Command</label>
+                            <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.smokeCommand')}</label>
                             <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
 
@@ -428,21 +428,21 @@ export default function NewProjectModal({
 
                           <div className="col-span-2 flex items-center space-x-2">
                             <input type="checkbox" id="contract-req" checked={deliveryContractRequired} onChange={(e) => setDeliveryContractRequired(e.target.checked)} className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer" />
-                            <label htmlFor="contract-req" className="font-bold text-2xs text-text-muted uppercase tracking-wider cursor-pointer">Require functional delivery evidence</label>
+                            <label htmlFor="contract-req" className="font-bold text-2xs text-text-muted uppercase tracking-wider cursor-pointer">{t('newProject.advanced.requireFunctionalEvidence')}</label>
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-2xs text-text-muted mb-1">Minimum Evidence Gate</label>
+                            <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.minimumEvidenceGate')}</label>
                             <select value={deliveryContractMinEvidence} onChange={(e) => setDeliveryContractMinEvidence(e.target.value)} className="bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs focus:outline-none focus:border-accent">
-                              <option value="infrastructure">Infrastructure Layer</option>
-                              <option value="functional">Functional Application Layer</option>
+                              <option value="infrastructure">{t('newProject.advanced.evidenceInfrastructure')}</option>
+                              <option value="functional">{t('newProject.advanced.evidenceFunctional')}</option>
                             </select>
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-2xs text-text-muted mb-1">Fatal Output Log Patterns (line separate)</label>
+                            <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.fatalPatterns')}</label>
                             <textarea value={deliveryContractFatalPatterns} onChange={(e) => setDeliveryContractFatalPatterns(e.target.value)} placeholder="e.g. migrate: executable file not found" className="w-full h-16 bg-surface-sunken text-text-primary border border-border-subtle rounded p-2 font-mono text-xs resize-none focus:outline-none focus:border-accent" />
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-2xs text-text-muted mb-1">Staging Acceptance Tests (id|type|command per line)</label>
+                            <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.acceptanceTests')}</label>
                             <textarea value={deliveryContractAcceptance} onChange={(e) => setDeliveryContractAcceptance(e.target.value)} placeholder="critical-path|ssh_command|docker compose exec -T backend ./migrate status" className="w-full h-16 bg-surface-sunken text-text-primary border border-border-subtle rounded p-2 font-mono text-xs resize-none focus:outline-none focus:border-accent" />
                           </div>
                         </div>
@@ -450,7 +450,7 @@ export default function NewProjectModal({
                     </div>
 
                     <div className="col-span-2">
-                      <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Role Model Overrides (one per line, role=model)</label>
+                      <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.advanced.roleModelOverrides')}</label>
                       <textarea
                         value={roleModelOverrides}
                         onChange={(e) => setRoleModelOverrides(e.target.value)}
@@ -460,7 +460,7 @@ export default function NewProjectModal({
                     </div>
 
                     <div className="col-span-2">
-                      <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">Local Project Config Path</label>
+                      <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.advanced.projectConfigPath')}</label>
                       <input
                         type="text"
                         value={projectConfig}

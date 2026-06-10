@@ -171,6 +171,7 @@ export default function ProjectTabRouter({
   startingWorkflow,
   startMode,
   state,
+  t,
   targetMessageFeedKey,
   totalApprovalsCount,
   updateUrl,
@@ -424,6 +425,7 @@ export default function ProjectTabRouter({
           suggestedAnswersForQuestion={suggestedAnswersForQuestion}
           handleApplyAnswers={handleApplyAnswers}
           handleRunDebate={handleRunDebate}
+          t={t}
         />
       )}
 

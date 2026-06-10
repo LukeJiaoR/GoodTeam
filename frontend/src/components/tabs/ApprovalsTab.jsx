@@ -52,21 +52,22 @@ export default function ApprovalsTab({
   suggestedAnswersForQuestion,
   handleApplyAnswers,
   handleRunDebate,
+  t = (key) => key,
 }) {
   const showChangesRequestedNoteKey = selectedReviewNoteKey;
 
   return (
                 <div className="space-y-6">
                   <div className="border-b-2 border-border-subtle pb-2">
-                    <h2 className="text-base font-extrabold text-text-primary">Approval Workflows</h2>
-                    <p className="text-xs text-text-muted">Review generated artifacts and confirm project transitions.</p>
+                    <h2 className="text-base font-extrabold text-text-primary">{t('approvals.title')}</h2>
+                    <p className="text-xs text-text-muted">{t('approvals.subtitle')}</p>
                   </div>
 
                   {/* Approvals top progress bar - height: 12px, border-radius: 6px, green bar */}
                   <div className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5 space-y-3 max-w-2xl">
                     <div className="flex justify-between items-center text-xs font-extrabold text-text-muted uppercase tracking-wider">
-                      <span>Approval Pipeline Progress</span>
-                      <span className="text-accent-text font-extrabold">{approvedCount} of {totalApprovalsCount} Gates</span>
+                      <span>{t('approvals.progress.title')}</span>
+                      <span className="text-accent-text font-extrabold">{t('approvals.progress.gates', { approved: approvedCount, total: totalApprovalsCount })}</span>
                     </div>
                     <div className="w-full bg-surface-sunken h-3 rounded-full overflow-hidden">
                       <div className="bg-accent h-full rounded-full transition-all duration-500" style={{ width: `${approvalProgressPercent}%` }} />
@@ -110,7 +111,7 @@ export default function ApprovalsTab({
                                 ) : (
                                   <Lock className="h-4 w-4 text-text-muted shrink-0" />
                                 )}
-                                <h3 className="font-extrabold text-xs uppercase tracking-wider text-text-secondary">{review.approval} Review</h3>
+                                <h3 className="font-extrabold text-xs uppercase tracking-wider text-text-secondary">{review.approval} {t('approvals.card.review')}</h3>
                               </div>
                               <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border capitalize tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>
                                 {getStatusLabel(review.decision)}
@@ -119,18 +120,18 @@ export default function ApprovalsTab({
 
                             <dl className="grid grid-cols-2 gap-x-2 text-2xs text-text-secondary pt-2 border-t border-border-subtle font-bold">
                               <div>
-                                <dt className="text-text-muted uppercase text-2xs mb-0.5">Artifact</dt>
+                                <dt className="text-text-muted uppercase text-2xs mb-0.5">{t('approvals.card.artifact')}</dt>
                                 <dd className="text-text-secondary uppercase">{review.artifact}</dd>
                               </div>
                               <div>
-                                <dt className="text-text-muted uppercase text-2xs mb-0.5">File Path</dt>
+                                <dt className="text-text-muted uppercase text-2xs mb-0.5">{t('approvals.card.filePath')}</dt>
                                 <dd><FilePath path={review.artifact_path} segments={1} /></dd>
                               </div>
                             </dl>
 
                             {isActionable && (
                               <div className="bg-status-success-bg text-status-success-text border-2 border-status-success/30 text-2xs font-extrabold p-2 rounded-xl text-center uppercase tracking-wider">
-                                Action Required
+                                {t('approvals.card.actionRequired')}
                               </div>
                             )}
 
@@ -146,7 +147,7 @@ export default function ApprovalsTab({
                                   className="bg-surface-raised hover:bg-surface-sunken border-2 border-border-subtle shadow-button text-text-secondary font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
                                 >
                                   <RefreshCw className={`h-3 w-3 ${generatingPrd ? 'animate-spin' : ''}`} />
-                                  <span>{generatingPrd ? 'Generating...' : 'Generate PRD'}</span>
+                                  <span>{generatingPrd ? t('approvals.actions.generating') : t('approvals.actions.generatePrd')}</span>
                                 </button>
                               )}
                               {review.artifact_path && (review.artifact_path.endsWith('.md') || review.artifact_path.endsWith('.markdown')) && (
@@ -159,7 +160,7 @@ export default function ApprovalsTab({
                                   className="bg-surface-raised hover:bg-surface-sunken border-2 border-border-subtle shadow-button text-text-secondary font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
                                 >
                                   <Edit className="h-3 w-3" />
-                                  <span>Edit</span>
+                                  <span>{t('approvals.actions.edit')}</span>
                                 </button>
                               )}
                               {review.artifact_path && (review.artifact_path.endsWith('.md') || review.artifact_path.endsWith('.markdown')) && (
@@ -172,7 +173,7 @@ export default function ApprovalsTab({
                                   className="bg-surface-raised hover:bg-status-info-bg border-2 border-status-info/30 shadow-button text-status-info-text font-bold text-2xs uppercase tracking-wider px-3 py-1.5 rounded-2xl transition-all duo-button-physics flex items-center space-x-1"
                                 >
                                   <HelpCircle className="h-3 w-3" />
-                                  <span>Questions</span>
+                                  <span>{t('approvals.actions.questions')}</span>
                                 </button>
                               )}
                               {isActionable && (
@@ -191,11 +192,11 @@ export default function ApprovalsTab({
                                     ) : (
                                       <Check className="h-3 w-3" />
                                     )}
-                                    <span>{isApproveLoading ? 'Approving...' : 'Approve'}</span>
+                                    <span>{isApproveLoading ? t('approvals.actions.approving') : t('approvals.actions.approve')}</span>
                                   </button>
                                   {isApproveLoading && (
                                     <span className="text-2xs text-text-secondary mt-1 text-right animate-pulse max-w-[150px] leading-tight">
-                                      Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)
+                                      {t('approvals.loadingHint')}
                                     </span>
                                   )}
                                 </div>
@@ -207,7 +208,7 @@ export default function ApprovalsTab({
 
                       {approvalReviews.length === 0 && (
                         <div className="bg-surface-raised border border-border-subtle p-8 text-center rounded-2xl text-text-secondary italic">
-                          No approvals recorded in this workflow node state.
+                          {t('approvals.emptyList')}
                         </div>
                       )}
                     </div>
@@ -720,7 +721,7 @@ export default function ApprovalsTab({
                         })()
                       ) : (
                         <div className="bg-surface-raised border border-border-subtle p-12 text-center text-text-secondary italic text-xs min-h-[500px] flex items-center justify-center rounded-2xl">
-                          Select an approval review card to view content.
+                          {t('approvals.emptyDetail')}
                         </div>
                       )}
                     </div>

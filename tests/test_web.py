@@ -3950,6 +3950,41 @@ def test_approvals_page_is_extracted_and_uses_theme_tokens():
         assert semantic_class in approvals_page
 
 
+def test_frontend_i18n_localizes_approvals_tab_summary_slice():
+    root = Path(__file__).resolve().parents[1]
+    en = (root / "frontend" / "src" / "i18n" / "locales" / "en.js").read_text(encoding="utf-8")
+    zh = (root / "frontend" / "src" / "i18n" / "locales" / "zh-CN.js").read_text(encoding="utf-8")
+    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(encoding="utf-8")
+    approvals_tab = (root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx").read_text(encoding="utf-8")
+
+    keys = [
+        "approvals.title",
+        "approvals.subtitle",
+        "approvals.progress.title",
+        "approvals.progress.gates",
+        "approvals.card.review",
+        "approvals.card.artifact",
+        "approvals.card.filePath",
+        "approvals.card.actionRequired",
+        "approvals.actions.generating",
+        "approvals.actions.generatePrd",
+        "approvals.actions.edit",
+        "approvals.actions.questions",
+        "approvals.actions.approving",
+        "approvals.actions.approve",
+        "approvals.loadingHint",
+        "approvals.emptyList",
+        "approvals.emptyDetail",
+    ]
+    for key in keys:
+        assert key in en
+        assert key in zh
+        assert f"t('{key}" in approvals_tab
+
+    assert "t = (key) => key" in approvals_tab
+    assert "t={t}" in router
+
+
 def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
     root = Path(__file__).resolve().parents[1]
     router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
@@ -4143,6 +4178,28 @@ def test_frontend_i18n_localizes_new_project_start_form_slice():
         "newProject.git.visibility",
         "newProject.git.private",
         "newProject.git.public",
+        "newProject.advanced.servicesBackend",
+        "newProject.advanced.taskSync",
+        "newProject.advanced.taskSyncLocal",
+        "newProject.advanced.taskSyncPlane",
+        "newProject.advanced.workerExecution",
+        "newProject.advanced.workerExecutionCodex",
+        "newProject.advanced.planeCredentials",
+        "newProject.advanced.planeApiHost",
+        "newProject.advanced.deploymentContract",
+        "newProject.advanced.deploymentBackend",
+        "newProject.advanced.deploymentNone",
+        "newProject.advanced.deploymentSshCompose",
+        "newProject.advanced.sshDeployConfig",
+        "newProject.advanced.stagingSshTarget",
+        "newProject.advanced.requireFunctionalEvidence",
+        "newProject.advanced.minimumEvidenceGate",
+        "newProject.advanced.evidenceInfrastructure",
+        "newProject.advanced.evidenceFunctional",
+        "newProject.advanced.fatalPatterns",
+        "newProject.advanced.acceptanceTests",
+        "newProject.advanced.roleModelOverrides",
+        "newProject.advanced.projectConfigPath",
         "newProject.launchCheck.title",
         "newProject.launchCheck.projectTarget",
         "newProject.launchCheck.sourceMode",
