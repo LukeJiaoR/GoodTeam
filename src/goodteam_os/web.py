@@ -233,6 +233,8 @@ def build_approval_evidence_snapshot(
 
     try:
         run_id = str(getattr(state, "run_id", "") or "")
+        if not run_id:
+            return snapshot
         project_roots: list[Path] = []
         source_ref = str(getattr(state, "source_ref", "") or "") if state is not None else ""
         if source_ref and source_ref != "manual":
@@ -268,7 +270,7 @@ def build_approval_evidence_snapshot(
                 continue
             seen_roots.add(resolved)
             for job in WorkerJobStore(resolved).list_jobs():
-                if run_id and str(job.get("run_id", "")) != run_id:
+                if str(job.get("run_id", "")) != run_id:
                     continue
                 job_id = str(job.get("id", "") or job.get("job_id", ""))
                 if job_id:

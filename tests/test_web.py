@@ -5365,6 +5365,27 @@ def test_decide_approval_accepts_existing_metadata_less_callers(tmp_path):
     assert actions[0]["actor_ref"] == "web:local"
 
 
+def test_build_approval_evidence_snapshot_skips_worker_jobs_without_run_id(tmp_path):
+    job = WorkerJobStore(tmp_path).create_job(
+        run_id="run-other",
+        role="qa",
+        adapter="noop",
+        task="Verify another run",
+        context="Context",
+    )
+    state = create_initial_state("", "CONTENTOPS", "Existing AI content studio run")
+
+    snapshot = build_approval_evidence_snapshot(
+        state=state,
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        debate_ref="",
+    )
+
+    assert job["id"]
+    assert snapshot["worker_job_refs"] == []
+
+
 def test_build_approval_evidence_snapshot_is_failure_safe_on_missing_data(tmp_path):
     snapshot = build_approval_evidence_snapshot(
         state=object(),

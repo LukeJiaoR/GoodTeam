@@ -105,9 +105,9 @@ def _session_review_items(session: dict[str, object]) -> list[dict[str, str]]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        state = str(item.get("state", "skipped") or "skipped")
+        state = str(item.get("state", "") or "")
         if state not in {"ok", "flagged", "skipped"}:
-            state = "skipped"
+            state = "not_reviewed"
         review_items.append(
             {
                 "id": str(item.get("id", "")),

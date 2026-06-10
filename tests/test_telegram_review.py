@@ -290,6 +290,7 @@ def test_final_decision_approves_workflow(tmp_path, monkeypatch):
         "cursor": 0,
         "items": [
             {"id": "acceptance", "title": "验收", "body": "OK", "state": "ok", "note": None},
+            {"id": "health", "title": "健康", "body": "OK", "state": "pending", "note": None},
         ],
         "decided": False,
     }
@@ -331,7 +332,8 @@ def test_final_decision_approves_workflow(tmp_path, monkeypatch):
         "telegram_user_id": "111",
     }
     assert approval_action["review_items"] == [
-        {"id": "acceptance", "title": "验收", "state": "ok", "note": ""}
+        {"id": "acceptance", "title": "验收", "state": "ok", "note": ""},
+        {"id": "health", "title": "健康", "state": "not_reviewed", "note": ""},
     ]
 
 
