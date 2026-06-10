@@ -1,7 +1,7 @@
 [project]
 name = "goodteam-os"
 version = "0.1.0"
-description = "LangGraph-based AI Native agile development team system"
+description = "Local-first control layer for AI software delivery"
 requires-python = ">=3.11"
 dependencies = [
   "rank-bm25>=0.2.2",

@@ -1,21 +1,31 @@
-# GoodTeam AI Team OS
+# GoodTeam — Local-First AI Engineering Team OS
 
-GoodTeam is a local-first LangGraph-oriented AI Native agile development team system.
+GoodTeam is the local-first control layer for AI software delivery. It coordinates
+specialized coding agents, project tools, CI, review, deployment evidence, and memory
+into one owned workflow ledger, so a human can ship software through explicit,
+reviewable gates.
 
-V1 focuses on the workflow foundation:
+**GoodTeam owns the engineering-org protocol; external tools are adapters.** The role
+chain, workflow state, approval gates, evidence model, review workbench, memory, and
+provenance are first-party. Plane, GitHub, CI, Playwright, deployment tooling, and the
+agent CLIs are integrated as replaceable adapters — they produce evidence, but the
+GoodTeam ledger remains the source of truth for workflow decisions.
+
+The foundation:
 
 - Start a run from an idea.
-- Generate a durable PRD artifact.
-- Persist workflow state to JSON.
-- Write a checkpoint.
-- Pause at a human approval gate.
+- Generate durable PRD/RFC artifacts.
+- Persist workflow state to JSON and write checkpoints.
+- Pause at human approval gates with an evidence-backed review workbench.
+- Record an append-only approval audit trail (decision origin, actor, review mode,
+  evidence snapshot) across Web and Telegram clients.
 - Keep project-local GoodTeam memory and task ledgers under each target project.
 
 GoodTeam can operate without Plane, Linear, or any external tracker. External systems are optional sync surfaces; the local project runtime is the source of truth for memory, artifacts, decisions, and tasks.
 
 ## Quick Start
 
-Install the package (this pulls in `langgraph`, `rank-bm25`, and the `goodteam-os` CLI):
+Install the package (this pulls in `rank-bm25` and the `goodteam-os` CLI):
 
 ```bash
 python3 -m venv .venv
@@ -471,9 +481,13 @@ Staging deploy commands follow the same local-only rule: SSH authentication must
 
 This repo must not read Codex local MCP credentials at runtime. Plane credentials for future adapters should come from environment variables or a secret manager.
 
-## Telegram Approval Channel
+## Telegram Approval & Remote Supervision Client
 
-GoodTeam can poll a Telegram bot for approval callbacks. The channel is local-first and uses long polling, not a public webhook:
+Telegram is a first-class approval client for GoodTeam's human gate protocol, not a
+shallow notification adapter. It drives decisions through the same ledger, approval
+state, evidence model, and stale-button safety rules as the dashboard — the dashboard
+remains the deep review workbench, Telegram is the complete mobile client. The channel
+is local-first and uses long polling, not a public webhook:
 
 ```bash
 export GOODTEAM_TG_BOT_TOKEN="<telegram-bot-token>"
@@ -485,4 +499,23 @@ PYTHONPATH=src .venv/bin/python -m goodteam_os.cli tg-poll \
   --project-key CONTENTOPS
 ```
 
-Only environment variable names and configured/allowed metadata are recorded by GoodTeam. Do not put bot tokens in project configs or committed files.
+From Telegram, an allowed operator can approve / request changes / reject a gate
+(including step-by-step item review with masked request-change notes), and supervise a
+run remotely with read-only commands:
+
+- `/gt status` — active project, current run, current node, pending gate, active
+  worker count, blocker count.
+- `/gt approvals` — pending approval cards with quick review buttons that route through
+  the same audited decision path.
+- `/gt workers` — recent/active worker jobs, status, elapsed time, masked last-error
+  excerpt.
+- `/gt evidence` — latest CI / smoke / QA / release-readiness status and blocker count.
+
+Every approval decision records an audit row — `decision_origin` (`web`/`telegram`),
+`actor_ref`, `review_mode`, an evidence snapshot, and item-level review state — so a
+later reviewer can reconstruct who approved a gate, from which client, after which
+review path. All outbound Telegram text is masked (paths, IPs, SSH targets, tokens,
+deploy dirs); the supervision commands are read-only and cannot run arbitrary shell or
+bypass server-action safety. Only environment variable names and configured/allowed
+metadata are recorded by GoodTeam. Do not put bot tokens in project configs or
+committed files.
