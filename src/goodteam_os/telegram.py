@@ -66,6 +66,27 @@ class TelegramReviewSessionStore:
                 continue
         return None
 
+    def find_live_for_gate(self, project_key: str, run_id: str, gate: str) -> dict[str, object] | None:
+        now = datetime.now(UTC)
+        for file in self.directory.glob("*.json"):
+            try:
+                data = json.loads(file.read_text(encoding="utf-8"))
+                expires_at = data.get("expires_at", "")
+                if expires_at and datetime.fromisoformat(str(expires_at)) < now:
+                    file.unlink(missing_ok=True)
+                    continue
+                if (
+                    data.get("project_key") == project_key
+                    and data.get("run_id") == run_id
+                    and data.get("gate") == gate
+                    and data.get("decided", False) is False
+                    and int(data.get("message_id", 0)) > 0
+                ):
+                    return data
+            except Exception:
+                continue
+        return None
+
 
 def generate_session_id(store: TelegramReviewSessionStore) -> str:
     for _ in range(100):
@@ -805,49 +826,14 @@ def build_approval_keyboard(*, project_key: str, run_id: str, gate: str) -> dict
     }
 
 
-def send_approval_notification(
+def _approval_notification_payload(
     *,
     project_key: str,
     run_id: str,
     gate: str,
-    artifact_path: str = "",
-    summary: str = "",
-    workspace: Path = Path("."),
+    summary: str,
+    session_id: str,
 ) -> dict[str, object]:
-    config = telegram_config_from_env()
-    if not config["enabled"]:
-        return {"status": "disabled", **config}
-
-    token = os.getenv(TOKEN_ENV, "")
-
-    store = TelegramReviewSessionStore(workspace)
-    session_id = generate_session_id(store)
-
-    content = ""
-    if artifact_path:
-        path = Path(artifact_path)
-        if not path.is_absolute():
-            path = (workspace / path).resolve()
-        if path.is_file():
-            content = path.read_text(encoding="utf-8")
-
-    items = split_artifact_into_review_items(gate, content)
-
-    session_data = {
-        "session_id": session_id,
-        "run_id": run_id,
-        "project_key": project_key,
-        "gate": gate,
-        "chat_id": int(config["chat_id"]),
-        "message_id": 0,
-        "cursor": 0,
-        "items": items,
-        "decided": False,
-        "created_at": datetime.now(UTC).isoformat(),
-        "expires_at": (datetime.now(UTC) + timedelta(hours=24)).isoformat(),
-    }
-    store.save(session_id, session_data)
-
     text_lines = [
         "🔔 *GoodTeam Approval Needed*",
         f"*Project*: {project_key}",
@@ -875,14 +861,116 @@ def send_approval_notification(
     else:
         text_lines.append(f"Dashboard: {dashboard_url}")
 
+    return {
+        "text": "\n".join(text_lines),
+        "parse_mode": "Markdown",
+        "reply_markup": keyboard,
+    }
+
+
+def _telegram_description(payload: dict[str, object]) -> str:
+    return str(payload.get("description", "") or "").lower()
+
+
+def send_approval_notification(
+    *,
+    project_key: str,
+    run_id: str,
+    gate: str,
+    artifact_path: str = "",
+    summary: str = "",
+    workspace: Path = Path("."),
+) -> dict[str, object]:
+    config = telegram_config_from_env()
+    if not config["enabled"]:
+        return {"status": "disabled", **config}
+
+    token = os.getenv(TOKEN_ENV, "")
+
+    store = TelegramReviewSessionStore(workspace)
+    existing_session = store.find_live_for_gate(project_key, run_id, gate)
+    if existing_session is not None:
+        session_id = str(existing_session["session_id"])
+        message_id = int(existing_session["message_id"])
+        card_payload = _approval_notification_payload(
+            project_key=project_key,
+            run_id=run_id,
+            gate=gate,
+            summary=summary,
+            session_id=session_id,
+        )
+        edit_payload = _telegram_request(
+            token,
+            "editMessageText",
+            {
+                "chat_id": str(config["chat_id"]),
+                "message_id": message_id,
+                **card_payload,
+            },
+        )
+        description = _telegram_description(edit_payload)
+        if edit_payload.get("ok", False) or "message is not modified" in description:
+            return {
+                "status": "refreshed",
+                **config,
+                "project_key": project_key,
+                "run_id": run_id,
+                "gate": gate,
+                "session_id": session_id,
+                "message_id": message_id,
+            }
+        if "message to edit not found" not in description and "message not found" not in description:
+            return {
+                "status": "refresh_failed",
+                **config,
+                "project_key": project_key,
+                "run_id": run_id,
+                "gate": gate,
+                "session_id": session_id,
+                "message_id": message_id,
+                "description": edit_payload.get("description", ""),
+            }
+
+    session_id = generate_session_id(store)
+
+    content = ""
+    if artifact_path:
+        path = Path(artifact_path)
+        if not path.is_absolute():
+            path = (workspace / path).resolve()
+        if path.is_file():
+            content = path.read_text(encoding="utf-8")
+
+    items = split_artifact_into_review_items(gate, content)
+
+    session_data = {
+        "session_id": session_id,
+        "run_id": run_id,
+        "project_key": project_key,
+        "gate": gate,
+        "chat_id": int(config["chat_id"]),
+        "message_id": 0,
+        "cursor": 0,
+        "items": items,
+        "decided": False,
+        "created_at": datetime.now(UTC).isoformat(),
+        "expires_at": (datetime.now(UTC) + timedelta(hours=24)).isoformat(),
+    }
+    store.save(session_id, session_data)
+
+    card_payload = _approval_notification_payload(
+        project_key=project_key,
+        run_id=run_id,
+        gate=gate,
+        summary=summary,
+        session_id=session_id,
+    )
     payload = _telegram_request(
         token,
         "sendMessage",
         {
             "chat_id": str(config["chat_id"]),
-            "text": "\n".join(text_lines),
-            "parse_mode": "Markdown",
-            "reply_markup": keyboard,
+            **card_payload,
         },
     )
     result = dict(payload.get("result", {}) or {})
