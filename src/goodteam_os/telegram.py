@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 from telebot import apihelper
@@ -12,6 +13,8 @@ from telebot import apihelper
 TOKEN_ENV = "GOODTEAM_TG_BOT_TOKEN"
 CHAT_ID_ENV = "GOODTEAM_TG_CHAT_ID"
 ALLOWED_USERS_ENV = "GOODTEAM_TG_ALLOWED_USERS"
+DASHBOARD_URL_ENV = "GOODTEAM_DASHBOARD_URL"
+DEFAULT_DASHBOARD_URL = "http://localhost:8788/"
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,20 @@ def generate_session_id(store: TelegramReviewSessionStore) -> str:
         if store.get(sid) is None:
             return sid
     raise RuntimeError("Unable to generate unique session ID")
+
+
+def _dashboard_url(project_key: str) -> str:
+    base_url = os.getenv(DASHBOARD_URL_ENV, "").strip() or DEFAULT_DASHBOARD_URL
+    parts = urlsplit(base_url)
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("project", project_key))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", urlencode(query), parts.fragment))
+
+
+def _is_public_https_url(url: str) -> bool:
+    parts = urlsplit(url)
+    hostname = (parts.hostname or "").lower()
+    return parts.scheme == "https" and hostname not in {"localhost", "127.0.0.1", "::1"}
 
 
 def truncate_text(text: str, max_chars: int = 150) -> str:
@@ -841,7 +858,7 @@ def send_approval_notification(
         masked_summary = mask_sensitive_data(summary)
         text_lines.append(f"*Summary*: {masked_summary}")
 
-    dashboard_url = f"http://localhost:8788/?project={project_key}"
+    dashboard_url = _dashboard_url(project_key)
     keyboard = {
         "inline_keyboard": [
             [
@@ -850,10 +867,13 @@ def send_approval_notification(
             ],
             [
                 {"text": "❌ 拒绝", "callback_data": f"v1:J:{session_id}"},
-                {"text": "📖 完整报告", "url": dashboard_url},
             ]
         ]
     }
+    if _is_public_https_url(dashboard_url):
+        keyboard["inline_keyboard"][1].append({"text": "📖 完整报告", "url": dashboard_url})
+    else:
+        text_lines.append(f"Dashboard: {dashboard_url}")
 
     payload = _telegram_request(
         token,

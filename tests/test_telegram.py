@@ -169,7 +169,7 @@ def test_telegram_request_uses_telebot_apihelper_and_preserves_raw_response_cont
     ]
 
 
-def test_send_approval_notification_posts_message_with_inline_keyboard(monkeypatch):
+def test_send_approval_notification_omits_localhost_url_button_and_includes_text_link(monkeypatch):
     calls = []
 
     def fake_request(token, method, params):
@@ -178,6 +178,7 @@ def test_send_approval_notification_posts_message_with_inline_keyboard(monkeypat
 
     monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
     monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.delenv("GOODTEAM_DASHBOARD_URL", raising=False)
     monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
 
     result = telegram.send_approval_notification(
@@ -199,7 +200,8 @@ def test_send_approval_notification_posts_message_with_inline_keyboard(monkeypat
         "*Project*: CONTENTOPS\n"
         "*Run*: run-1\n"
         "*Gate*: PRD\n"
-        "*Summary*: ContentOps Studio v1 PRD is ready for review."
+        "*Summary*: ContentOps Studio v1 PRD is ready for review.\n"
+        "Dashboard: http://localhost:8788/?project=CONTENTOPS"
     )
     expected_keyboard = {
         "inline_keyboard": [
@@ -209,7 +211,6 @@ def test_send_approval_notification_posts_message_with_inline_keyboard(monkeypat
             ],
             [
                 {"text": "❌ 拒绝", "callback_data": f"v1:J:{session_id}"},
-                {"text": "📖 完整报告", "url": "http://localhost:8788/?project=CONTENTOPS"},
             ]
         ]
     }
@@ -228,6 +229,49 @@ def test_send_approval_notification_posts_message_with_inline_keyboard(monkeypat
     ]
     assert "secret-token" not in json.dumps(result)
     assert "secret-token" not in json.dumps(calls[0]["params"])
+    buttons = [
+        button
+        for row in calls[0]["params"]["reply_markup"]["inline_keyboard"]
+        for button in row
+    ]
+    assert not any(button.get("url", "").startswith("http://localhost") for button in buttons)
+
+
+def test_send_approval_notification_includes_public_https_dashboard_url_button(monkeypatch):
+    calls = []
+
+    def fake_request(token, method, params):
+        calls.append({"token": token, "method": method, "params": params})
+        return {"ok": True, "result": {"message_id": 42}}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.setenv("GOODTEAM_DASHBOARD_URL", "https://goodteam.example.com/dashboard")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = telegram.send_approval_notification(
+        project_key="CONTENTOPS",
+        run_id="run-1",
+        gate="prd",
+        summary="ContentOps Studio v1 PRD is ready for review.",
+    )
+
+    session_id = result["session_id"]
+    expected_keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ 快速批准", "callback_data": f"v1:A:{session_id}"},
+                {"text": "🔍 逐项 review", "callback_data": f"v1:R:{session_id}"},
+            ],
+            [
+                {"text": "❌ 拒绝", "callback_data": f"v1:J:{session_id}"},
+                {"text": "📖 完整报告", "url": "https://goodteam.example.com/dashboard?project=CONTENTOPS"},
+            ]
+        ]
+    }
+
+    assert calls[0]["params"]["reply_markup"] == expected_keyboard
+    assert "Dashboard: https://goodteam.example.com/dashboard?project=CONTENTOPS" not in calls[0]["params"]["text"]
 
 
 def test_send_approval_notification_skips_when_env_is_incomplete(monkeypatch):
