@@ -169,7 +169,7 @@ def test_telegram_request_uses_telebot_apihelper_and_preserves_raw_response_cont
     ]
 
 
-def test_send_approval_notification_omits_localhost_url_button_and_includes_text_link(monkeypatch):
+def test_send_approval_notification_omits_localhost_url_button_and_includes_text_link(tmp_path, monkeypatch):
     calls = []
 
     def fake_request(token, method, params):
@@ -187,6 +187,7 @@ def test_send_approval_notification_omits_localhost_url_button_and_includes_text
         gate="prd",
         artifact_path="/tmp/artifacts/runs/run-1/prd/prd.md",
         summary="ContentOps Studio v1 PRD is ready for review.",
+        workspace=tmp_path,
     )
 
     assert result["status"] == "sent"
@@ -237,7 +238,7 @@ def test_send_approval_notification_omits_localhost_url_button_and_includes_text
     assert not any(button.get("url", "").startswith("http://localhost") for button in buttons)
 
 
-def test_send_approval_notification_includes_public_https_dashboard_url_button(monkeypatch):
+def test_send_approval_notification_includes_public_https_dashboard_url_button(tmp_path, monkeypatch):
     calls = []
 
     def fake_request(token, method, params):
@@ -254,6 +255,7 @@ def test_send_approval_notification_includes_public_https_dashboard_url_button(m
         run_id="run-1",
         gate="prd",
         summary="ContentOps Studio v1 PRD is ready for review.",
+        workspace=tmp_path,
     )
 
     session_id = result["session_id"]
@@ -272,6 +274,149 @@ def test_send_approval_notification_includes_public_https_dashboard_url_button(m
 
     assert calls[0]["params"]["reply_markup"] == expected_keyboard
     assert "Dashboard: https://goodteam.example.com/dashboard?project=CONTENTOPS" not in calls[0]["params"]["text"]
+
+
+def test_send_approval_notification_refreshes_existing_live_gate_card(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_request(token, method, params):
+        calls.append({"token": token, "method": method, "params": params})
+        if method == "sendMessage":
+            return {"ok": True, "result": {"message_id": 42}}
+        return {"ok": True, "result": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.delenv("GOODTEAM_DASHBOARD_URL", raising=False)
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    first = telegram.send_approval_notification(
+        project_key="CONTENTOPS",
+        run_id="run-1",
+        gate="prd",
+        summary="PRD ready.",
+        workspace=tmp_path,
+    )
+    second = telegram.send_approval_notification(
+        project_key="CONTENTOPS",
+        run_id="run-1",
+        gate="prd",
+        summary="PRD ready.",
+        workspace=tmp_path,
+    )
+
+    assert first["status"] == "sent"
+    assert second["status"] == "refreshed"
+    assert second["session_id"] == first["session_id"]
+    assert second["message_id"] == 42
+    assert [call["method"] for call in calls] == ["sendMessage", "editMessageText"]
+    assert calls[1]["params"]["message_id"] == 42
+    assert calls[1]["params"]["reply_markup"] == calls[0]["params"]["reply_markup"]
+    assert len(list((tmp_path / "state" / "tg-reviews").glob("*.json"))) == 1
+
+
+def test_send_approval_notification_sends_new_card_for_different_gate(tmp_path, monkeypatch):
+    calls = []
+    next_message_id = 41
+
+    def fake_request(token, method, params):
+        nonlocal next_message_id
+        calls.append({"token": token, "method": method, "params": params})
+        next_message_id += 1
+        return {"ok": True, "result": {"message_id": next_message_id}}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    first = telegram.send_approval_notification(project_key="CONTENTOPS", run_id="run-1", gate="prd", workspace=tmp_path)
+    second = telegram.send_approval_notification(
+        project_key="CONTENTOPS",
+        run_id="run-1",
+        gate="implementation",
+        workspace=tmp_path,
+    )
+
+    assert first["status"] == "sent"
+    assert second["status"] == "sent"
+    assert second["session_id"] != first["session_id"]
+    assert [call["method"] for call in calls] == ["sendMessage", "sendMessage"]
+    assert len(list((tmp_path / "state" / "tg-reviews").glob("*.json"))) == 2
+
+
+def test_send_approval_notification_sends_new_card_when_same_gate_session_is_decided(tmp_path, monkeypatch):
+    calls = []
+    next_message_id = 41
+
+    def fake_request(token, method, params):
+        nonlocal next_message_id
+        calls.append({"token": token, "method": method, "params": params})
+        next_message_id += 1
+        return {"ok": True, "result": {"message_id": next_message_id}}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    first = telegram.send_approval_notification(project_key="CONTENTOPS", run_id="run-1", gate="prd", workspace=tmp_path)
+    store = telegram.TelegramReviewSessionStore(tmp_path)
+    session = store.get(str(first["session_id"]))
+    session["decided"] = True
+    store.save(str(first["session_id"]), session)
+
+    second = telegram.send_approval_notification(project_key="CONTENTOPS", run_id="run-1", gate="prd", workspace=tmp_path)
+
+    assert second["status"] == "sent"
+    assert second["session_id"] != first["session_id"]
+    assert [call["method"] for call in calls] == ["sendMessage", "sendMessage"]
+    assert len(list((tmp_path / "state" / "tg-reviews").glob("*.json"))) == 2
+
+
+def test_send_approval_notification_treats_not_modified_refresh_as_success(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_request(token, method, params):
+        calls.append({"token": token, "method": method, "params": params})
+        if method == "sendMessage":
+            return {"ok": True, "result": {"message_id": 42}}
+        return {"ok": False, "description": "Bad Request: message is not modified"}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    first = telegram.send_approval_notification(project_key="CONTENTOPS", run_id="run-1", gate="prd", workspace=tmp_path)
+    second = telegram.send_approval_notification(project_key="CONTENTOPS", run_id="run-1", gate="prd", workspace=tmp_path)
+
+    assert second["status"] == "refreshed"
+    assert second["session_id"] == first["session_id"]
+    assert [call["method"] for call in calls] == ["sendMessage", "editMessageText"]
+    assert len(list((tmp_path / "state" / "tg-reviews").glob("*.json"))) == 1
+
+
+def test_send_approval_notification_resends_when_existing_message_is_missing(tmp_path, monkeypatch):
+    calls = []
+    next_message_id = 41
+
+    def fake_request(token, method, params):
+        nonlocal next_message_id
+        calls.append({"token": token, "method": method, "params": params})
+        if method == "editMessageText":
+            return {"ok": False, "description": "Bad Request: message to edit not found"}
+        next_message_id += 1
+        return {"ok": True, "result": {"message_id": next_message_id}}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    first = telegram.send_approval_notification(project_key="CONTENTOPS", run_id="run-1", gate="prd", workspace=tmp_path)
+    second = telegram.send_approval_notification(project_key="CONTENTOPS", run_id="run-1", gate="prd", workspace=tmp_path)
+
+    assert second["status"] == "sent"
+    assert second["session_id"] != first["session_id"]
+    assert [call["method"] for call in calls] == ["sendMessage", "editMessageText", "sendMessage"]
+    assert len(list((tmp_path / "state" / "tg-reviews").glob("*.json"))) == 2
 
 
 def test_send_approval_notification_skips_when_env_is_incomplete(monkeypatch):
