@@ -553,7 +553,7 @@ def _parse_telegram_command(text: str) -> str:
         command = head[1:]
     else:
         return ""
-    return command if command in {"status", "approvals", "workers", "evidence"} else ""
+    return command if command in {"status", "approvals", "workers", "evidence", "view", "approve", "reject", "changes"} else ""
 
 
 def _send_masked_telegram_message(*, token: str, chat_id: object, text: str) -> None:
@@ -742,6 +742,16 @@ def _format_evidence_command(*, workspace: Path, project_key: str) -> str:
     )
 
 
+def _extract_command_arg(raw_text: str, command: str) -> str:
+    """Extract the argument (everything after the command word) from raw message text."""
+    text = raw_text.strip()
+    # Try "/gt <cmd> <arg>" form first
+    for prefix in (f"/gt {command}", f"/{command}"):
+        if text.lower().startswith(prefix):
+            return text[len(prefix):].strip()
+    return ""
+
+
 def _process_telegram_command(
     command: str,
     *,
@@ -749,6 +759,8 @@ def _process_telegram_command(
     chat_id: object,
     workspace: Path,
     project_key: str,
+    raw_text: str = "",
+    user_id: str = "",
 ) -> dict[str, object]:
     if command == "approvals":
         state = _read_command_state(workspace, project_key)
@@ -768,6 +780,173 @@ def _process_telegram_command(
             summary=f"GoodTeam is waiting for {gate.upper()} approval on {getattr(state, 'project_key', project_key)}.",
             workspace=workspace,
         )
+        return {"status": "processed", "command": command}
+
+    if command == "view":
+        from goodteam_os.web import current_approval_gate
+        from goodteam_os.roles import approval_artifact_map
+
+        state = _read_command_state(workspace, project_key)
+        gate_arg = _extract_command_arg(raw_text, "view")
+
+        if gate_arg:
+            # Verify it's a real key in state.approvals
+            approvals = getattr(state, "approvals", {}) if state is not None else {}
+            if gate_arg not in approvals:
+                _send_masked_telegram_message(
+                    token=token, chat_id=chat_id,
+                    text=f"No artifact found for gate {gate_arg}"
+                )
+                return {"status": "processed", "command": command}
+            gate = gate_arg
+        else:
+            gate = current_approval_gate(state) if state is not None else ""
+            if not gate:
+                _send_masked_telegram_message(
+                    token=token, chat_id=chat_id,
+                    text="No pending approval gate."
+                )
+                return {"status": "processed", "command": command}
+
+        artifact_key = approval_artifact_map().get(gate, gate)
+        artifact_path = str(getattr(state, "artifacts", {}).get(artifact_key, "") if state is not None else "")
+
+        if not artifact_path:
+            _send_masked_telegram_message(
+                token=token, chat_id=chat_id,
+                text=f"No artifact found for gate {gate}"
+            )
+            return {"status": "processed", "command": command}
+
+        path = Path(artifact_path)
+        if not path.is_absolute():
+            path = (workspace / path).resolve()
+        if not path.is_file():
+            _send_masked_telegram_message(
+                token=token, chat_id=chat_id,
+                text=f"No artifact found for gate {gate}"
+            )
+            return {"status": "processed", "command": command}
+
+        content = mask_sensitive_data(path.read_text(encoding="utf-8"))
+        chunk_size = 3800
+        if len(content) <= chunk_size:
+            _telegram_request(
+                token,
+                "sendMessage",
+                {"chat_id": str(chat_id), "text": f"📄 {gate}:\n\n{content}"},
+            )
+        else:
+            chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)]
+            n = len(chunks)
+            for i, chunk in enumerate(chunks, 1):
+                _telegram_request(
+                    token,
+                    "sendMessage",
+                    {"chat_id": str(chat_id), "text": f"📄 {gate} (part {i}/{n}):\n\n{chunk}"},
+                )
+        return {"status": "processed", "command": command}
+
+    if command in {"approve", "reject", "changes"}:
+        from goodteam_os.web import current_approval_gate
+        from goodteam_os.roles import approval_artifact_map
+
+        note = _extract_command_arg(raw_text, command)
+
+        if command == "reject" and not note:
+            _send_masked_telegram_message(
+                token=token, chat_id=chat_id,
+                text="Usage: /gt reject <reason>"
+            )
+            return {"status": "processed", "command": command}
+        if command == "changes" and not note:
+            _send_masked_telegram_message(
+                token=token, chat_id=chat_id,
+                text="Usage: /gt changes <note>"
+            )
+            return {"status": "processed", "command": command}
+
+        state = _read_command_state(workspace, project_key)
+        gate = current_approval_gate(state) if state is not None else ""
+        if not gate:
+            _send_masked_telegram_message(
+                token=token, chat_id=chat_id,
+                text="No pending approval gate."
+            )
+            return {"status": "processed", "command": command}
+
+        decision_map = {
+            "approve": "approved",
+            "reject": "rejected",
+            "changes": "changes_requested",
+        }
+        review_mode_map = {
+            "approve": "quick",
+            "reject": "reject_confirmed",
+            "changes": "request_changes_with_notes",
+        }
+        decision = decision_map[command]
+        review_mode = review_mode_map[command]
+
+        decide_approval(
+            workspace=workspace,
+            project_key=project_key,
+            approval=gate,
+            decision=decision,
+            decision_origin="telegram",
+            actor_ref=f"telegram:user:{user_id}",
+            review_mode=review_mode,
+            review_session_id="",
+            client_context={"chat_id": str(chat_id), "user_id": user_id},
+            note=note,
+        )
+
+        # Try to find and mark the live session, then edit the card
+        run_id = str(getattr(state, "run_id", "") if state is not None else "")
+        store = TelegramReviewSessionStore(workspace)
+        live_session = store.find_live_for_gate(project_key, run_id, gate)
+        if live_session:
+            live_session["decided"] = True
+            store.save(str(live_session["session_id"]), live_session)
+            try:
+                _telegram_request(
+                    token,
+                    "editMessageText",
+                    {
+                        "chat_id": str(live_session["chat_id"]),
+                        "message_id": live_session["message_id"],
+                        "text": render_final_card_text(
+                            session=live_session,
+                            decision_label={
+                                "approved": "已批准",
+                                "rejected": "已拒绝并终止运行",
+                                "changes_requested": "已送回修改",
+                            }.get(decision, decision),
+                            next_info="已通过 /gt 命令处理。",
+                        ),
+                        "parse_mode": "Markdown",
+                    },
+                )
+            except Exception:
+                pass
+
+        if command == "changes" and live_session:
+            try:
+                compile_and_write_review_notes(workspace, live_session)
+            except Exception:
+                pass
+
+        # Send confirmation
+        if command == "approve":
+            confirm = f"✅ {gate.upper()} approved."
+            if note:
+                confirm += f"\nNote: {note}"
+        elif command == "reject":
+            confirm = f"❌ {gate.upper()} rejected.\nReason: {note}"
+        else:
+            confirm = f"🔄 {gate.upper()} — changes requested.\nNote: {note}"
+
+        _send_masked_telegram_message(token=token, chat_id=chat_id, text=confirm)
         return {"status": "processed", "command": command}
 
     text = {
@@ -1102,7 +1281,8 @@ def process_telegram_update(
 
                 return {"status": "processed", "callback_id": f"msg_{message.get('message_id')}"}
 
-        command = _parse_telegram_command(str(message.get("text", "") or ""))
+        msg_text = str(message.get("text", "") or "")
+        command = _parse_telegram_command(msg_text)
         if command:
             user = dict(message.get("from", {}) or {})
             user_id = str(user.get("id", ""))
@@ -1115,6 +1295,8 @@ def process_telegram_update(
                 chat_id=chat_id,
                 workspace=workspace,
                 project_key=project_key,
+                raw_text=msg_text,
+                user_id=user_id,
             )
 
         return {"status": "ignored", "reason": "not a reply message"}
