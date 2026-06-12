@@ -160,10 +160,23 @@ def append_action(
         handle.write(json.dumps(event) + "\n")
 
 
+_DEFAULT_TG_NOTIFY_GATES: frozenset[str] = frozenset({"prd", "staging", "release"})
+
+
+def _tg_notify_gate_set() -> frozenset[str]:
+    """Return the set of gates that trigger a Telegram notification card."""
+    env = os.getenv("GOODTEAM_TG_NOTIFY_GATES", "")
+    if env.strip():
+        return frozenset(g.strip() for g in env.split(",") if g.strip())
+    return _DEFAULT_TG_NOTIFY_GATES
+
+
 def notify_current_approval_gate(state: AgileDevState | None, workspace: Path = Path(".")) -> dict[str, object]:
     gate = current_approval_gate(state)
     if state is None or not gate:
         return {"status": "skipped", "reason": "no approval gate"}
+    if gate not in _tg_notify_gate_set():
+        return {"status": "skipped", "reason": "gate_not_in_notify_set"}
     artifact_key = approval_artifact_map().get(gate, gate)
     try:
         return send_approval_notification(

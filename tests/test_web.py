@@ -4661,7 +4661,7 @@ def test_start_workflow_notifies_when_takeover_approval_gate_is_ready(tmp_path, 
         encoding="utf-8",
     )
 
-    payload = start_workflow(
+    start_workflow(
         workspace=tmp_path,
         idea="Take over the AI content studio and prepare cross-platform publishing workflows.",
         project_key="CONTENTOPS",
@@ -4671,15 +4671,8 @@ def test_start_workflow_notifies_when_takeover_approval_gate_is_ready(tmp_path, 
         project_config=project_config,
     )
 
-    assert notifications == [
-        {
-            "project_key": "CONTENTOPS",
-            "run_id": payload["run_id"],
-            "gate": "takeover",
-            "artifact_path": payload["artifacts"]["takeover"],
-            "summary": "GoodTeam is waiting for TAKEOVER approval on CONTENTOPS.",
-        }
-    ]
+    # takeover is an internal gate and is not in the default TG notify set
+    assert notifications == []
 
 
 def test_start_workflow_rejects_new_run_when_current_run_is_active(tmp_path):
@@ -5950,3 +5943,74 @@ def test_render_project_overview_does_not_link_to_missing_gto_project(tmp_path):
     html = render_project_overview(tmp_path)
 
     assert 'href="/?project=GTO"' not in html
+
+
+def test_tg_notify_gate_default_filter_skips_non_notify_gate(monkeypatch):
+    monkeypatch.delenv("GOODTEAM_TG_NOTIFY_GATES", raising=False)
+    called = []
+
+    def fake_send(**kwargs):
+        called.append(kwargs)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(web, "send_approval_notification", fake_send)
+
+    state = create_initial_state("r1", "TEST", "Test project")
+    state.next_node = "await_rfc_approval"
+    state.approvals["rfc"] = "pending"
+
+    result = web.notify_current_approval_gate(state)
+
+    assert result == {"status": "skipped", "reason": "gate_not_in_notify_set"}
+    assert called == []
+
+
+def test_tg_notify_gate_default_filter_sends_for_prd_gate(monkeypatch):
+    monkeypatch.delenv("GOODTEAM_TG_NOTIFY_GATES", raising=False)
+    called = []
+
+    def fake_send(**kwargs):
+        called.append(kwargs)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(web, "send_approval_notification", fake_send)
+
+    state = create_initial_state("r1", "TEST", "Test project")
+    state.next_node = "await_prd_approval"
+    state.approvals["prd"] = "pending"
+
+    web.notify_current_approval_gate(state)
+
+    assert len(called) == 1
+
+
+def test_tg_notify_gate_env_override_routes_correctly(monkeypatch):
+    monkeypatch.setenv("GOODTEAM_TG_NOTIFY_GATES", "rfc")
+    called = []
+
+    def fake_send(**kwargs):
+        called.append(kwargs["gate"])
+        return {"status": "ok"}
+
+    monkeypatch.setattr(web, "send_approval_notification", fake_send)
+
+    # rfc gate IS in override set → should call send
+    rfc_state = create_initial_state("r1", "TEST", "Test project")
+    rfc_state.next_node = "await_rfc_approval"
+    rfc_state.approvals["rfc"] = "pending"
+
+    web.notify_current_approval_gate(rfc_state)
+
+    assert called == ["rfc"]
+
+    called.clear()
+
+    # prd gate NOT in override set → should skip
+    prd_state = create_initial_state("r2", "TEST", "Test project")
+    prd_state.next_node = "await_prd_approval"
+    prd_state.approvals["prd"] = "pending"
+
+    result = web.notify_current_approval_gate(prd_state)
+
+    assert result == {"status": "skipped", "reason": "gate_not_in_notify_set"}
+    assert called == []
