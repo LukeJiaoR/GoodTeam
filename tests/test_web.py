@@ -5956,8 +5956,8 @@ def test_tg_notify_gate_default_filter_skips_non_notify_gate(monkeypatch):
     monkeypatch.setattr(web, "send_approval_notification", fake_send)
 
     state = create_initial_state("r1", "TEST", "Test project")
-    state.next_node = "await_rfc_approval"
-    state.approvals["rfc"] = "pending"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = "pending"
 
     result = web.notify_current_approval_gate(state)
 

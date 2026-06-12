@@ -160,7 +160,7 @@ def append_action(
         handle.write(json.dumps(event) + "\n")
 
 
-_DEFAULT_TG_NOTIFY_GATES: frozenset[str] = frozenset({"prd", "staging", "release"})
+_DEFAULT_TG_NOTIFY_GATES: frozenset[str] = frozenset({"prd", "rfc", "security", "staging", "release"})
 
 
 def _tg_notify_gate_set() -> frozenset[str]:
