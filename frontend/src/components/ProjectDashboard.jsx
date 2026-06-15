@@ -244,6 +244,7 @@ export default function ProjectDashboard({
         updateUrl={updateUrl}
       />
 
+      <div className="flex-grow flex flex-col min-w-0">
       <ProjectHeader
         activeRun={activeRun}
         getStatusLabel={getStatusLabel}
@@ -422,6 +423,7 @@ export default function ProjectDashboard({
             startMode={startMode}
             state={state}
             targetMessageFeedKey={targetMessageFeedKey}
+            t={t}
             totalApprovalsCount={totalApprovalsCount}
             updateUrl={updateUrl}
             usedBackends={usedBackends}
@@ -443,6 +445,7 @@ export default function ProjectDashboard({
         showGitNotice={showGitNotice}
         t={t}
       />
+      </div>
     </div>
   );
 }
