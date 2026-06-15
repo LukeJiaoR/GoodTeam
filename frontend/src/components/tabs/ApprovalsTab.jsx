@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Check,
   Edit,
   HelpCircle,
@@ -444,6 +445,18 @@ export default function ApprovalsTab({
                         (() => {
                           const selectedReview = approvalReviews.find(r => r.is_actionable) || approvalReviews[0];
                           const badge = getBadgeStyle(selectedReview.decision);
+                          const evidenceSnapshot = selectedReview.evidence_snapshot && typeof selectedReview.evidence_snapshot === 'string'
+                            ? (() => { try { return JSON.parse(selectedReview.evidence_snapshot); } catch { return null; } })()
+                            : selectedReview.evidence_snapshot;
+                          const statusBadge = (status) => {
+                            if (status === 'passed') {
+                              return { cls: 'text-status-success-text bg-status-success-bg border-status-success/30', label: 'Passed' };
+                            }
+                            if (status === 'failed') {
+                              return { cls: 'text-status-danger-text bg-status-danger-bg border-status-danger/30', label: 'Failed' };
+                            }
+                            return { cls: 'text-text-muted bg-surface-sunken border-border-subtle', label: 'Unknown' };
+                          };
                           const committee = selectedReview.committee && typeof selectedReview.committee === 'object' ? selectedReview.committee : null;
                           const committeeAdvisors = Array.isArray(committee?.advisors) ? committee.advisors : [];
                           const committeeMessages = Array.isArray(committee?.messages) ? committee.messages : [];
@@ -504,9 +517,9 @@ export default function ApprovalsTab({
                                  <div className="px-6 py-4 bg-surface-sunken border-b-2 border-border-subtle flex justify-between items-center">
                                    <div>
                                      <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">Preview Panel</span>
-                                     <h3 className="font-extrabold text-sm text-text-secondary mt-0.5">{selectedReview.artifact.toUpperCase()} Review Details</h3>
+                                     <h3 className="font-extrabold text-sm text-text-secondary mt-0.5">{selectedReview.artifact?.toUpperCase() || ''} Review Details</h3>
                                    </div>
-                                   <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>{selectedReview.decision.replace('_', ' ')}</span>
+                                   <span className={`inline-block px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${badge.bg} ${badge.text} ${badge.border}`}>{selectedReview.decision?.replace('_', ' ') || ''}</span>
                                  </div>
 
                                  <div className="p-6 flex-grow space-y-6">
@@ -541,14 +554,22 @@ export default function ApprovalsTab({
                                              </div>
                                            </div>
                                          ) : (
-                                           <span className="text-2xs font-bold text-status-danger-text bg-status-danger-bg px-2 py-0.5 rounded-full border border-status-danger/30 uppercase tracking-wider self-start">⚠️ Missing Evidence</span>
+                                           <span className="text-2xs font-bold text-status-danger-text bg-status-danger-bg px-2 py-0.5 rounded-full border border-status-danger/30 uppercase tracking-wider self-start inline-flex items-center gap-1"><AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />Missing Evidence</span>
                                          )}
                                        </div>
 
                                        {/* Slot: Blockers */}
                                        <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
                                          <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">Blockers</span>
-                                         <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                         {typeof evidenceSnapshot?.blocker_count === 'number' ? (
+                                           evidenceSnapshot.blocker_count > 0 ? (
+                                             <span className="text-2xs font-bold text-status-danger-text bg-status-danger-bg px-2 py-0.5 rounded-full border border-status-danger/30 uppercase tracking-wider self-start">{evidenceSnapshot.blocker_count}</span>
+                                           ) : (
+                                             <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">0</span>
+                                           )
+                                         ) : (
+                                           <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                         )}
                                        </div>
 
                                        {/* Slot: Debate */}
@@ -566,19 +587,25 @@ export default function ApprovalsTab({
                                        {/* Slot: CI Status */}
                                        <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
                                          <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">CI Status</span>
-                                         <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                         {(() => { const sb = statusBadge(evidenceSnapshot?.ci_status); return (
+                                           <span className={`text-2xs font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider self-start ${sb.cls}`}>{sb.label}</span>
+                                         ); })()}
                                        </div>
 
                                        {/* Slot: Smoke Status */}
                                        <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
                                          <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">Smoke Tests</span>
-                                         <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                         {(() => { const sb = statusBadge(evidenceSnapshot?.smoke_status); return (
+                                           <span className={`text-2xs font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider self-start ${sb.cls}`}>{sb.label}</span>
+                                         ); })()}
                                        </div>
 
                                        {/* Slot: QA Status */}
                                        <div className="bg-surface-raised border border-border-subtle rounded-xl p-3 flex flex-col justify-between space-y-2">
                                          <span className="text-2xs font-extrabold text-text-muted uppercase tracking-wider">QA Verification</span>
-                                         <span className="text-2xs font-bold text-text-muted bg-surface-sunken px-2 py-0.5 rounded-full border border-border-subtle uppercase tracking-wider self-start">Unknown</span>
+                                         {(() => { const sb = statusBadge(evidenceSnapshot?.qa_status); return (
+                                           <span className={`text-2xs font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider self-start ${sb.cls}`}>{sb.label}</span>
+                                         ); })()}
                                        </div>
                                      </div>
 
@@ -586,31 +613,33 @@ export default function ApprovalsTab({
                                      <div className="space-y-2">
                                        {!selectedReview.artifact_path && (
                                          <div className="bg-status-danger-bg text-status-danger-text border border-status-danger/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
-                                           <span>⚠️</span>
+                                           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
                                            <span>MISSING-EVIDENCE: Artifact path is empty or unavailable. Review cannot proceed without target content.</span>
                                          </div>
                                        )}
-                                       <div className="bg-status-warning-bg text-status-warning-text border border-status-warning/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
-                                         <span>⚠️</span>
-                                         <span>MISSING-EVIDENCE: CI status is unknown. Build verification is recommended before gate approval.</span>
-                                       </div>
-                                       <div className="bg-status-warning-bg text-status-warning-text border border-status-warning/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
-                                         <span>⚠️</span>
-                                         <span>MISSING-EVIDENCE: Smoke tests status is unknown. Deployment smoke testing is recommended before gate approval.</span>
-                                       </div>
-                                       <div className="bg-status-warning-bg text-status-warning-text border border-status-warning/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
-                                         <span>⚠️</span>
-                                         <span>MISSING-EVIDENCE: QA verification status is unknown. QA checks are recommended before gate approval.</span>
-                                       </div>
+                                       {evidenceSnapshot?.ci_status === 'failed' && (
+                                         <div className="bg-status-danger-bg text-status-danger-text border border-status-danger/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
+                                           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                           <span>CI status: failed. Resolve the failing build before approval.</span>
+                                         </div>
+                                       )}
+                                       {evidenceSnapshot?.smoke_status === 'failed' && (
+                                         <div className="bg-status-danger-bg text-status-danger-text border border-status-danger/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
+                                           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                           <span>Smoke tests: failed. Resolve the failing smoke run before approval.</span>
+                                         </div>
+                                       )}
+                                       {evidenceSnapshot?.qa_status === 'failed' && (
+                                         <div className="bg-status-danger-bg text-status-danger-text border border-status-danger/30 rounded-xl p-3 text-2xs font-bold flex items-center space-x-2">
+                                           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                           <span>QA verification: failed. Resolve the failing QA checks before approval.</span>
+                                         </div>
+                                       )}
                                      </div>
                                    </div>
 
                                     {/* Provenance Section */}
                                     {(() => {
-                                      const evidenceSnapshot = selectedReview.evidence_snapshot && typeof selectedReview.evidence_snapshot === 'string'
-                                        ? (() => { try { return JSON.parse(selectedReview.evidence_snapshot); } catch { return null; } })()
-                                        : selectedReview.evidence_snapshot;
-
                                       const provenanceRefs = Array.isArray(selectedReview.provenance_refs)
                                         ? selectedReview.provenance_refs
                                         : Array.isArray(evidenceSnapshot?.provenance_refs)
@@ -715,7 +744,7 @@ export default function ApprovalsTab({
                                      <div className="border-2 border-dashed border-border-subtle rounded-2xl p-4 bg-status-warning-bg space-y-3">
                                        <div className="flex items-center justify-between gap-3">
                                          <div>
-                                           <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Committee</h4>
+                                           <h4 className="text-xs font-extrabold uppercase tracking-wider text-text-muted">Committee</h4>
                                            {needsCommitteeDebate && (
                                              <p className="text-2xs font-bold text-text-muted mt-1">Committee declared. Run debate to convene it.</p>
                                            )}
@@ -909,8 +938,9 @@ export default function ApprovalsTab({
                                            className="w-full p-3 border border-border-subtle bg-surface-raised text-text-secondary rounded-xl text-xs focus:ring-2 focus:ring-status-warning outline-none resize-none font-sans"
                                          />
                                          {changesRequestedNote.trim() === '' && (
-                                           <div className="text-status-warning-text text-2xs font-bold">
-                                             ⚠️ Feedback note is empty. Please provide detail so the model knows what to revise.
+                                           <div className="text-status-warning-text text-2xs font-bold flex items-center space-x-2">
+                                             <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                             <span>Feedback note is empty. Please provide detail so the model knows what to revise.</span>
                                            </div>
                                          )}
                                        </div>
@@ -1026,7 +1056,7 @@ export default function ApprovalsTab({
                                  return (
                                    <section className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5 space-y-4">
                                      <div className="border-b-2 border-border-subtle pb-2">
-                                       <h3 className="font-extrabold text-sm text-text-primary uppercase tracking-wider">Approval Audit Trail</h3>
+                                       <h3 className="font-extrabold text-xs text-text-primary uppercase tracking-wider">Approval Audit Trail</h3>
                                        <p className="text-2xs text-text-muted">Historical decisions for the {selectedReview.approval} gate.</p>
                                      </div>
                                      {filteredAudit.length === 0 ? (
