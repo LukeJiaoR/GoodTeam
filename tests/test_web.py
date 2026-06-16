@@ -5120,6 +5120,7 @@ def test_decide_approval_approves_security_and_runs_planner(tmp_path, monkeypatc
     )
 
     assert payload["approvals"]["security"] == "approved"
+    assert payload["approvals"]["staging"] == "approved"
     assert payload["current_node"] == "release_review_gate"
     assert payload["next_node"] == "await_release_approval"
     assert "implementation_handoff" in payload["artifacts"]

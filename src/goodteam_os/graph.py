@@ -1212,6 +1212,7 @@ def run_delivery_until_release_gate(
     if staging_backend_enabled(source_type=state.source_type, project_config=project_config):
         return run_staging_until_gate(state, workspace, project_config)
 
+    state.approvals["staging"] = ApprovalDecision.APPROVED
     return run_release_until_gate(state, workspace, project_config, worker_results=worker_results)
 
 
