@@ -33,6 +33,7 @@ from goodteam_os.graph import (
     resolve_project_runtime_root,
     run_architecture_until_gate,
     run_adoption_until_next_gate,
+    run_fix_until_next_gate,
     run_until_next_gate,
     should_generate_artifact_with_worker,
     sync_project_stage_tasks,
@@ -57,6 +58,7 @@ from goodteam_os.workflow_table import (
     WORKFLOW_NODES,
     advisors_for_gate,
     approved_next_for_gate,
+    resolve_profile,
     workflow_execution_plan,
     workflow_execution_plan_v2,
 )
@@ -160,7 +162,26 @@ def append_action(
         handle.write(json.dumps(event) + "\n")
 
 
-_DEFAULT_TG_NOTIFY_GATES: frozenset[str] = frozenset({"prd", "rfc", "security", "staging", "release"})
+_DEFAULT_TG_NOTIFY_GATES: frozenset[str] = frozenset(
+    {"prd", "rfc", "security", "staging", "release", "fix_plan", "code_review", "qa"}
+)
+
+# Phase 1 `fix` profile gate -> artifact-key overlay. The role-config
+# approval_artifacts map only knows greenfield gates; the fix gates write the
+# same artifact files greenfield does, so map them onto those keys additively.
+_FIX_APPROVAL_ARTIFACTS: dict[str, str] = {
+    "fix_plan": "fix_plan",
+    "code_review": "implementation_handoff",
+    "qa": "qa_report",
+}
+
+
+def _approval_artifact_for_gate(gate: str) -> str:
+    """Resolve the artifact key for a gate, overlaying the fix-profile gates."""
+    base = approval_artifact_map()
+    if gate in base:
+        return base[gate]
+    return _FIX_APPROVAL_ARTIFACTS.get(gate, gate)
 
 
 def _tg_notify_gate_set() -> frozenset[str]:
@@ -177,7 +198,7 @@ def notify_current_approval_gate(state: AgileDevState | None, workspace: Path = 
         return {"status": "skipped", "reason": "no approval gate"}
     if gate not in _tg_notify_gate_set():
         return {"status": "skipped", "reason": "gate_not_in_notify_set"}
-    artifact_key = approval_artifact_map().get(gate, gate)
+    artifact_key = _approval_artifact_for_gate(gate)
     try:
         return send_approval_notification(
             project_key=state.project_key,
@@ -2506,6 +2527,7 @@ def start_workflow(
     source_type: str = "new_project",
     project_config: Path | None = None,
     role_model_overrides: list[str] | None = None,
+    load_profile: str = "greenfield",
     dry_run: bool = False,
 ) -> dict[str, object]:
     if not idea.strip():
@@ -2537,6 +2559,9 @@ def start_workflow(
     state.delivery_mode = normalize_delivery_mode(delivery_mode or str(target.get("delivery_mode", "") or "init_project"))
     state.delivery_standards = _normalize_start_delivery_standards(delivery_standards) if state.delivery_mode == "custom" else []
     state.role_models = role_models
+    profile = resolve_profile(load_profile or "greenfield")
+    state.load_profile = profile.name
+    use_fix_profile = profile.name == "fix" and source_type != "existing_project"
 
     if dry_run:
         if source_type == "existing_project":
@@ -2544,6 +2569,11 @@ def start_workflow(
             state.current_node = "takeover_review_gate"
             state.next_node = "await_takeover_approval"
             state.approvals["takeover"] = ApprovalDecision.PENDING
+        elif use_fix_profile:
+            planned_artifacts = {"fix_plan": str(workspace / "artifacts" / "runs" / state.run_id / "fix_plan" / "fix-plan.md")}
+            state.current_node = "fix_plan_review_gate"
+            state.next_node = "await_fix_plan_approval"
+            state.approvals["fix_plan"] = ApprovalDecision.PENDING
         else:
             planned_artifacts = {"prd": str(workspace / "artifacts" / "runs" / state.run_id / "prd" / "prd.md")}
             state.current_node = "prd_review_gate"
@@ -2555,6 +2585,8 @@ def start_workflow(
 
     if source_type == "existing_project":
         result = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+    elif use_fix_profile:
+        result = run_fix_until_next_gate(state=state, workspace=workspace, project_config=project_config)
     else:
         result = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
     state_store = StateStore(root=workspace)
@@ -2604,8 +2636,6 @@ def decide_approval(
     client_context: dict[str, object] | None = None,
     review_items: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    approved_next = approved_next_for_gate(approval)
-
     try:
         approval_decision = ApprovalDecision(decision)
     except ValueError as exc:
@@ -2616,6 +2646,18 @@ def decide_approval(
     if state is None:
         raise ValueError("No active run to approve.")
     key = normalize_project_key(project_key or state.project_key)
+
+    # Resolve the approved-next target through the run's load profile. Greenfield
+    # keeps the historical module-function call path (so monkeypatch-based tests
+    # that spy on web.approved_next_for_gate stay valid, including its
+    # "Unknown approval gate" raise ordering); other profiles (e.g. fix) resolve
+    # against their own captured gate-transition table.
+    profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
+    if profile.name == "greenfield":
+        approved_next = approved_next_for_gate(approval)
+    else:
+        approved_next = profile.approved_next_for_gate(approval)
+
     if approval not in state.approvals:
         raise ValueError(f"Approval gate is not present in current state: {approval}")
     if state.next_node != f"await_{approval}_approval":
@@ -2644,8 +2686,8 @@ def decide_approval(
         decision=str(approval_decision),
         before_node=before_node,
         after_node=state.next_node,
-        artifact=approval_artifact_map().get(approval, approval),
-        artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
+        artifact=_approval_artifact_for_gate(approval),
+        artifact_path=state.artifacts.get(_approval_artifact_for_gate(approval), ""),
         debate_ref=debate_ref,
         note=note.strip(),
         decision_origin=decision_origin,

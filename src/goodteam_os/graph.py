@@ -976,50 +976,94 @@ def _advance_approved_workflow_legacy(
     # (which the greenfield profile wraps) so behavior — and tests/helpers that
     # patch those module seams — is byte-identical.
     profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
-    if profile.name != "greenfield":  # pragma: no cover - no non-greenfield profile in Phase 0
-        raise ValueError(f"Unsupported load profile: {profile.name}")
-    runners = {
-        "run_architecture_until_gate": run_architecture_until_gate,
-        "run_delivery_until_release_gate": run_delivery_until_release_gate,
-        "run_release_until_gate": run_release_until_gate,
-        "run_retro_until_complete": run_retro_until_complete,
-        "noop_security_gate": noop_security_gate,
-    }
-    while True:
-        before = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
-        node = workflow_node(state.next_node)
-        if node is None:
-            return state
-        blocked_gate = next(
-            (
-                dependency
-                for dependency in node.depends_on
-                if dependency in state.approvals
-                and str(state.approvals.get(dependency, "")) != ApprovalDecision.APPROVED
-            ),
-            "",
-        )
-        if blocked_gate:
-            state.current_node = f"{blocked_gate}_review_gate"
-            state.next_node = gate_next_node(
-                state,
-                gate=blocked_gate,
-                approved_next=approved_next_for_gate(blocked_gate),
+    if profile.name == "greenfield":
+        runners = {
+            "run_architecture_until_gate": run_architecture_until_gate,
+            "run_delivery_until_release_gate": run_delivery_until_release_gate,
+            "run_release_until_gate": run_release_until_gate,
+            "run_retro_until_complete": run_retro_until_complete,
+            "noop_security_gate": noop_security_gate,
+        }
+        while True:
+            before = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
+            node = workflow_node(state.next_node)
+            if node is None:
+                return state
+            blocked_gate = next(
+                (
+                    dependency
+                    for dependency in node.depends_on
+                    if dependency in state.approvals
+                    and str(state.approvals.get(dependency, "")) != ApprovalDecision.APPROVED
+                ),
+                "",
             )
-            return state
-        if str(state.approvals.get(node.run_guard_gate, "")) != ApprovalDecision.APPROVED:
-            state.current_node = f"{node.run_guard_gate}_review_gate"
-            state.next_node = gate_next_node(
-                state,
-                gate=node.run_guard_gate,
-                approved_next=approved_next_for_gate(node.run_guard_gate),
+            if blocked_gate:
+                state.current_node = f"{blocked_gate}_review_gate"
+                state.next_node = gate_next_node(
+                    state,
+                    gate=blocked_gate,
+                    approved_next=approved_next_for_gate(blocked_gate),
+                )
+                return state
+            if str(state.approvals.get(node.run_guard_gate, "")) != ApprovalDecision.APPROVED:
+                state.current_node = f"{node.run_guard_gate}_review_gate"
+                state.next_node = gate_next_node(
+                    state,
+                    gate=node.run_guard_gate,
+                    approved_next=approved_next_for_gate(node.run_guard_gate),
+                )
+                return state
+            state = runners[node.runner_fn](state, workspace, project_config)
+            after = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
+            if after == before:
+                return state
+        return state
+    else:
+        # Non-greenfield profiles (e.g. the Phase 1 `fix` profile) advance through
+        # their OWN captured node/gate tables. Same loop shape as greenfield, but
+        # every node/gate lookup goes through the resolved profile so the fix path
+        # never touches the live greenfield module tables.
+        runners = {
+            "run_fix_implementation": run_fix_implementation,
+            "run_fix_qa": run_fix_qa,
+            "run_fix_close": run_fix_close,
+        }
+        while True:
+            before = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
+            node = profile.node_for(state.next_node)
+            if node is None:
+                return state
+            blocked_gate = next(
+                (
+                    dependency
+                    for dependency in node.depends_on
+                    if dependency in state.approvals
+                    and str(state.approvals.get(dependency, "")) != ApprovalDecision.APPROVED
+                ),
+                "",
             )
-            return state
-        state = runners[node.runner_fn](state, workspace, project_config)
-        after = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
-        if after == before:
-            return state
-    return state
+            if blocked_gate:
+                state.current_node = f"{blocked_gate}_review_gate"
+                state.next_node = gate_next_node(
+                    state,
+                    gate=blocked_gate,
+                    approved_next=profile.approved_next_for_gate(blocked_gate),
+                )
+                return state
+            if str(state.approvals.get(node.run_guard_gate, "")) != ApprovalDecision.APPROVED:
+                state.current_node = f"{node.run_guard_gate}_review_gate"
+                state.next_node = gate_next_node(
+                    state,
+                    gate=node.run_guard_gate,
+                    approved_next=profile.approved_next_for_gate(node.run_guard_gate),
+                )
+                return state
+            state = runners[node.runner_fn](state, workspace, project_config)
+            after = (state.current_node, state.next_node, tuple(sorted(state.artifacts)))
+            if after == before:
+                return state
+        return state
 
 
 def _workflow_runners() -> dict[str, object]:
@@ -1981,6 +2025,167 @@ def run_until_next_gate(
     state.artifacts["prd"] = str(prd_path)
     state.current_node = "prd_review_gate"
     state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
+    sync_project_stage_tasks(state, project_config)
+    return state
+
+
+# --- Phase 1: `fix` load-profile runners --------------------------------------
+# Each mirrors the `run_until_next_gate` shape (write an artifact via ArtifactStore,
+# then set current_node + next_node via gate_next_node) but for the lightweight
+# fix chain: fix_plan -> fix_implement -> code_review -> fix_qa -> qa -> fix_close.
+# These are only reachable when state.load_profile == "fix"; greenfield never
+# enters them.
+
+
+def fix_plan_worker_task(state: AgileDevState) -> str:
+    task = (
+        "Write a minimal fix plan for the following defect / change request: "
+        f"{state.idea}. Cover: a root-cause hypothesis, the smallest change that "
+        "addresses it, the files/areas likely touched, and a concrete verification "
+        "plan (commands / checks that prove the fix). Ground it in the project "
+        "context provided. Output markdown only - no preamble."
+    )
+    note = state.change_requests.get("fix_plan", "").strip()
+    if note:
+        task += (
+            "\n\nA reviewer requested changes to the current fix plan. Revise it to "
+            f"ADDRESS this feedback, preserving what is fine: {note}"
+        )
+    return task
+
+
+def render_fix_plan_markdown(state: AgileDevState) -> str:
+    note = state.change_requests.get("fix_plan", "").strip()
+    lines = [
+        "# Fix Plan",
+        "",
+        "## Defect / Change Request",
+        "",
+        f"- {state.idea}",
+        "",
+        "## Root-Cause Hypothesis",
+        "",
+        "- To be confirmed during implementation; capture the failing behavior and the",
+        "  most likely cause before changing code.",
+        "",
+        "## Minimal Change Plan",
+        "",
+        "- Make the smallest change that addresses the root cause.",
+        "- Avoid unrelated refactors; keep the diff reviewable.",
+        "",
+        "## Verification Plan",
+        "",
+        "- Add or extend a test that fails before the fix and passes after.",
+        "- Run the project's test suite and lint before requesting review.",
+    ]
+    if note:
+        lines.extend(["", "## Reviewer Feedback Addressed", "", f"- {note}"])
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_fix_qa_report_markdown(state: AgileDevState, worker_results: list[dict[str, object]] | None = None) -> str:
+    lines = [
+        "# Fix QA Report",
+        "",
+        "## Scope",
+        "",
+        f"- Verification for fix: {state.idea}",
+        "",
+        "## Verification Matrix",
+        "",
+        *format_worker_evidence_lines(worker_results or []),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def run_fix_until_next_gate(
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None = None,
+) -> AgileDevState:
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    content = render_fix_plan_markdown(state)
+    if should_generate_artifact_with_worker(project_config, "architect"):
+        worker_content = generate_artifact_via_worker(
+            state=state,
+            workspace=workspace,
+            project_config=project_config,
+            role="architect",
+            artifact_key="fix_plan",
+            task_text=fix_plan_worker_task(state),
+        )
+        if worker_content is not None:
+            state.change_requests.pop("fix_plan", None)
+            content = worker_content
+    fix_plan_path = store.write_markdown(
+        state.run_id,
+        "fix_plan",
+        _artifact_filename("fix_plan"),
+        content,
+    )
+    state.artifacts["fix_plan"] = str(fix_plan_path)
+    state.approvals["fix_plan"] = state.approvals.get("fix_plan", "pending")
+    state.current_node = "fix_plan_review_gate"
+    state.next_node = gate_next_node(state, gate="fix_plan", approved_next="fix_implement")
+    sync_project_stage_tasks(state, project_config)
+    return state
+
+
+def run_fix_implementation(
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None = None,
+) -> AgileDevState:
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    worker_results = run_implementation_workers(state, project_config, workspace=workspace)
+    handoff_path = store.write_markdown(
+        state.run_id,
+        "implementation_handoff",
+        _artifact_filename("implementation_handoff"),
+        render_downstream_artifact_markdown(
+            "implementation_handoff",
+            state,
+            project_config,
+            worker_results=worker_results,
+        ),
+    )
+    state.artifacts["implementation_handoff"] = str(handoff_path)
+    state.approvals["code_review"] = state.approvals.get("code_review", "pending")
+    state.current_node = "code_review_review_gate"
+    state.next_node = gate_next_node(state, gate="code_review", approved_next="fix_qa")
+    sync_project_stage_tasks(state, project_config)
+    return state
+
+
+def run_fix_qa(
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None = None,
+) -> AgileDevState:
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    qa_path = store.write_markdown(
+        state.run_id,
+        "qa_report",
+        _artifact_filename("qa_report"),
+        render_fix_qa_report_markdown(state),
+    )
+    state.artifacts["qa_report"] = str(qa_path)
+    state.approvals["qa"] = state.approvals.get("qa", "pending")
+    state.current_node = "qa_review_gate"
+    state.next_node = gate_next_node(state, gate="qa", approved_next="fix_close")
+    sync_project_stage_tasks(state, project_config)
+    return state
+
+
+def run_fix_close(
+    state: AgileDevState,
+    workspace: Path,
+    project_config: Path | None = None,
+) -> AgileDevState:
+    state.current_node = "complete"
+    state.next_node = ""
     sync_project_stage_tasks(state, project_config)
     return state
 

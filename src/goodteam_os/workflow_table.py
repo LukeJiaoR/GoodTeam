@@ -239,7 +239,64 @@ GREENFIELD_PROFILE = LoadProfile(
     gate_transitions=_GATE_TRANSITIONS,
 )
 
-_LOAD_PROFILES: dict[str, LoadProfile] = {"greenfield": GREENFIELD_PROFILE}
+# --- Phase 1: the lightweight `fix` load profile -----------------------------
+# A separate, self-contained workflow definition: fix_plan -> fix_implement ->
+# code_review -> fix_qa -> qa -> fix_close. Unlike greenfield (which delegates
+# node/gate lookups to the live module tables for back-compat with monkeypatch),
+# the fix profile binds its OWN captured nodes/gates so it is fully isolated from
+# the greenfield tables.
+_FIX_GATE_TRANSITIONS = {
+    "fix_plan": GateTransition(
+        gate="fix_plan",
+        on_approved_next="fix_implement",
+        on_changes_requested="revise_fix_plan",
+        on_rejected="rejected",
+    ),
+    "code_review": GateTransition(
+        gate="code_review",
+        on_approved_next="fix_qa",
+        on_changes_requested="revise_code_review",
+        on_rejected="rejected",
+    ),
+    "qa": GateTransition(
+        gate="qa",
+        on_approved_next="fix_close",
+        on_changes_requested="revise_qa",
+        on_rejected="rejected",
+    ),
+}
+
+_FIX_WORKFLOW_NODES = {
+    "fix_implement": WorkflowNode(
+        name="fix_implement",
+        run_guard_gate="fix_plan",
+        runner_fn="run_fix_implementation",
+        depends_on=("fix_plan",),
+    ),
+    "fix_qa": WorkflowNode(
+        name="fix_qa",
+        run_guard_gate="code_review",
+        runner_fn="run_fix_qa",
+        depends_on=("code_review",),
+    ),
+    "fix_close": WorkflowNode(
+        name="fix_close",
+        run_guard_gate="qa",
+        runner_fn="run_fix_close",
+        depends_on=("qa",),
+    ),
+}
+
+FIX_PROFILE = LoadProfile(
+    name="fix",
+    nodes=MappingProxyType(dict(_FIX_WORKFLOW_NODES)),
+    gate_transitions=MappingProxyType(dict(_FIX_GATE_TRANSITIONS)),
+)
+
+_LOAD_PROFILES: dict[str, LoadProfile] = {
+    "greenfield": GREENFIELD_PROFILE,
+    "fix": FIX_PROFILE,
+}
 
 
 def resolve_profile(name: str = "") -> LoadProfile:
