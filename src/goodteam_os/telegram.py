@@ -553,7 +553,7 @@ def _parse_telegram_command(text: str) -> str:
         command = head[1:]
     else:
         return ""
-    return command if command in {"status", "approvals", "workers", "evidence", "view", "approve", "reject", "changes"} else ""
+    return command if command in {"status", "approvals", "workers", "evidence", "view", "approve", "reject", "changes", "bug"} else ""
 
 
 def _send_masked_telegram_message(*, token: str, chat_id: object, text: str) -> None:
@@ -950,6 +950,45 @@ def _process_telegram_command(
 
         _send_masked_telegram_message(token=token, chat_id=chat_id, text=confirm)
         return {"status": "processed", "command": command}
+
+    if command == "bug":
+        arg = _extract_command_arg(raw_text, "bug")
+
+        severity = "p2"
+        match = re.match(r"^\[(p[123])\]\s*", arg, flags=re.IGNORECASE)
+        if match:
+            severity = match.group(1).lower()
+            arg = arg[match.end():].strip()
+
+        description = arg.strip()
+        if not description:
+            _send_masked_telegram_message(
+                token=token, chat_id=chat_id,
+                text="Usage: /gt bug [p1|p2|p3] <description>",
+            )
+            return {"status": "processed", "command": "bug"}
+
+        from goodteam_os.web import report_bug
+
+        try:
+            report_bug(
+                workspace=workspace,
+                project_key=project_key,
+                description=description,
+                severity=severity,
+            )
+        except ValueError as exc:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text=str(exc))
+            return {"status": "processed", "command": "bug"}
+
+        confirm = (
+            "🐛 Bug 已上报 · fix 工作流已启动\n"
+            f"严重度: {severity}\n"
+            "门: FIX_PLAN 待审\n"
+            "回复审批卡或用 /gt approve 处理"
+        )
+        _send_masked_telegram_message(token=token, chat_id=chat_id, text=confirm)
+        return {"status": "processed", "command": "bug"}
 
     text = {
         "status": _format_status_command,

@@ -1288,3 +1288,123 @@ def test_gt_changes_calls_decide_approval_changes_requested(tmp_path, monkeypatc
     assert decisions[0]["decision"] == "changes_requested"
     assert decisions[0]["review_mode"] == "request_changes_with_notes"
     assert decisions[0]["note"] == "needs more detail in section 3"
+
+
+def test_gt_bug_files_bug_and_confirms(tmp_path, monkeypatch):
+    calls = []
+    bug_calls = []
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    def fake_report_bug(**kwargs):
+        bug_calls.append(kwargs)
+        return {"next_node": "await_fix_plan_approval", "severity": kwargs.get("severity")}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.web.report_bug", fake_report_bug)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt bug Something broke"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "bug"}
+    assert len(bug_calls) == 1
+    assert bug_calls[0]["description"] == "Something broke"
+    assert bug_calls[0]["severity"] == "p2"
+    assert bug_calls[0]["project_key"] == "CONTENTOPS"
+    assert len(calls) == 1
+    text = calls[0]["params"]["text"]
+    assert "fix" in text
+    assert "FIX_PLAN" in text
+
+
+def test_gt_bug_parses_leading_severity_tag(tmp_path, monkeypatch):
+    bug_calls = []
+
+    def fake_request(token, method, params):
+        return {"ok": True}
+
+    def fake_report_bug(**kwargs):
+        bug_calls.append(kwargs)
+        return {"next_node": "await_fix_plan_approval"}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.web.report_bug", fake_report_bug)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt bug [p1] Critical crash"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "bug"}
+    assert len(bug_calls) == 1
+    assert bug_calls[0]["severity"] == "p1"
+    assert bug_calls[0]["description"] == "Critical crash"
+
+
+def test_gt_bug_empty_sends_usage_and_skips_report(tmp_path, monkeypatch):
+    calls = []
+    bug_calls = []
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    def fake_report_bug(**kwargs):
+        bug_calls.append(kwargs)
+        return {}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.web.report_bug", fake_report_bug)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt bug"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "bug"}
+    assert bug_calls == []
+    assert len(calls) == 1
+    assert "Usage: /gt bug" in calls[0]["params"]["text"]
+
+
+def test_gt_bug_active_run_error_is_sent_without_crash(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    def fake_report_bug(**kwargs):
+        raise ValueError("An active run already exists for project CONTENTOPS.")
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.web.report_bug", fake_report_bug)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt bug Something broke again"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "bug"}
+    assert len(calls) == 1
+    assert "active run already exists" in calls[0]["params"]["text"]
