@@ -1160,7 +1160,7 @@ def send_approval_notification(
 
         evidence = build_approval_evidence_snapshot(state=state, workspace=workspace, project_key=project_key)
         recommendation = build_approval_recommendation(
-            state=state, review={"approval": gate}, evidence_snapshot=evidence, workspace=workspace
+            state=state, review={"approval": gate, "content": content}, evidence_snapshot=evidence, workspace=workspace
         )
     except Exception:
         evidence, recommendation = {}, {}
