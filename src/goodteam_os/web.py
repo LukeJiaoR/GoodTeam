@@ -2621,6 +2621,56 @@ def start_workflow(
     return payload
 
 
+def report_bug(
+    *,
+    workspace: Path,
+    project_key: str,
+    description: str,
+    title: str = "",
+    severity: str = "p2",
+) -> dict[str, object]:
+    """Start a lightweight `fix` workflow run from a human-reported bug.
+
+    Builds the defect context (`[BUG] ...`) into the run idea and dispatches the
+    `fix` load profile, which stops at the `await_fix_plan_approval` gate with a
+    `fix_plan` artifact. The active-run guard in `start_workflow` still applies;
+    its ValueError propagates so the route can map it to a 400.
+    """
+    title = (title or "").strip()
+    description = (description or "").strip()
+    severity = (severity or "p2").strip() or "p2"
+    if not description and not title:
+        raise ValueError("Bug description is required.")
+
+    # Resolve the project's config so the fix run inherits repo/model context.
+    # Config-light projects may have none — pass through.
+    project_config: Path | None
+    try:
+        project_config = _project_config_for_key(workspace, project_key)
+    except ValueError:
+        project_config = None
+
+    target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
+    model_profile = str(target.get("model_profile", "") or "") or "balanced"
+
+    heading = f"[BUG][{severity}] {title}".strip() if title else f"[BUG][{severity}]"
+    idea = f"{heading}\n\n{description}".strip()
+
+    result = start_workflow(
+        workspace=workspace,
+        idea=idea,
+        project_key=project_key,
+        model_config=Path("models.yaml"),
+        model_profile=model_profile,
+        source_type="new_project",
+        project_config=project_config,
+        load_profile="fix",
+    )
+    result["severity"] = severity
+    result["title"] = title
+    return result
+
+
 def decide_approval(
     *,
     workspace: Path,
@@ -7436,7 +7486,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
+            if normalized_path not in {"/start", "/report-bug", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -7477,6 +7527,14 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         project_config=Path(str(request["project_config"])) if str(request.get("project_config", "")).strip() else None,
                         role_model_overrides=[str(value) for value in request.get("role_model_overrides", [])],
                         dry_run=bool(request.get("dry_run", False)),
+                    )
+                elif normalized_path == "/report-bug":
+                    result = report_bug(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        description=str(request.get("description", "")),
+                        title=str(request.get("title", "")),
+                        severity=str(request.get("severity", "p2")),
                     )
                 elif normalized_path == "/approve":
                     result = decide_approval(
