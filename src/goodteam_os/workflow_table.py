@@ -166,23 +166,100 @@ _FAILURE_DISPOSITIONS = {
 FAILURE_DISPOSITIONS: Mapping[str, str] = MappingProxyType(_FAILURE_DISPOSITIONS)
 
 
-def gate_transition(gate: str) -> GateTransition:
+def _gate_transition(transition_table: Mapping[str, GateTransition], gate: str) -> GateTransition:
     try:
-        return GATE_TRANSITIONS[gate]
+        return transition_table[gate]
     except KeyError as exc:
         raise ValueError(f"Unknown approval gate: {gate}") from exc
 
 
+@dataclass(frozen=True)
+class LoadProfile:
+    """A named, selectable workflow definition.
+
+    Wraps a node table + gate-transition table so the engine can resolve
+    node/gate lookups through a profile. Phase 0 ships exactly one profile
+    ("greenfield"); its node/gate accessors delegate to the live module-level
+    tables (``WORKFLOW_NODES`` / ``GATE_TRANSITIONS``) so behavior — including
+    test monkeypatches of those tables — is byte-identical to the historical
+    module functions. Future profiles (fix/increment) plug in via the registry
+    with their own ``nodes`` / ``gate_transitions`` and resolve against those.
+    """
+
+    name: str
+    nodes: Mapping[str, WorkflowNode]
+    gate_transitions: Mapping[str, GateTransition]
+
+    @property
+    def _node_table(self) -> Mapping[str, WorkflowNode]:
+        # Greenfield reads the live module proxy so attribute-level patches of
+        # ``workflow_table.WORKFLOW_NODES`` flow through (back-compat). Other
+        # profiles use their own captured table.
+        if self.name == "greenfield":
+            return WORKFLOW_NODES
+        return self.nodes
+
+    @property
+    def _transition_table(self) -> Mapping[str, GateTransition]:
+        if self.name == "greenfield":
+            return GATE_TRANSITIONS
+        return self.gate_transitions
+
+    def node_for(self, name: str) -> WorkflowNode | None:
+        return self._node_table.get(name)
+
+    def gate_transition(self, gate: str) -> GateTransition:
+        return _gate_transition(self._transition_table, gate)
+
+    def approved_next_for_gate(self, gate: str) -> str:
+        return self.gate_transition(gate).on_approved_next
+
+    def advisors_for_gate(self, gate: str) -> tuple[str, ...]:
+        return self.gate_transition(gate).advisors
+
+    def execution_plan(self) -> WorkflowExecutionPlan:
+        return _workflow_execution_plan(
+            self._node_table, gate_transitions=self._transition_table
+        )
+
+    def topological_nodes(self) -> list[str]:
+        return _topological_workflow_nodes(self._node_table)
+
+    def validate_dag(self, *, valid_advisors: Iterable[str] | None = None) -> None:
+        validate_workflow_dag(
+            self._node_table,
+            gate_transitions=self._transition_table,
+            valid_advisors=valid_advisors,
+        )
+
+
+GREENFIELD_PROFILE = LoadProfile(
+    name="greenfield",
+    nodes=_WORKFLOW_NODES,
+    gate_transitions=_GATE_TRANSITIONS,
+)
+
+_LOAD_PROFILES: dict[str, LoadProfile] = {"greenfield": GREENFIELD_PROFILE}
+
+
+def resolve_profile(name: str = "") -> LoadProfile:
+    return _LOAD_PROFILES.get(name or "greenfield", GREENFIELD_PROFILE)
+
+
+def gate_transition(gate: str) -> GateTransition:
+    return GREENFIELD_PROFILE.gate_transition(gate)
+
+
 def approved_next_for_gate(gate: str) -> str:
-    return gate_transition(gate).on_approved_next
+    return GREENFIELD_PROFILE.approved_next_for_gate(gate)
 
 
 def advisors_for_gate(gate: str) -> tuple[str, ...]:
-    return gate_transition(gate).advisors
+    return GREENFIELD_PROFILE.advisors_for_gate(gate)
 
 
 def workflow_node(node: str) -> WorkflowNode | None:
-    return WORKFLOW_NODES.get(node)
+    return GREENFIELD_PROFILE.node_for(node)
 
 
 def validate_workflow_dag(
@@ -250,7 +327,10 @@ def validate_workflow_dag(
 
 
 def topological_workflow_nodes(nodes: Mapping[str, WorkflowNode] | None = None) -> list[str]:
-    node_table = nodes or WORKFLOW_NODES
+    return _topological_workflow_nodes(nodes if nodes is not None else GREENFIELD_PROFILE.nodes)
+
+
+def _topological_workflow_nodes(node_table: Mapping[str, WorkflowNode]) -> list[str]:
     validate_workflow_dag(node_table)
     ordered: list[str] = []
     seen: set[str] = set()
@@ -274,8 +354,18 @@ def workflow_execution_plan(
     *,
     gate_transitions: Mapping[str, GateTransition] | None = None,
 ) -> WorkflowExecutionPlan:
-    node_table = nodes or WORKFLOW_NODES
-    transition_table = gate_transitions or GATE_TRANSITIONS
+    return _workflow_execution_plan(
+        nodes if nodes is not None else GREENFIELD_PROFILE.nodes,
+        gate_transitions=gate_transitions if gate_transitions is not None else GREENFIELD_PROFILE.gate_transitions,
+    )
+
+
+def _workflow_execution_plan(
+    node_table: Mapping[str, WorkflowNode],
+    *,
+    gate_transitions: Mapping[str, GateTransition],
+) -> WorkflowExecutionPlan:
+    transition_table = gate_transitions
     validate_workflow_dag(node_table, gate_transitions=transition_table)
     ordered = _topological_dependency_order(node_table, gate_transitions=transition_table)
     level_by_identifier: dict[str, int] = {}

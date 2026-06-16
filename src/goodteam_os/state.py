@@ -29,6 +29,7 @@ class AgileDevState:
     role_models: dict[str, dict[str, str]] = field(default_factory=dict)
     current_node: str = "start"
     next_node: str = "product_requirement"
+    load_profile: str = "greenfield"
 
 
 def create_initial_state(run_id: str, project_key: str, idea: str) -> AgileDevState:
@@ -124,6 +125,7 @@ class StateStore:
         data.setdefault("blockers", [])
         data.setdefault("model_profile", "balanced")
         data.setdefault("role_models", {})
+        data.setdefault("load_profile", "greenfield")
         return AgileDevState(**data)
 
     def _write(self, path: Path, state: AgileDevState) -> None:

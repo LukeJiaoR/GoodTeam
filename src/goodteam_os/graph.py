@@ -26,6 +26,7 @@ from goodteam_os.workflow_table import (
     blocked_next_for_node,
     disposition_for_failure_class,
     error_next_for_node,
+    resolve_profile,
     retry_policy_for_node,
     workflow_execution_plan_v2,
     workflow_node,
@@ -967,6 +968,16 @@ def _advance_approved_workflow_legacy(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    # Phase 0 load-profile seam: every active state resolves to a LoadProfile
+    # (today always GREENFIELD_PROFILE, which delegates node/gate lookups to the
+    # live module-level tables this loop already uses). Resolving here documents
+    # and exercises the plug point future profiles (fix/increment) attach to;
+    # the node/gate lookups below intentionally stay on the module functions
+    # (which the greenfield profile wraps) so behavior — and tests/helpers that
+    # patch those module seams — is byte-identical.
+    profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
+    if profile.name != "greenfield":  # pragma: no cover - no non-greenfield profile in Phase 0
+        raise ValueError(f"Unsupported load profile: {profile.name}")
     runners = {
         "run_architecture_until_gate": run_architecture_until_gate,
         "run_delivery_until_release_gate": run_delivery_until_release_gate,
