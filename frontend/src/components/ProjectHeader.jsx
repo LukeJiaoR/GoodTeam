@@ -1,4 +1,4 @@
-import { Menu, X } from 'lucide-react';
+import { Bug, Menu, X } from 'lucide-react';
 
 export default function ProjectHeader({
   activeRun,
@@ -7,6 +7,7 @@ export default function ProjectHeader({
   headerStatus,
   mobileMenuOpen,
   mobileStatusClass,
+  onReportBug,
   setMobileMenuOpen,
   startContext,
   state,
@@ -53,6 +54,18 @@ export default function ProjectHeader({
         </div>
 
         <div className="flex items-center space-x-4">
+          {onReportBug && (
+            <button
+              type="button"
+              onClick={onReportBug}
+              className="inline-flex items-center gap-1.5 bg-surface-raised hover:bg-surface-sunken border-2 border-border-subtle shadow-button text-text-secondary hover:text-accent-text font-bold px-3 py-1.5 rounded-lg text-2xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer"
+              aria-label="Report a bug"
+            >
+              <Bug className="h-3.5 w-3.5" />
+              <span>Report Bug</span>
+            </button>
+          )}
+
           <span className="text-2xs font-mono font-bold text-text-muted uppercase hidden sm:inline">{t('chrome.runId')}: <code className="bg-surface-sunken border border-border-subtle px-2 py-0.5 rounded-lg text-text-secondary select-all font-mono">{state?.run_id || t('chrome.none')}</code></span>
 
           {headerStatus.toLowerCase() === 'complete' ? (

@@ -21,6 +21,7 @@ export default function ProjectContentShell({
   message,
   newProjectModal,
   renderMemoryEventLink,
+  reportBugModal,
   setActiveTab,
   setMemoryEventDetail,
   setShowGitNotice,
@@ -55,6 +56,7 @@ export default function ProjectContentShell({
       />
 
       {newProjectModal}
+      {reportBugModal}
       {directoryPickerModal}
 
       <ProjectMainPanel loading={loading} error={error} loadingLabel={loadingLabel}>

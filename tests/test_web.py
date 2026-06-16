@@ -6015,3 +6015,41 @@ def test_tg_notify_gate_env_override_routes_correctly(monkeypatch):
 
     assert result == {"status": "skipped", "reason": "gate_not_in_notify_set"}
     assert called == []
+
+
+def test_frontend_contract_wires_report_bug_fix_workflow():
+    """The dashboard must expose a Report Bug affordance that POSTs to
+    /api/report-bug and routes the user to the approvals gate for the new fix run."""
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    header = (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(
+        encoding="utf-8"
+    )
+    modal_path = root / "frontend" / "src" / "components" / "ReportBugModal.jsx"
+    assert modal_path.exists()
+    modal = modal_path.read_text(encoding="utf-8")
+
+    # The header renders a Report Bug trigger button wired to a callback.
+    assert "onReportBug" in header
+    assert "Report Bug" in header
+
+    # App wires the POST to the backend contract endpoint with the expected payload.
+    assert "/api/report-bug" in app
+    assert "<ReportBugModal" in app
+    assert "project_key: projectKey" in app
+    assert "severity: reportBugSeverity" in app
+    # On success it refreshes state and routes to the approvals gate.
+    assert "setActiveTab('approvals')" in app
+
+    # The modal collects description (required) + severity and submits.
+    assert "description" in modal
+    assert "severity" in modal
+    assert "Report Bug" in modal
+    # Submit is gated on a non-empty description.
+    assert "description.trim().length > 0" in modal
+
+    # Theme tokens, not hardcoded hex/zinc colors.
+    for token in ["bg-surface-overlay", "border-border-subtle", "text-text-muted"]:
+        assert token in modal
+    for banned in ["bg-[#", "border-[#", "text-[#"]:
+        assert banned not in modal

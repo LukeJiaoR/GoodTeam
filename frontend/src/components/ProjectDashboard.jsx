@@ -113,6 +113,7 @@ export default function ProjectDashboard({
   mobileMenuOpen,
   modelProfile,
   newProjectModal,
+  onReportBug,
   openQuestions,
   openQuestionsAnswers,
   panelGlobalMode,
@@ -121,6 +122,7 @@ export default function ProjectDashboard({
   projectKey,
   proposedRevision,
   refineLoading,
+  reportBugModal,
   roleBackendOptions,
   safeDiscoveredAgents,
   savingBackends,
@@ -252,6 +254,7 @@ export default function ProjectDashboard({
         headerStatus={headerStatus}
         mobileMenuOpen={mobileMenuOpen}
         mobileStatusClass={`${headBadge.bg} ${headBadge.text} ${headBadge.border}`}
+        onReportBug={onReportBug}
         setMobileMenuOpen={setMobileMenuOpen}
         startContext={startContext}
         state={state}
@@ -439,6 +442,7 @@ export default function ProjectDashboard({
         message={message}
         newProjectModal={newProjectModal}
         renderMemoryEventLink={renderMemoryEventLink}
+        reportBugModal={reportBugModal}
         setActiveTab={setActiveTab}
         setMemoryEventDetail={setMemoryEventDetail}
         setShowGitNotice={setShowGitNotice}

@@ -3,6 +3,7 @@ import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModalContainer from './components/NewProjectModalContainer';
 import ProjectDashboard from './components/ProjectDashboard';
 import ProjectsHomePage from './components/ProjectsHomePage';
+import ReportBugModal from './components/ReportBugModal';
 import { useAppearancePreferences } from './hooks/useAppearancePreferences';
 import { useClipboardFeedback } from './hooks/useClipboardFeedback';
 import { useDirectoryPicker } from './hooks/useDirectoryPicker';
@@ -36,6 +37,14 @@ export default function App() {
 
   const [agentsMemorySubTab, setAgentsMemorySubTab] = useState('roles');
   const [newProjectModalOpen, setNewProjectModalOpen] = useState(false);
+
+  // Report Bug modal state
+  const [reportBugModalOpen, setReportBugModalOpen] = useState(false);
+  const [reportBugTitle, setReportBugTitle] = useState('');
+  const [reportBugDescription, setReportBugDescription] = useState('');
+  const [reportBugSeverity, setReportBugSeverity] = useState('p2');
+  const [reportBugError, setReportBugError] = useState(null);
+  const [reportingBug, setReportingBug] = useState(false);
 
 
   const appearance = useAppearancePreferences();
@@ -804,6 +813,63 @@ export default function App() {
     }
   };
 
+  const openReportBugModal = () => {
+    setReportBugError(null);
+    setReportBugModalOpen(true);
+  };
+
+  const closeReportBugModal = () => {
+    setReportBugModalOpen(false);
+  };
+
+  const handleReportBug = async () => {
+    if (!projectKey || !reportBugDescription.trim()) return;
+    setReportingBug(true);
+    setReportBugError(null);
+    try {
+      const response = await fetch('/api/report-bug', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: projectKey,
+          title: reportBugTitle,
+          description: reportBugDescription,
+          severity: reportBugSeverity,
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) throw new Error(res.error || 'Failed to report bug');
+      // Reset the form and close the modal.
+      setReportBugModalOpen(false);
+      setReportBugTitle('');
+      setReportBugDescription('');
+      setReportBugSeverity('p2');
+      showToast('Fix workflow started — review the fix plan');
+      fetchState(projectKey);
+      setActiveTab('approvals');
+    } catch (err) {
+      setReportBugError(err.message);
+    } finally {
+      setReportingBug(false);
+    }
+  };
+
+  const reportBugModal = reportBugModalOpen ? (
+    <ReportBugModal
+      description={reportBugDescription}
+      onClose={closeReportBugModal}
+      onSubmit={handleReportBug}
+      projectKey={projectKey}
+      reportBugError={reportBugError}
+      setDescription={setReportBugDescription}
+      setSeverity={setReportBugSeverity}
+      setTitle={setReportBugTitle}
+      severity={reportBugSeverity}
+      submitting={reportingBug}
+      title={reportBugTitle}
+    />
+  ) : null;
+
   const newProjectModal = (
     <NewProjectModalContainer
       actionLoading={actionLoading}
@@ -1026,6 +1092,7 @@ export default function App() {
       mobileMenuOpen={mobileMenuOpen}
       modelProfile={modelProfile}
       newProjectModal={newProjectModal}
+      onReportBug={openReportBugModal}
       openQuestions={openQuestions}
       openQuestionsAnswers={openQuestionsAnswers}
       panelGlobalMode={panelGlobalMode}
@@ -1034,6 +1101,7 @@ export default function App() {
       projectKey={projectKey}
       proposedRevision={proposedRevision}
       refineLoading={refineLoading}
+      reportBugModal={reportBugModal}
       roleBackendOptions={roleBackendOptions}
       safeDiscoveredAgents={safeDiscoveredAgents}
       savingBackends={savingBackends}
