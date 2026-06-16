@@ -431,6 +431,100 @@ def build_approval_recommendation(
     return recommendation
 
 
+def _derive_smoke_status(workspace: Path) -> str:
+    """Aggregate recent smoke report verdicts; failure-safe, defaults to "unknown"."""
+    try:
+        items = build_smoke_run_items(workspace)
+        if not items:
+            return "unknown"
+        statuses = [str(item.get("report_status", "") or "").lower() for item in items]
+        if any(status == "failed" for status in statuses):
+            return "failed"
+        if any(status == "passed" for status in statuses):
+            return "passed"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _derive_qa_status(state: AgileDevState | object | None) -> str:
+    """Map the run-scoped QA gate decision to a verdict; defaults to "unknown"."""
+    try:
+        approvals = getattr(state, "approvals", {}) if state is not None else {}
+        if not isinstance(approvals, dict):
+            return "unknown"
+        decision = str(approvals.get("qa", "") or "").lower()
+        if decision == "approved":
+            return "passed"
+        if decision == "rejected":
+            return "failed"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _map_manifest_ci_status(raw_status: object) -> str:
+    """Map a provenance manifest's ci_status string to passed/failed/unknown."""
+    status = str(raw_status or "").strip().lower()
+    if status in {"success", "passed", "pass", "succeeded"}:
+        return "passed"
+    if status in {"failure", "failed", "fail", "error"}:
+        return "failed"
+    return "unknown"
+
+
+def _derive_ci_status(
+    *,
+    state: AgileDevState | object | None,
+    workspace: Path,
+    project_key: str,
+) -> str:
+    """Read the run's provenance manifest ci_status from disk; defaults to "unknown"."""
+    try:
+        run_id = str(getattr(state, "run_id", "") or "") if state is not None else ""
+        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
+        seen_manifests: set[Path] = set()
+        candidates: list[tuple[float, str]] = []
+        run_match_status: str | None = None
+        for root in roots:
+            provenance_root = root / ".goodteam" / "provenance"
+            if not provenance_root.is_dir():
+                continue
+            for manifest_path in provenance_root.glob("pr-*/manifest.json"):
+                try:
+                    resolved_manifest = manifest_path.resolve()
+                except Exception:
+                    resolved_manifest = manifest_path
+                if resolved_manifest in seen_manifests:
+                    continue
+                seen_manifests.add(resolved_manifest)
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(manifest, dict):
+                    continue
+                ci_status = _map_manifest_ci_status(manifest.get("ci_status", ""))
+                manifest_run_id = str(manifest.get("run_id", "") or "")
+                if run_id and manifest_run_id and manifest_run_id == run_id:
+                    if ci_status != "unknown":
+                        return ci_status
+                    run_match_status = run_match_status or ci_status
+                try:
+                    mtime = manifest_path.stat().st_mtime
+                except Exception:
+                    mtime = 0.0
+                candidates.append((mtime, ci_status))
+        if run_match_status is not None:
+            return run_match_status
+        if not candidates:
+            return "unknown"
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+    except Exception:
+        return "unknown"
+
+
 def build_approval_evidence_snapshot(
     *,
     state: AgileDevState | object | None,
@@ -476,6 +570,21 @@ def build_approval_evidence_snapshot(
         snapshot["provenance_refs"] = build_provenance_refs(state=state, workspace=workspace, project_key=project_key)
     except Exception:
         snapshot["provenance_refs"] = []
+
+    try:
+        snapshot["smoke_status"] = _derive_smoke_status(workspace)
+    except Exception:
+        snapshot["smoke_status"] = "unknown"
+
+    try:
+        snapshot["qa_status"] = _derive_qa_status(state)
+    except Exception:
+        snapshot["qa_status"] = "unknown"
+
+    try:
+        snapshot["ci_status"] = _derive_ci_status(state=state, workspace=workspace, project_key=project_key)
+    except Exception:
+        snapshot["ci_status"] = "unknown"
 
     try:
         run_id = str(getattr(state, "run_id", "") or "")

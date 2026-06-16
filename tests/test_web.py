@@ -5652,6 +5652,136 @@ def test_build_approval_evidence_snapshot_is_failure_safe_on_missing_data(tmp_pa
     }
 
 
+def _seed_smoke_report(workspace, status):
+    from goodteam_os.smoke import write_smoke_report
+
+    write_smoke_report(
+        workspace,
+        {
+            "status": status,
+            "suite": ["contentops"],
+            "cycles": 1,
+            "runs": [
+                {
+                    "project_key": "CONTENTOPS",
+                    "suite": "contentops",
+                    "cycle": 1,
+                    "status": status,
+                }
+            ],
+        },
+    )
+
+
+def test_build_approval_evidence_snapshot_smoke_status_passed(tmp_path):
+    _seed_smoke_report(tmp_path, "passed")
+    state = create_initial_state("run-smoke", "CONTENTOPS", "Smoke run")
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="CONTENTOPS")
+
+    assert snapshot["smoke_status"] == "passed"
+
+
+def test_build_approval_evidence_snapshot_smoke_status_failed(tmp_path):
+    _seed_smoke_report(tmp_path, "failed")
+    state = create_initial_state("run-smoke", "CONTENTOPS", "Smoke run")
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="CONTENTOPS")
+
+    assert snapshot["smoke_status"] == "failed"
+
+
+def test_build_approval_evidence_snapshot_smoke_status_unknown_when_no_reports(tmp_path):
+    state = create_initial_state("run-smoke", "CONTENTOPS", "Smoke run")
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="CONTENTOPS")
+
+    assert snapshot["smoke_status"] == "unknown"
+
+
+def test_build_approval_evidence_snapshot_qa_status_passed_on_approved(tmp_path):
+    state = create_initial_state("run-qa", "GTO", "QA run")
+    state.approvals["qa"] = ApprovalDecision.APPROVED
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert snapshot["qa_status"] == "passed"
+
+
+def test_build_approval_evidence_snapshot_qa_status_failed_on_rejected(tmp_path):
+    state = create_initial_state("run-qa", "GTO", "QA run")
+    state.approvals["qa"] = ApprovalDecision.REJECTED
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert snapshot["qa_status"] == "failed"
+
+
+def test_build_approval_evidence_snapshot_qa_status_unknown_when_pending(tmp_path):
+    state = create_initial_state("run-qa", "GTO", "QA run")
+    state.approvals["qa"] = ApprovalDecision.PENDING
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert snapshot["qa_status"] == "unknown"
+
+
+def _seed_ci_manifest(tmp_path, ci_status, run_id=""):
+    project_root = tmp_path / "repo"
+    project_root.mkdir(exist_ok=True)
+    config_dir = tmp_path / "projects"
+    config_dir.mkdir(exist_ok=True)
+    (config_dir / "gto.local.yaml").write_text(
+        f"name: GoodTeam\nkey: GTO\nrepos:\n  app: {project_root}\n",
+        encoding="utf-8",
+    )
+    manifest_dir = project_root / ".goodteam" / "provenance" / "pr-7"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {"pr": 7, "branch": "feat/x", "ci_status": ci_status}
+    if run_id:
+        manifest["run_id"] = run_id
+    (manifest_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return config_dir
+
+
+def test_build_approval_evidence_snapshot_ci_status_passed(tmp_path, monkeypatch):
+    config_dir = _seed_ci_manifest(tmp_path, "success", run_id="run-ci")
+    monkeypatch.setattr(web, "_project_config_for_key", lambda workspace, key: config_dir / "gto.local.yaml")
+    state = create_initial_state("run-ci", "GTO", "CI run")
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert snapshot["ci_status"] == "passed"
+
+
+def test_build_approval_evidence_snapshot_ci_status_failed(tmp_path, monkeypatch):
+    config_dir = _seed_ci_manifest(tmp_path, "failure", run_id="run-ci")
+    monkeypatch.setattr(web, "_project_config_for_key", lambda workspace, key: config_dir / "gto.local.yaml")
+    state = create_initial_state("run-ci", "GTO", "CI run")
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert snapshot["ci_status"] == "failed"
+
+
+def test_build_approval_evidence_snapshot_ci_status_unknown_without_manifest(tmp_path):
+    state = create_initial_state("run-ci", "GTO", "CI run")
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert snapshot["ci_status"] == "unknown"
+
+
+def test_build_approval_evidence_snapshot_bare_state_all_unknown(tmp_path):
+    state = create_initial_state("run-bare", "GTO", "Bare run")
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert snapshot["smoke_status"] == "unknown"
+    assert snapshot["qa_status"] == "unknown"
+    assert snapshot["ci_status"] == "unknown"
+
+
 def test_decide_approval_rejects_prd_by_regenerating_for_review(tmp_path):
     state = create_initial_state("run-1", "GTO", "Bad PRD")
     state.current_node = "prd_review_gate"
