@@ -3387,7 +3387,11 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
 
     reviews = []
     approval_artifacts = approval_artifact_map()
+    profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
+    relevant_gates = None if profile.name == "greenfield" else set(profile.gate_names())
     for approval, decision in state.approvals.items():
+        if relevant_gates is not None and approval not in relevant_gates:
+            continue
         artifact = approval_artifacts.get(approval, approval)
         artifact_path = state.artifacts.get(artifact, "")
         review = {

@@ -215,7 +215,17 @@ class LoadProfile:
         return self.gate_transition(gate).on_approved_next
 
     def advisors_for_gate(self, gate: str) -> tuple[str, ...]:
-        return self.gate_transition(gate).advisors
+        # Fail-safe: a gate with no known transition simply has no advisors.
+        # Read paths iterate over state.approvals, which may contain gates outside
+        # this profile (e.g. a fix run keeps the greenfield approval keys); they
+        # must not raise.
+        try:
+            return self.gate_transition(gate).advisors
+        except ValueError:
+            return ()
+
+    def gate_names(self) -> tuple[str, ...]:
+        return tuple(self._transition_table.keys())
 
     def execution_plan(self) -> WorkflowExecutionPlan:
         return _workflow_execution_plan(
