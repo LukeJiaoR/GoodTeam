@@ -196,14 +196,6 @@ def test_send_approval_notification_omits_localhost_url_button_and_includes_text
     assert result["gate"] == "prd"
 
     session_id = result["session_id"]
-    expected_text = (
-        "🔔 *GoodTeam Approval Needed*\n"
-        "*Project*: CONTENTOPS\n"
-        "*Run*: run-1\n"
-        "*Gate*: PRD\n"
-        "*Summary*: ContentOps Studio v1 PRD is ready for review.\n"
-        "Dashboard: http://localhost:8788/?project=CONTENTOPS"
-    )
     expected_keyboard = {
         "inline_keyboard": [
             [
@@ -216,26 +208,74 @@ def test_send_approval_notification_omits_localhost_url_button_and_includes_text
         ]
     }
 
-    assert calls == [
-        {
-            "token": "secret-token",
-            "method": "sendMessage",
-            "params": {
-                "chat_id": "12345",
-                "text": expected_text,
-                "parse_mode": "Markdown",
-                "reply_markup": expected_keyboard,
-            },
-        }
-    ]
+    assert len(calls) == 1
+    assert calls[0]["token"] == "secret-token"
+    assert calls[0]["method"] == "sendMessage"
+    params = calls[0]["params"]
+    assert params["chat_id"] == "12345"
+    assert params["reply_markup"] == expected_keyboard
+    # Plain text: parse_mode dropped to survive artifact-derived text.
+    assert "parse_mode" not in params
+
+    text = params["text"]
+    # New digest-style header carries the decision, not machine addressing.
+    assert "🔔 PRD 待审 · CONTENTOPS" in text
+    assert "建议:" in text
+    assert "证据:" in text
+    # Machine noise is gone.
+    assert "run-1" not in text
+    assert "is waiting for" not in text
+    assert "http://localhost" not in text
+
     assert "secret-token" not in json.dumps(result)
-    assert "secret-token" not in json.dumps(calls[0]["params"])
+    assert "secret-token" not in json.dumps(params)
     buttons = [
         button
-        for row in calls[0]["params"]["reply_markup"]["inline_keyboard"]
+        for row in params["reply_markup"]["inline_keyboard"]
         for button in row
     ]
     assert not any(button.get("url", "").startswith("http://localhost") for button in buttons)
+    # Localhost link is replaced by a /gt view hint, not a dead URL line.
+    assert "回复本卡发 /gt view 读全文" in text
+
+
+def test_approval_notification_payload_surfaces_digest_recommendation_evidence():
+    payload = telegram._approval_notification_payload(
+        project_key="DEMO",
+        run_id="2de0b4a9-8ee2-4e1e-8a05-febfd5aace4d",
+        gate="security",
+        summary="GoodTeam is waiting for SECURITY approval on DEMO",
+        session_id="abc123",
+        digest="Implement OAuth token rotation for the staging deploy",
+        recommendation={
+            "verdict": "caution",
+            "blocking_count": 2,
+            "reasons": [{"kind": "open_objection", "text": "Secret scan found a leaked token"}],
+        },
+        evidence={"ci_status": "passed", "smoke_status": "failed", "qa_status": "unknown", "blocker_count": 0},
+    )
+
+    text = payload["text"]
+    assert text.startswith("🔔 SECURITY 待审 · DEMO")
+    assert "本次:Implement OAuth token rotation for the staging deploy" in text
+    assert "建议:⚠️ caution · 阻断 2 — Secret scan found a leaked token" in text
+    assert "证据:CI 通过 · Smoke 失败 · QA 未知 · 阻断 0" in text
+    # Machine addressing must not leak onto the card.
+    assert "2de0b4a9-8ee2-4e1e-8a05-febfd5aace4d" not in text
+    assert "is waiting for" not in text
+    assert "http://localhost" not in text
+    # Plain text only — no Markdown parse_mode that could choke on artifact text.
+    assert "parse_mode" not in payload
+
+
+def test_artifact_digest_strips_markdown_and_truncates():
+    assert telegram._artifact_digest("") == ""
+    assert telegram._artifact_digest("\n\n# \n## Heading\nBody") == "Heading"
+    assert telegram._artifact_digest("- first real line\nsecond") == "first real line"
+    long = "x" * 200
+    digest = telegram._artifact_digest(long)
+    assert len(digest) == 140
+    assert digest.endswith("...")
 
 
 def test_send_approval_notification_includes_public_https_dashboard_url_button(tmp_path, monkeypatch):
@@ -757,8 +797,11 @@ def test_gt_status_command_sends_masked_active_run_summary(tmp_path, monkeypatch
     assert calls[0]["method"] == "sendMessage"
     text = calls[0]["params"]["text"]
     assert "Project: CONTENTOPS" in text
-    assert "Run: run-1" in text
-    assert "Current node: architect" in text
+    # Full run UUID is dropped; only the last-6 tail is shown for reference.
+    assert "Run: …" in text
+    assert "Run: run-1" not in text
+    # Internal node jargon is gone in favor of the human-readable gate.
+    assert "Current node:" not in text
     assert "Pending gate: prd" in text
     assert "Active workers: 1" in text
     assert "Blockers: 2" in text
@@ -832,7 +875,8 @@ def test_gt_workers_masks_worker_error_paths_and_ips(tmp_path, monkeypatch):
 
     assert result == {"status": "processed", "command": "workers"}
     text = calls[0]["params"]["text"]
-    assert "job-secret" in text
+    # Job UUID is shortened to its last-8 chars for readability.
+    assert "…b-secret" in text
     assert "implementation" in text
     assert "failed" in text
     assert "local-workspace-dir" in text
@@ -891,7 +935,7 @@ def test_gt_approvals_command_sends_pending_gate_with_quick_decision_buttons(tmp
 
     assert result == {"status": "processed", "command": "approvals"}
     assert calls[0]["method"] == "sendMessage"
-    assert "*Gate*: PRD" in calls[0]["params"]["text"]
+    assert "🔔 PRD 待审 · CONTENTOPS" in calls[0]["params"]["text"]
     keyboard = calls[0]["params"]["reply_markup"]["inline_keyboard"]
     assert keyboard[0][0]["callback_data"].startswith("v1:A:")
     assert keyboard[0][1]["callback_data"].startswith("v1:R:")

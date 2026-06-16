@@ -674,12 +674,13 @@ def _format_status_command(*, workspace: Path, project_key: str) -> str:
     blockers = getattr(state, "blockers", [])
     blocker_count = len(blockers) if isinstance(blockers, list) else 0
     gate = current_approval_gate(state) or "none"
+    run_id = str(getattr(state, "run_id", "") or "")
+    run_label = f"…{run_id[-6:]}" if run_id else "unknown"
     return "\n".join(
         [
             "GoodTeam status",
             f"Project: {getattr(state, 'project_key', project_key or 'unknown')}",
-            f"Run: {getattr(state, 'run_id', 'unknown') or 'unknown'}",
-            f"Current node: {getattr(state, 'current_node', '') or getattr(state, 'next_node', '') or 'unknown'}",
+            f"Run: {run_label}",
             f"Pending gate: {gate}",
             f"Active workers: {active_workers}",
             f"Blockers: {blocker_count}",
@@ -697,7 +698,8 @@ def _format_workers_command(*, workspace: Path, project_key: str) -> str:
         return "GoodTeam workers\nNo worker jobs."
     lines = ["GoodTeam workers"]
     for job in sorted(jobs, key=lambda item: str(item.get("updated_at", "")), reverse=True)[:5]:
-        job_id = str(job.get("id", "") or job.get("job_id", "") or "unknown")
+        full_job_id = str(job.get("id", "") or job.get("job_id", "") or "unknown")
+        job_id = f"…{full_job_id[-8:]}" if len(full_job_id) > 8 else full_job_id
         role = str(job.get("role", "") or "unknown")
         status = str(job.get("status", "") or "unknown")
         error = _worker_error_excerpt(job)
@@ -1005,6 +1007,43 @@ def build_approval_keyboard(*, project_key: str, run_id: str, gate: str) -> dict
     }
 
 
+def _artifact_digest(content: str) -> str:
+    """Return the first meaningful line of an artifact, stripped of markdown noise.
+
+    Skips blank lines and bare heading/list markers; takes the first line that has
+    real text, strips leading '#', '*', '-' and whitespace, and truncates to ~140
+    chars with an ellipsis when longer.
+    """
+    if not content:
+        return ""
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip().lstrip("#*-").strip()
+        if not stripped:
+            continue
+        if len(stripped) > 140:
+            return stripped[:137] + "..."
+        return stripped
+    return ""
+
+
+def _recommendation_icon(verdict: str) -> str:
+    return {
+        "approve": "✅",
+        "caution": "⚠️",
+        "request_changes": "⚠️",
+        "reject": "❌",
+    }.get(verdict, "▫️")
+
+
+def _evidence_status_label(status: object) -> str:
+    value = str(status or "").lower()
+    if value == "passed":
+        return "通过"
+    if value == "failed":
+        return "失败"
+    return "未知"
+
+
 def _approval_notification_payload(
     *,
     project_key: str,
@@ -1012,16 +1051,39 @@ def _approval_notification_payload(
     gate: str,
     summary: str,
     session_id: str,
+    digest: str = "",
+    recommendation: dict | None = None,
+    evidence: dict | None = None,
 ) -> dict[str, object]:
-    text_lines = [
-        "🔔 *GoodTeam Approval Needed*",
-        f"*Project*: {project_key}",
-        f"*Run*: {run_id}",
-        f"*Gate*: {gate.upper()}",
-    ]
-    if summary:
-        masked_summary = mask_sensitive_data(summary)
-        text_lines.append(f"*Summary*: {masked_summary}")
+    text_lines = [f"🔔 {gate.upper()} 待审 · {project_key}"]
+
+    if digest:
+        text_lines.append(f"本次:{digest}")
+
+    if recommendation:
+        verdict = str(recommendation.get("verdict", "") or "")
+        icon = _recommendation_icon(verdict)
+        try:
+            blocking_count = int(recommendation.get("blocking_count", 0) or 0)
+        except Exception:
+            blocking_count = 0
+        reasons = recommendation.get("reasons", []) or []
+        reason_suffix = ""
+        if isinstance(reasons, list) and reasons and isinstance(reasons[0], dict):
+            reason_text = str(reasons[0].get("text", "") or "").strip()
+            if reason_text:
+                reason_suffix = f" — {reason_text}"
+        text_lines.append(f"建议:{icon} {verdict} · 阻断 {blocking_count}{reason_suffix}")
+
+    if evidence:
+        ci = _evidence_status_label(evidence.get("ci_status"))
+        smoke = _evidence_status_label(evidence.get("smoke_status"))
+        qa = _evidence_status_label(evidence.get("qa_status"))
+        try:
+            blocker_count = int(evidence.get("blocker_count", 0) or 0)
+        except Exception:
+            blocker_count = 0
+        text_lines.append(f"证据:CI {ci} · Smoke {smoke} · QA {qa} · 阻断 {blocker_count}")
 
     dashboard_url = _dashboard_url(project_key)
     keyboard = {
@@ -1038,11 +1100,10 @@ def _approval_notification_payload(
     if _is_public_https_url(dashboard_url):
         keyboard["inline_keyboard"][1].append({"text": "📖 完整报告", "url": dashboard_url})
     else:
-        text_lines.append(f"Dashboard: {dashboard_url}")
+        text_lines.append("回复本卡发 /gt view 读全文")
 
     return {
         "text": "\n".join(text_lines),
-        "parse_mode": "Markdown",
         "reply_markup": keyboard,
     }
 
@@ -1066,6 +1127,44 @@ def send_approval_notification(
 
     token = os.getenv(TOKEN_ENV, "")
 
+    # Compute the decision intelligence ONCE, up front, so it is available to both
+    # the refresh/edit path and the new-send path. Everything here is failure-safe:
+    # any error falls back to an empty digest/recommendation/evidence so the card
+    # still renders with header + buttons.
+    state = None
+    digest = ""
+    evidence: dict = {}
+    recommendation: dict = {}
+    try:
+        state = _read_command_state(workspace, project_key)
+    except Exception:
+        state = None
+
+    content = ""
+    if artifact_path:
+        try:
+            path = Path(artifact_path)
+            if not path.is_absolute():
+                path = (workspace / path).resolve()
+            if path.is_file():
+                content = path.read_text(encoding="utf-8")
+        except Exception:
+            content = ""
+    try:
+        digest = mask_sensitive_data(_artifact_digest(content))
+    except Exception:
+        digest = ""
+
+    try:
+        from goodteam_os.web import build_approval_evidence_snapshot, build_approval_recommendation
+
+        evidence = build_approval_evidence_snapshot(state=state, workspace=workspace, project_key=project_key)
+        recommendation = build_approval_recommendation(
+            state=state, review={"approval": gate}, evidence_snapshot=evidence, workspace=workspace
+        )
+    except Exception:
+        evidence, recommendation = {}, {}
+
     store = TelegramReviewSessionStore(workspace)
     existing_session = store.find_live_for_gate(project_key, run_id, gate)
     if existing_session is not None:
@@ -1077,6 +1176,9 @@ def send_approval_notification(
             gate=gate,
             summary=summary,
             session_id=session_id,
+            digest=digest,
+            recommendation=recommendation,
+            evidence=evidence,
         )
         edit_payload = _telegram_request(
             token,
@@ -1112,14 +1214,6 @@ def send_approval_notification(
 
     session_id = generate_session_id(store)
 
-    content = ""
-    if artifact_path:
-        path = Path(artifact_path)
-        if not path.is_absolute():
-            path = (workspace / path).resolve()
-        if path.is_file():
-            content = path.read_text(encoding="utf-8")
-
     items = split_artifact_into_review_items(gate, content)
 
     session_data = {
@@ -1143,6 +1237,9 @@ def send_approval_notification(
         gate=gate,
         summary=summary,
         session_id=session_id,
+        digest=digest,
+        recommendation=recommendation,
+        evidence=evidence,
     )
     payload = _telegram_request(
         token,
