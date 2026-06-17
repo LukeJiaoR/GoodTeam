@@ -30,25 +30,25 @@ profiles:
       fallback: codex:gpt-5.5
       mode: multimodal
     implementation:
-      primary: codex:gpt-5.3-codex
-      fallback: codex:gpt-5.3-codex
-      assistant: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: worker-dispatch
     frontend:
-      primary: codex:gpt-5.3-codex
-      fallback: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: implementation
     backend:
-      primary: codex:gpt-5.3-codex
-      assistant: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: implementation
     qa:
-      primary: codex:gpt-5.3-codex
-      fallback: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: test-design
     code_review:
-      first_pass: codex:gpt-5.3-codex
-      primary: codex:gpt-5.3-codex
+      first_pass: codex:gpt-5.5
+      primary: codex:gpt-5.5
       architecture_review: codex:gpt-5.5
       mode: multi-pass-review
     release:
@@ -89,25 +89,25 @@ profiles:
       fallback: codex:gpt-5.5
       mode: lightweight-ui
     implementation:
-      primary: codex:gpt-5.3-codex
-      fallback: codex:gpt-5.3-codex
-      assistant: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: worker-dispatch
     frontend:
-      primary: codex:gpt-5.3-codex
-      fallback: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: implementation
     backend:
-      primary: codex:gpt-5.3-codex
-      assistant: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      assistant: codex:gpt-5.5
       mode: implementation
     qa:
-      primary: codex:gpt-5.3-codex
-      fallback: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
       mode: test-design
     code_review:
-      first_pass: codex:gpt-5.3-codex
-      primary: codex:gpt-5.3-codex
+      first_pass: codex:gpt-5.5
+      primary: codex:gpt-5.5
       mode: multi-pass-review
     release:
       primary: codex:gpt-5.5
@@ -150,26 +150,26 @@ profiles:
       reviewer: codex:gpt-5.5
       mode: multimodal
     implementation:
-      primary: codex:gpt-5.3-codex
-      fallback: codex:gpt-5.3-codex
-      reviewer: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: worker-dispatch
     frontend:
-      primary: codex:gpt-5.3-codex
-      fallback: codex:gpt-5.3-codex
-      reviewer: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      fallback: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: implementation
     backend:
-      primary: codex:gpt-5.3-codex
-      reviewer: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      reviewer: codex:gpt-5.5
       mode: implementation
     qa:
-      primary: codex:gpt-5.3-codex
-      draft: codex:gpt-5.3-codex
+      primary: codex:gpt-5.5
+      draft: codex:gpt-5.5
       mode: test-design
     code_review:
-      first_pass: codex:gpt-5.3-codex
-      primary: codex:gpt-5.3-codex
+      first_pass: codex:gpt-5.5
+      primary: codex:gpt-5.5
       architecture_review: codex:gpt-5.5
       mode: multi-pass-review
     release:
