@@ -5,12 +5,16 @@ from pathlib import Path
 
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.workers import (
+    AGY_BACKEND,
+    CODEX_BACKEND,
     WORKER_MAX_ATTEMPTS,
     WorkerJobStore,
     _claude_summary,
     _codex_summary,
+    _gemini_summary,
     _query_agy_models,
     _query_codex_models,
+    _run_command_in_pty,
     classify_worker_failure,
     discover_installed_agents,
     is_transient,
@@ -1773,11 +1777,24 @@ def test_codex_adapter_uses_job_model_when_present(tmp_path, monkeypatch):
 def test_worker_prompt_uses_adapter_default_model_instead_of_codex_default_for_agy(tmp_path, monkeypatch):
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
     calls = []
-    install_fake_popen(
-        monkeypatch,
-        result_text="Agy implemented the feature.",
-        calls=calls,
-    )
+
+    # agy routes through the PTY path (needs_pty=True), so stub the pty helper
+    # rather than subprocess.Popen. The helper records the same call shape
+    # (command/cwd/env/input) the assertions below check.
+    def fake_run_in_pty(command, *, cwd, env, process_input, timeout_seconds):
+        calls.append(
+            {
+                "command": command,
+                "cwd": cwd,
+                "env": env,
+                "input": process_input,
+                "text": True,
+                "timeout": timeout_seconds,
+            }
+        )
+        return (0, "Agy implemented the feature.", "")
+
+    monkeypatch.setattr("goodteam_os.workers._run_command_in_pty", fake_run_in_pty)
     store = WorkerJobStore(tmp_path)
     job = store.create_job(
         run_id="run-1",
@@ -2136,3 +2153,93 @@ def test_codex_adapter_fails_fast_when_codex_cli_is_missing(tmp_path, monkeypatc
     assert "Codex CLI is not available" in result["summary"]
     assert result["preflight"]["codex_available"] is False
     assert calls == []
+
+
+def test_run_command_in_pty_captures_stdout_and_zero_returncode():
+    returncode, stdout, stderr = _run_command_in_pty(
+        ["/bin/sh", "-c", "printf 'HELLO\\n'"],
+        cwd=None,
+        env=None,
+        process_input=None,
+        timeout_seconds=10,
+    )
+    assert returncode == 0
+    assert "HELLO" in stdout
+    assert stderr == ""
+
+
+def test_run_command_in_pty_reports_nonzero_returncode():
+    returncode, _stdout, _stderr = _run_command_in_pty(
+        ["/bin/sh", "-c", "exit 7"],
+        cwd=None,
+        env=None,
+        process_input=None,
+        timeout_seconds=10,
+    )
+    assert returncode != 0
+
+
+def test_run_command_in_pty_strips_ansi_escape_codes():
+    returncode, stdout, _stderr = _run_command_in_pty(
+        ["/bin/sh", "-c", "printf '\\033[31mRED\\033[0m\\n'"],
+        cwd=None,
+        env=None,
+        process_input=None,
+        timeout_seconds=10,
+    )
+    assert returncode == 0
+    assert "\x1b" not in stdout
+    assert stdout.strip() == "RED"
+
+
+def test_run_command_in_pty_raises_timeout_with_partial_output():
+    import pytest
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_command_in_pty(
+            ["/bin/sh", "-c", "printf 'PARTIAL\\n'; sleep 30"],
+            cwd=None,
+            env=None,
+            process_input=None,
+            timeout_seconds=1,
+        )
+
+
+def test_agy_backend_needs_pty_and_codex_does_not():
+    assert AGY_BACKEND.needs_pty is True
+    assert CODEX_BACKEND.needs_pty is False
+
+
+def test_run_cli_worker_with_pty_completes_without_hanging(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-pty",
+        role="implementation",
+        adapter="agy",
+        task="Run a tty-emitting command.",
+        context="Context packet.",
+    )
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+
+    result = store._run_cli_worker(
+        job_root,
+        job,
+        command=["/bin/sh", "-c", "printf '\\033[32m# Worker Result\\033[0m\\nDone via PTY.\\n'"],
+        model="auto",
+        preflight={"agy_available": True},
+        label="Antigravity (agy) CLI",
+        capture="stdout",
+        summarize=_gemini_summary,
+        prompt_via="stdin",
+        worker_env=None,
+        timeout_seconds=10,
+        use_pty=True,
+    )
+
+    assert result["status"] == "completed"
+    assert result["exit_code"] == 0
+    stdout_text = (job_root / "stdout.txt").read_text(encoding="utf-8")
+    assert "\x1b" not in stdout_text
+    assert "Worker Result" in stdout_text
+    result_text = (job_root / "result.md").read_text(encoding="utf-8")
+    assert "Done via PTY." in result_text

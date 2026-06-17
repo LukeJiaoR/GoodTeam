@@ -1,6 +1,8 @@
 import json
 import os
+import pty
 import re
+import select
 import subprocess
 import threading
 import time
@@ -212,6 +214,9 @@ class CliBackendSpec:
     not_available_message: str
     prompt_via: str = "stdin"
     isolated_home: bool = False
+    # Some CLIs (e.g. agy's bubbletea TUI) require a controlling terminal and hang
+    # on a plain pipe. needs_pty routes them through a real PTY in _run_cli_worker.
+    needs_pty: bool = False
 
 
 def _codex_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
@@ -342,6 +347,84 @@ def _command_with_prompt(command: list[str], prompt: str, *, prompt_via: str) ->
     return updated
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
+
+
+def _strip_terminal_control(text: str) -> str:
+    """Remove ANSI escape sequences and stray carriage returns from PTY output."""
+    cleaned = _ANSI_ESCAPE_RE.sub("", text)
+    return cleaned.replace("\r", "")
+
+
+def _run_command_in_pty(
+    command: list[str],
+    *,
+    cwd: Path | str | None,
+    env: dict[str, str] | None,
+    process_input: str | None,
+    timeout_seconds: float,
+) -> tuple[int, str, str]:
+    """Run ``command`` attached to a real PTY so TUIs that require a controlling
+    terminal (e.g. agy's bubbletea loop) don't hang on a plain pipe.
+
+    Returns ``(returncode, stdout, stderr)``. With a single PTY the child's stdout
+    and stderr are merged onto one stream, so the returned stderr is always "".
+    The accumulated output has ANSI escape codes stripped. On timeout the child is
+    killed and ``subprocess.TimeoutExpired`` is raised with the partial output, so
+    callers can reuse their existing timeout handling.
+    """
+    master_fd, slave_fd = pty.openpty()
+    proc = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdin=(subprocess.PIPE if process_input is not None else slave_fd),
+        stdout=slave_fd,
+        stderr=slave_fd,
+        text=False,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+    if process_input is not None and proc.stdin is not None:
+        try:
+            proc.stdin.write(process_input.encode("utf-8"))
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+    chunks: list[bytes] = []
+    deadline = time.time() + timeout_seconds
+    try:
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                proc.kill()
+                output = _strip_terminal_control(b"".join(chunks).decode("utf-8", errors="replace"))
+                raise subprocess.TimeoutExpired(command, timeout_seconds, output=output)
+            ready, _, _ = select.select([master_fd], [], [], min(remaining, 1.0))
+            if not ready:
+                continue
+            try:
+                data = os.read(master_fd, 65536)
+            except OSError:
+                # EIO is raised on the master fd when the child has exited.
+                break
+            if not data:
+                break
+            chunks.append(data)
+    finally:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+    try:
+        returncode = proc.wait(timeout=max(deadline - time.time(), 1.0))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        returncode = proc.wait()
+    text = b"".join(chunks).decode("utf-8", errors="replace")
+    return returncode, _strip_terminal_control(text), ""
+
+
 def _codex_summary(exit_code: int, stderr: str) -> str:
     if exit_code == 0:
         return "Codex CLI exited with code 0."
@@ -468,6 +551,7 @@ AGY_BACKEND = CliBackendSpec(
     summarize=_gemini_summary,
     not_available_message="Antigravity CLI (agy) is not available. Install agy or add it to PATH before running agy workers.",
     prompt_via="arg",
+    needs_pty=True,
 )
 
 # Registry of agentic CLI worker backends. Add a CliBackendSpec here to support a
@@ -814,6 +898,7 @@ class WorkerJobStore:
             summarize=spec.summarize,
             prompt_via=spec.prompt_via,
             worker_env=self._worker_env(job_root, spec),
+            use_pty=spec.needs_pty,
         )
 
     def _worker_env(self, job_root: Path, spec: "CliBackendSpec") -> dict[str, str] | None:
@@ -853,6 +938,7 @@ class WorkerJobStore:
         prompt_via: str = "stdin",
         worker_env: dict[str, str] | None = None,
         timeout_seconds: int = 1800,
+        use_pty: bool = False,
     ) -> dict[str, Any]:
         """Run an agentic coding CLI (codex/claude) over the job protocol files.
 
@@ -880,32 +966,60 @@ class WorkerJobStore:
         stderr_path.write_text("", encoding="utf-8")
         process: subprocess.Popen[str] | None = None
         stop_heartbeat = threading.Event()
+        returncode = 1
         try:
-            process = subprocess.Popen(
-                process_command,
-                cwd=self.project_root,
-                env=worker_env,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": process.pid}
-            self._write_status(
-                job_root,
-                job,
-                "running",
-                running_summary,
-                extra={**running_extra, "heartbeat_at": self._now()},
-            )
-            heartbeat_thread = threading.Thread(
-                target=self._heartbeat_until_stopped,
-                args=(job_root, job, stop_heartbeat),
-                kwargs={"summary": running_summary, "extra": running_extra},
-                daemon=True,
-            )
-            heartbeat_thread.start()
-            stdout, stderr = process.communicate(input=process_input, timeout=timeout_seconds)
+            if use_pty:
+                # The PTY path manages its own child process internally; we don't
+                # hold a Popen here. Status starts running before the (blocking) run.
+                running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": None}
+                self._write_status(
+                    job_root,
+                    job,
+                    "running",
+                    running_summary,
+                    extra={**running_extra, "heartbeat_at": self._now()},
+                )
+                heartbeat_thread = threading.Thread(
+                    target=self._heartbeat_until_stopped,
+                    args=(job_root, job, stop_heartbeat),
+                    kwargs={"summary": running_summary, "extra": running_extra},
+                    daemon=True,
+                )
+                heartbeat_thread.start()
+                returncode, stdout, stderr = _run_command_in_pty(
+                    process_command,
+                    cwd=self.project_root,
+                    env=worker_env,
+                    process_input=process_input,
+                    timeout_seconds=timeout_seconds,
+                )
+            else:
+                process = subprocess.Popen(
+                    process_command,
+                    cwd=self.project_root,
+                    env=worker_env,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": process.pid}
+                self._write_status(
+                    job_root,
+                    job,
+                    "running",
+                    running_summary,
+                    extra={**running_extra, "heartbeat_at": self._now()},
+                )
+                heartbeat_thread = threading.Thread(
+                    target=self._heartbeat_until_stopped,
+                    args=(job_root, job, stop_heartbeat),
+                    kwargs={"summary": running_summary, "extra": running_extra},
+                    daemon=True,
+                )
+                heartbeat_thread.start()
+                stdout, stderr = process.communicate(input=process_input, timeout=timeout_seconds)
+                returncode = int(process.returncode if process.returncode is not None else 1)
         except subprocess.TimeoutExpired as exc:
             stop_heartbeat.set()
             stdout_path.write_text(_timeout_text(exc.output), encoding="utf-8")
@@ -928,7 +1042,7 @@ class WorkerJobStore:
             stop_heartbeat.set()
         stdout_path.write_text(stdout or "", encoding="utf-8")
         stderr_path.write_text(stderr or "", encoding="utf-8")
-        returncode = int(process.returncode if process is not None and process.returncode is not None else 1)
+        returncode = int(returncode)
         status = "completed" if returncode == 0 else "failed"
         summary = summarize(returncode, stderr or "")
         if capture == "stdout" and returncode == 0 and (stdout or "").strip():
