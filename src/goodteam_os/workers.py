@@ -19,7 +19,7 @@ from goodteam_os.roles import role_definition, stable_role_prompt
 
 
 DEFAULT_CODEX_PATH = os.getenv("GOODTEAM_CODEX_PATH", "/opt/homebrew/bin/codex")
-DEFAULT_CODEX_MODEL = os.getenv("GOODTEAM_CODEX_MODEL", "gpt-5.3-codex")
+DEFAULT_CODEX_MODEL = os.getenv("GOODTEAM_CODEX_MODEL", "gpt-5.4")
 CODEX_AUTH_ENV_NAMES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
 DEFAULT_CLAUDE_PATH = os.getenv("GOODTEAM_CLAUDE_PATH", "claude")
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
@@ -489,7 +489,7 @@ CODEX_BACKEND = CliBackendSpec(
     which_name="codex",
     default_path=lambda: DEFAULT_CODEX_PATH,
     model_default=DEFAULT_CODEX_MODEL,
-    models=(DEFAULT_CODEX_MODEL, "gpt-5.5", "gpt-5.3-codex"),
+    models=(DEFAULT_CODEX_MODEL, "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"),
     auth_env=CODEX_AUTH_ENV_NAMES,
     capture="output_file",
     label="Codex CLI",

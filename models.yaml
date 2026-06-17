@@ -1,184 +1,184 @@
 profiles:
   balanced:
     orchestrator:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: short-context
     research:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
-      assistant: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
+      assistant: codex:gpt-5.4
       mode: long-context
     product_requirement:
-      primary: codex:gpt-5.5
-      draft: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      draft: codex:gpt-5.4
       mode: spec-writing
     architect:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: high-reasoning
     review:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: adversarial-review
     planner:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: structured-breakdown
     ui:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: multimodal
     implementation:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
-      assistant: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
+      assistant: codex:gpt-5.4
       mode: worker-dispatch
     frontend:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: implementation
     backend:
-      primary: codex:gpt-5.5
-      assistant: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      assistant: codex:gpt-5.4
       mode: implementation
     qa:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: test-design
     code_review:
-      first_pass: codex:gpt-5.5
-      primary: codex:gpt-5.5
-      architecture_review: codex:gpt-5.5
+      first_pass: codex:gpt-5.4
+      primary: codex:gpt-5.4
+      architecture_review: codex:gpt-5.4
       mode: multi-pass-review
     release:
-      primary: codex:gpt-5.5
-      checklist: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      checklist: codex:gpt-5.4
       mode: release-control
     retro_memory:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: memory-writing
   cheap:
     orchestrator:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: short-context
     research:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: cost-efficient
     product_requirement:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: draft-first
     architect:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: draft-plus-review
     review:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: first-pass-review
     planner:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: structured-breakdown
     ui:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: lightweight-ui
     implementation:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
-      assistant: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
+      assistant: codex:gpt-5.4
       mode: worker-dispatch
     frontend:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: implementation
     backend:
-      primary: codex:gpt-5.5
-      assistant: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      assistant: codex:gpt-5.4
       mode: implementation
     qa:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
       mode: test-design
     code_review:
-      first_pass: codex:gpt-5.5
-      primary: codex:gpt-5.5
+      first_pass: codex:gpt-5.4
+      primary: codex:gpt-5.4
       mode: multi-pass-review
     release:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: checklist
     retro_memory:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: memory-writing
   max_quality:
     orchestrator:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
-      escalation: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
+      escalation: codex:gpt-5.4
       mode: short-context-with-global-planning-escalation
     research:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
-      assistant: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
+      assistant: codex:gpt-5.4
       mode: long-context
     product_requirement:
-      primary: codex:gpt-5.5
-      draft: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      draft: codex:gpt-5.4
       mode: spec-writing
     architect:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: high-reasoning
     review:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: adversarial-review
     planner:
-      primary: codex:gpt-5.5
-      draft: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      draft: codex:gpt-5.4
       mode: structured-breakdown
     ui:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: multimodal
     implementation:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: worker-dispatch
     frontend:
-      primary: codex:gpt-5.5
-      fallback: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      fallback: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: implementation
     backend:
-      primary: codex:gpt-5.5
-      reviewer: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      reviewer: codex:gpt-5.4
       mode: implementation
     qa:
-      primary: codex:gpt-5.5
-      draft: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      draft: codex:gpt-5.4
       mode: test-design
     code_review:
-      first_pass: codex:gpt-5.5
-      primary: codex:gpt-5.5
-      architecture_review: codex:gpt-5.5
+      first_pass: codex:gpt-5.4
+      primary: codex:gpt-5.4
+      architecture_review: codex:gpt-5.4
       mode: multi-pass-review
     release:
-      primary: codex:gpt-5.5
-      checklist: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      checklist: codex:gpt-5.4
       mode: release-control
     retro_memory:
-      primary: codex:gpt-5.5
-      draft: codex:gpt-5.5
+      primary: codex:gpt-5.4
+      draft: codex:gpt-5.4
       mode: memory-writing
   anthropic:
     orchestrator:
