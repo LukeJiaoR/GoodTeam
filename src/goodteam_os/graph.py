@@ -179,6 +179,18 @@ def collect_project_context(project_config: Path | None = None) -> list[dict[str
             )
     single_root = single_root_context_root(repos)
     if single_root is not None:
+        from goodteam_os.context import read_context_entry
+
+        entry = read_context_entry(single_root)
+        if entry is not None:
+            packets.append(
+                {
+                    "repo": "goodteam_context",
+                    "path": str((single_root / ".goodteam" / "context" / "understanding.md").resolve()),
+                    "purpose": "GoodTeam project understanding",
+                    "summary": str(entry.get("understanding", "")),
+                }
+            )
         packets.extend(discover_single_root_context(single_root))
         return packets
     for repo_name, files in context_file_specs().items():
