@@ -1084,10 +1084,10 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
 
     assert result["status"] == "completed"
     assert result["adapter"] == "codex"
-    assert result["model"] == "gpt-5.3-codex"
+    assert result["model"] == "gpt-5.4"
     assert result["exit_code"] == 0
     assert calls[0]["cwd"] == tmp_path
-    assert calls[0]["command"][:4] == ["/fake/bin/codex", "exec", "--model", "gpt-5.3-codex"]
+    assert calls[0]["command"][:4] == ["/fake/bin/codex", "exec", "--model", "gpt-5.4"]
     assert "--skip-git-repo-check" in calls[0]["command"]
     assert "--ignore-user-config" not in calls[0]["command"]
     assert "--ephemeral" not in calls[0]["command"]
@@ -1097,7 +1097,7 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
     status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
     assert status["command"] == calls[0]["command"]
     assert status["preflight"]["codex_available"] is True
-    assert status["preflight"]["model"] == "gpt-5.3-codex"
+    assert status["preflight"]["model"] == "gpt-5.4"
     assert "OPENAI_API_KEY" in status["preflight"]["auth_env"]
     assert "value" not in json.dumps(status["preflight"]).lower()
     assert calls[0]["text"] is True
@@ -1371,9 +1371,11 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     assert by_backend["codex"]["available"] is True
     assert by_backend["codex"]["ready"] is True
     assert by_backend["codex"]["command"] == "codex"
-    assert by_backend["codex"]["model_default"] == "gpt-5.3-codex"
+    assert by_backend["codex"]["model_default"] == "gpt-5.4"
+    assert "gpt-5.4" in by_backend["codex"]["models"]
+    assert "gpt-5.4-mini" in by_backend["codex"]["models"]
     assert "gpt-5.5" in by_backend["codex"]["models"]
-    assert "gpt-5.3-codex" in by_backend["codex"]["models"]
+    assert "gpt-5.3-codex" not in by_backend["codex"]["models"]
     assert by_backend["codex"]["models_source"] == "static"
     assert by_backend["claude"]["available"] is True
     assert by_backend["claude"]["ready"] is True
@@ -1421,8 +1423,9 @@ def test_discover_installed_agents_uses_static_codex_models_when_live_query_fail
 
     by_backend = {item["backend"]: item for item in discover_installed_agents()}
 
+    assert "gpt-5.4" in by_backend["codex"]["models"]
     assert "gpt-5.5" in by_backend["codex"]["models"]
-    assert "gpt-5.3-codex" in by_backend["codex"]["models"]
+    assert "gpt-5.3-codex" not in by_backend["codex"]["models"]
     assert by_backend["codex"]["models_source"] == "static"
 
 

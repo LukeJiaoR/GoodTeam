@@ -278,7 +278,7 @@ def test_cli_start_accepts_model_profile_and_role_override(tmp_path):
     payload = json.loads(completed.stdout)
 
     assert payload["model_profile"] == "cheap"
-    assert payload["role_models"]["planner"]["primary"] == "codex:gpt-5.5"
+    assert payload["role_models"]["planner"]["primary"] == "codex:gpt-5.4"
     assert payload["role_models"]["architect"]["primary"] == "codex:gpt-5.5"
 
 
@@ -338,7 +338,7 @@ def test_cli_start_uses_project_model_profile_and_role_overrides(tmp_path):
 
     assert payload["model_profile"] == "cheap"
     assert payload["delivery_mode"] == "init_project"
-    assert payload["role_models"]["planner"]["primary"] == "codex:gpt-5.5"
+    assert payload["role_models"]["planner"]["primary"] == "codex:gpt-5.4"
     assert payload["role_models"]["frontend"]["primary"] == "codex:gpt-5.3-codex"
 
 
@@ -394,7 +394,7 @@ def test_cli_start_dry_run_does_not_write_state_or_artifacts(tmp_path):
     assert payload["dry_run"] is True
     assert payload["next_node"] == "await_prd_approval"
     assert payload["planned_artifacts"]["prd"].endswith("/prd/prd.md")
-    assert payload["role_models"]["architect"]["primary"] == "codex:gpt-5.5"
+    assert payload["role_models"]["architect"]["primary"] == "codex:gpt-5.4"
     assert not (tmp_path / "state" / "current.json").exists()
     assert not (tmp_path / "artifacts").exists()
 
