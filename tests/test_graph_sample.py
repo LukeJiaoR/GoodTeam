@@ -7,6 +7,10 @@ from goodteam_os.graph import (
     accept_refinement,
     advance_approved_workflow,
     collect_project_context,
+    MAX_CONTEXT_DOC_FILES,
+    single_root_context_files,
+    render_fix_plan_markdown,
+    run_fix_until_next_gate,
     delivery_standards_for_mode,
     discard_refinement,
     extract_open_questions,
@@ -1110,6 +1114,123 @@ def test_collect_project_context_discovers_single_root_context(tmp_path):
     assert str((project / "package.json").resolve()) in paths
     assert str((docs / "architecture.md").resolve()) in paths
     assert any(item["purpose"] == "Shallow project directory overview" for item in context)
+
+
+def _write_single_root_config(tmp_path: Path, project: Path) -> Path:
+    config = tmp_path / "single.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: Single Root",
+                "key: SINGLE",
+                "repos:",
+                f"  root: {project}",
+                "worker_backend:",
+                "  mode: fake",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_single_root_context_lifts_twenty_doc_cap(tmp_path):
+    project = tmp_path / "docheavy"
+    docs = project / "docs"
+    docs.mkdir(parents=True)
+    for index in range(35):
+        (docs / f"doc-{index:03d}.md").write_text(f"# Doc {index}\n\nbody\n", encoding="utf-8")
+
+    files = single_root_context_files(project)
+    doc_entries = [path for path, purpose in files if purpose == "Project documentation"]
+
+    assert len(doc_entries) > 20
+    assert len(doc_entries) <= MAX_CONTEXT_DOC_FILES
+    # Deterministic alphabetical-by-relative-path selection is preserved.
+    names = [path.name for path in doc_entries]
+    assert names == sorted(names)
+
+
+def test_single_root_context_byte_budget_stops_accumulation(tmp_path):
+    project = tmp_path / "bigdocs"
+    docs = project / "docs"
+    docs.mkdir(parents=True)
+    # Each doc is ~1.2MB; the 2MB budget should admit roughly the first two.
+    blob = "x" * 1_200_000
+    for index in range(6):
+        (docs / f"doc-{index:02d}.md").write_text(blob, encoding="utf-8")
+
+    files = single_root_context_files(project)
+    doc_entries = [path for path, purpose in files if purpose == "Project documentation"]
+
+    assert 0 < len(doc_entries) < 6
+
+
+def test_single_root_context_loads_root_instruction_files_before_docs(tmp_path):
+    project = tmp_path / "withclaude"
+    docs = project / "docs"
+    docs.mkdir(parents=True)
+    (project / "CLAUDE.md").write_text("# CLAUDE\n\nagent guidance\n", encoding="utf-8")
+    (docs / "design.md").write_text("# Design\n\nbody\n", encoding="utf-8")
+
+    files = single_root_context_files(project)
+    purposes = [purpose for _, purpose in files]
+    names = [path.name for path, _ in files]
+
+    assert "CLAUDE.md" in names
+    claude_index = next(i for i, (p, _) in enumerate(files) if p.name == "CLAUDE.md")
+    first_doc_index = purposes.index("Project documentation")
+    assert claude_index < first_doc_index
+    assert files[claude_index][1] == "Project instructions / agent guidance"
+
+
+def test_collect_project_context_includes_root_claude_md(tmp_path):
+    project = tmp_path / "withclaude"
+    docs = project / "docs"
+    docs.mkdir(parents=True)
+    (project / "CLAUDE.md").write_text("# CLAUDE\n\nProject instructions live here.\n", encoding="utf-8")
+    (docs / "design.md").write_text("# Design\n\nbody\n", encoding="utf-8")
+    config = _write_single_root_config(tmp_path, project)
+
+    context = collect_project_context(config)
+    paths = [item["path"] for item in context]
+
+    assert str((project / "CLAUDE.md").resolve()) in paths
+    claude_index = paths.index(str((project / "CLAUDE.md").resolve()))
+    doc_index = paths.index(str((docs / "design.md").resolve()))
+    assert claude_index < doc_index
+
+
+def test_fix_plan_markdown_includes_project_context(tmp_path):
+    project = tmp_path / "withclaude"
+    docs = project / "docs"
+    docs.mkdir(parents=True)
+    (project / "CLAUDE.md").write_text("# CLAUDE\n\nProject instructions live here.\n", encoding="utf-8")
+
+    config = _write_single_root_config(tmp_path, project)
+    context = collect_project_context(config)
+    state = create_initial_state("fix-1", "SINGLE", "Button click does nothing")
+
+    markdown = render_fix_plan_markdown(state, context)
+
+    assert "## Project Context Read" in markdown
+    assert "CLAUDE.md" in markdown
+
+
+def test_run_fix_until_next_gate_loads_project_context(tmp_path):
+    project = tmp_path / "withclaude"
+    docs = project / "docs"
+    docs.mkdir(parents=True)
+    (project / "CLAUDE.md").write_text("# CLAUDE\n\nProject instructions live here.\n", encoding="utf-8")
+
+    config = _write_single_root_config(tmp_path, project)
+    state = create_initial_state("fix-1", "SINGLE", "Button click does nothing")
+
+    result = run_fix_until_next_gate(state=state, workspace=tmp_path, project_config=config)
+    fix_plan = Path(result.artifacts["fix_plan"]).read_text(encoding="utf-8")
+
+    assert "## Project Context Read" in fix_plan
+    assert "CLAUDE.md" in fix_plan
 
 
 def test_run_until_next_gate_mirrors_artifact_to_single_root_docs(tmp_path):

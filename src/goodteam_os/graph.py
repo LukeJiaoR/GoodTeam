@@ -34,6 +34,26 @@ from goodteam_os.workflow_table import (
 from goodteam_os.workers import BUILTIN_WORKER_MODES, WorkerJobStore
 
 
+# Bounds for single-root `docs/` context gathering. The cap is generous so
+# doc-heavy repos (GoodTeam's own docs/ is 40+ files) are not silently
+# truncated, while the byte budget keeps a pathological repo from blowing up
+# the context packet.
+MAX_CONTEXT_DOC_FILES = 200
+MAX_CONTEXT_DOC_BYTES = 2_000_000
+
+# Root-level instruction / agent-guidance files (matched case-insensitively).
+# These are higher-signal than design docs, so they are loaded before docs/.
+ROOT_INSTRUCTION_FILES = (
+    "CLAUDE.md",
+    "AGENTS.md",
+    "AGENT.md",
+    "CONTRIBUTING.md",
+    "ARCHITECTURE.md",
+    "CONTEXT.md",
+    "GOODTEAM.md",
+)
+
+
 DELIVERY_MODE_STANDARDS = {
     "mvp": [
         "Deliver a validation-ready MVP with the smallest useful product surface.",
@@ -230,6 +250,14 @@ def single_root_context_files(root: Path) -> list[tuple[Path, str]]:
     for path in sorted(root.glob("README*"), key=lambda item: item.name.lower()):
         if path.is_file():
             files.append((path, "Top-level project README"))
+    wanted_instructions = {name.lower() for name in ROOT_INSTRUCTION_FILES}
+    instruction_files = [
+        path
+        for path in root.iterdir()
+        if path.is_file() and path.name.lower() in wanted_instructions
+    ]
+    for path in sorted(instruction_files, key=lambda item: item.name.lower()):
+        files.append((path, "Project instructions / agent guidance"))
     manifest_names = {
         "package.json",
         "pyproject.toml",
@@ -254,7 +282,14 @@ def single_root_context_files(root: Path) -> list[tuple[Path, str]]:
             for path in docs_root.rglob("*")
             if path.is_file() and len(path.relative_to(docs_root).parts) <= 2
         ]
-        for path in sorted(docs, key=lambda item: str(item.relative_to(docs_root)).lower())[:20]:
+        doc_bytes = 0
+        for path in sorted(docs, key=lambda item: str(item.relative_to(docs_root)).lower())[:MAX_CONTEXT_DOC_FILES]:
+            try:
+                doc_bytes += path.stat().st_size
+            except OSError:
+                continue
+            if doc_bytes > MAX_CONTEXT_DOC_BYTES:
+                break
             files.append((path, "Project documentation"))
     return files
 
@@ -2037,7 +2072,10 @@ def run_until_next_gate(
 # enters them.
 
 
-def fix_plan_worker_task(state: AgileDevState) -> str:
+def fix_plan_worker_task(
+    state: AgileDevState,
+    context: list[dict[str, str]] | None = None,
+) -> str:
     task = (
         "Write a minimal fix plan for the following defect / change request: "
         f"{state.idea}. Cover: a root-cause hypothesis, the smallest change that "
@@ -2045,6 +2083,11 @@ def fix_plan_worker_task(state: AgileDevState) -> str:
         "plan (commands / checks that prove the fix). Ground it in the project "
         "context provided. Output markdown only - no preamble."
     )
+    if context:
+        task += (
+            "\n\nProject context read:\n"
+            + format_context_sources(context)
+        )
     note = state.change_requests.get("fix_plan", "").strip()
     if note:
         task += (
@@ -2054,7 +2097,10 @@ def fix_plan_worker_task(state: AgileDevState) -> str:
     return task
 
 
-def render_fix_plan_markdown(state: AgileDevState) -> str:
+def render_fix_plan_markdown(
+    state: AgileDevState,
+    context: list[dict[str, str]] | None = None,
+) -> str:
     note = state.change_requests.get("fix_plan", "").strip()
     lines = [
         "# Fix Plan",
@@ -2062,6 +2108,10 @@ def render_fix_plan_markdown(state: AgileDevState) -> str:
         "## Defect / Change Request",
         "",
         f"- {state.idea}",
+        "",
+        "## Project Context Read",
+        "",
+        format_context_sources(context or []),
         "",
         "## Root-Cause Hypothesis",
         "",
@@ -2106,7 +2156,8 @@ def run_fix_until_next_gate(
     project_config: Path | None = None,
 ) -> AgileDevState:
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
-    content = render_fix_plan_markdown(state)
+    context = collect_project_context(project_config)
+    content = render_fix_plan_markdown(state, context)
     if should_generate_artifact_with_worker(project_config, "architect"):
         worker_content = generate_artifact_via_worker(
             state=state,
@@ -2114,7 +2165,7 @@ def run_fix_until_next_gate(
             project_config=project_config,
             role="architect",
             artifact_key="fix_plan",
-            task_text=fix_plan_worker_task(state),
+            task_text=fix_plan_worker_task(state, context),
         )
         if worker_content is not None:
             state.change_requests.pop("fix_plan", None)
