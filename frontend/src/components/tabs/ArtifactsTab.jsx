@@ -1,9 +1,15 @@
 import { ExternalLink, FileText } from 'lucide-react';
 
-export default function ArtifactsTab({ artifacts, handleEditArtifact, FilePath }) {
-  const artifactEntries = artifacts
-    ? Object.entries(artifacts).filter(([name]) => name !== 'task_ledger')
+export default function ArtifactsTab({ artifacts, resources, handleEditArtifact, FilePath }) {
+  const resourceEntries = Array.isArray(resources)
+    ? resources.filter((resource) => {
+        const capabilities = Array.isArray(resource.capabilities) ? resource.capabilities : [];
+        return capabilities.includes('edit') || capabilities.includes('review') || capabilities.includes('preview');
+      })
     : [];
+  const artifactEntries = resourceEntries.length > 0
+    ? resourceEntries.map((resource) => [resource.key, resource.path])
+    : (artifacts ? Object.entries(artifacts).filter(([name]) => name !== 'task_ledger') : []);
 
   return (
     <div className="space-y-6">

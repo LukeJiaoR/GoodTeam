@@ -469,6 +469,7 @@ def compile_and_write_review_notes(workspace: Path, session: dict[str, object]) 
             )
 
     from goodteam_os.roles import approval_artifact_map
+    from goodteam_os.resources import ResourceCapability, resource_path
     from goodteam_os.state import StateStore
     gate = str(session["gate"])
     artifact_key = approval_artifact_map().get(gate, gate)
@@ -476,9 +477,12 @@ def compile_and_write_review_notes(workspace: Path, session: dict[str, object]) 
     state_store = StateStore(workspace)
     project_key = str(session["project_key"])
     state = state_store.read_project_current(project_key) if project_key else state_store.read_current()
-    if state and artifact_key in state.artifacts:
-        art_path = state.artifacts[artifact_key]
-        path = Path(art_path)
+    if state:
+        path = resource_path(state.resources, artifact_key, capability=ResourceCapability.REVIEW)
+        if path is None and artifact_key in state.artifacts:
+            path = Path(state.artifacts[artifact_key])
+        if path is None:
+            return
         if not path.is_absolute():
             path = (workspace / path).resolve()
         if path.is_file():

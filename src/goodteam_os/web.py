@@ -44,6 +44,13 @@ from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
+from goodteam_os.resources import (
+    ResourceCapability,
+    ResourceKind,
+    ResourceScope,
+    register_markdown_artifact,
+    resource_to_dict,
+)
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import read_messages
@@ -1824,7 +1831,13 @@ def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
 def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
     if state is None:
         return None
-    path = str(state.artifacts.get("task_ledger", "")).strip()
+    path = ""
+    for resource in state.resources.values():
+        if ResourceCapability.BOARD_SOURCE in resource.capabilities and resource.path:
+            path = resource.path
+            break
+    if not path:
+        path = str(state.artifacts.get("task_ledger", "")).strip()
     if not path:
         return None
     ledger = Path(path)
@@ -2997,7 +3010,7 @@ def regenerate_rfc_review_gate(
         "rfc.md",
         render_downstream_artifact_markdown("rfc", state, project_config),
     )
-    state.artifacts["rfc"] = str(rfc_path)
+    register_markdown_artifact(state, "rfc", rfc_path)
     state.current_node = "rfc_review_gate"
     state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
     sync_project_stage_tasks(state, project_config)
@@ -3039,7 +3052,7 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
             "staging-report.md",
             render_staging_report_markdown(state, project_config, staging_result),
         )
-        state.artifacts["staging_report"] = str(staging_path)
+        register_markdown_artifact(state, "staging_report", staging_path, reviewable=True)
         if str(staging_result.get("status", "")) != "passed":
             failed_step = str(staging_result.get("failed_step", "") or "deploy")
             state.current_node = "implementation"
@@ -3374,9 +3387,15 @@ def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key
     state = store.read_project_current(project_key) if project_key else store.read_current()
     if state is None:
         raise ValueError("No active run state found.")
-    if artifact_key == "task_ledger":
-        raise ValueError("Task ledger is not an editable markdown artifact.")
-    artifact_path = state.artifacts.get(artifact_key, "")
+    resource = state.resources.get(artifact_key)
+    if resource is not None:
+        if resource.kind not in {ResourceKind.MARKDOWN_ARTIFACT, ResourceKind.PROPOSED_MARKDOWN_ARTIFACT}:
+            raise ValueError(f"Resource is not a markdown artifact: {artifact_key}")
+        if ResourceCapability.READ not in resource.capabilities:
+            raise ValueError(f"Resource does not allow read: {artifact_key}")
+        artifact_path = resource.path
+    else:
+        artifact_path = state.artifacts.get(artifact_key, "")
     if not artifact_path:
         raise ValueError(f"Artifact is not registered in current run: {artifact_key}")
 
@@ -3385,7 +3404,10 @@ def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key
         path = workspace / path
     path = path.resolve()
     run_root = (workspace / "artifacts" / "runs" / state.run_id).resolve()
-    if run_root not in [path, *path.parents]:
+    if resource is None or resource.scope == ResourceScope.RUN:
+        if run_root not in [path, *path.parents]:
+            raise ValueError("Artifact path must stay inside the current run artifacts directory.")
+    elif resource.scope != ResourceScope.PROJECT_RUNTIME:
         raise ValueError("Artifact path must stay inside the current run artifacts directory.")
     if path.suffix.lower() not in {".md", ".markdown"}:
         raise ValueError("Only markdown artifacts can be edited in the dashboard.")
@@ -3407,12 +3429,22 @@ def render_file_path(path: str, artifact_key: str = "") -> str:
     """
 
 
+def build_resource_items(state: AgileDevState | None) -> list[dict[str, object]]:
+    if state is None:
+        return []
+    return [
+        resource_to_dict(resource)
+        for _key, resource in sorted(state.resources.items())
+    ]
+
+
 def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
     return {
         "artifact": artifact_key,
         "path": str(path),
         "content": path.read_text(encoding="utf-8"),
+        "resource": resource_to_dict(state.resources[artifact_key]) if artifact_key in state.resources else {},
     }
 
 
@@ -7590,6 +7622,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                             "type": "overview",
                             "project_items": build_project_overview_items(workspace),
                             "legacy_state": asdict(legacy_state) if legacy_state is not None else None,
+                            "resources": build_resource_items(legacy_state),
                         }
                     else:
                         project_config = _project_config_for_key(workspace, project_key)
@@ -7600,6 +7633,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         res_data = {
                             "type": "project",
                             "state": asdict(state) if state is not None else None,
+                            "resources": build_resource_items(state),
                             "start_context": start_context,
                             "active_run": is_active_run(state),
                             "role_observations": build_role_observations(state),
@@ -7611,6 +7645,20 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                             "worker_jobs": build_worker_job_items(project_root),
                         }
                     self._send_json(200, res_data)
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path == "/api/resources":
+                try:
+                    state = resolve_dashboard_state(workspace, project_key=project_key) if project_key else StateStore(workspace).read_current()
+                    self._send_json(
+                        200,
+                        {
+                            "project_key": normalize_project_key(project_key or state.project_key) if state is not None else "",
+                            "resources": build_resource_items(state),
+                            "legacy_artifacts": dict(state.artifacts) if state is not None else {},
+                        },
+                    )
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return

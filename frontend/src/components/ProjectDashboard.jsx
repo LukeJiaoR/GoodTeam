@@ -190,6 +190,7 @@ export default function ProjectDashboard({
   const smokeRunItems = data?.smoke_run_items || [];
   const agileBoard = data?.agile_board || { columns: {}, counts: {} };
   const workerJobs = data?.worker_jobs || [];
+  const resources = data?.resources || [];
 
   const headerStatus = state?.next_node || state?.current_node || 'no_active_run';
   const headBadge = getBadgeStyle(headerStatus);
@@ -381,6 +382,7 @@ export default function ProjectDashboard({
             panelRoleOverrides={panelRoleOverrides}
             proposedRevision={proposedRevision}
             refineLoading={refineLoading}
+            resources={resources}
             roleBackendOptions={roleBackendOptions}
             roleObservations={roleObservations}
             safeDiscoveredAgents={safeDiscoveredAgents}

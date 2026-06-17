@@ -1489,7 +1489,7 @@ def test_save_artifact_rejects_task_ledger_as_non_editable_artifact(tmp_path):
     state.artifacts["task_ledger"] = str(ledger)
     StateStore(tmp_path).write_current(state)
 
-    with pytest.raises(ValueError, match="Task ledger is not an editable markdown artifact"):
+    with pytest.raises(ValueError, match="Resource is not a markdown artifact: task_ledger"):
         save_artifact(workspace=tmp_path, artifact_key="task_ledger", content="# Ledger")
 
 
@@ -4018,8 +4018,9 @@ def test_artifacts_page_filters_task_ledger_from_editable_artifacts():
         encoding="utf-8"
     )
 
-    assert "task_ledger" in artifacts_page
-    assert ".filter(" in artifacts_page
+    assert "resources" in artifacts_page
+    assert "capabilities" in artifacts_page
+    assert "state.artifacts" not in artifacts_page
 
 
 def test_actions_page_is_extracted_and_uses_theme_tokens():
