@@ -3374,6 +3374,8 @@ def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key
     state = store.read_project_current(project_key) if project_key else store.read_current()
     if state is None:
         raise ValueError("No active run state found.")
+    if artifact_key == "task_ledger":
+        raise ValueError("Task ledger is not an editable markdown artifact.")
     artifact_path = state.artifacts.get(artifact_key, "")
     if not artifact_path:
         raise ValueError(f"Artifact is not registered in current run: {artifact_key}")

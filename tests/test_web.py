@@ -1479,6 +1479,20 @@ def test_save_artifact_rejects_unregistered_artifact(tmp_path):
         raise AssertionError("Expected unregistered artifact to be rejected")
 
 
+def test_save_artifact_rejects_task_ledger_as_non_editable_artifact(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    ledger = project_root / ".goodteam" / "tasks" / "tasks.json"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"tasks": []}', encoding="utf-8")
+    state = create_initial_state("run-1", "CONTENTOPS", "Take over the AI content studio")
+    state.artifacts["task_ledger"] = str(ledger)
+    StateStore(tmp_path).write_current(state)
+
+    with pytest.raises(ValueError, match="Task ledger is not an editable markdown artifact"):
+        save_artifact(workspace=tmp_path, artifact_key="task_ledger", content="# Ledger")
+
+
 def test_save_artifact_rejects_path_outside_current_run(tmp_path):
     outside = tmp_path / "notes.md"
     outside.write_text("# Outside", encoding="utf-8")
@@ -3996,6 +4010,16 @@ def test_artifacts_page_is_extracted_and_uses_theme_tokens():
         "border-status-info",
     ]:
         assert semantic_class in artifacts_page
+
+
+def test_artifacts_page_filters_task_ledger_from_editable_artifacts():
+    root = Path(__file__).resolve().parents[1]
+    artifacts_page = (root / "frontend" / "src" / "components" / "tabs" / "ArtifactsTab.jsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "task_ledger" in artifacts_page
+    assert ".filter(" in artifacts_page
 
 
 def test_actions_page_is_extracted_and_uses_theme_tokens():

@@ -1,7 +1,9 @@
 import { ExternalLink, FileText } from 'lucide-react';
 
 export default function ArtifactsTab({ artifacts, handleEditArtifact, FilePath }) {
-  const artifactEntries = artifacts ? Object.entries(artifacts) : [];
+  const artifactEntries = artifacts
+    ? Object.entries(artifacts).filter(([name]) => name !== 'task_ledger')
+    : [];
 
   return (
     <div className="space-y-6">
