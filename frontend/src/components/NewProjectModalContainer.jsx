@@ -8,11 +8,16 @@ export default function NewProjectModalContainer({
   deliveryContractFatalPatterns,
   deliveryContractMinEvidence,
   deliveryContractRequired,
+  contextEstimate,
+  contextSources,
   deliveryMode,
   deliveryStandards,
   deploymentBackendMode,
   dryRun,
+  generatingContext,
   handleCreateConfig,
+  handleContextEstimate,
+  handleContextGenerate,
   handleStartWorkflow,
   idea,
   initGit,
@@ -35,6 +40,8 @@ export default function NewProjectModalContainer({
   setDeliveryContractFatalPatterns,
   setDeliveryContractMinEvidence,
   setDeliveryContractRequired,
+  setContextEstimate,
+  setContextSources,
   setDeliveryMode,
   setDeliveryStandards,
   setDeploymentBackendMode,
@@ -72,6 +79,7 @@ export default function NewProjectModalContainer({
   stagingRemoteDir,
   stagingSmokeCommand,
   stagingSshTarget,
+  previewingContext,
   startingWorkflow,
   startMode,
   startProjectKey,
@@ -91,11 +99,16 @@ export default function NewProjectModalContainer({
       deliveryContractFatalPatterns={deliveryContractFatalPatterns}
       deliveryContractMinEvidence={deliveryContractMinEvidence}
       deliveryContractRequired={deliveryContractRequired}
+      contextEstimate={contextEstimate}
+      contextSources={contextSources}
       deliveryMode={deliveryMode}
       deliveryStandards={deliveryStandards}
       deploymentBackendMode={deploymentBackendMode}
       dryRun={dryRun}
+      generatingContext={generatingContext}
       handleCreateConfig={handleCreateConfig}
+      handleContextEstimate={handleContextEstimate}
+      handleContextGenerate={handleContextGenerate}
       handleStartWorkflow={handleStartWorkflow}
       idea={idea}
       initGit={initGit}
@@ -118,6 +131,8 @@ export default function NewProjectModalContainer({
       setDeliveryContractFatalPatterns={setDeliveryContractFatalPatterns}
       setDeliveryContractMinEvidence={setDeliveryContractMinEvidence}
       setDeliveryContractRequired={setDeliveryContractRequired}
+      setContextEstimate={setContextEstimate}
+      setContextSources={setContextSources}
       setDeliveryMode={setDeliveryMode}
       setDeliveryStandards={setDeliveryStandards}
       setDeploymentBackendMode={setDeploymentBackendMode}
@@ -155,6 +170,7 @@ export default function NewProjectModalContainer({
       stagingRemoteDir={stagingRemoteDir}
       stagingSmokeCommand={stagingSmokeCommand}
       stagingSshTarget={stagingSshTarget}
+      previewingContext={previewingContext}
       startingWorkflow={startingWorkflow}
       startMode={startMode}
       startProjectKey={startProjectKey}

@@ -1,8 +1,12 @@
 import {
   ChevronDown,
+  Calculator,
   Info,
+  Plus,
   Play,
   RefreshCw,
+  Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
 import { DELIVERY_MODE_OPTIONS } from '../constants/deliveryModes';
@@ -14,11 +18,16 @@ export default function NewProjectModal({
   deliveryContractFatalPatterns,
   deliveryContractMinEvidence,
   deliveryContractRequired,
+  contextEstimate,
+  contextSources,
   deliveryMode,
   deliveryStandards,
   deploymentBackendMode,
   dryRun,
+  generatingContext,
   handleCreateConfig,
+  handleContextEstimate,
+  handleContextGenerate,
   handleStartWorkflow,
   idea,
   initGit,
@@ -41,6 +50,8 @@ export default function NewProjectModal({
   setDeliveryContractFatalPatterns,
   setDeliveryContractMinEvidence,
   setDeliveryContractRequired,
+  setContextEstimate,
+  setContextSources,
   setDeliveryMode,
   setDeliveryStandards,
   setDeploymentBackendMode,
@@ -78,6 +89,7 @@ export default function NewProjectModal({
   stagingRemoteDir,
   stagingSmokeCommand,
   stagingSshTarget,
+  previewingContext,
   startingWorkflow,
   startMode,
   startProjectKey,
@@ -90,6 +102,24 @@ export default function NewProjectModal({
     const label = t(key);
     return label === key ? option.label : label;
   };
+  const updateContextSource = (index, patch) => {
+    setContextSources(contextSources.map((source, sourceIndex) => (
+      sourceIndex === index ? { ...source, ...patch } : source
+    )));
+    setContextEstimate(null);
+  };
+  const addContextSource = () => {
+    setContextSources([...contextSources, { kind: 'dir', value: '' }]);
+    setContextEstimate(null);
+  };
+  const removeContextSource = (index) => {
+    const nextSources = contextSources.filter((_, sourceIndex) => sourceIndex !== index);
+    setContextSources(nextSources.length > 0 ? nextSources : [{ kind: 'dir', value: '' }]);
+    setContextEstimate(null);
+  };
+  const hasContextSources = contextSources.some((source) => source.value.trim());
+  const contextTokenCount = contextEstimate?.estimate?.est_tokens ?? 0;
+  const contextModel = contextEstimate?.recommended_model ?? '';
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
@@ -228,6 +258,89 @@ export default function NewProjectModal({
                         {t('newProject.projectRoot.browse')}
                       </button>
                     </div>
+                  </div>
+                </div>
+
+                <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">Project context</div>
+                      <p className="mt-1 text-2xs text-text-secondary leading-relaxed">
+                        Declare files, directories, or URLs before GoodTeam builds its cached project understanding.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addContextSource}
+                      className="bg-surface-raised hover:bg-surface-overlay border-2 border-border-subtle shadow-button text-text-primary p-2 rounded-lg transition-all duo-button-physics cursor-pointer shrink-0"
+                      aria-label="Add context source"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {contextSources.map((source, index) => (
+                      <div key={`context-source-${index}`} className="grid grid-cols-[96px_minmax(0,1fr)_36px] gap-2 items-center">
+                        <select
+                          value={source.kind}
+                          onChange={(e) => updateContextSource(index, { kind: e.target.value })}
+                          className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-2 py-2 text-xs font-bold focus:outline-none focus:border-accent"
+                          aria-label={`Context source ${index + 1} type`}
+                        >
+                          <option value="file">File</option>
+                          <option value="dir">Dir</option>
+                          <option value="url">URL</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={source.value}
+                          onChange={(e) => updateContextSource(index, { value: e.target.value })}
+                          placeholder={source.kind === 'url' ? 'https://example.com/context.md' : '/absolute/path/or/project-relative'}
+                          className="min-w-0 w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-accent"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeContextSource(index)}
+                          className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle hover:border-status-danger/30 text-text-secondary hover:text-status-danger p-2 rounded-lg transition-all duo-button-physics cursor-pointer"
+                          aria-label={`Remove context source ${index + 1}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {contextEstimate && (
+                    <div className="bg-surface-raised border-2 border-border-subtle rounded-lg px-3 py-2 text-xs flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-bold text-accent-text">
+                        ~{contextTokenCount.toLocaleString()} tokens · recommend {contextModel}
+                      </span>
+                      <span className="text-2xs text-text-muted font-mono">
+                        {contextEstimate.estimate.source_count} sources · {contextEstimate.estimate.bytes.toLocaleString()} bytes
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={handleContextEstimate}
+                      disabled={previewingContext || generatingContext || !hasContextSources}
+                      className="flex-1 bg-surface-raised hover:bg-accent-bg hover:text-accent-text border-2 border-border-subtle shadow-button text-text-secondary font-bold py-2 rounded-lg text-xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {previewingContext ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Calculator className="h-3.5 w-3.5" />}
+                      <span>Preview cost</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleContextGenerate}
+                      disabled={generatingContext || previewingContext || !contextEstimate}
+                      className="flex-1 bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold py-2 rounded-lg text-xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {generatingContext ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      <span>Generate context</span>
+                    </button>
                   </div>
                 </div>
 

@@ -193,7 +193,7 @@ def _dump_sources_yaml(record: dict[str, object]) -> str:
         if not isinstance(source, dict):
             continue
         first = True
-        for key in ["repo", "path", "url", "purpose", "topic"]:
+        for key in ["repo", "path", "url", "purpose", "topic", "kind", "value"]:
             value = source.get(key)
             if value is None or value == "":
                 continue
@@ -362,6 +362,8 @@ def _source_record(source: dict) -> dict[str, str]:
         "url": str(source.get("url", "")),
         "purpose": str(source.get("purpose", "")),
         "topic": str(source.get("topic", "")),
+        "kind": str(source.get("kind", "")),
+        "value": str(source.get("value", "")),
     }
 
 

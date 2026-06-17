@@ -136,6 +136,14 @@ export default function App() {
     setDeliveryContractFatalPatterns,
     deliveryContractAcceptance,
     setDeliveryContractAcceptance,
+    contextSources,
+    setContextSources,
+    contextEstimate,
+    setContextEstimate,
+    previewingContext,
+    setPreviewingContext,
+    generatingContext,
+    setGeneratingContext,
   } = newProjectForm;
 
   const dispatchTrackForm = useDispatchTrackForm();
@@ -575,6 +583,74 @@ export default function App() {
     }
   };
 
+  const cleanContextSources = () => (
+    contextSources
+      .map((source) => ({
+        kind: source.kind,
+        value: source.value.trim(),
+      }))
+      .filter((source) => source.value)
+  );
+
+  const handleContextEstimate = async () => {
+    const targetProject = startProjectKey || projectKey;
+    if (!targetProject) {
+      showToast('Project key is required before previewing context cost', true);
+      return;
+    }
+    setPreviewingContext(true);
+    try {
+      const response = await fetch('/api/context-estimate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: targetProject,
+          sources: cleanContextSources(),
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) throw new Error(res.error || 'Failed to preview context cost');
+      setContextEstimate(res);
+      showToast(`Context preview ready: ~${res.estimate.est_tokens.toLocaleString()} tokens`);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setPreviewingContext(false);
+    }
+  };
+
+  const handleContextGenerate = async () => {
+    const targetProject = startProjectKey || projectKey;
+    if (!targetProject) {
+      showToast('Project key is required before generating context', true);
+      return;
+    }
+    if (!contextEstimate) {
+      showToast('Preview context cost before generating', true);
+      return;
+    }
+    setGeneratingContext(true);
+    try {
+      const response = await fetch('/api/context-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_key: targetProject,
+          sources: cleanContextSources(),
+          confirm: true,
+        }),
+      });
+      const res = await response.json();
+      if (!response.ok) throw new Error(res.error || 'Failed to generate context');
+      showToast('Project context generated');
+      fetchState(targetProject);
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      setGeneratingContext(false);
+    }
+  };
+
   const handleStartWorkflow = async () => {
     if (!idea.trim()) {
       showToast('Workflow goal is required', true);
@@ -879,11 +955,16 @@ export default function App() {
       deliveryContractFatalPatterns={deliveryContractFatalPatterns}
       deliveryContractMinEvidence={deliveryContractMinEvidence}
       deliveryContractRequired={deliveryContractRequired}
+      contextEstimate={contextEstimate}
+      contextSources={contextSources}
       deliveryMode={deliveryMode}
       deliveryStandards={deliveryStandards}
       deploymentBackendMode={deploymentBackendMode}
       dryRun={dryRun}
+      generatingContext={generatingContext}
       handleCreateConfig={handleCreateConfig}
+      handleContextEstimate={handleContextEstimate}
+      handleContextGenerate={handleContextGenerate}
       handleStartWorkflow={handleStartWorkflow}
       idea={idea}
       initGit={initGit}
@@ -906,6 +987,8 @@ export default function App() {
       setDeliveryContractFatalPatterns={setDeliveryContractFatalPatterns}
       setDeliveryContractMinEvidence={setDeliveryContractMinEvidence}
       setDeliveryContractRequired={setDeliveryContractRequired}
+      setContextEstimate={setContextEstimate}
+      setContextSources={setContextSources}
       setDeliveryMode={setDeliveryMode}
       setDeliveryStandards={setDeliveryStandards}
       setDeploymentBackendMode={setDeploymentBackendMode}
@@ -943,6 +1026,7 @@ export default function App() {
       stagingRemoteDir={stagingRemoteDir}
       stagingSmokeCommand={stagingSmokeCommand}
       stagingSshTarget={stagingSshTarget}
+      previewingContext={previewingContext}
       startingWorkflow={startingWorkflow}
       startMode={startMode}
       startProjectKey={startProjectKey}

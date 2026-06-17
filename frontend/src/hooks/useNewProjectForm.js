@@ -41,6 +41,10 @@ export function useNewProjectForm(setNewProjectModalOpen) {
   const [deliveryContractMinEvidence, setDeliveryContractMinEvidence] = useState('infrastructure');
   const [deliveryContractFatalPatterns, setDeliveryContractFatalPatterns] = useState('');
   const [deliveryContractAcceptance, setDeliveryContractAcceptance] = useState('');
+  const [contextSources, setContextSources] = useState([{ kind: 'dir', value: '' }]);
+  const [contextEstimate, setContextEstimate] = useState(null);
+  const [previewingContext, setPreviewingContext] = useState(false);
+  const [generatingContext, setGeneratingContext] = useState(false);
 
   const openNewProjectModal = () => {
     setInitGit(true);
@@ -49,6 +53,7 @@ export function useNewProjectForm(setNewProjectModalOpen) {
     setGitWarnings([]);
     setGitRemoteCreated(false);
     setShowGitNotice(false);
+    setContextEstimate(null);
     setNewProjectModalOpen(true);
   };
 
@@ -132,5 +137,13 @@ export function useNewProjectForm(setNewProjectModalOpen) {
     setDeliveryContractFatalPatterns,
     deliveryContractAcceptance,
     setDeliveryContractAcceptance,
+    contextSources,
+    setContextSources,
+    contextEstimate,
+    setContextEstimate,
+    previewingContext,
+    setPreviewingContext,
+    generatingContext,
+    setGeneratingContext,
   };
 }

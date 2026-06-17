@@ -1,5 +1,8 @@
 import json
 import inspect
+import threading
+import urllib.error
+import urllib.request
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,6 +48,54 @@ from goodteam_os.web import (
     open_path_in_file_manager,
     start_workflow,
 )
+
+
+def _write_context_project(workspace: Path, project_root: Path, key: str = "CTX") -> Path:
+    projects = workspace / "projects"
+    projects.mkdir()
+    config = projects / f"{key.lower()}.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: Context Project",
+                f"key: {key}",
+                "repos:",
+                f"  root: {project_root}",
+                "worker_backend:",
+                "  mode: fake",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return config
+
+
+def _post_web_json(workspace: Path, route: str, payload: dict[str, object], *, origin: str | None = None):
+    server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(workspace))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}{route}"
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": origin or f"http://127.0.0.1:{server.server_port}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def _init_git_repo(path: Path) -> None:
@@ -6180,6 +6231,138 @@ def test_frontend_contract_wires_report_bug_fix_workflow():
 
     # Theme tokens, not hardcoded hex/zinc colors.
     for token in ["bg-surface-overlay", "border-border-subtle", "text-text-muted"]:
+        assert token in modal
+    for banned in ["bg-[#", "border-[#", "text-[#"]:
+        assert banned not in modal
+
+
+def test_context_estimate_returns_estimate_without_writing_cache(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    readme = project_root / "README.md"
+    readme.write_text("# Context\n\nSeeded docs.\n", encoding="utf-8")
+    _write_context_project(tmp_path, project_root)
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/context-estimate",
+        {"project_key": "CTX", "sources": [{"kind": "file", "value": str(readme)}]},
+    )
+
+    assert status == 200
+    assert payload["estimate"]["bytes"] == readme.stat().st_size
+    assert payload["estimate"]["est_tokens"] == readme.stat().st_size // 4
+    assert payload["estimate"]["source_count"] == 1
+    assert payload["needs_generation"] is True
+    assert payload["recommended_model"] == "gpt-5.4-mini"
+    assert not (project_root / ".goodteam" / "context" / "understanding.md").exists()
+
+
+def test_context_generate_requires_confirmation(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    (project_root / "README.md").write_text("# Context\n", encoding="utf-8")
+    _write_context_project(tmp_path, project_root)
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/context-generate",
+        {"project_key": "CTX", "sources": [{"kind": "dir", "value": str(project_root)}]},
+    )
+
+    assert status == 400
+    assert payload["error"] == "confirmation required"
+    assert not (project_root / ".goodteam" / "context" / "understanding.md").exists()
+
+
+def test_context_generate_writes_cached_entry(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    docs = project_root / "docs"
+    docs.mkdir()
+    guide = docs / "guide.md"
+    guide.write_text("# Guide\n\nContext guide.\n", encoding="utf-8")
+    _write_context_project(tmp_path, project_root)
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/context-generate",
+        {
+            "project_key": "CTX",
+            "confirm": True,
+            "sources": [{"kind": "dir", "value": str(docs)}],
+        },
+    )
+
+    assert status == 200
+    assert payload["generated"] is True
+    assert payload["estimate"]["source_count"] == 1
+    assert Path(payload["understanding_path"]).is_file()
+    assert Path(payload["index_path"]).is_file()
+    assert "Project context directory" in Path(payload["understanding_path"]).read_text(encoding="utf-8")
+    sources_yaml = project_root / ".goodteam" / "context" / "sources.yaml"
+    assert "kind: dir" in sources_yaml.read_text(encoding="utf-8")
+
+
+def test_context_estimate_rejects_cross_origin(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root)
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/context-estimate",
+        {"project_key": "CTX"},
+        origin="https://evil.example",
+    )
+
+    assert status == 403
+    assert payload["error"] == "cross-origin POST requests are not allowed"
+
+
+def test_context_estimate_enforces_url_size_cap(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root)
+
+    def fake_fetch_url_source(url: str, *, per_source_cap: int, timeout: float) -> dict[str, object]:
+        return {
+            "url": url,
+            "content": "x" * (per_source_cap + 1),
+            "purpose": "Untrusted URL context source",
+            "kind": "url",
+            "value": url,
+        }
+
+    monkeypatch.setattr(web, "_fetch_context_url_source", fake_fetch_url_source)
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/context-estimate",
+        {"project_key": "CTX", "sources": [{"kind": "url", "value": "https://example.com/context.md"}]},
+    )
+
+    assert status == 400
+    assert payload["error"] == "URL source exceeds 1048576 byte cap: https://example.com/context.md"
+
+
+def test_frontend_contract_wires_context_sources_cost_preview():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
+    modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
+
+    assert "/api/context-estimate" in app
+    assert "/api/context-generate" in app
+    assert "contextSources" in app
+    assert "contextSources={contextSources}" in container
+    assert "setContextSources={setContextSources}" in container
+    assert "Project context" in modal
+    assert "Preview cost" in modal
+    assert "Generate context" in modal
+    assert "contextSources.map" in modal
+    assert "Trash2" in modal
+    for token in ["bg-surface-sunken", "border-border-subtle", "text-text-muted"]:
         assert token in modal
     for banned in ["bg-[#", "border-[#", "text-[#"]:
         assert banned not in modal

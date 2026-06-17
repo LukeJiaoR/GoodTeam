@@ -11,8 +11,10 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
 from uuid import uuid4
 
+from goodteam_os import context as project_context
 from goodteam_os.debate import default_debate_dispatch, run_gate_debate
 from goodteam_os.dispatch import (
     dispatch_tracks,
@@ -3642,6 +3644,238 @@ def resolve_project_root_for_request(workspace: Path, request: dict[str, object]
     if isinstance(repos, dict) and repos:
         return resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()})
     return config_path.parent
+
+
+CONTEXT_URL_PER_SOURCE_BYTES = 1_048_576
+CONTEXT_URL_TOTAL_BYTES = 5_242_880
+CONTEXT_URL_TIMEOUT_SECONDS = 5
+
+
+def context_estimate_for_request(workspace: Path, request: dict[str, object]) -> dict[str, object]:
+    project_key = str(request.get("project", "") or request.get("project_key", "")).strip()
+    if not project_key:
+        raise ValueError("project_key is required")
+    project_config, project_root = _context_project_paths(workspace, project_key)
+    declared_sources = _normalize_context_sources(request.get("sources", []))
+    if declared_sources:
+        _persist_context_sources(project_config, declared_sources)
+        sources = _context_source_packets(project_root, declared_sources)
+        estimate = project_context.estimate_context_tokens(sources)
+        needs_generation = project_context.read_context_entry(project_root) is None
+    else:
+        result = project_context.load_or_generate_context(
+            project_config=project_config,
+            root=project_root,
+            generate=False,
+        )
+        estimate = result.get("estimate") or {"bytes": 0, "est_tokens": 0, "source_count": 0}
+        needs_generation = bool(result.get("needs_generation", result.get("entry") is None))
+    return {
+        "estimate": estimate,
+        "needs_generation": needs_generation,
+        "recommended_model": os.getenv("GOODTEAM_CONTEXT_MODEL", "gpt-5.4-mini"),
+    }
+
+
+def context_generate_for_request(workspace: Path, request: dict[str, object]) -> dict[str, object]:
+    if request.get("confirm") is not True:
+        raise ValueError("confirmation required")
+    project_key = str(request.get("project", "") or request.get("project_key", "")).strip()
+    if not project_key:
+        raise ValueError("project_key is required")
+    project_config, project_root = _context_project_paths(workspace, project_key)
+    declared_sources = _normalize_context_sources(request.get("sources", []))
+    if declared_sources:
+        _persist_context_sources(project_config, declared_sources)
+        sources = _context_source_packets(project_root, declared_sources)
+        estimate = project_context.estimate_context_tokens(sources)
+        generated = project_context.generate_context_entry(
+            sources=sources,
+            root=project_root,
+        )
+        return {
+            "generated": True,
+            "understanding_path": generated["understanding_path"],
+            "index_path": generated["index_path"],
+            "estimate": estimate,
+        }
+    result = project_context.load_or_generate_context(
+        project_config=project_config,
+        root=project_root,
+        generate=True,
+    )
+    entry = result.get("entry") or {}
+    return {
+        "generated": True,
+        "understanding_path": str(project_root / project_context.CONTEXT_DIR_NAME / project_context.UNDERSTANDING_FILE),
+        "index_path": str(project_root / project_context.CONTEXT_DIR_NAME / project_context.INDEX_FILE),
+        "estimate": result.get("estimate") or {"bytes": 0, "est_tokens": 0, "source_count": 0},
+        "source": entry.get("source", "generated") if isinstance(entry, dict) else "generated",
+    }
+
+
+def _context_project_paths(workspace: Path, project_key: str) -> tuple[Path, Path]:
+    project_config = _project_config_for_key(workspace, project_key)
+    target = load_project_target(project_config)
+    root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    if root is None:
+        raise ValueError(f"No project root found for project: {project_key}")
+    return project_config, root
+
+
+def _normalize_context_sources(raw_sources: object) -> list[dict[str, str]]:
+    if not isinstance(raw_sources, list):
+        return []
+    sources: list[dict[str, str]] = []
+    for raw in raw_sources:
+        if not isinstance(raw, dict):
+            continue
+        kind = str(raw.get("kind", "")).strip().lower()
+        value = str(raw.get("value", "")).strip()
+        if kind not in {"file", "dir", "url"} or not value:
+            continue
+        sources.append({"kind": kind, "value": value})
+    return sources
+
+
+def _context_source_packets(root: Path, declared_sources: list[dict[str, str]]) -> list[dict[str, object]]:
+    packets: list[dict[str, object]] = []
+    total_url_bytes = 0
+    for source in declared_sources:
+        kind = source["kind"]
+        value = source["value"]
+        if kind == "url":
+            packet = _fetch_context_url_source(
+                value,
+                per_source_cap=CONTEXT_URL_PER_SOURCE_BYTES,
+                timeout=CONTEXT_URL_TIMEOUT_SECONDS,
+            )
+            content = str(packet.get("content", ""))
+            url_bytes = len(content.encode("utf-8"))
+            if url_bytes > CONTEXT_URL_PER_SOURCE_BYTES:
+                raise ValueError(f"URL source exceeds {CONTEXT_URL_PER_SOURCE_BYTES} byte cap: {value}")
+            total_url_bytes += url_bytes
+            if total_url_bytes > CONTEXT_URL_TOTAL_BYTES:
+                raise ValueError(f"URL sources exceed {CONTEXT_URL_TOTAL_BYTES} byte total cap")
+            packets.append(packet)
+            continue
+        path = _resolve_context_local_path(root, value)
+        if kind == "file":
+            if not path.is_file():
+                raise ValueError(f"Context file not found: {value}")
+            packets.append(
+                {
+                    "repo": "declared_context",
+                    "path": str(path),
+                    "purpose": "Declared project context file",
+                    "kind": kind,
+                    "value": value,
+                }
+            )
+            continue
+        if not path.is_dir():
+            raise ValueError(f"Context directory not found: {value}")
+        packets.append(
+            {
+                "repo": "declared_context",
+                "path": str(path),
+                "purpose": "Project context directory",
+                "summary": project_context.build_code_skeleton(path),
+                "kind": kind,
+                "value": value,
+            }
+        )
+    return packets
+
+
+def _resolve_context_local_path(root: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    return path.resolve()
+
+
+def _fetch_context_url_source(url: str, *, per_source_cap: int, timeout: float) -> dict[str, object]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"Unsupported context URL scheme: {url}")
+    with urlopen(url, timeout=timeout) as response:
+        body = response.read(per_source_cap + 1)
+    content = body.decode("utf-8", errors="replace")
+    return {
+        "repo": "declared_context",
+        "url": url,
+        "content": content,
+        "purpose": "Untrusted URL context source",
+        "kind": "url",
+        "value": url,
+    }
+
+
+def _persist_context_sources(project_config: Path, sources: list[dict[str, str]]) -> None:
+    existing = project_config.read_text(encoding="utf-8").splitlines()
+    kept: list[str] = []
+    skipping = False
+    for line in existing:
+        if line.startswith("context_sources:"):
+            skipping = True
+            continue
+        if skipping:
+            if line and not line.startswith(" "):
+                skipping = False
+            else:
+                continue
+        if not skipping:
+            kept.append(line)
+    kept.append("context_sources:")
+    for index, source in enumerate(sources, start=1):
+        kept.append(f"  source_{index:04d}:")
+        kept.append(f"    kind: {_config_scalar('Context source kind', source['kind'])}")
+        kept.append(f"    value: {_config_scalar('Context source value', source['value'])}")
+    project_config.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
+
+
+def build_dashboard_handler(workspace: Path):
+    class DashboardHandler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            normalized_path = self.path
+            if normalized_path.startswith("/api/"):
+                normalized_path = normalized_path[4:]
+            if normalized_path not in {"/context-estimate", "/context-generate"}:
+                self.send_error(404)
+                return
+            if not _request_origin_is_same_origin(
+                origin=str(self.headers.get("Origin", "")),
+                host=str(self.headers.get("Host", "")),
+            ):
+                self._send_json(403, {"error": "cross-origin POST requests are not allowed"})
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(content_length)
+                request = json.loads(raw_body.decode("utf-8") or "{}")
+                if normalized_path == "/context-estimate":
+                    result = context_estimate_for_request(workspace, request)
+                else:
+                    result = context_generate_for_request(workspace, request)
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+
+        def _send_json(self, status: int, payload: dict[str, object]) -> None:
+            body = json.dumps(payload, indent=2).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            _send_cors_headers(self, host="127.0.0.1", port=int(self.server.server_port))
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    return DashboardHandler
 
 
 def normalize_task_backend(value: object) -> dict[str, object]:
@@ -7599,7 +7833,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path[4:]
 
-            if normalized_path not in {"/start", "/report-bug", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
+            if normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -7649,6 +7883,10 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         title=str(request.get("title", "")),
                         severity=str(request.get("severity", "p2")),
                     )
+                elif normalized_path == "/context-estimate":
+                    result = context_estimate_for_request(workspace, request)
+                elif normalized_path == "/context-generate":
+                    result = context_generate_for_request(workspace, request)
                 elif normalized_path == "/approve":
                     result = decide_approval(
                         workspace=workspace,
