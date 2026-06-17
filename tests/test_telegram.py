@@ -2,6 +2,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 import goodteam_os.telegram as telegram
 from goodteam_os.telegram import (
@@ -106,6 +108,26 @@ def test_approval_keyboard_uses_inline_decision_buttons():
     assert keyboard["inline_keyboard"][0][1]["text"] == "Request changes"
 
 
+def test_global_test_telegram_request_fake_prevents_network(monkeypatch):
+    calls = []
+
+    def fail_if_network_layer_is_used(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        raise AssertionError("real Telegram transport should be isolated in pytest")
+
+    monkeypatch.setattr("telebot.apihelper._make_request", fail_if_network_layer_is_used)
+
+    payload = telegram._telegram_request(
+        "secret-token",
+        "sendMessage",
+        {"chat_id": "12345", "text": "hello from tests"},
+    )
+
+    assert payload == {"ok": True, "result": {"message_id": 1}}
+    assert calls == []
+
+
+@pytest.mark.telegram_transport_unit
 def test_telegram_request_uses_telebot_apihelper_and_preserves_raw_response_contract(monkeypatch):
     calls = []
 
