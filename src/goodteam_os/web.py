@@ -81,13 +81,13 @@ PRD_REVIEW_ROLES = [
     "Review / QA",
 ]
 
-_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "gemini", "agy", "fake", "noop", "human")
+_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "gemini", "agy", "opencode", "fake", "noop", "human")
 WORKER_BACKEND_OPTIONS = [
     mode
     for mode in _PREFERRED_WORKER_BACKEND_ORDER
     if mode in {*BUILTIN_WORKER_MODES, *CLI_BACKENDS}
 ]
-WORKER_BACKEND_ACCEPTED_OPTIONS = sorted({*WORKER_BACKEND_OPTIONS, *CLI_BACKENDS})
+WORKER_BACKEND_ACCEPTED_OPTIONS = sorted({*WORKER_BACKEND_OPTIONS, *CLI_BACKENDS, "manual"})
 WORKER_ROLES = [
     "orchestrator",
     "research",
@@ -781,7 +781,14 @@ def _request_origin_is_same_origin(*, origin: str, host: str) -> bool:
     parsed = urlparse(origin)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
-    return parsed.netloc.lower() == host.split("@")[-1].lower()
+    request_host = host.split("@")[-1].lower()
+    origin_host = parsed.netloc.lower()
+    if origin_host == request_host:
+        return True
+    local_hosts = {"localhost", "127.0.0.1", "::1", "[::1]"}
+    origin_name = (parsed.hostname or "").lower()
+    request_name = request_host.rsplit(":", 1)[0]
+    return origin_name in local_hosts and request_name in local_hosts
 
 
 def _dispatch_worktree_path(workspace: Path, name: str) -> Path:
@@ -2230,6 +2237,7 @@ def create_local_project_config(
     plane_api_key_env: str = "",
     plane_mcp_server: str = "",
     worker_backend_mode: str = "codex",
+    workers: dict[str, str] | None = None,
     model_profile: str = "balanced",
     delivery_mode: str = "init_project",
     delivery_standards: str = "",
@@ -2341,7 +2349,19 @@ def create_local_project_config(
         lines.append("  plane:")
         lines.extend(f"    {key}: {_config_scalar('Plane config value', value)}" for key, value in plane_config.items() if value)
     worker_mode = _single_line_config_value("Worker backend mode", worker_backend_mode, default="codex")
+    worker_overrides = {
+        _config_mapping_key("Worker role", str(role)): _single_line_config_value("Worker backend", str(backend))
+        for role, backend in (workers or {}).items()
+        if str(role).strip() and str(backend).strip()
+    }
+    _validate_worker_backend_config(mode=worker_mode, workers=worker_overrides, role_models=overrides)
     lines.extend(["worker_backend:", f"  mode: {_config_scalar('Worker backend mode', worker_mode)}"])
+    if worker_overrides:
+        lines.append("workers:")
+        lines.extend(
+            f"  {role}: {_config_scalar('Worker backend', backend)}"
+            for role, backend in _ordered_worker_overrides(worker_overrides).items()
+        )
     deployment_backend = {
         "mode": _single_line_config_value("Deployment backend mode", deployment_backend_mode),
         "staging_ssh_target": _single_line_config_value("Staging SSH target", staging_ssh_target),
@@ -3400,10 +3420,19 @@ def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key
         raise ValueError(f"Artifact is not registered in current run: {artifact_key}")
 
     path = Path(artifact_path)
-    if not path.is_absolute():
-        path = workspace / path
-    path = path.resolve()
     run_root = (workspace / "artifacts" / "runs" / state.run_id).resolve()
+    if path.is_absolute():
+        path = path.resolve()
+    else:
+        candidates = [(workspace / path).resolve(), path.resolve()]
+        path = next(
+            (
+                candidate
+                for candidate in candidates
+                if run_root in [candidate, *candidate.parents]
+            ),
+            candidates[0],
+        )
     if resource is None or resource.scope == ResourceScope.RUN:
         if run_root not in [path, *path.parents]:
             raise ValueError("Artifact path must stay inside the current run artifacts directory.")
@@ -3874,8 +3903,8 @@ def build_dashboard_handler(workspace: Path):
         def do_POST(self) -> None:
             normalized_path = self.path
             if normalized_path.startswith("/api/"):
-                normalized_path = normalized_path[4:]
-            if normalized_path not in {"/context-estimate", "/context-generate"}:
+                normalized_path = normalized_path.removeprefix("/api")
+            if normalized_path not in {"/context-estimate", "/context-generate", "/project-config"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -3890,8 +3919,45 @@ def build_dashboard_handler(workspace: Path):
                 request = json.loads(raw_body.decode("utf-8") or "{}")
                 if normalized_path == "/context-estimate":
                     result = context_estimate_for_request(workspace, request)
-                else:
+                elif normalized_path == "/context-generate":
                     result = context_generate_for_request(workspace, request)
+                elif (
+                    request.get("action") == "update_worker_backends"
+                    or (
+                        ("project" in request or "project_key" in request)
+                        and "workers" in request
+                        and "project_name" not in request
+                    )
+                ):
+                    result = update_project_worker_backend_settings(
+                        workspace=workspace,
+                        request=request,
+                    )
+                else:
+                    result = create_local_project_config(
+                        workspace=workspace,
+                        project_name=str(request.get("project_name", "")),
+                        project_key=str(request.get("project_key", "")),
+                        project_root=str(request.get("project_root", "")),
+                        docs_path=str(request.get("docs_path", "")),
+                        backend_path=str(request.get("backend_path", "")),
+                        frontend_path=str(request.get("frontend_path", "")),
+                        task_sync=[str(value) for value in request.get("task_sync", [])],
+                        plane_api_host_url=str(request.get("plane_api_host_url", "")),
+                        plane_workspace_slug=str(request.get("plane_workspace_slug", "")),
+                        plane_project_id=str(request.get("plane_project_id", "")),
+                        plane_api_key_env=str(request.get("plane_api_key_env", "")),
+                        plane_mcp_server=str(request.get("plane_mcp_server", "")),
+                        worker_backend_mode=str(request.get("worker_backend_mode", "codex")),
+                        workers=dict(request.get("workers", {})),
+                        model_profile=str(request.get("model_profile", "balanced")),
+                        delivery_mode=str(request.get("delivery_mode", "init_project")),
+                        delivery_standards=str(request.get("delivery_standards", "")),
+                        role_model_overrides=dict(request.get("role_model_overrides", {})),
+                        init_git=_request_bool(request.get("init_git"), True),
+                        create_remote=_request_bool(request.get("create_remote"), False),
+                        remote_private=_request_bool(request.get("remote_private"), True),
+                    )
                 self._send_json(200, result)
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
@@ -7881,7 +7947,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
         def do_POST(self) -> None:
             normalized_path = self.path
             if normalized_path.startswith("/api/"):
-                normalized_path = normalized_path[4:]
+                normalized_path = normalized_path.removeprefix("/api")
 
             if normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
@@ -8058,7 +8124,14 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 # panel sends `project` + `workers` for an existing project; the
                 # create-config form sends neither. Route both explicitly so an
                 # unrelated path can never silently fall through to create-config.
-                elif normalized_path == "/project-config" and ("project" in request or "workers" in request):
+                elif normalized_path == "/project-config" and (
+                    request.get("action") == "update_worker_backends"
+                    or (
+                        ("project" in request or "project_key" in request)
+                        and "workers" in request
+                        and "project_name" not in request
+                    )
+                ):
                     result = update_project_worker_backend_settings(
                         workspace=workspace,
                         request=request,
@@ -8079,6 +8152,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         plane_api_key_env=str(request.get("plane_api_key_env", "")),
                         plane_mcp_server=str(request.get("plane_mcp_server", "")),
                         worker_backend_mode=str(request.get("worker_backend_mode", "codex")),
+                        workers=dict(request.get("workers", {})),
                         deployment_backend_mode=str(request.get("deployment_backend_mode", "")),
                         staging_ssh_target=str(request.get("staging_ssh_target", "")),
                         staging_remote_dir=str(request.get("staging_remote_dir", "")),

@@ -23,7 +23,9 @@ export default function NewProjectModal({
   deliveryMode,
   deliveryStandards,
   deploymentBackendMode,
+  discoveredAgents = null,
   dryRun,
+  fallbackAgentModes = {},
   generatingContext,
   handleCreateConfig,
   handleContextEstimate,
@@ -31,7 +33,10 @@ export default function NewProjectModal({
   handleStartWorkflow,
   idea,
   initGit,
+  initWorkerBucketSelections = {},
+  initWorkerRoutingBuckets = [],
   isNewProjectMode,
+  loadingDiscoveredAgents = false,
   modelProfile,
   onClose,
   openDirectoryPicker,
@@ -45,6 +50,7 @@ export default function NewProjectModal({
   projectRoot,
   remotePrivate,
   roleModelOverrides,
+  safeDiscoveredAgents = [],
   setCreateRemote,
   setDeliveryContractAcceptance,
   setDeliveryContractFatalPatterns,
@@ -58,6 +64,7 @@ export default function NewProjectModal({
   setDryRun,
   setIdea,
   setInitGit,
+  setInitWorkerBucketSelections,
   setModelProfile,
   setPlaneApiHost,
   setPlaneApiKeyEnv,
@@ -120,6 +127,29 @@ export default function NewProjectModal({
   const hasContextSources = contextSources.some((source) => source.value.trim());
   const contextTokenCount = contextEstimate?.estimate?.est_tokens ?? 0;
   const contextModel = contextEstimate?.recommended_model ?? '';
+  const discoveredInitAgents = Array.isArray(discoveredAgents) ? discoveredAgents : safeDiscoveredAgents;
+  const availableInitAgents = (discoveredInitAgents.length > 0 ? discoveredInitAgents : [])
+    .filter((agent) => agent.available);
+  const initAgentOptions = availableInitAgents.length > 0
+    ? availableInitAgents
+    : Object.entries(fallbackAgentModes).map(([backend, config]) => ({
+        backend,
+        available: true,
+        ready: true,
+        models: config.models,
+        model_default: config.model_default,
+      }));
+  const initAgentByBackend = Object.fromEntries(initAgentOptions.map((agent) => [agent.backend, agent]));
+  const setInitBucketSelection = (bucketKey, patch) => {
+    if (!setInitWorkerBucketSelections) return;
+    setInitWorkerBucketSelections((prev) => ({
+      ...prev,
+      [bucketKey]: {
+        ...(prev[bucketKey] || {}),
+        ...patch,
+      },
+    }));
+  };
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
@@ -419,6 +449,73 @@ export default function NewProjectModal({
                   </div>
                 )}
 
+                <div className="col-span-2 grid grid-cols-1 gap-3 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.workerBuckets.title')}</div>
+                    {loadingDiscoveredAgents && (
+                      <span className="text-2xs text-text-muted font-mono">{t('newProject.workerBuckets.loading')}</span>
+                    )}
+                  </div>
+                  <div className="space-y-3">
+                    {initWorkerRoutingBuckets.map((bucket) => {
+                      const selection = initWorkerBucketSelections[bucket.key] || {};
+                      const backendValue = selection.backend || '';
+                      const effectiveBackend = backendValue || workerBackendMode || initAgentOptions[0]?.backend || 'codex';
+                      const agent = initAgentByBackend[effectiveBackend] || initAgentOptions[0] || {};
+                      const models = agent.models || fallbackAgentModes[effectiveBackend]?.models || ['auto'];
+                      const defaultModel = agent.model_default || fallbackAgentModes[effectiveBackend]?.model_default || 'auto';
+                      const modelValue = selection.model || '';
+
+                      return (
+                        <div key={bucket.key} className="grid grid-cols-1 md:grid-cols-[minmax(120px,0.8fr)_minmax(140px,1fr)_minmax(160px,1.2fr)] gap-3 items-start">
+                          <div>
+                            <div className="text-xs font-bold text-text-primary">{bucket.label}</div>
+                            <div className="text-2xs text-text-muted font-mono truncate">{bucket.roles.join(', ')}</div>
+                          </div>
+                          <label className="block">
+                            <span className="block text-2xs text-text-secondary mb-1 uppercase">Backend</span>
+                            <select
+                              value={backendValue}
+                              onChange={(event) => setInitBucketSelection(bucket.key, { backend: event.target.value })}
+                              className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
+                            >
+                              <option value="">Inherit ({workerBackendMode || 'codex'})</option>
+                              {initAgentOptions.map((agentOption) => (
+                                <option key={agentOption.backend} value={agentOption.backend}>
+                                  {agentOption.backend}{agentOption.ready === false ? ' - not ready' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="block text-2xs text-text-secondary mb-1 uppercase">Model</span>
+                            <select
+                              value={modelValue}
+                              onChange={(event) => setInitBucketSelection(bucket.key, { model: event.target.value })}
+                              className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
+                            >
+                              <option value="">Inherit ({defaultModel})</option>
+                              {models.map((model) => (
+                                <option key={model} value={model}>{model}</option>
+                              ))}
+                              <option value="__custom__">Custom...</option>
+                            </select>
+                            {modelValue === '__custom__' && (
+                              <input
+                                type="text"
+                                value={selection.customModel || ''}
+                                onChange={(event) => setInitBucketSelection(bucket.key, { customModel: event.target.value })}
+                                placeholder="provider/model"
+                                className="mt-2 w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-accent"
+                              />
+                            )}
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="col-span-2 border-t border-border-subtle my-4" />
 
                 {/* Toggle Advanced Button */}
@@ -459,6 +556,11 @@ export default function NewProjectModal({
                           className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
                         >
                           <option value="codex">{t('newProject.advanced.workerExecutionCodex')}</option>
+                          <option value="claude">Claude</option>
+                          <option value="gemini">Gemini</option>
+                          <option value="agy">Antigravity</option>
+                          <option value="opencode">OpenCode</option>
+                          <option value="fake">Fake</option>
                           <option value="manual">{t('newProject.advanced.workerExecutionManual')}</option>
                           <option value="noop">{t('newProject.advanced.workerExecutionNoop')}</option>
                         </select>

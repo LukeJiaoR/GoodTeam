@@ -29,6 +29,9 @@ DEFAULT_GEMINI_MODEL = "auto"
 DEFAULT_AGY_PATH = os.getenv("GOODTEAM_AGY_PATH", "agy")
 DEFAULT_AGY_MODEL = os.getenv("GOODTEAM_AGY_MODEL", "auto")
 AGY_AUTH_ENV_NAMES = ()
+DEFAULT_OPENCODE_PATH = os.getenv("GOODTEAM_OPENCODE_PATH", "opencode")
+DEFAULT_OPENCODE_MODEL = os.getenv("GOODTEAM_OPENCODE_MODEL", "auto")
+OPENCODE_AUTH_ENV_NAMES = ()
 GEMINI_AUTH_ENV_NAMES = (
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
@@ -310,6 +313,24 @@ def _query_agy_models(command_path: str) -> tuple[str, ...] | None:
     return tuple(dict.fromkeys(models)) or None
 
 
+def _query_opencode_models(command_path: str) -> tuple[str, ...] | None:
+    try:
+        completed = subprocess.run(
+            [command_path, "models"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+
+    models = [line.strip() for line in completed.stdout.splitlines() if "/" in line and line.strip()]
+    return tuple(dict.fromkeys(models)) or None
+
+
 def _claude_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
     return [binary, "-p", "--model", model, "--dangerously-skip-permissions"]
 
@@ -330,9 +351,25 @@ def _agy_build_command(binary: str, model: str, project_root: Path, result_path:
     return command
 
 
+def _opencode_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
+    command = [
+        binary,
+        "run",
+        "--dir",
+        str(project_root),
+        "--dangerously-skip-permissions",
+    ]
+    model = model.strip()
+    if model and model.lower() != "auto":
+        command.extend(["-m", model])
+    return command
+
+
 def _command_with_prompt(command: list[str], prompt: str, *, prompt_via: str) -> list[str]:
     if prompt_via == "stdin":
         return list(command)
+    if prompt_via == "positional_arg":
+        return [*command, prompt]
     if prompt_via != "arg":
         raise ValueError(f"Unsupported prompt_via value: {prompt_via}")
     updated = list(command)
@@ -554,6 +591,21 @@ AGY_BACKEND = CliBackendSpec(
     needs_pty=True,
 )
 
+OPENCODE_BACKEND = CliBackendSpec(
+    name="opencode",
+    which_name="opencode",
+    default_path=lambda: DEFAULT_OPENCODE_PATH,
+    model_default=DEFAULT_OPENCODE_MODEL,
+    models=(DEFAULT_OPENCODE_MODEL,),
+    auth_env=OPENCODE_AUTH_ENV_NAMES,
+    capture="stdout",
+    label="OpenCode CLI",
+    build_command=_opencode_build_command,
+    summarize=_gemini_summary,
+    not_available_message="OpenCode CLI is not available. Install opencode or add it to PATH before running opencode workers.",
+    prompt_via="positional_arg",
+)
+
 # Registry of agentic CLI worker backends. Add a CliBackendSpec here to support a
 # new CLI. Aliases point at the same backend spec.
 CLI_BACKENDS: dict[str, CliBackendSpec] = {
@@ -563,6 +615,7 @@ CLI_BACKENDS: dict[str, CliBackendSpec] = {
     "gemini": GEMINI_BACKEND,
     "agy": AGY_BACKEND,
     "antigravity": AGY_BACKEND,
+    "opencode": OPENCODE_BACKEND,
 }
 
 
@@ -1338,6 +1391,11 @@ def discover_installed_agents() -> list[dict[str, Any]]:
                 models_source = "live"
         elif spec.which_name == "agy" and report.get("available"):
             live_models = _query_agy_models(str(report.get("command_path", "")))
+            if live_models:
+                models = tuple(dict.fromkeys((*spec.models, *live_models)))
+                models_source = "live"
+        elif spec.which_name == "opencode" and report.get("available"):
+            live_models = _query_opencode_models(str(report.get("command_path", "")))
             if live_models:
                 models = tuple(dict.fromkeys((*spec.models, *live_models)))
                 models_source = "live"

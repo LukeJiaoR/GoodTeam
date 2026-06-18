@@ -33,6 +33,7 @@ export default function ProjectsHomePage({
   theme,
   updateUrl,
 }) {
+  const isStaleOverviewData = data && data.type !== 'overview';
   const projectItems = data?.project_items || [];
   const legacyState = data?.legacy_state;
   const openNewProject = () => {
@@ -115,7 +116,7 @@ export default function ProjectsHomePage({
           )}
 
           {/* Project List */}
-          {loading ? (
+          {loading || isStaleOverviewData ? (
             <Spinner label={t('chrome.loading')} />
           ) : error ? (
             <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-xl text-status-danger flex items-center space-x-3">

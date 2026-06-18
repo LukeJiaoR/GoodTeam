@@ -13,7 +13,9 @@ export default function NewProjectModalContainer({
   deliveryMode,
   deliveryStandards,
   deploymentBackendMode,
+  discoveredAgents,
   dryRun,
+  fallbackAgentModes,
   generatingContext,
   handleCreateConfig,
   handleContextEstimate,
@@ -21,7 +23,10 @@ export default function NewProjectModalContainer({
   handleStartWorkflow,
   idea,
   initGit,
+  initWorkerBucketSelections,
+  initWorkerRoutingBuckets,
   isNewProjectMode,
+  loadingDiscoveredAgents,
   modelProfile,
   newProjectModalOpen,
   openDirectoryPicker,
@@ -35,6 +40,7 @@ export default function NewProjectModalContainer({
   projectRoot,
   remotePrivate,
   roleModelOverrides,
+  safeDiscoveredAgents,
   setCreateRemote,
   setDeliveryContractAcceptance,
   setDeliveryContractFatalPatterns,
@@ -48,6 +54,7 @@ export default function NewProjectModalContainer({
   setDryRun,
   setIdea,
   setInitGit,
+  setInitWorkerBucketSelections,
   setModelProfile,
   setPlaneApiHost,
   setPlaneApiKeyEnv,
@@ -104,7 +111,9 @@ export default function NewProjectModalContainer({
       deliveryMode={deliveryMode}
       deliveryStandards={deliveryStandards}
       deploymentBackendMode={deploymentBackendMode}
+      discoveredAgents={discoveredAgents}
       dryRun={dryRun}
+      fallbackAgentModes={fallbackAgentModes}
       generatingContext={generatingContext}
       handleCreateConfig={handleCreateConfig}
       handleContextEstimate={handleContextEstimate}
@@ -112,7 +121,10 @@ export default function NewProjectModalContainer({
       handleStartWorkflow={handleStartWorkflow}
       idea={idea}
       initGit={initGit}
+      initWorkerBucketSelections={initWorkerBucketSelections}
+      initWorkerRoutingBuckets={initWorkerRoutingBuckets}
       isNewProjectMode={isNewProjectMode}
+      loadingDiscoveredAgents={loadingDiscoveredAgents}
       modelProfile={modelProfile}
       onClose={closeNewProjectModal}
       openDirectoryPicker={openDirectoryPicker}
@@ -126,6 +138,7 @@ export default function NewProjectModalContainer({
       projectRoot={projectRoot}
       remotePrivate={remotePrivate}
       roleModelOverrides={roleModelOverrides}
+      safeDiscoveredAgents={safeDiscoveredAgents}
       setCreateRemote={setCreateRemote}
       setDeliveryContractAcceptance={setDeliveryContractAcceptance}
       setDeliveryContractFatalPatterns={setDeliveryContractFatalPatterns}
@@ -139,6 +152,7 @@ export default function NewProjectModalContainer({
       setDryRun={setDryRun}
       setIdea={setIdea}
       setInitGit={setInitGit}
+      setInitWorkerBucketSelections={setInitWorkerBucketSelections}
       setModelProfile={setModelProfile}
       setPlaneApiHost={setPlaneApiHost}
       setPlaneApiKeyEnv={setPlaneApiKeyEnv}

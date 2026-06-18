@@ -14,6 +14,7 @@ from goodteam_os.workers import (
     _gemini_summary,
     _query_agy_models,
     _query_codex_models,
+    _query_opencode_models,
     _run_command_in_pty,
     classify_worker_failure,
     discover_installed_agents,
@@ -1334,6 +1335,37 @@ def test_query_agy_models_returns_none_on_failures(monkeypatch):
     assert _query_agy_models("/fake/bin/agy") is None
 
 
+def test_command_with_prompt_supports_positional_arg_mode():
+    from goodteam_os.workers import _command_with_prompt
+
+    assert _command_with_prompt(
+        ["/fake/bin/opencode", "run", "--dir", "/repo"],
+        "do the task",
+        prompt_via="positional_arg",
+    ) == ["/fake/bin/opencode", "run", "--dir", "/repo", "do the task"]
+
+
+def test_query_opencode_models_parses_provider_model_lines(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+
+        class Completed:
+            returncode = 0
+            stdout = "opencode-go/qwen3.7-max\nnot-a-model\nanthropic/claude-sonnet-4-6\n"
+
+        return Completed()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert _query_opencode_models("/fake/bin/opencode") == (
+        "opencode-go/qwen3.7-max",
+        "anthropic/claude-sonnet-4-6",
+    )
+    assert calls[0]["command"] == ["/fake/bin/opencode", "models"]
+
+
 def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(monkeypatch):
     available_commands = {"codex", "claude", "gemini"}
 
@@ -1347,6 +1379,7 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     monkeypatch.setattr("goodteam_os.workers.DEFAULT_CLAUDE_PATH", "/missing/claude")
     monkeypatch.setattr("goodteam_os.workers.DEFAULT_GEMINI_PATH", "/missing/gemini")
     monkeypatch.setattr("goodteam_os.workers.DEFAULT_AGY_PATH", "/missing/agy")
+    monkeypatch.setattr("goodteam_os.workers.DEFAULT_OPENCODE_PATH", "/missing/opencode")
     monkeypatch.setenv("CODEX_API_KEY", "codex-secret")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
@@ -1357,15 +1390,17 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     monkeypatch.delenv("AGY_API_KEY", raising=False)
     monkeypatch.setattr("goodteam_os.workers._query_codex_models", lambda command_path: None)
     monkeypatch.setattr("goodteam_os.workers._query_agy_models", lambda command_path: None)
+    monkeypatch.setattr("goodteam_os.workers._query_opencode_models", lambda command_path: None)
 
     discovered = discover_installed_agents()
 
-    assert [item["backend"] for item in discovered] == ["agy", "claude", "codex", "gemini"]
+    assert [item["backend"] for item in discovered] == ["agy", "claude", "codex", "gemini", "opencode"]
     assert [item["aliases"] for item in discovered] == [
         ["agy", "antigravity"],
         ["anthropic", "claude"],
         ["codex"],
         ["gemini"],
+        ["opencode"],
     ]
     by_backend = {item["backend"]: item for item in discovered}
     assert by_backend["codex"]["available"] is True
@@ -1392,6 +1427,11 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     assert by_backend["agy"]["models"] == ["auto"]
     assert by_backend["agy"]["model_default"] == "auto"
     assert by_backend["agy"]["models_source"] == "static"
+    assert by_backend["opencode"]["available"] is False
+    assert by_backend["opencode"]["ready"] is False
+    assert by_backend["opencode"]["models"] == ["auto"]
+    assert by_backend["opencode"]["model_default"] == "auto"
+    assert by_backend["opencode"]["models_source"] == "static"
 
 
 def test_discover_installed_agents_uses_live_codex_models(monkeypatch):
@@ -1402,6 +1442,10 @@ def test_discover_installed_agents_uses_live_codex_models(monkeypatch):
         lambda command_path: ("gpt-live-a", "gpt-live-b", "gpt-live-a"),
     )
     monkeypatch.setattr("goodteam_os.workers._query_agy_models", lambda command_path: ("Agy Medium", "Agy Max"))
+    monkeypatch.setattr(
+        "goodteam_os.workers._query_opencode_models",
+        lambda command_path: ("opencode-go/qwen3.7-max", "anthropic/claude-sonnet-4-6"),
+    )
 
     by_backend = {item["backend"]: item for item in discover_installed_agents()}
 
@@ -1413,6 +1457,8 @@ def test_discover_installed_agents_uses_live_codex_models(monkeypatch):
     assert "gemini-2.5-pro" in by_backend["gemini"]["models"]
     assert by_backend["agy"]["models_source"] == "live"
     assert by_backend["agy"]["models"] == ["auto", "Agy Medium", "Agy Max"]
+    assert by_backend["opencode"]["models_source"] == "live"
+    assert by_backend["opencode"]["models"] == ["auto", "opencode-go/qwen3.7-max", "anthropic/claude-sonnet-4-6"]
 
 
 def test_discover_installed_agents_uses_static_codex_models_when_live_query_fails(monkeypatch):
@@ -1420,6 +1466,7 @@ def test_discover_installed_agents_uses_static_codex_models_when_live_query_fail
     monkeypatch.setenv("CODEX_API_KEY", "codex-secret")
     monkeypatch.setattr("goodteam_os.workers._query_codex_models", lambda command_path: None)
     monkeypatch.setattr("goodteam_os.workers._query_agy_models", lambda command_path: None)
+    monkeypatch.setattr("goodteam_os.workers._query_opencode_models", lambda command_path: None)
 
     by_backend = {item["backend"]: item for item in discover_installed_agents()}
 
@@ -1459,6 +1506,28 @@ def test_agy_build_command_has_no_gemini_only_flags():
     assert "--dangerously-skip-permissions" in cmd
     assert "--model" not in cmd
     assert "--approval-mode" not in cmd
+
+
+def test_opencode_backend_uses_positional_prompt_and_model_flag():
+    from goodteam_os.workers import CLI_BACKENDS, _command_with_prompt
+
+    spec = CLI_BACKENDS["opencode"]
+    cmd = _command_with_prompt(
+        spec.build_command("/fake/bin/opencode", "opencode-go/qwen3.7-max", Path("/repo"), Path("r.md")),
+        "do the thing",
+        prompt_via=spec.prompt_via,
+    )
+
+    assert cmd == [
+        "/fake/bin/opencode",
+        "run",
+        "--dir",
+        "/repo",
+        "--dangerously-skip-permissions",
+        "-m",
+        "opencode-go/qwen3.7-max",
+        "do the thing",
+    ]
 
 
 def test_anthropic_adapter_invokes_claude_cli_and_captures_stdout_result(tmp_path, monkeypatch):

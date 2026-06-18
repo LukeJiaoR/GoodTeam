@@ -12,6 +12,7 @@ export function useNewProjectForm(setNewProjectModalOpen) {
   const [projectConfig, setProjectConfig] = useState('');
   const [taskSync, setTaskSync] = useState('');
   const [workerBackendMode, setWorkerBackendMode] = useState('codex');
+  const [initWorkerBucketSelections, setInitWorkerBucketSelections] = useState({});
   const [deploymentBackendMode, setDeploymentBackendMode] = useState('');
   const [startMode, setStartMode] = useState('existing_project');
   const [dryRun, setDryRun] = useState(false);
@@ -54,6 +55,7 @@ export function useNewProjectForm(setNewProjectModalOpen) {
     setGitRemoteCreated(false);
     setShowGitNotice(false);
     setContextEstimate(null);
+    setInitWorkerBucketSelections({});
     setNewProjectModalOpen(true);
   };
 
@@ -86,6 +88,8 @@ export function useNewProjectForm(setNewProjectModalOpen) {
     setTaskSync,
     workerBackendMode,
     setWorkerBackendMode,
+    initWorkerBucketSelections,
+    setInitWorkerBucketSelections,
     deploymentBackendMode,
     setDeploymentBackendMode,
     startMode,

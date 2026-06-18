@@ -31,10 +31,12 @@ from goodteam_os.web import (
     decide_approval,
     discover_project_configs,
     discover_project_directories,
+    _request_origin_is_same_origin,
     create_local_project_config,
     delete_project,
     read_artifact,
     read_artifact_preview,
+    read_open_questions,
     render_markdown_preview,
     render_dashboard,
     render_project_overview,
@@ -110,6 +112,24 @@ def test_build_dev_loop_without_project_returns_empty_note():
     assert dev_loop["pre_reviews"] == []
     assert dev_loop["is_git_repo"] is False
     assert dev_loop["warnings"] == ["no project selected"]
+
+
+def test_request_origin_allows_local_vite_proxy_origin():
+    assert _request_origin_is_same_origin(
+        origin="http://127.0.0.1:5173",
+        host="127.0.0.1:8788",
+    ) is True
+    assert _request_origin_is_same_origin(
+        origin="http://localhost:5173",
+        host="127.0.0.1:8788",
+    ) is True
+
+
+def test_request_origin_rejects_non_local_cross_origin():
+    assert _request_origin_is_same_origin(
+        origin="https://evil.example",
+        host="127.0.0.1:8788",
+    ) is False
 
 
 def test_build_dev_loop_non_git_directory_reports_not_git_repo(tmp_path):
@@ -1426,6 +1446,25 @@ def test_read_artifact_reads_current_run_artifact(tmp_path):
     assert payload["content"] == "# Takeover\n\nReview me"
 
 
+def test_read_artifact_accepts_workspace_prefixed_relative_artifact_path(tmp_path, monkeypatch):
+    workspace = tmp_path / "dev-workspace"
+    artifact = workspace / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("# PRD\n\n## Open Questions\n\n- Which slice ships first?\n", encoding="utf-8")
+    state = create_initial_state("run-1", "CONTENTOPS", "Take over the AI content studio")
+    state.artifacts["prd"] = str(artifact.relative_to(tmp_path))
+    StateStore(workspace).write_current(state)
+
+    monkeypatch.chdir(tmp_path)
+
+    payload = read_open_questions(workspace=Path("dev-workspace"), artifact_key="prd")
+
+    assert payload == {
+        "artifact": "prd",
+        "questions": ["Which slice ships first?"],
+    }
+
+
 def test_read_artifact_rejects_unregistered_absolute_path(tmp_path):
     secret = tmp_path / "secret.md"
     secret.write_text("# Secret\n\nDo not expose this.", encoding="utf-8")
@@ -1732,6 +1771,7 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
         plane_api_key_env="PLANE_API_KEY",
         plane_mcp_server="plane",
         worker_backend_mode="codex",
+        workers={"implementation": "opencode", "qa": "codex"},
         model_profile="cheap",
         delivery_mode="multi_service",
         role_model_overrides={"architect": "codex:gpt-5.5"},
@@ -1759,6 +1799,9 @@ def test_create_local_project_config_writes_selected_directories(tmp_path):
     assert "task_backend:" in content
     assert "  mode: local" in content
     assert "  sync: plane" in content
+    assert "workers:" in content
+    assert "  implementation: opencode" in content
+    assert "  qa: codex" in content
     assert "  plane:" in content
     assert '    api_host_url: "https://api.plane.so/"' in content
     assert "    workspace_slug: leader_kanban" in content
@@ -1881,6 +1924,23 @@ def test_create_local_project_config_rejects_unsafe_role_model_override_keys(tmp
             project_root=str(project_root),
             role_model_overrides={"architect: injected": "codex:gpt-5.5"},
         )
+
+
+def test_create_local_project_config_accepts_manual_worker_alias(tmp_path):
+    project_root = tmp_path / "contentops"
+    project_root.mkdir()
+
+    payload = create_local_project_config(
+        workspace=tmp_path,
+        project_name="AI Content Studio",
+        project_key="CONTENTOPS",
+        project_root=str(project_root),
+        worker_backend_mode="manual",
+    )
+
+    content = Path(payload["project_config"]).read_text(encoding="utf-8")
+    assert "worker_backend:" in content
+    assert "  mode: manual" in content
 
 
 def test_create_local_project_config_writes_single_project_root(tmp_path):
@@ -2152,7 +2212,7 @@ def test_worker_constants_are_extracted_from_app_shell():
     assert "export function canonicalBackendForOption" in constants_source
     assert "function canonicalBackendForOption" not in app
     assert "import { FALLBACK_AGENT_MODES, WORKER_ROUTING_BUCKETS } from '../constants/workers';" in router
-    assert "FALLBACK_AGENT_MODES" not in app
+    assert "const FALLBACK_AGENT_MODES" not in app
 
 
 def test_frontend_contract_exposes_release_readiness_without_execution_controls():
@@ -2646,16 +2706,42 @@ def test_role_model_override_helpers_are_extracted_from_app_shell_without_behavi
     assert "Object.entries(roleModelOverrides)" in utils_source
     assert "`${role}=${model}`" in utils_source
     assert "Object.fromEntries" in utils_source
-    assert (
-        "import { formatRoleModelOverridesText, parseRoleModelOverrideLines, parseRoleModelOverridesMap } "
-        "from './utils/roleModelOverrides';"
-    ) in app
+    assert "from './utils/roleModelOverrides';" in app
+    assert "formatRoleModelOverridesText" in app
+    assert "parseRoleModelOverrideLines" in app
+    assert "parseRoleModelOverridesMap" in app
     assert "parseRoleModelOverridesMap(roleModelOverrides)" in app
     assert "parseRoleModelOverrideLines(roleModelOverrides)" in app
     assert "setRoleModelOverrides(formatRoleModelOverridesText(sc.role_model_overrides));" in app
     assert "const parsedOverrides = Object.fromEntries" not in app
     assert "const overrides = roleModelOverrides" not in app
     assert "Object.entries(sc.role_model_overrides).map" not in app
+
+
+def test_frontend_contract_renders_init_backend_model_buckets():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    hook = (root / "frontend" / "src" / "hooks" / "useNewProjectForm.js").read_text(encoding="utf-8")
+    modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
+    container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
+    helpers = (root / "frontend" / "src" / "utils" / "roleModelOverrides.js").read_text(encoding="utf-8")
+    workers = (root / "frontend" / "src" / "constants" / "workers.js").read_text(encoding="utf-8")
+
+    assert "INIT_WORKER_ROUTING_BUCKET_KEYS" in workers
+    assert "opencode" in workers
+    assert "initWorkerBucketSelections" in hook
+    assert "setInitWorkerBucketSelections({})" in hook
+    assert "expandInitBucketWorkerOverrides" in helpers
+    assert "expandInitBucketModelOverrides" in helpers
+    assert "selection.model === '__custom__'" in helpers
+    assert "initBucketWorkers" in app
+    assert "initBucketRoleModels" in app
+    assert "action: 'update_worker_backends'" in app
+    assert "fetchDiscoveredAgents();" in app
+    assert "initWorkerRoutingBuckets" in container
+    assert "initWorkerRoutingBuckets" in modal
+    assert "newProject.workerBuckets.title" in modal
+    assert "newProject.advanced.roleModelOverrides" in modal
 
 
 def test_custom_delivery_payload_helper_is_extracted_from_app_shell_without_behavior_changes():
@@ -3282,6 +3368,21 @@ def test_projects_home_page_is_extracted_from_app_shell():
     assert "projectItems.map" not in app
     assert "import ProjectsHomePage from './components/ProjectsHomePage';" in app
     assert "<ProjectsHomePage" in app
+
+
+def test_projects_home_page_does_not_render_empty_state_for_stale_project_data():
+    root = Path(__file__).resolve().parents[1]
+    page_source = (root / "frontend" / "src" / "components" / "ProjectsHomePage.jsx").read_text(encoding="utf-8")
+
+    assert "const isStaleOverviewData = data && data.type !== 'overview';" in page_source
+    assert "loading || isStaleOverviewData" in page_source
+
+
+def test_overview_terminate_refreshes_project_overview_not_project_detail():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "projectKey === key ? key : ''" in app
 
 
 def test_language_switcher_is_extracted_from_app_shell():
@@ -4506,6 +4607,8 @@ def test_frontend_i18n_localizes_new_project_start_form_slice():
         "newProject.git.visibility",
         "newProject.git.private",
         "newProject.git.public",
+        "newProject.workerBuckets.title",
+        "newProject.workerBuckets.loading",
         "newProject.advanced.servicesBackend",
         "newProject.advanced.taskSync",
         "newProject.advanced.taskSyncLocal",
@@ -6281,6 +6384,60 @@ def test_context_estimate_returns_estimate_without_writing_cache(tmp_path):
     assert payload["needs_generation"] is True
     assert payload["recommended_model"] == "gpt-5.4-mini"
     assert not (project_root / ".goodteam" / "context" / "understanding.md").exists()
+
+
+def test_api_project_config_create_accepts_workers_without_update_branch(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/project-config",
+        {
+            "project_name": "Worker Bucket Project",
+            "project_key": "WBP",
+            "project_root": str(project_root),
+            "worker_backend_mode": "codex",
+            "workers": {"implementation": "opencode", "qa": "codex"},
+            "role_model_overrides": {"implementation": "opencode:opencode-go/qwen3.7-max"},
+        },
+    )
+
+    assert status == 200
+    config = Path(payload["project_config"])
+    assert config == tmp_path / "projects" / "wbp.local.yaml"
+    content = config.read_text(encoding="utf-8")
+    assert "workers:" in content
+    assert "  implementation: opencode" in content
+    assert "  qa: codex" in content
+    assert "role_model_overrides:" in content
+    assert '  implementation: "opencode:opencode-go/qwen3.7-max"' in content
+
+
+def test_api_project_config_update_still_accepts_project_key_with_workers(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="WBP")
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/project-config",
+        {
+            "project_key": "WBP",
+            "worker_backend_mode": "codex",
+            "workers": {"implementation": "opencode", "qa": "codex"},
+            "role_models": {"implementation": "opencode:opencode-go/qwen3.7-max"},
+        },
+    )
+
+    assert status == 200
+    assert payload["role_worker_backends"]["implementation"] == "opencode"
+    config = tmp_path / "projects" / "wbp.local.yaml"
+    content = config.read_text(encoding="utf-8")
+    assert "workers:" in content
+    assert "  implementation: opencode" in content
+    assert "role_model_overrides:" in content
+    assert "  implementation: opencode:opencode-go/qwen3.7-max" in content
 
 
 def test_context_generate_requires_confirmation(tmp_path):
