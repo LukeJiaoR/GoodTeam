@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowUp,
+  File,
   Folder,
   GitBranch,
   RefreshCw,
@@ -18,7 +19,7 @@ async function readDirectory(path) {
   return data;
 }
 
-export default function DirectoryPickerModal({ initialPath = '', onClose, onSelect }) {
+export default function DirectoryPickerModal({ initialPath = '', mode = 'directory', onClose, onSelect }) {
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState(null);
   const [pickerEntries, setPickerEntries] = useState([]);
@@ -104,9 +105,26 @@ export default function DirectoryPickerModal({ initialPath = '', onClose, onSele
   };
 
   const handleSelectFolder = () => {
+    if (!onSelect) return;
     onSelect(pickerPath);
     onClose();
   };
+
+  const handleEntrySelect = (entry) => {
+    if (entry.is_dir) {
+      fetchDirectory(entry.path);
+      return;
+    }
+    if (mode === 'file' && onSelect) {
+      onSelect(entry.path);
+      onClose();
+    }
+  };
+
+  const visibleEntries = mode === 'file'
+    ? pickerEntries
+    : pickerEntries.filter((entry) => entry.is_dir);
+  const pickerTitle = mode === 'file' ? 'Selecting Context File' : 'Selecting Project Root Directory';
 
   return (
     <div className="fixed inset-0 z-45 flex items-center justify-center bg-zinc-950/50 px-4 py-6 backdrop-blur-sm">
@@ -121,7 +139,7 @@ export default function DirectoryPickerModal({ initialPath = '', onClose, onSele
           <div>
             <p className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Directory Browser</p>
             <h3 id="dir-picker-title" className="font-mono text-xs font-extrabold text-accent-text dark:text-emerald-400 mt-1">
-              Selecting Project Root Directory
+              {pickerTitle}
             </h3>
           </div>
           <button
@@ -200,21 +218,25 @@ export default function DirectoryPickerModal({ initialPath = '', onClose, onSele
                 <p className="font-normal font-mono text-2xs mt-0.5">{pickerError}</p>
               </div>
             </div>
-          ) : pickerEntries.length === 0 ? (
+          ) : visibleEntries.length === 0 ? (
             <div className="text-center py-10 text-zinc-400 dark:text-zinc-500 font-bold text-xs">
-              This directory is empty.
+              {mode === 'file' ? 'No selectable files in this directory.' : 'This directory is empty.'}
             </div>
           ) : (
             <div className="space-y-1">
-              {pickerEntries.map((entry) => (
+              {visibleEntries.map((entry) => (
                 <button
                   key={entry.path}
                   type="button"
-                  onClick={() => fetchDirectory(entry.path)}
+                  onClick={() => handleEntrySelect(entry)}
                   className="w-full flex items-center justify-between text-left px-3 py-2 rounded-xl hover:bg-zinc-50 dark:hover:bg-zinc-900/40 border border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 transition-colors cursor-pointer group"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <Folder className="h-4 w-4 text-accent dark:text-[#78D639] group-hover:scale-110 transition-transform shrink-0" />
+                    {entry.is_dir ? (
+                      <Folder className="h-4 w-4 text-accent dark:text-[#78D639] group-hover:scale-110 transition-transform shrink-0" />
+                    ) : (
+                      <File className="h-4 w-4 text-zinc-500 dark:text-zinc-400 group-hover:text-accent transition-colors shrink-0" />
+                    )}
                     <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300 truncate select-all">{entry.name}</span>
                   </div>
                   {entry.is_git_repo && (
@@ -241,7 +263,7 @@ export default function DirectoryPickerModal({ initialPath = '', onClose, onSele
             type="button"
             disabled={pickerLoading || !!pickerError}
             onClick={handleSelectFolder}
-            className="bg-accent hover:bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-5 py-2 rounded-2xl text-xs disabled:opacity-50 disabled:pointer-events-none transition-all duo-button-physics cursor-pointer"
+            className={`bg-accent hover:bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-5 py-2 rounded-2xl text-xs disabled:opacity-50 disabled:pointer-events-none transition-all duo-button-physics cursor-pointer ${mode === 'file' ? 'hidden' : ''}`}
           >
             Select this folder
           </button>

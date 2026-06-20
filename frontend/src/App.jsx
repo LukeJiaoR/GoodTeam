@@ -245,7 +245,7 @@ export default function App() {
   } = gitInitAction;
   const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();
 
-  const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);
+  const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker();
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];

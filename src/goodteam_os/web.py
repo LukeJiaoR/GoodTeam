@@ -1963,13 +1963,14 @@ def list_directory_for_picker(path_value: str | None) -> dict[str, object]:
         if child.name in FS_LIST_IGNORED_NAMES:
             continue
         try:
-            if not child.is_dir():
-                continue
+            is_dir = child.is_dir()
             child_path = child.resolve(strict=True)
-            is_git_repo = (child / ".git").exists()
+            is_git_repo = is_dir and (child / ".git").exists()
         except (OSError, RuntimeError, ValueError):
             continue
-        entries.append({"name": child.name, "path": str(child_path), "is_git_repo": is_git_repo})
+        entries.append(
+            {"name": child.name, "path": str(child_path), "is_dir": is_dir, "is_git_repo": is_git_repo}
+        )
 
     return {"path": str(resolved), "parent": parent, "entries": entries}
 

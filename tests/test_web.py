@@ -1688,24 +1688,25 @@ def test_discover_project_directories_defaults_to_home_without_personal_path(tmp
     assert "/Users/luke/WorkSpace/codeAi" not in inspect.getsource(discover_project_directories)
 
 
-def test_list_directory_for_picker_returns_dirs_only_filtered_sorted_and_git_flag(tmp_path):
+def test_list_directory_for_picker_returns_files_and_dirs_filtered_sorted_and_git_flag(tmp_path):
     names = ["zeta", "Alpha", ".config", "beta"]
     for name in names:
         (tmp_path / name).mkdir()
     (tmp_path / "Alpha" / ".git").mkdir()
     for name in web.FS_LIST_IGNORED_NAMES:
         (tmp_path / name).mkdir()
-    (tmp_path / "file.txt").write_text("nope", encoding="utf-8")
+    (tmp_path / "file.txt").write_text("selectable", encoding="utf-8")
 
     payload = list_directory_for_picker(str(tmp_path))
 
     assert payload["path"] == str(tmp_path.resolve())
     assert payload["parent"] == str(tmp_path.resolve().parent)
     assert payload["entries"] == [
-        {"name": ".config", "path": str((tmp_path / ".config").resolve()), "is_git_repo": False},
-        {"name": "Alpha", "path": str((tmp_path / "Alpha").resolve()), "is_git_repo": True},
-        {"name": "beta", "path": str((tmp_path / "beta").resolve()), "is_git_repo": False},
-        {"name": "zeta", "path": str((tmp_path / "zeta").resolve()), "is_git_repo": False},
+        {"name": ".config", "path": str((tmp_path / ".config").resolve()), "is_dir": True, "is_git_repo": False},
+        {"name": "Alpha", "path": str((tmp_path / "Alpha").resolve()), "is_dir": True, "is_git_repo": True},
+        {"name": "beta", "path": str((tmp_path / "beta").resolve()), "is_dir": True, "is_git_repo": False},
+        {"name": "file.txt", "path": str((tmp_path / "file.txt").resolve()), "is_dir": False, "is_git_repo": False},
+        {"name": "zeta", "path": str((tmp_path / "zeta").resolve()), "is_dir": True, "is_git_repo": False},
     ]
 
 
@@ -2946,7 +2947,8 @@ def test_directory_picker_hook_is_extracted_from_app_shell():
     assert "openDirectoryPicker" in hook_source
     assert "directoryPickerModal" in hook_source
     assert "import { useDirectoryPicker } from './hooks/useDirectoryPicker';" in app
-    assert "const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);" in app
+    assert "const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);" not in app
+    assert "const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker();" in app
     assert "const [pickerOpen" not in app
     assert "const [pickerInitialPath" not in app
     assert "const openDirectoryPicker" not in app
@@ -6548,3 +6550,27 @@ def test_frontend_contract_wires_context_sources_cost_preview():
         assert token in modal
     for banned in ["bg-[#", "border-[#", "text-[#"]:
         assert banned not in modal
+
+
+def test_frontend_contract_context_sources_can_browse_files_and_directories():
+    root = Path(__file__).resolve().parents[1]
+    container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
+    modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
+
+    assert "handleProjectRootBrowse" in modal
+    assert "handleProjectRootNativePick" in modal
+    assert "projectRootPickerRef" in modal
+    assert "type=\"file\"" in modal
+    assert "webkitdirectory=\"\"" in modal
+    assert "file?.path" in modal
+    assert "openDirectoryPicker(projectRoot, setProjectRoot, { mode: 'directory' })" in modal
+    assert "contextBrowseInitialPath" in modal
+    assert "openDirectoryPicker(contextBrowseInitialPath(source), (selectedPath) => updateContextSource(index, { value: selectedPath }), {" in modal
+    assert "mode: source.kind === 'file' ? 'file' : 'directory'" in modal
+    assert "entry.is_dir" in (root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx").read_text(encoding="utf-8")
+    assert "mode === 'file'" in (root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx").read_text(encoding="utf-8")
+    assert "handleContextSourceBrowse" in modal
+    assert "source.kind !== 'url'" in modal
+    assert "grid-cols-[96px_minmax(0,1fr)_36px]" not in modal
+    assert "grid-cols-[96px_minmax(0,1fr)_40px_36px]" in modal
+    assert "openDirectoryPicker={openDirectoryPicker}" in container
