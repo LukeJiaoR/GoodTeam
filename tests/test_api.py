@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import goodteam_os.web as web
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import append_message
+from goodteam_os.resources import register_markdown_artifact, register_task_ledger
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import serve
 
@@ -935,7 +936,20 @@ def test_api_fs_list_route_returns_directory_listing(tmp_path, monkeypatch):
     assert payload == {
         "path": str(tmp_path.resolve()),
         "parent": str(tmp_path.resolve().parent),
-        "entries": [{"name": "repo", "path": str((tmp_path / "repo").resolve()), "is_git_repo": True}],
+        "entries": [
+            {
+                "name": "file.txt",
+                "path": str((tmp_path / "file.txt").resolve()),
+                "is_dir": False,
+                "is_git_repo": False,
+            },
+            {
+                "name": "repo",
+                "path": str((tmp_path / "repo").resolve()),
+                "is_dir": True,
+                "is_git_repo": True,
+            },
+        ],
     }
 
 
@@ -1825,7 +1839,16 @@ def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatc
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     context = payload["start_context"]
-    assert context["worker_backend_options"] == ["codex", "claude", "gemini", "agy", "fake", "noop", "human"]
+    assert context["worker_backend_options"] == [
+        "codex",
+        "claude",
+        "gemini",
+        "agy",
+        "opencode",
+        "fake",
+        "noop",
+        "human",
+    ]
     assert context["worker_roles"] == [
         "orchestrator",
         "research",
@@ -1888,6 +1911,44 @@ def test_api_state_reads_runtime_root_when_context_packet_path_empty(tmp_path, m
             "summary": "",
         }
     ]
+
+
+def test_api_state_includes_resource_descriptors(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    write_project_config(tmp_path, repos={"root": project_root})
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
+    register_markdown_artifact(state, "prd", prd)
+    register_task_ledger(state, project_root / ".goodteam" / "tasks" / "tasks.json")
+    StateStore(tmp_path).write_project_current(state)
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/state?project=REAL")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    resources = {item["key"]: item for item in payload["resources"]}
+    assert resources["prd"]["kind"] == "markdown_artifact"
+    assert "edit" in resources["prd"]["capabilities"]
+    assert resources["task_ledger"]["kind"] == "task_ledger"
+    assert "board_source" in resources["task_ledger"]["capabilities"]
+
+
+def test_api_resources_returns_resource_descriptors(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    write_project_config(tmp_path, repos={"root": project_root})
+    state = create_initial_state("run-1", "REAL", "Build the product.")
+    register_task_ledger(state, project_root / ".goodteam" / "tasks" / "tasks.json")
+    StateStore(tmp_path).write_project_current(state)
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/resources?project=REAL")
+
+    assert 200 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["project_key"] == "REAL"
+    assert payload["resources"][0]["key"] == "task_ledger"
+    assert payload["resources"][0]["kind"] == "task_ledger"
 
 
 def test_api_project_config_updates_worker_backends(tmp_path, monkeypatch):

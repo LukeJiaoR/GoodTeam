@@ -1,12 +1,16 @@
 import { createElement, useState } from 'react';
 import DirectoryPickerModal from '../components/DirectoryPickerModal';
 
-export function useDirectoryPicker(onSelectDirectory) {
+export function useDirectoryPicker(defaultOnSelectDirectory) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerInitialPath, setPickerInitialPath] = useState('');
+  const [pickerOnSelect, setPickerOnSelect] = useState(() => defaultOnSelectDirectory);
+  const [pickerOptions, setPickerOptions] = useState({ mode: 'directory' });
 
-  const openDirectoryPicker = (currentPath) => {
+  const openDirectoryPicker = (currentPath, onSelectDirectory = defaultOnSelectDirectory, options = {}) => {
     setPickerInitialPath(currentPath || '');
+    setPickerOnSelect(() => onSelectDirectory);
+    setPickerOptions({ mode: options.mode || 'directory' });
     setPickerOpen(true);
   };
 
@@ -14,8 +18,9 @@ export function useDirectoryPicker(onSelectDirectory) {
     pickerOpen &&
     createElement(DirectoryPickerModal, {
       initialPath: pickerInitialPath,
+      mode: pickerOptions.mode,
       onClose: () => setPickerOpen(false),
-      onSelect: onSelectDirectory,
+      onSelect: pickerOnSelect,
     });
 
   return { directoryPickerModal, openDirectoryPicker };

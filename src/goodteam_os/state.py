@@ -3,6 +3,14 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from goodteam_os.resources import (
+    ResourceDescriptor,
+    derive_resources_from_legacy_artifacts,
+    legacy_artifacts_view,
+    resources_from_json,
+    resources_to_json,
+)
+
 
 class ApprovalDecision(StrEnum):
     PENDING = "pending"
@@ -22,6 +30,7 @@ class AgileDevState:
     delivery_standards: list[str] = field(default_factory=list)
     context_packet_path: str = ""
     artifacts: dict[str, str] = field(default_factory=dict)
+    resources: dict[str, ResourceDescriptor] = field(default_factory=dict)
     approvals: dict[str, ApprovalDecision] = field(default_factory=dict)
     change_requests: dict[str, str] = field(default_factory=dict)
     blockers: list[str] = field(default_factory=list)
@@ -121,6 +130,16 @@ class StateStore:
         data.setdefault("delivery_standards", [])
         data.setdefault("context_packet_path", "")
         data.setdefault("artifacts", {})
+        resources_payload = data.get("resources", {})
+        if resources_payload:
+            data["resources"] = resources_from_json(resources_payload)
+        else:
+            data["resources"] = derive_resources_from_legacy_artifacts(
+                data.get("artifacts", {}),
+                run_id=str(data.get("run_id", "")),
+                workspace=self.root,
+            )
+        data["artifacts"] = legacy_artifacts_view(data["resources"])
         data.setdefault("change_requests", {})
         data.setdefault("blockers", [])
         data.setdefault("model_profile", "balanced")
@@ -130,7 +149,10 @@ class StateStore:
 
     def _write(self, path: Path, state: AgileDevState) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(state), indent=2), encoding="utf-8")
+        payload = asdict(state)
+        payload["resources"] = resources_to_json(state.resources)
+        payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _write_checkpoint(self, directory: Path, state: AgileDevState) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
@@ -140,6 +162,8 @@ class StateStore:
             try:
                 with path.open("x", encoding="utf-8") as file:
                     payload = asdict(state)
+                    payload["resources"] = resources_to_json(state.resources)
+                    payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
                     payload["checkpoint"] = {
                         "node": state.current_node,
                         "sequence": sequence,

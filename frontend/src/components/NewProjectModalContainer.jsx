@@ -8,15 +8,25 @@ export default function NewProjectModalContainer({
   deliveryContractFatalPatterns,
   deliveryContractMinEvidence,
   deliveryContractRequired,
+  contextEstimate,
+  contextSources,
   deliveryMode,
   deliveryStandards,
   deploymentBackendMode,
+  discoveredAgents,
   dryRun,
+  fallbackAgentModes,
+  generatingContext,
   handleCreateConfig,
+  handleContextEstimate,
+  handleContextGenerate,
   handleStartWorkflow,
   idea,
   initGit,
+  initWorkerBucketSelections,
+  initWorkerRoutingBuckets,
   isNewProjectMode,
+  loadingDiscoveredAgents,
   modelProfile,
   newProjectModalOpen,
   openDirectoryPicker,
@@ -30,17 +40,21 @@ export default function NewProjectModalContainer({
   projectRoot,
   remotePrivate,
   roleModelOverrides,
+  safeDiscoveredAgents,
   setCreateRemote,
   setDeliveryContractAcceptance,
   setDeliveryContractFatalPatterns,
   setDeliveryContractMinEvidence,
   setDeliveryContractRequired,
+  setContextEstimate,
+  setContextSources,
   setDeliveryMode,
   setDeliveryStandards,
   setDeploymentBackendMode,
   setDryRun,
   setIdea,
   setInitGit,
+  setInitWorkerBucketSelections,
   setModelProfile,
   setPlaneApiHost,
   setPlaneApiKeyEnv,
@@ -72,6 +86,7 @@ export default function NewProjectModalContainer({
   stagingRemoteDir,
   stagingSmokeCommand,
   stagingSshTarget,
+  previewingContext,
   startingWorkflow,
   startMode,
   startProjectKey,
@@ -91,15 +106,25 @@ export default function NewProjectModalContainer({
       deliveryContractFatalPatterns={deliveryContractFatalPatterns}
       deliveryContractMinEvidence={deliveryContractMinEvidence}
       deliveryContractRequired={deliveryContractRequired}
+      contextEstimate={contextEstimate}
+      contextSources={contextSources}
       deliveryMode={deliveryMode}
       deliveryStandards={deliveryStandards}
       deploymentBackendMode={deploymentBackendMode}
+      discoveredAgents={discoveredAgents}
       dryRun={dryRun}
+      fallbackAgentModes={fallbackAgentModes}
+      generatingContext={generatingContext}
       handleCreateConfig={handleCreateConfig}
+      handleContextEstimate={handleContextEstimate}
+      handleContextGenerate={handleContextGenerate}
       handleStartWorkflow={handleStartWorkflow}
       idea={idea}
       initGit={initGit}
+      initWorkerBucketSelections={initWorkerBucketSelections}
+      initWorkerRoutingBuckets={initWorkerRoutingBuckets}
       isNewProjectMode={isNewProjectMode}
+      loadingDiscoveredAgents={loadingDiscoveredAgents}
       modelProfile={modelProfile}
       onClose={closeNewProjectModal}
       openDirectoryPicker={openDirectoryPicker}
@@ -113,17 +138,21 @@ export default function NewProjectModalContainer({
       projectRoot={projectRoot}
       remotePrivate={remotePrivate}
       roleModelOverrides={roleModelOverrides}
+      safeDiscoveredAgents={safeDiscoveredAgents}
       setCreateRemote={setCreateRemote}
       setDeliveryContractAcceptance={setDeliveryContractAcceptance}
       setDeliveryContractFatalPatterns={setDeliveryContractFatalPatterns}
       setDeliveryContractMinEvidence={setDeliveryContractMinEvidence}
       setDeliveryContractRequired={setDeliveryContractRequired}
+      setContextEstimate={setContextEstimate}
+      setContextSources={setContextSources}
       setDeliveryMode={setDeliveryMode}
       setDeliveryStandards={setDeliveryStandards}
       setDeploymentBackendMode={setDeploymentBackendMode}
       setDryRun={setDryRun}
       setIdea={setIdea}
       setInitGit={setInitGit}
+      setInitWorkerBucketSelections={setInitWorkerBucketSelections}
       setModelProfile={setModelProfile}
       setPlaneApiHost={setPlaneApiHost}
       setPlaneApiKeyEnv={setPlaneApiKeyEnv}
@@ -155,6 +184,7 @@ export default function NewProjectModalContainer({
       stagingRemoteDir={stagingRemoteDir}
       stagingSmokeCommand={stagingSmokeCommand}
       stagingSshTarget={stagingSshTarget}
+      previewingContext={previewingContext}
       startingWorkflow={startingWorkflow}
       startMode={startMode}
       startProjectKey={startProjectKey}

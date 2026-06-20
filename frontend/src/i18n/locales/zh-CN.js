@@ -101,6 +101,8 @@ export const zhCN = {
   'newProject.git.authBeforeLaunch': '。',
   'newProject.git.authScopes': 'Token 权限 - Classic:',
   'newProject.git.authFineGrained': 'Fine-grained:',
+  'newProject.workerBuckets.title': 'Worker 默认值',
+  'newProject.workerBuckets.loading': '正在检测 agents...',
   'newProject.advanced.hide': '隐藏高级配置',
   'newProject.advanced.show': '显示高级配置（任务后端、部署）',
   'newProject.advanced.servicesBackend': '服务后端',

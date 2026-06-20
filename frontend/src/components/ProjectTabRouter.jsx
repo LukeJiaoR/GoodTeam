@@ -127,6 +127,7 @@ export default function ProjectTabRouter({
   panelRoleOverrides,
   proposedRevision,
   refineLoading,
+  resources,
   roleBackendOptions,
   roleObservations,
   safeDiscoveredAgents,
@@ -309,6 +310,7 @@ export default function ProjectTabRouter({
       {activeTab === 'artifacts' && (
         <ArtifactsTab
           artifacts={state?.artifacts}
+          resources={resources}
           handleEditArtifact={handleEditArtifact}
           FilePath={FilePath}
         />

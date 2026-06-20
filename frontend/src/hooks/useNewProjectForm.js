@@ -12,6 +12,7 @@ export function useNewProjectForm(setNewProjectModalOpen) {
   const [projectConfig, setProjectConfig] = useState('');
   const [taskSync, setTaskSync] = useState('');
   const [workerBackendMode, setWorkerBackendMode] = useState('codex');
+  const [initWorkerBucketSelections, setInitWorkerBucketSelections] = useState({});
   const [deploymentBackendMode, setDeploymentBackendMode] = useState('');
   const [startMode, setStartMode] = useState('existing_project');
   const [dryRun, setDryRun] = useState(false);
@@ -41,6 +42,10 @@ export function useNewProjectForm(setNewProjectModalOpen) {
   const [deliveryContractMinEvidence, setDeliveryContractMinEvidence] = useState('infrastructure');
   const [deliveryContractFatalPatterns, setDeliveryContractFatalPatterns] = useState('');
   const [deliveryContractAcceptance, setDeliveryContractAcceptance] = useState('');
+  const [contextSources, setContextSources] = useState([{ kind: 'dir', value: '' }]);
+  const [contextEstimate, setContextEstimate] = useState(null);
+  const [previewingContext, setPreviewingContext] = useState(false);
+  const [generatingContext, setGeneratingContext] = useState(false);
 
   const openNewProjectModal = () => {
     setInitGit(true);
@@ -49,6 +54,8 @@ export function useNewProjectForm(setNewProjectModalOpen) {
     setGitWarnings([]);
     setGitRemoteCreated(false);
     setShowGitNotice(false);
+    setContextEstimate(null);
+    setInitWorkerBucketSelections({});
     setNewProjectModalOpen(true);
   };
 
@@ -81,6 +88,8 @@ export function useNewProjectForm(setNewProjectModalOpen) {
     setTaskSync,
     workerBackendMode,
     setWorkerBackendMode,
+    initWorkerBucketSelections,
+    setInitWorkerBucketSelections,
     deploymentBackendMode,
     setDeploymentBackendMode,
     startMode,
@@ -132,5 +141,13 @@ export function useNewProjectForm(setNewProjectModalOpen) {
     setDeliveryContractFatalPatterns,
     deliveryContractAcceptance,
     setDeliveryContractAcceptance,
+    contextSources,
+    setContextSources,
+    contextEstimate,
+    setContextEstimate,
+    previewingContext,
+    setPreviewingContext,
+    generatingContext,
+    setGeneratingContext,
   };
 }

@@ -1,8 +1,14 @@
+import { useRef } from 'react';
 import {
   ChevronDown,
+  Calculator,
+  FolderOpen,
   Info,
+  Plus,
   Play,
   RefreshCw,
+  Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
 import { DELIVERY_MODE_OPTIONS } from '../constants/deliveryModes';
@@ -14,15 +20,25 @@ export default function NewProjectModal({
   deliveryContractFatalPatterns,
   deliveryContractMinEvidence,
   deliveryContractRequired,
+  contextEstimate,
+  contextSources,
   deliveryMode,
   deliveryStandards,
   deploymentBackendMode,
+  discoveredAgents = null,
   dryRun,
+  fallbackAgentModes = {},
+  generatingContext,
   handleCreateConfig,
+  handleContextEstimate,
+  handleContextGenerate,
   handleStartWorkflow,
   idea,
   initGit,
+  initWorkerBucketSelections = {},
+  initWorkerRoutingBuckets = [],
   isNewProjectMode,
+  loadingDiscoveredAgents = false,
   modelProfile,
   onClose,
   openDirectoryPicker,
@@ -36,17 +52,21 @@ export default function NewProjectModal({
   projectRoot,
   remotePrivate,
   roleModelOverrides,
+  safeDiscoveredAgents = [],
   setCreateRemote,
   setDeliveryContractAcceptance,
   setDeliveryContractFatalPatterns,
   setDeliveryContractMinEvidence,
   setDeliveryContractRequired,
+  setContextEstimate,
+  setContextSources,
   setDeliveryMode,
   setDeliveryStandards,
   setDeploymentBackendMode,
   setDryRun,
   setIdea,
   setInitGit,
+  setInitWorkerBucketSelections,
   setModelProfile,
   setPlaneApiHost,
   setPlaneApiKeyEnv,
@@ -78,6 +98,7 @@ export default function NewProjectModal({
   stagingRemoteDir,
   stagingSmokeCommand,
   stagingSshTarget,
+  previewingContext,
   startingWorkflow,
   startMode,
   startProjectKey,
@@ -85,10 +106,85 @@ export default function NewProjectModal({
   t = (key) => key,
   workerBackendMode,
 }) {
+  const projectRootPickerRef = useRef(null);
   const deliveryModeLabel = (option) => {
     const key = `newProject.deliveryModes.${option.value}`;
     const label = t(key);
     return label === key ? option.label : label;
+  };
+  const updateContextSource = (index, patch) => {
+    setContextSources(contextSources.map((source, sourceIndex) => (
+      sourceIndex === index ? { ...source, ...patch } : source
+    )));
+    setContextEstimate(null);
+  };
+  const addContextSource = () => {
+    setContextSources([...contextSources, { kind: 'dir', value: '' }]);
+    setContextEstimate(null);
+  };
+  const removeContextSource = (index) => {
+    const nextSources = contextSources.filter((_, sourceIndex) => sourceIndex !== index);
+    setContextSources(nextSources.length > 0 ? nextSources : [{ kind: 'dir', value: '' }]);
+    setContextEstimate(null);
+  };
+  const directoryFromNativeFile = (file) => {
+    const nativePath = file?.path || '';
+    if (!nativePath) return '';
+    const separatorIndex = Math.max(nativePath.lastIndexOf('/'), nativePath.lastIndexOf('\\'));
+    return separatorIndex > 0 ? nativePath.slice(0, separatorIndex) : nativePath;
+  };
+  const handleProjectRootNativePick = (event) => {
+    const nativeRoot = directoryFromNativeFile(event.target.files?.[0]);
+    event.target.value = '';
+    if (nativeRoot) {
+      setProjectRoot(nativeRoot);
+      return;
+    }
+    openDirectoryPicker(projectRoot, setProjectRoot, { mode: 'directory' });
+  };
+  const handleProjectRootBrowse = () => {
+    if (projectRootPickerRef.current) {
+      projectRootPickerRef.current.click();
+      return;
+    }
+    openDirectoryPicker(projectRoot, setProjectRoot, { mode: 'directory' });
+  };
+  const contextBrowseInitialPath = (source) => {
+    const value = source.value.trim();
+    if (source.kind !== 'file' || !value) return value;
+    const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+    return separatorIndex > 0 ? value.slice(0, separatorIndex) : value;
+  };
+  const handleContextSourceBrowse = (source, index) => {
+    openDirectoryPicker(contextBrowseInitialPath(source), (selectedPath) => updateContextSource(index, { value: selectedPath }), {
+      mode: source.kind === 'file' ? 'file' : 'directory',
+    });
+  };
+  const hasContextSources = contextSources.some((source) => source.value.trim());
+  const contextTokenCount = contextEstimate?.estimate?.est_tokens ?? 0;
+  const contextModel = contextEstimate?.recommended_model ?? '';
+  const discoveredInitAgents = Array.isArray(discoveredAgents) ? discoveredAgents : safeDiscoveredAgents;
+  const availableInitAgents = (discoveredInitAgents.length > 0 ? discoveredInitAgents : [])
+    .filter((agent) => agent.available);
+  const initAgentOptions = availableInitAgents.length > 0
+    ? availableInitAgents
+    : Object.entries(fallbackAgentModes).map(([backend, config]) => ({
+        backend,
+        available: true,
+        ready: true,
+        models: config.models,
+        model_default: config.model_default,
+      }));
+  const initAgentByBackend = Object.fromEntries(initAgentOptions.map((agent) => [agent.backend, agent]));
+  const setInitBucketSelection = (bucketKey, patch) => {
+    if (!setInitWorkerBucketSelections) return;
+    setInitWorkerBucketSelections((prev) => ({
+      ...prev,
+      [bucketKey]: {
+        ...(prev[bucketKey] || {}),
+        ...patch,
+      },
+    }));
   };
 
   return (
@@ -138,7 +234,7 @@ export default function NewProjectModal({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold">
-                <div className="col-span-2">
+                <div className="md:col-span-2">
                   <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.goal.label')}</label>
                   <textarea
                     value={idea}
@@ -197,7 +293,7 @@ export default function NewProjectModal({
                 </div>
 
                 {deliveryMode === 'custom' && (
-                  <div className="col-span-2">
+                  <div className="md:col-span-2">
                     <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.deliveryStandards.label')}</label>
                     <textarea
                       value={deliveryStandards}
@@ -208,11 +304,22 @@ export default function NewProjectModal({
                   </div>
                 )}
 
-                <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                <div className="md:col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
                   <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.projectLocation.title')}</div>
                   <div>
                     <label className="block text-2xs text-text-secondary mb-1 uppercase">{t('newProject.projectRoot.label')}</label>
                     <div className="flex gap-2">
+                      <input
+                        ref={projectRootPickerRef}
+                        type="file"
+                        webkitdirectory=""
+                        directory=""
+                        multiple
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        onChange={handleProjectRootNativePick}
+                        className="hidden"
+                      />
                       <input
                         type="text"
                         value={projectRoot}
@@ -222,7 +329,7 @@ export default function NewProjectModal({
                       />
                       <button
                         type="button"
-                        onClick={() => openDirectoryPicker(projectRoot)}
+                        onClick={handleProjectRootBrowse}
                         className="bg-surface-raised hover:bg-surface-sunken border-2 border-border-subtle shadow-button text-text-primary font-bold px-2.5 py-1.5 rounded-lg text-xs transition-all duo-button-physics cursor-pointer"
                       >
                         {t('newProject.projectRoot.browse')}
@@ -231,8 +338,104 @@ export default function NewProjectModal({
                   </div>
                 </div>
 
+                <div className="md:col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">Project context</div>
+                      <p className="mt-1 text-2xs text-text-secondary leading-relaxed">
+                        Declare files, directories, or URLs before GoodTeam builds its cached project understanding.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addContextSource}
+                      className="bg-surface-raised hover:bg-surface-overlay border-2 border-border-subtle shadow-button text-text-primary p-2 rounded-lg transition-all duo-button-physics cursor-pointer shrink-0"
+                      aria-label="Add context source"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {contextSources.map((source, index) => (
+                      <div key={`context-source-${index}`} className="grid grid-cols-[96px_minmax(0,1fr)_40px_36px] max-[520px]:grid-cols-[84px_minmax(0,1fr)_36px_36px] gap-2 items-center">
+                        <select
+                          value={source.kind}
+                          onChange={(e) => updateContextSource(index, { kind: e.target.value })}
+                          className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-2 py-2 text-xs font-bold focus:outline-none focus:border-accent"
+                          aria-label={`Context source ${index + 1} type`}
+                        >
+                          <option value="file">File</option>
+                          <option value="dir">Dir</option>
+                          <option value="url">URL</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={source.value}
+                          onChange={(e) => updateContextSource(index, { value: e.target.value })}
+                          placeholder={source.kind === 'url' ? 'https://example.com/context.md' : '/absolute/path/or/project-relative'}
+                          className="min-w-0 w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-accent"
+                        />
+                        {source.kind !== 'url' ? (
+                          <button
+                            type="button"
+                            onClick={() => handleContextSourceBrowse(source, index)}
+                            className="bg-surface-raised hover:bg-accent-bg border-2 border-border-subtle hover:border-accent/30 text-text-secondary hover:text-accent-text p-2 rounded-lg transition-all duo-button-physics cursor-pointer"
+                            aria-label={`Browse context source ${index + 1}`}
+                            title={source.kind === 'file' ? 'Browse file' : 'Browse directory'}
+                          >
+                            <FolderOpen className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <span className="max-[520px]:hidden" aria-hidden="true" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeContextSource(index)}
+                          className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle hover:border-status-danger/30 text-text-secondary hover:text-status-danger p-2 rounded-lg transition-all duo-button-physics cursor-pointer max-[520px]:col-start-3"
+                          aria-label={`Remove context source ${index + 1}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {contextEstimate && (
+                    <div className="bg-surface-raised border-2 border-border-subtle rounded-lg px-3 py-2 text-xs flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-bold text-accent-text">
+                        ~{contextTokenCount.toLocaleString()} tokens · recommend {contextModel}
+                      </span>
+                      <span className="text-2xs text-text-muted font-mono">
+                        {contextEstimate.estimate.source_count} sources · {contextEstimate.estimate.bytes.toLocaleString()} bytes
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={handleContextEstimate}
+                      disabled={previewingContext || generatingContext || !hasContextSources}
+                      className="flex-1 bg-surface-raised hover:bg-accent-bg hover:text-accent-text border-2 border-border-subtle shadow-button text-text-secondary font-bold py-2 rounded-lg text-xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {previewingContext ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Calculator className="h-3.5 w-3.5" />}
+                      <span>Preview cost</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleContextGenerate}
+                      disabled={generatingContext || previewingContext || !contextEstimate}
+                      className="flex-1 bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold py-2 rounded-lg text-xs uppercase tracking-wider transition-all duo-button-physics cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {generatingContext ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      <span>Generate context</span>
+                    </button>
+                  </div>
+                </div>
+
                 {isNewProjectMode && (
-                  <div className="col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                  <div className="md:col-span-2 grid grid-cols-1 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
                     <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.git.title')}</div>
                     <div className="space-y-4">
                       {/* Initialize Git Checkbox */}
@@ -306,10 +509,77 @@ export default function NewProjectModal({
                   </div>
                 )}
 
-                <div className="col-span-2 border-t border-border-subtle my-4" />
+                <div className="md:col-span-2 grid grid-cols-1 gap-3 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.workerBuckets.title')}</div>
+                    {loadingDiscoveredAgents && (
+                      <span className="text-2xs text-text-muted font-mono">{t('newProject.workerBuckets.loading')}</span>
+                    )}
+                  </div>
+                  <div className="space-y-3">
+                    {initWorkerRoutingBuckets.map((bucket) => {
+                      const selection = initWorkerBucketSelections[bucket.key] || {};
+                      const backendValue = selection.backend || '';
+                      const effectiveBackend = backendValue || workerBackendMode || initAgentOptions[0]?.backend || 'codex';
+                      const agent = initAgentByBackend[effectiveBackend] || initAgentOptions[0] || {};
+                      const models = agent.models || fallbackAgentModes[effectiveBackend]?.models || ['auto'];
+                      const defaultModel = agent.model_default || fallbackAgentModes[effectiveBackend]?.model_default || 'auto';
+                      const modelValue = selection.model || '';
+
+                      return (
+                        <div key={bucket.key} className="grid grid-cols-1 md:grid-cols-[minmax(120px,0.8fr)_minmax(140px,1fr)_minmax(160px,1.2fr)] gap-3 items-start">
+                          <div>
+                            <div className="text-xs font-bold text-text-primary">{bucket.label}</div>
+                            <div className="text-2xs text-text-muted font-mono truncate">{bucket.roles.join(', ')}</div>
+                          </div>
+                          <label className="block">
+                            <span className="block text-2xs text-text-secondary mb-1 uppercase">Backend</span>
+                            <select
+                              value={backendValue}
+                              onChange={(event) => setInitBucketSelection(bucket.key, { backend: event.target.value })}
+                              className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
+                            >
+                              <option value="">Inherit ({workerBackendMode || 'codex'})</option>
+                              {initAgentOptions.map((agentOption) => (
+                                <option key={agentOption.backend} value={agentOption.backend}>
+                                  {agentOption.backend}{agentOption.ready === false ? ' - not ready' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="block text-2xs text-text-secondary mb-1 uppercase">Model</span>
+                            <select
+                              value={modelValue}
+                              onChange={(event) => setInitBucketSelection(bucket.key, { model: event.target.value })}
+                              className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
+                            >
+                              <option value="">Inherit ({defaultModel})</option>
+                              {models.map((model) => (
+                                <option key={model} value={model}>{model}</option>
+                              ))}
+                              <option value="__custom__">Custom...</option>
+                            </select>
+                            {modelValue === '__custom__' && (
+                              <input
+                                type="text"
+                                value={selection.customModel || ''}
+                                onChange={(event) => setInitBucketSelection(bucket.key, { customModel: event.target.value })}
+                                placeholder="provider/model"
+                                className="mt-2 w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-accent"
+                              />
+                            )}
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="md:col-span-2 border-t border-border-subtle my-4" />
 
                 {/* Toggle Advanced Button */}
-                <div className="col-span-2">
+                <div className="md:col-span-2">
                   <button
                     type="button"
                     onClick={() => setShowConfigDrawer(!showConfigDrawer)}
@@ -322,8 +592,8 @@ export default function NewProjectModal({
 
                 {showConfigDrawer && (
                   <>
-                    <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
-                      <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.servicesBackend')}</div>
+                    <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                      <div className="md:col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.servicesBackend')}</div>
                       <div>
                         <label className="block text-2xs text-text-secondary mb-1 uppercase">{t('newProject.advanced.taskSync')}</label>
                         <select
@@ -346,15 +616,20 @@ export default function NewProjectModal({
                           className="w-full bg-surface-raised text-text-primary border-2 border-border-subtle rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent"
                         >
                           <option value="codex">{t('newProject.advanced.workerExecutionCodex')}</option>
+                          <option value="claude">Claude</option>
+                          <option value="gemini">Gemini</option>
+                          <option value="agy">Antigravity</option>
+                          <option value="opencode">OpenCode</option>
+                          <option value="fake">Fake</option>
                           <option value="manual">{t('newProject.advanced.workerExecutionManual')}</option>
                           <option value="noop">{t('newProject.advanced.workerExecutionNoop')}</option>
                         </select>
                       </div>
 
                       {taskSync === 'plane' && (
-                        <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-border-subtle p-4 rounded-xl bg-surface-raised mt-2">
-                          <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.planeCredentials')}</div>
-                          <div className="col-span-2">
+                        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3 border-2 border-border-subtle p-4 rounded-xl bg-surface-raised mt-2">
+                          <div className="md:col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.planeCredentials')}</div>
+                          <div className="md:col-span-2">
                             <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.planeApiHost')}</label>
                             <input type="text" value={planeApiHost} onChange={(e) => setPlaneApiHost(e.target.value)} className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-accent" />
                           </div>
@@ -378,9 +653,9 @@ export default function NewProjectModal({
                       )}
                     </div>
 
-                    <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
-                      <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.deploymentContract')}</div>
-                      <div className="col-span-2">
+                    <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-2 border-border-subtle p-5 rounded-xl bg-surface-sunken">
+                      <div className="md:col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.deploymentContract')}</div>
+                      <div className="md:col-span-2">
                         <label className="block text-2xs text-text-secondary mb-1.5 uppercase">{t('newProject.advanced.deploymentBackend')}</label>
                         <select
                           value={deploymentBackendMode}
@@ -393,8 +668,8 @@ export default function NewProjectModal({
                       </div>
 
                       {deploymentBackendMode === 'ssh_compose' && (
-                        <div className="col-span-2 grid grid-cols-2 gap-3 border-2 border-border-subtle p-4 rounded-xl bg-surface-raised mt-2 text-xs">
-                          <div className="col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.sshDeployConfig')}</div>
+                        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3 border-2 border-border-subtle p-4 rounded-xl bg-surface-raised mt-2 text-xs">
+                          <div className="md:col-span-2 font-bold text-2xs text-text-muted uppercase tracking-wider">{t('newProject.advanced.sshDeployConfig')}</div>
                           <div>
                             <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.stagingSshTarget')}</label>
                             <input type="text" value={stagingSshTarget} onChange={(e) => setStagingSshTarget(e.target.value)} placeholder="user@host" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
@@ -411,7 +686,7 @@ export default function NewProjectModal({
                             <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.stagingPublicUrl')}</label>
                             <input type="text" value={stagingPublicUrl} onChange={(e) => setStagingPublicUrl(e.target.value)} placeholder="http://url:port" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
-                          <div className="col-span-2">
+                          <div className="md:col-span-2">
                             <label className="block text-2xs text-text-secondary mb-1">{t('newProject.advanced.deployCommand')}</label>
                             <input type="text" value={stagingDeployCommand} onChange={(e) => setStagingDeployCommand(e.target.value)} placeholder="docker compose up -d" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
@@ -424,24 +699,24 @@ export default function NewProjectModal({
                             <input type="text" value={stagingSmokeCommand} onChange={(e) => setStagingSmokeCommand(e.target.value)} placeholder="curl -f /" className="w-full bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 font-mono text-2xs focus:outline-none focus:border-accent" />
                           </div>
 
-                          <div className="col-span-2 border-t-2 border-border-subtle my-1" />
+                          <div className="md:col-span-2 border-t-2 border-border-subtle my-1" />
 
-                          <div className="col-span-2 flex items-center space-x-2">
+                          <div className="md:col-span-2 flex items-center space-x-2">
                             <input type="checkbox" id="contract-req" checked={deliveryContractRequired} onChange={(e) => setDeliveryContractRequired(e.target.checked)} className="rounded text-accent focus:ring-accent h-4 w-4 cursor-pointer" />
                             <label htmlFor="contract-req" className="font-bold text-2xs text-text-muted uppercase tracking-wider cursor-pointer">{t('newProject.advanced.requireFunctionalEvidence')}</label>
                           </div>
-                          <div className="col-span-2">
+                          <div className="md:col-span-2">
                             <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.minimumEvidenceGate')}</label>
                             <select value={deliveryContractMinEvidence} onChange={(e) => setDeliveryContractMinEvidence(e.target.value)} className="bg-surface-sunken text-text-primary border border-border-subtle rounded px-2 py-1 text-xs focus:outline-none focus:border-accent">
                               <option value="infrastructure">{t('newProject.advanced.evidenceInfrastructure')}</option>
                               <option value="functional">{t('newProject.advanced.evidenceFunctional')}</option>
                             </select>
                           </div>
-                          <div className="col-span-2">
+                          <div className="md:col-span-2">
                             <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.fatalPatterns')}</label>
                             <textarea value={deliveryContractFatalPatterns} onChange={(e) => setDeliveryContractFatalPatterns(e.target.value)} placeholder="e.g. migrate: executable file not found" className="w-full h-16 bg-surface-sunken text-text-primary border border-border-subtle rounded p-2 font-mono text-xs resize-none focus:outline-none focus:border-accent" />
                           </div>
-                          <div className="col-span-2">
+                          <div className="md:col-span-2">
                             <label className="block text-2xs text-text-muted mb-1">{t('newProject.advanced.acceptanceTests')}</label>
                             <textarea value={deliveryContractAcceptance} onChange={(e) => setDeliveryContractAcceptance(e.target.value)} placeholder="critical-path|ssh_command|docker compose exec -T backend ./migrate status" className="w-full h-16 bg-surface-sunken text-text-primary border border-border-subtle rounded p-2 font-mono text-xs resize-none focus:outline-none focus:border-accent" />
                           </div>
@@ -449,7 +724,7 @@ export default function NewProjectModal({
                       )}
                     </div>
 
-                    <div className="col-span-2">
+                    <div className="md:col-span-2">
                       <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.advanced.roleModelOverrides')}</label>
                       <textarea
                         value={roleModelOverrides}
@@ -459,7 +734,7 @@ export default function NewProjectModal({
                       />
                     </div>
 
-                    <div className="col-span-2">
+                    <div className="md:col-span-2">
                       <label className="block text-2xs text-text-muted uppercase tracking-wider mb-1.5">{t('newProject.advanced.projectConfigPath')}</label>
                       <input
                         type="text"
