@@ -936,7 +936,20 @@ def test_api_fs_list_route_returns_directory_listing(tmp_path, monkeypatch):
     assert payload == {
         "path": str(tmp_path.resolve()),
         "parent": str(tmp_path.resolve().parent),
-        "entries": [{"name": "repo", "path": str((tmp_path / "repo").resolve()), "is_git_repo": True}],
+        "entries": [
+            {
+                "name": "file.txt",
+                "path": str((tmp_path / "file.txt").resolve()),
+                "is_dir": False,
+                "is_git_repo": False,
+            },
+            {
+                "name": "repo",
+                "path": str((tmp_path / "repo").resolve()),
+                "is_dir": True,
+                "is_git_repo": True,
+            },
+        ],
     }
 
 
@@ -1826,7 +1839,16 @@ def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatc
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     context = payload["start_context"]
-    assert context["worker_backend_options"] == ["codex", "claude", "gemini", "agy", "fake", "noop", "human"]
+    assert context["worker_backend_options"] == [
+        "codex",
+        "claude",
+        "gemini",
+        "agy",
+        "opencode",
+        "fake",
+        "noop",
+        "human",
+    ]
     assert context["worker_roles"] == [
         "orchestrator",
         "research",
