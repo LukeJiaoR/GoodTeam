@@ -18,6 +18,11 @@ from goodteam_os.roles import (
     list_role_definitions,
     role_definition,
 )
+from goodteam_os.resources import (
+    register_markdown_artifact,
+    register_proposed_markdown_artifact,
+    register_task_ledger,
+)
 from goodteam_os.staging import run_staging_backend, staging_backend_enabled
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, sync_stage_tasks
@@ -1228,7 +1233,7 @@ def run_architecture_until_gate(
         "rfc.md",
         content,
     )
-    state.artifacts["rfc"] = str(rfc_path)
+    _register_written_markdown(state, "rfc", rfc_path)
     state.approvals["rfc"] = state.approvals.get("rfc", "pending")
     state.current_node = "rfc_review_gate"
     state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
@@ -1249,7 +1254,7 @@ def run_delivery_until_release_gate(
             _artifact_filename(artifact_key),
             render_downstream_artifact_markdown(artifact_key, state, project_config),
         )
-        state.artifacts[artifact_key] = str(path)
+        _register_written_markdown(state, artifact_key, path)
 
     worker_results = run_implementation_workers(state, project_config, workspace=workspace)
     failed_workers = [result for result in worker_results if str(result.get("status", "")) != "completed"]
@@ -1283,7 +1288,7 @@ def run_delivery_until_release_gate(
                 worker_results=worker_results,
             ),
         )
-        state.artifacts["implementation_handoff"] = str(handoff_path)
+        _register_written_markdown(state, "implementation_handoff", handoff_path)
         sync_project_stage_tasks(state, project_config)
         return state
     for artifact_key in ["implementation_handoff", "qa_report", "code_review"]:
@@ -1298,7 +1303,7 @@ def run_delivery_until_release_gate(
                 worker_results=worker_results,
             ),
         )
-        state.artifacts[artifact_key] = str(path)
+        _register_written_markdown(state, artifact_key, path)
 
     if staging_backend_enabled(source_type=state.source_type, project_config=project_config):
         return run_staging_until_gate(state, workspace, project_config)
@@ -1323,7 +1328,7 @@ def run_staging_until_gate(
         _artifact_filename("staging_report"),
         render_staging_report_markdown(state, project_config, staging_result),
     )
-    state.artifacts["staging_report"] = str(staging_path)
+    _register_written_markdown(state, "staging_report", staging_path)
     if str(staging_result.get("status", "")) != "passed":
         failed_step = str(staging_result.get("failed_step", "") or "deploy")
         state.current_node = "implementation"
@@ -1355,7 +1360,7 @@ def run_release_until_gate(
         _artifact_filename("release_notes"),
         render_downstream_artifact_markdown("release_notes", state, project_config, worker_results=worker_results),
     )
-    state.artifacts["release_notes"] = str(release_path)
+    _register_written_markdown(state, "release_notes", release_path)
     state.current_node = "release_review_gate"
     state.next_node = gate_next_node(state, gate="release", approved_next="retro_memory")
     sync_project_stage_tasks(state, project_config)
@@ -1374,7 +1379,7 @@ def run_retro_until_complete(
         "retro-memory.md",
         render_downstream_artifact_markdown("retro_memory", state, project_config),
     )
-    state.artifacts["retro_memory"] = str(retro_path)
+    _register_written_markdown(state, "retro_memory", retro_path)
     state.current_node = "complete"
     state.next_node = ""
     sync_project_stage_tasks(state, project_config)
@@ -2013,6 +2018,15 @@ def _artifact_filename(artifact_key: str) -> str:
     return artifact_key.replace("_", "-") + ".md"
 
 
+def _register_written_markdown(state: AgileDevState, artifact_key: str, path: Path) -> None:
+    register_markdown_artifact(
+        state,
+        artifact_key,
+        path,
+        reviewable=artifact_key in set(approval_artifact_map().values()) | {"fix_plan", "qa_report"},
+    )
+
+
 def run_adoption_until_next_gate(
     state: AgileDevState,
     workspace: Path,
@@ -2035,8 +2049,8 @@ def run_adoption_until_next_gate(
     if memory_path is not None:
         state.context_packet_path = str(memory_path)
     if task_ledger_path is not None:
-        state.artifacts["task_ledger"] = str(task_ledger_path)
-    state.artifacts["takeover"] = str(takeover_path)
+        register_task_ledger(state, task_ledger_path)
+    _register_written_markdown(state, "takeover", takeover_path)
     state.approvals["takeover"] = "pending"
     state.current_node = "takeover_review_gate"
     state.next_node = gate_next_node(state, gate="takeover", approved_next="product_requirement")
@@ -2069,7 +2083,7 @@ def run_until_next_gate(
         "prd.md",
         content,
     )
-    state.artifacts["prd"] = str(prd_path)
+    _register_written_markdown(state, "prd", prd_path)
     state.current_node = "prd_review_gate"
     state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
     sync_project_stage_tasks(state, project_config)
@@ -2188,7 +2202,7 @@ def run_fix_until_next_gate(
         _artifact_filename("fix_plan"),
         content,
     )
-    state.artifacts["fix_plan"] = str(fix_plan_path)
+    _register_written_markdown(state, "fix_plan", fix_plan_path)
     state.approvals["fix_plan"] = state.approvals.get("fix_plan", "pending")
     state.current_node = "fix_plan_review_gate"
     state.next_node = gate_next_node(state, gate="fix_plan", approved_next="fix_implement")
@@ -2214,7 +2228,7 @@ def run_fix_implementation(
             worker_results=worker_results,
         ),
     )
-    state.artifacts["implementation_handoff"] = str(handoff_path)
+    _register_written_markdown(state, "implementation_handoff", handoff_path)
     state.approvals["code_review"] = state.approvals.get("code_review", "pending")
     state.current_node = "code_review_review_gate"
     state.next_node = gate_next_node(state, gate="code_review", approved_next="fix_qa")
@@ -2234,7 +2248,7 @@ def run_fix_qa(
         _artifact_filename("qa_report"),
         render_fix_qa_report_markdown(state),
     )
-    state.artifacts["qa_report"] = str(qa_path)
+    _register_written_markdown(state, "qa_report", qa_path)
     state.approvals["qa"] = state.approvals.get("qa", "pending")
     state.current_node = "qa_review_gate"
     state.next_node = gate_next_node(state, gate="qa", approved_next="fix_close")
@@ -2397,7 +2411,7 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
 
     artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     prd_path = artifact_store.write_markdown(state.run_id, "prd", "prd.md", content)
-    state.artifacts["prd"] = str(prd_path)
+    _register_written_markdown(state, "prd", prd_path)
     state.current_node = "prd_review_gate"
     state.next_node = gate_next_node(state, gate="prd", approved_next="architect")
     sync_project_stage_tasks(state, project_config)
@@ -2435,7 +2449,7 @@ def refine_artifact(
         filename,
         content,
     )
-    state.artifacts[artifact_key] = str(base_path)
+    _register_written_markdown(state, artifact_key, base_path)
     state.artifacts.pop(f"{artifact_key}_proposed", None)
     sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
@@ -2484,7 +2498,12 @@ def refine_artifact(
         filename,
         proposed_content,
     )
-    state.artifacts[f"{artifact_key}_proposed"] = str(proposed_path)
+    register_proposed_markdown_artifact(
+        state,
+        f"{artifact_key}_proposed",
+        proposed_path,
+        base_key=artifact_key,
+    )
     sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
@@ -2525,7 +2544,8 @@ def accept_refinement(
         content,
     )
     proposed_path.unlink()
-    state.artifacts[artifact_key] = str(base_path)
+    _register_written_markdown(state, artifact_key, base_path)
+    state.resources.pop(proposed_key, None)
     state.artifacts.pop(proposed_key, None)
     gate = next(
         (gate for gate, gated_artifact in approval_artifact_map().items() if gated_artifact == artifact_key),
@@ -2560,6 +2580,7 @@ def discard_refinement(
         raise ValueError(f"No active run for project: {key}")
     project_config = _resolve_state_project_config(workspace, state, key)
     proposed_ref = str(state.artifacts.pop(f"{artifact_key}_proposed", "") or "")
+    state.resources.pop(f"{artifact_key}_proposed", None)
     if proposed_ref:
         Path(proposed_ref).unlink(missing_ok=True)
     sync_project_stage_tasks(state, project_config)
@@ -2636,7 +2657,7 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
 
     artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     rfc_path = artifact_store.write_markdown(state.run_id, "rfc", "rfc.md", content)
-    state.artifacts["rfc"] = str(rfc_path)
+    _register_written_markdown(state, "rfc", rfc_path)
     state.current_node = "rfc_review_gate"
     state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
     sync_project_stage_tasks(state, project_config)

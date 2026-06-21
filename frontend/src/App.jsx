@@ -22,7 +22,15 @@ import { formatDeliveryContractAcceptance, formatDeliveryContractFatalPatterns }
 import { buildCustomDeliveryPayload } from './utils/deliveryPayload';
 import { getMissionSummary } from './utils/missionSummary';
 import { resolveProjectRootFromRepos } from './utils/projectRoot';
-import { formatRoleModelOverridesText, parseRoleModelOverrideLines, parseRoleModelOverridesMap } from './utils/roleModelOverrides';
+import { FALLBACK_AGENT_MODES, INIT_WORKER_ROUTING_BUCKET_KEYS, WORKER_ROUTING_BUCKETS } from './constants/workers';
+import {
+  expandInitBucketModelOverrides,
+  expandInitBucketWorkerOverrides,
+  formatRoleModelOverridesMap,
+  formatRoleModelOverridesText,
+  parseRoleModelOverrideLines,
+  parseRoleModelOverridesMap,
+} from './utils/roleModelOverrides';
 import {
   LANGUAGE_PREFERENCE_AUTO,
 } from './i18n';
@@ -85,6 +93,8 @@ export default function App() {
     setTaskSync,
     workerBackendMode,
     setWorkerBackendMode,
+    initWorkerBucketSelections,
+    setInitWorkerBucketSelections,
     deploymentBackendMode,
     setDeploymentBackendMode,
     startMode,
@@ -235,7 +245,7 @@ export default function App() {
   } = gitInitAction;
   const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();
 
-  const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);
+  const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker();
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -357,6 +367,7 @@ export default function App() {
     discoveredAgents,
     loadingDiscoveredAgents,
     safeDiscoveredAgents,
+    fetchDiscoveredAgents,
     roleBackendOptions,
     workerRoles,
     discoveredAgentByBackend,
@@ -369,6 +380,28 @@ export default function App() {
     handleCustomModelChange,
     handleSaveWorkerBackends,
   } = workerBackendSettings;
+
+  const initWorkerRoutingBuckets = WORKER_ROUTING_BUCKETS.filter((bucket) => (
+    INIT_WORKER_ROUTING_BUCKET_KEYS.includes(bucket.key)
+  ));
+  const initBucketWorkers = expandInitBucketWorkerOverrides(
+    initWorkerBucketSelections,
+    initWorkerRoutingBuckets
+  );
+  const initBucketFallbackBackends = Object.fromEntries(
+    initWorkerRoutingBuckets.map((bucket) => [bucket.key, workerBackendMode || panelGlobalMode || 'codex'])
+  );
+  const initBucketRoleModels = expandInitBucketModelOverrides(
+    initWorkerBucketSelections,
+    initWorkerRoutingBuckets,
+    initBucketFallbackBackends
+  );
+
+  useEffect(() => {
+    if (newProjectModalOpen && discoveredAgents === null && !loadingDiscoveredAgents) {
+      fetchDiscoveredAgents();
+    }
+  }, [discoveredAgents, fetchDiscoveredAgents, loadingDiscoveredAgents, newProjectModalOpen]);
 
   const approvalEditor = useApprovalEditor({
     projectKey,
@@ -454,7 +487,7 @@ export default function App() {
       const res = await response.json();
       if (!response.ok) throw new Error(res.error || 'Failed to terminate run');
       showToast(`Terminated run for project ${key}`);
-      fetchState(key);
+      fetchState(projectKey === key ? key : '');
     } catch (err) {
       showToast(err.message, true);
     } finally {
@@ -509,7 +542,10 @@ export default function App() {
     setActionLoading(true);
     showToast('Creating local project config...');
     try {
-      const parsedOverrides = parseRoleModelOverridesMap(roleModelOverrides);
+      const parsedOverrides = {
+        ...parseRoleModelOverridesMap(roleModelOverrides),
+        ...initBucketRoleModels,
+      };
       const customDeliveryPayload = buildCustomDeliveryPayload(deliveryMode, deliveryStandards);
 
       const response = await fetch('/api/project-config', {
@@ -526,6 +562,7 @@ export default function App() {
           plane_api_key_env: planeApiKeyEnv,
           plane_mcp_server: planeMcpServer,
           worker_backend_mode: workerBackendMode,
+          workers: initBucketWorkers,
           deployment_backend_mode: deploymentBackendMode,
           staging_ssh_target: stagingSshTarget,
           staging_remote_dir: stagingRemoteDir,
@@ -660,8 +697,66 @@ export default function App() {
     setActionLoading(true);
     showToast('Starting workflow...');
     try {
-      const overrides = parseRoleModelOverrideLines(roleModelOverrides);
       const customDeliveryPayload = buildCustomDeliveryPayload(deliveryMode, deliveryStandards);
+      const hasInitBucketOverrides = Object.keys(initBucketWorkers).length > 0 || Object.keys(initBucketRoleModels).length > 0;
+      const mergedRoleModelOverrides = {
+        ...parseRoleModelOverridesMap(roleModelOverrides),
+        ...initBucketRoleModels,
+      };
+      const overrides = [
+        ...parseRoleModelOverrideLines(roleModelOverrides),
+        ...parseRoleModelOverrideLines(formatRoleModelOverridesMap(initBucketRoleModels)),
+      ];
+      let workflowProjectConfig = projectConfig;
+
+      if (hasInitBucketOverrides && workflowProjectConfig) {
+        const updateResponse = await fetch('/api/project-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update_worker_backends',
+            project: startProjectKey || projectKey,
+            worker_backend_mode: workerBackendMode,
+            workers: initBucketWorkers,
+            role_models: mergedRoleModelOverrides,
+          }),
+        });
+        const updateResult = await updateResponse.json();
+        if (!updateResponse.ok) throw new Error(updateResult.error || 'Failed to update worker config');
+      }
+
+      if (hasInitBucketOverrides && !workflowProjectConfig) {
+        const configResponse = await fetch('/api/project-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_name: projectName,
+            project_key: startProjectKey || projectKey,
+            project_root: projectRoot,
+            task_sync: taskSync ? [taskSync] : [],
+            plane_api_host_url: planeApiHost,
+            plane_workspace_slug: planeWorkspaceSlug,
+            plane_project_id: planeProjectId,
+            plane_api_key_env: planeApiKeyEnv,
+            plane_mcp_server: planeMcpServer,
+            worker_backend_mode: workerBackendMode,
+            workers: initBucketWorkers,
+            role_model_overrides: mergedRoleModelOverrides,
+            model_profile: modelProfile,
+            delivery_mode: deliveryMode,
+            ...customDeliveryPayload,
+            ...(isNewProjectMode ? {
+              init_git: initGit,
+              create_remote: createRemote,
+              remote_private: remotePrivate
+            } : {})
+          }),
+        });
+        const configResult = await configResponse.json();
+        if (!configResponse.ok) throw new Error(configResult.error || 'Failed to create config');
+        workflowProjectConfig = configResult.project_config;
+        setProjectConfig(configResult.project_config);
+      }
 
       const response = await fetch('/api/start', {
         method: 'POST',
@@ -673,7 +768,7 @@ export default function App() {
           delivery_mode: deliveryMode,
           ...customDeliveryPayload,
           source_type: startMode,
-          project_config: projectConfig,
+          project_config: workflowProjectConfig,
           role_model_overrides: overrides,
           dry_run: dryRun,
           ...(isNewProjectMode ? {
@@ -960,7 +1055,9 @@ export default function App() {
       deliveryMode={deliveryMode}
       deliveryStandards={deliveryStandards}
       deploymentBackendMode={deploymentBackendMode}
+      discoveredAgents={discoveredAgents}
       dryRun={dryRun}
+      fallbackAgentModes={FALLBACK_AGENT_MODES}
       generatingContext={generatingContext}
       handleCreateConfig={handleCreateConfig}
       handleContextEstimate={handleContextEstimate}
@@ -968,7 +1065,10 @@ export default function App() {
       handleStartWorkflow={handleStartWorkflow}
       idea={idea}
       initGit={initGit}
+      initWorkerBucketSelections={initWorkerBucketSelections}
+      initWorkerRoutingBuckets={initWorkerRoutingBuckets}
       isNewProjectMode={isNewProjectMode}
+      loadingDiscoveredAgents={loadingDiscoveredAgents}
       modelProfile={modelProfile}
       newProjectModalOpen={newProjectModalOpen}
       openDirectoryPicker={openDirectoryPicker}
@@ -982,6 +1082,7 @@ export default function App() {
       projectRoot={projectRoot}
       remotePrivate={remotePrivate}
       roleModelOverrides={roleModelOverrides}
+      safeDiscoveredAgents={safeDiscoveredAgents}
       setCreateRemote={setCreateRemote}
       setDeliveryContractAcceptance={setDeliveryContractAcceptance}
       setDeliveryContractFatalPatterns={setDeliveryContractFatalPatterns}
@@ -995,6 +1096,7 @@ export default function App() {
       setDryRun={setDryRun}
       setIdea={setIdea}
       setInitGit={setInitGit}
+      setInitWorkerBucketSelections={setInitWorkerBucketSelections}
       setModelProfile={setModelProfile}
       setPlaneApiHost={setPlaneApiHost}
       setPlaneApiKeyEnv={setPlaneApiKeyEnv}

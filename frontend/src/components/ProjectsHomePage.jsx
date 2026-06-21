@@ -33,6 +33,7 @@ export default function ProjectsHomePage({
   theme,
   updateUrl,
 }) {
+  const isStaleOverviewData = data && data.type !== 'overview';
   const projectItems = data?.project_items || [];
   const legacyState = data?.legacy_state;
   const openNewProject = () => {
@@ -115,7 +116,7 @@ export default function ProjectsHomePage({
           )}
 
           {/* Project List */}
-          {loading ? (
+          {loading || isStaleOverviewData ? (
             <Spinner label={t('chrome.loading')} />
           ) : error ? (
             <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-xl text-status-danger flex items-center space-x-3">
@@ -126,12 +127,6 @@ export default function ProjectsHomePage({
             <div className="space-y-6">
               <div className="flex justify-between items-center border-b-2 border-border-subtle pb-4">
                 <h2 className="text-sm font-bold uppercase tracking-widest text-text-muted">Registered Projects ({projectItems.length})</h2>
-                <button
-                  onClick={openNewProject}
-                  className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center gap-1.5 hover:opacity-90 cursor-pointer"
-                >
-                  <span>{t('chrome.newProject')}</span>
-                </button>
               </div>
 
               {projectItems.length === 0 ? (
@@ -245,16 +240,6 @@ export default function ProjectsHomePage({
                     );
                   })}
 
-                  {/* "+" Tile Card */}
-                  <button
-                    onClick={openNewProject}
-                    className="bg-surface-sunken border-2 border-dashed border-border-subtle rounded-xl p-6 flex flex-col items-center justify-center min-h-[200px] hover:border-accent hover:bg-surface-raised transition-all duration-200 group cursor-pointer theme-card-hover"
-                  >
-                    <div className="w-12 h-12 rounded-full border-2 border-dashed border-border-strong group-hover:border-accent flex items-center justify-center text-text-muted group-hover:text-accent transition-colors mb-3">
-                      <span className="text-2xl font-bold font-sans">+</span>
-                    </div>
-                    <span className="text-xs font-bold text-text-secondary group-hover:text-accent-text uppercase tracking-wider">New Project</span>
-                  </button>
                 </div>
               )}
             </div>

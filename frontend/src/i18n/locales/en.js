@@ -101,6 +101,8 @@ export const en = {
   'newProject.git.authBeforeLaunch': 'before launching GoodTeam.',
   'newProject.git.authScopes': 'Token scopes - Classic:',
   'newProject.git.authFineGrained': 'Fine-grained:',
+  'newProject.workerBuckets.title': 'Worker defaults',
+  'newProject.workerBuckets.loading': 'Detecting agents...',
   'newProject.advanced.hide': 'Hide Advanced Config',
   'newProject.advanced.show': 'Show Advanced Config (Task Backend, Deployment)',
   'newProject.advanced.servicesBackend': 'Services Backend',

@@ -44,6 +44,13 @@ from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
+from goodteam_os.resources import (
+    ResourceCapability,
+    ResourceKind,
+    ResourceScope,
+    register_markdown_artifact,
+    resource_to_dict,
+)
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import read_messages
@@ -74,13 +81,13 @@ PRD_REVIEW_ROLES = [
     "Review / QA",
 ]
 
-_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "gemini", "agy", "fake", "noop", "human")
+_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "gemini", "agy", "opencode", "fake", "noop", "human")
 WORKER_BACKEND_OPTIONS = [
     mode
     for mode in _PREFERRED_WORKER_BACKEND_ORDER
     if mode in {*BUILTIN_WORKER_MODES, *CLI_BACKENDS}
 ]
-WORKER_BACKEND_ACCEPTED_OPTIONS = sorted({*WORKER_BACKEND_OPTIONS, *CLI_BACKENDS})
+WORKER_BACKEND_ACCEPTED_OPTIONS = sorted({*WORKER_BACKEND_OPTIONS, *CLI_BACKENDS, "manual"})
 WORKER_ROLES = [
     "orchestrator",
     "research",
@@ -774,7 +781,14 @@ def _request_origin_is_same_origin(*, origin: str, host: str) -> bool:
     parsed = urlparse(origin)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
-    return parsed.netloc.lower() == host.split("@")[-1].lower()
+    request_host = host.split("@")[-1].lower()
+    origin_host = parsed.netloc.lower()
+    if origin_host == request_host:
+        return True
+    local_hosts = {"localhost", "127.0.0.1", "::1", "[::1]"}
+    origin_name = (parsed.hostname or "").lower()
+    request_name = request_host.rsplit(":", 1)[0]
+    return origin_name in local_hosts and request_name in local_hosts
 
 
 def _dispatch_worktree_path(workspace: Path, name: str) -> Path:
@@ -1824,7 +1838,13 @@ def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
 def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
     if state is None:
         return None
-    path = str(state.artifacts.get("task_ledger", "")).strip()
+    path = ""
+    for resource in state.resources.values():
+        if ResourceCapability.BOARD_SOURCE in resource.capabilities and resource.path:
+            path = resource.path
+            break
+    if not path:
+        path = str(state.artifacts.get("task_ledger", "")).strip()
     if not path:
         return None
     ledger = Path(path)
@@ -1943,13 +1963,14 @@ def list_directory_for_picker(path_value: str | None) -> dict[str, object]:
         if child.name in FS_LIST_IGNORED_NAMES:
             continue
         try:
-            if not child.is_dir():
-                continue
+            is_dir = child.is_dir()
             child_path = child.resolve(strict=True)
-            is_git_repo = (child / ".git").exists()
+            is_git_repo = is_dir and (child / ".git").exists()
         except (OSError, RuntimeError, ValueError):
             continue
-        entries.append({"name": child.name, "path": str(child_path), "is_git_repo": is_git_repo})
+        entries.append(
+            {"name": child.name, "path": str(child_path), "is_dir": is_dir, "is_git_repo": is_git_repo}
+        )
 
     return {"path": str(resolved), "parent": parent, "entries": entries}
 
@@ -2217,6 +2238,7 @@ def create_local_project_config(
     plane_api_key_env: str = "",
     plane_mcp_server: str = "",
     worker_backend_mode: str = "codex",
+    workers: dict[str, str] | None = None,
     model_profile: str = "balanced",
     delivery_mode: str = "init_project",
     delivery_standards: str = "",
@@ -2328,7 +2350,19 @@ def create_local_project_config(
         lines.append("  plane:")
         lines.extend(f"    {key}: {_config_scalar('Plane config value', value)}" for key, value in plane_config.items() if value)
     worker_mode = _single_line_config_value("Worker backend mode", worker_backend_mode, default="codex")
+    worker_overrides = {
+        _config_mapping_key("Worker role", str(role)): _single_line_config_value("Worker backend", str(backend))
+        for role, backend in (workers or {}).items()
+        if str(role).strip() and str(backend).strip()
+    }
+    _validate_worker_backend_config(mode=worker_mode, workers=worker_overrides, role_models=overrides)
     lines.extend(["worker_backend:", f"  mode: {_config_scalar('Worker backend mode', worker_mode)}"])
+    if worker_overrides:
+        lines.append("workers:")
+        lines.extend(
+            f"  {role}: {_config_scalar('Worker backend', backend)}"
+            for role, backend in _ordered_worker_overrides(worker_overrides).items()
+        )
     deployment_backend = {
         "mode": _single_line_config_value("Deployment backend mode", deployment_backend_mode),
         "staging_ssh_target": _single_line_config_value("Staging SSH target", staging_ssh_target),
@@ -2997,7 +3031,7 @@ def regenerate_rfc_review_gate(
         "rfc.md",
         render_downstream_artifact_markdown("rfc", state, project_config),
     )
-    state.artifacts["rfc"] = str(rfc_path)
+    register_markdown_artifact(state, "rfc", rfc_path)
     state.current_node = "rfc_review_gate"
     state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
     sync_project_stage_tasks(state, project_config)
@@ -3039,7 +3073,7 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
             "staging-report.md",
             render_staging_report_markdown(state, project_config, staging_result),
         )
-        state.artifacts["staging_report"] = str(staging_path)
+        register_markdown_artifact(state, "staging_report", staging_path, reviewable=True)
         if str(staging_result.get("status", "")) != "passed":
             failed_step = str(staging_result.get("failed_step", "") or "deploy")
             state.current_node = "implementation"
@@ -3374,16 +3408,36 @@ def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key
     state = store.read_project_current(project_key) if project_key else store.read_current()
     if state is None:
         raise ValueError("No active run state found.")
-    artifact_path = state.artifacts.get(artifact_key, "")
+    resource = state.resources.get(artifact_key)
+    if resource is not None:
+        if resource.kind not in {ResourceKind.MARKDOWN_ARTIFACT, ResourceKind.PROPOSED_MARKDOWN_ARTIFACT}:
+            raise ValueError(f"Resource is not a markdown artifact: {artifact_key}")
+        if ResourceCapability.READ not in resource.capabilities:
+            raise ValueError(f"Resource does not allow read: {artifact_key}")
+        artifact_path = resource.path
+    else:
+        artifact_path = state.artifacts.get(artifact_key, "")
     if not artifact_path:
         raise ValueError(f"Artifact is not registered in current run: {artifact_key}")
 
     path = Path(artifact_path)
-    if not path.is_absolute():
-        path = workspace / path
-    path = path.resolve()
     run_root = (workspace / "artifacts" / "runs" / state.run_id).resolve()
-    if run_root not in [path, *path.parents]:
+    if path.is_absolute():
+        path = path.resolve()
+    else:
+        candidates = [(workspace / path).resolve(), path.resolve()]
+        path = next(
+            (
+                candidate
+                for candidate in candidates
+                if run_root in [candidate, *candidate.parents]
+            ),
+            candidates[0],
+        )
+    if resource is None or resource.scope == ResourceScope.RUN:
+        if run_root not in [path, *path.parents]:
+            raise ValueError("Artifact path must stay inside the current run artifacts directory.")
+    elif resource.scope != ResourceScope.PROJECT_RUNTIME:
         raise ValueError("Artifact path must stay inside the current run artifacts directory.")
     if path.suffix.lower() not in {".md", ".markdown"}:
         raise ValueError("Only markdown artifacts can be edited in the dashboard.")
@@ -3405,12 +3459,22 @@ def render_file_path(path: str, artifact_key: str = "") -> str:
     """
 
 
+def build_resource_items(state: AgileDevState | None) -> list[dict[str, object]]:
+    if state is None:
+        return []
+    return [
+        resource_to_dict(resource)
+        for _key, resource in sorted(state.resources.items())
+    ]
+
+
 def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
     return {
         "artifact": artifact_key,
         "path": str(path),
         "content": path.read_text(encoding="utf-8"),
+        "resource": resource_to_dict(state.resources[artifact_key]) if artifact_key in state.resources else {},
     }
 
 
@@ -3840,8 +3904,8 @@ def build_dashboard_handler(workspace: Path):
         def do_POST(self) -> None:
             normalized_path = self.path
             if normalized_path.startswith("/api/"):
-                normalized_path = normalized_path[4:]
-            if normalized_path not in {"/context-estimate", "/context-generate"}:
+                normalized_path = normalized_path.removeprefix("/api")
+            if normalized_path not in {"/context-estimate", "/context-generate", "/project-config"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -3856,8 +3920,45 @@ def build_dashboard_handler(workspace: Path):
                 request = json.loads(raw_body.decode("utf-8") or "{}")
                 if normalized_path == "/context-estimate":
                     result = context_estimate_for_request(workspace, request)
-                else:
+                elif normalized_path == "/context-generate":
                     result = context_generate_for_request(workspace, request)
+                elif (
+                    request.get("action") == "update_worker_backends"
+                    or (
+                        ("project" in request or "project_key" in request)
+                        and "workers" in request
+                        and "project_name" not in request
+                    )
+                ):
+                    result = update_project_worker_backend_settings(
+                        workspace=workspace,
+                        request=request,
+                    )
+                else:
+                    result = create_local_project_config(
+                        workspace=workspace,
+                        project_name=str(request.get("project_name", "")),
+                        project_key=str(request.get("project_key", "")),
+                        project_root=str(request.get("project_root", "")),
+                        docs_path=str(request.get("docs_path", "")),
+                        backend_path=str(request.get("backend_path", "")),
+                        frontend_path=str(request.get("frontend_path", "")),
+                        task_sync=[str(value) for value in request.get("task_sync", [])],
+                        plane_api_host_url=str(request.get("plane_api_host_url", "")),
+                        plane_workspace_slug=str(request.get("plane_workspace_slug", "")),
+                        plane_project_id=str(request.get("plane_project_id", "")),
+                        plane_api_key_env=str(request.get("plane_api_key_env", "")),
+                        plane_mcp_server=str(request.get("plane_mcp_server", "")),
+                        worker_backend_mode=str(request.get("worker_backend_mode", "codex")),
+                        workers=dict(request.get("workers", {})),
+                        model_profile=str(request.get("model_profile", "balanced")),
+                        delivery_mode=str(request.get("delivery_mode", "init_project")),
+                        delivery_standards=str(request.get("delivery_standards", "")),
+                        role_model_overrides=dict(request.get("role_model_overrides", {})),
+                        init_git=_request_bool(request.get("init_git"), True),
+                        create_remote=_request_bool(request.get("create_remote"), False),
+                        remote_private=_request_bool(request.get("remote_private"), True),
+                    )
                 self._send_json(200, result)
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
@@ -7588,6 +7689,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                             "type": "overview",
                             "project_items": build_project_overview_items(workspace),
                             "legacy_state": asdict(legacy_state) if legacy_state is not None else None,
+                            "resources": build_resource_items(legacy_state),
                         }
                     else:
                         project_config = _project_config_for_key(workspace, project_key)
@@ -7598,6 +7700,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         res_data = {
                             "type": "project",
                             "state": asdict(state) if state is not None else None,
+                            "resources": build_resource_items(state),
                             "start_context": start_context,
                             "active_run": is_active_run(state),
                             "role_observations": build_role_observations(state),
@@ -7609,6 +7712,20 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                             "worker_jobs": build_worker_job_items(project_root),
                         }
                     self._send_json(200, res_data)
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+            if parsed.path == "/api/resources":
+                try:
+                    state = resolve_dashboard_state(workspace, project_key=project_key) if project_key else StateStore(workspace).read_current()
+                    self._send_json(
+                        200,
+                        {
+                            "project_key": normalize_project_key(project_key or state.project_key) if state is not None else "",
+                            "resources": build_resource_items(state),
+                            "legacy_artifacts": dict(state.artifacts) if state is not None else {},
+                        },
+                    )
                 except Exception as exc:
                     self._send_json(400, {"error": str(exc)})
                 return
@@ -7831,7 +7948,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
         def do_POST(self) -> None:
             normalized_path = self.path
             if normalized_path.startswith("/api/"):
-                normalized_path = normalized_path[4:]
+                normalized_path = normalized_path.removeprefix("/api")
 
             if normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
@@ -8008,7 +8125,14 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 # panel sends `project` + `workers` for an existing project; the
                 # create-config form sends neither. Route both explicitly so an
                 # unrelated path can never silently fall through to create-config.
-                elif normalized_path == "/project-config" and ("project" in request or "workers" in request):
+                elif normalized_path == "/project-config" and (
+                    request.get("action") == "update_worker_backends"
+                    or (
+                        ("project" in request or "project_key" in request)
+                        and "workers" in request
+                        and "project_name" not in request
+                    )
+                ):
                     result = update_project_worker_backend_settings(
                         workspace=workspace,
                         request=request,
@@ -8029,6 +8153,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         plane_api_key_env=str(request.get("plane_api_key_env", "")),
                         plane_mcp_server=str(request.get("plane_mcp_server", "")),
                         worker_backend_mode=str(request.get("worker_backend_mode", "codex")),
+                        workers=dict(request.get("workers", {})),
                         deployment_backend_mode=str(request.get("deployment_backend_mode", "")),
                         staging_ssh_target=str(request.get("staging_ssh_target", "")),
                         staging_remote_dir=str(request.get("staging_remote_dir", "")),
