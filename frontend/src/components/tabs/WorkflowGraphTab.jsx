@@ -1,385 +1,192 @@
 import {
   AlertTriangle,
   Check,
+  Circle,
+  Clock,
+  GitBranch,
   Info,
-  Lock,
+  PauseCircle,
+  Play,
   XCircle,
 } from 'lucide-react';
+import {
+  currentWorkflowNodeName,
+  displayWorkflowName,
+  nextWorkflowNodeName,
+  relevantWorkflowNodes,
+} from '../../utils/workflowGraphModel';
 
-const NODE_WIDTH = 200;
-const NODE_HEIGHT = 90;
-const COLUMN_WIDTH = 270;
-const ROW_HEIGHT = 150;
-const PADDING_X = 40;
-const PADDING_Y = 40;
+const STATUS_META = {
+  active: {
+    label: 'active',
+    icon: Play,
+    nodeClass: 'border-status-success bg-status-success-bg/35 shadow-card',
+    railClass: 'bg-status-success',
+    textClass: 'text-status-success-text',
+  },
+  queued: {
+    label: 'queued',
+    icon: Clock,
+    nodeClass: 'border-status-info bg-status-info-bg/30',
+    railClass: 'bg-status-info',
+    textClass: 'text-status-info-text',
+  },
+  done: {
+    label: 'done',
+    icon: Check,
+    nodeClass: 'border-status-success/35 bg-surface-raised',
+    railClass: 'bg-status-success',
+    textClass: 'text-status-success-text',
+  },
+  idle: {
+    label: 'idle',
+    icon: PauseCircle,
+    nodeClass: 'border-border-subtle bg-surface-sunken',
+    railClass: 'bg-text-muted',
+    textClass: 'text-text-muted',
+  },
+  blocked: {
+    label: 'blocked',
+    icon: AlertTriangle,
+    nodeClass: 'border-status-warning bg-status-warning-bg/30',
+    railClass: 'bg-status-warning',
+    textClass: 'text-status-warning-text',
+  },
+};
 
-function computeWorkflowLayout(rawNodes, rawEdges) {
-  const nodes = Array.isArray(rawNodes) ? rawNodes : [];
-  const edges = Array.isArray(rawEdges) ? rawEdges : [];
-  const allNodeNames = new Set(nodes.map((node) => node.name));
-
-  for (const edge of edges) {
-    allNodeNames.add(edge.from);
-    allNodeNames.add(edge.to);
-  }
-
-  const nodeMap = {};
-  for (const name of allNodeNames) {
-    const originalNode = nodes.find((node) => node.name === name);
-    nodeMap[name] = {
-      name,
-      gate: originalNode?.gate || '',
-      runner: originalNode?.runner || '',
-      kind: originalNode?.kind || 'stage',
-      incoming: [],
-      outgoing: [],
-      rank: 0,
-      index: 0,
-    };
-  }
-
-  for (const edge of edges) {
-    if (nodeMap[edge.from] && nodeMap[edge.to]) {
-      nodeMap[edge.from].outgoing.push(edge);
-      nodeMap[edge.to].incoming.push(edge);
-    }
-  }
-
-  const maxIterations = 1000;
-  let iterations = 0;
-  let changed = true;
-
-  while (changed && iterations < maxIterations) {
-    changed = false;
-    iterations += 1;
-
-    for (const edge of edges) {
-      const fromNode = nodeMap[edge.from];
-      const toNode = nodeMap[edge.to];
-
-      if (
-        fromNode &&
-        toNode &&
-        fromNode.rank + 1 > toNode.rank &&
-        toNode.rank < Object.keys(nodeMap).length
-      ) {
-        toNode.rank = fromNode.rank + 1;
-        changed = true;
-      }
-    }
-  }
-
-  const columns = {};
-  for (const node of Object.values(nodeMap)) {
-    if (!columns[node.rank]) {
-      columns[node.rank] = [];
-    }
-    node.index = columns[node.rank].length;
-    columns[node.rank].push(node);
-  }
-
-  return { nodeMap, columns };
-}
-
-function createEdgePath(fromNode, toNode) {
-  const fromLeft = PADDING_X + fromNode.rank * COLUMN_WIDTH;
-  const fromTop = PADDING_Y + fromNode.index * ROW_HEIGHT;
-  const toLeft = PADDING_X + toNode.rank * COLUMN_WIDTH;
-  const toTop = PADDING_Y + toNode.index * ROW_HEIGHT;
-
-  if (toNode.rank > fromNode.rank) {
-    const x1 = fromLeft + NODE_WIDTH;
-    const y1 = fromTop + NODE_HEIGHT / 2;
-    const x2 = toLeft - 8;
-    const y2 = toTop + NODE_HEIGHT / 2;
-    const controlX = (x1 + x2) / 2;
-
-    return {
-      path: `M ${x1} ${y1} C ${controlX} ${y1}, ${controlX} ${y2}, ${x2} ${y2}`,
-      midX: controlX,
-      midY: (y1 + y2) / 2,
-    };
-  }
-
-  if (toNode.rank === fromNode.rank) {
-    const x1 = fromLeft + NODE_WIDTH;
-    const y1 = fromTop + NODE_HEIGHT / 2;
-    const x2 = toLeft - 8;
-    const y2 = toTop + NODE_HEIGHT / 2;
-    const controlX = x1 + 40;
-
-    return {
-      path: `M ${x1} ${y1} C ${controlX} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`,
-      midX: controlX - 20,
-      midY: (y1 + y2) / 2,
-    };
-  }
-
-  const x1 = fromLeft;
-  const y1 = fromTop + NODE_HEIGHT / 2;
-  const x2 = toLeft - 8;
-  const y2 = toTop + NODE_HEIGHT / 2;
-  const controlX1 = x1 - 50;
-  const controlX2 = x2 - 50;
-
-  return {
-    path: `M ${x1} ${y1} C ${controlX1} ${y1}, ${controlX2} ${y2}, ${x2} ${y2}`,
-    midX: (controlX1 + controlX2) / 2,
-    midY: (y1 + y2) / 2,
-  };
-}
-
-function getEdgeColor(type) {
-  const norm = String(type || '').toLowerCase().trim();
-  if (norm === 'approved') return 'var(--success)';
-  if (norm === 'changes_requested' || norm === 'blocked') return 'var(--warning)';
-  if (norm === 'rejected' || norm === 'error') return 'var(--danger)';
-  return 'var(--text-muted)';
-}
-
-function getEdgeMarker(type) {
-  const norm = String(type || '').toLowerCase().trim();
-  if (['approved', 'changes_requested', 'rejected', 'error', 'blocked'].includes(norm)) {
-    return `url(#arrow-${norm})`;
-  }
-  return 'url(#arrow-default)';
-}
-
-function getNodeTone({ isCurrent, isNext, node, approvalStatus }) {
-  if (isCurrent) {
-    return 'border-status-success bg-status-success-bg/35';
-  }
-  if (isNext) {
-    return 'border-status-info bg-status-info-bg/35';
-  }
-  if (node.gate && approvalStatus === 'approved') {
-    return 'border-status-success bg-status-success-bg/25';
-  }
-  if (node.gate && approvalStatus === 'changes_requested') {
-    return 'border-status-warning bg-status-warning-bg/25';
-  }
-  if (node.gate && approvalStatus === 'rejected') {
-    return 'border-status-danger bg-status-danger-bg/25';
-  }
-  return 'border-border-subtle bg-surface-raised';
-}
-
-function ApprovalBadge({ status }) {
-  if (status === 'approved') {
-    return (
-      <span className="bg-status-success-bg border border-status-success/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-success-text" title="Approved">
-        <Check className="h-2.5 w-2.5 text-status-success" />
-        <span>approved</span>
-      </span>
-    );
-  }
-
-  if (status === 'changes_requested') {
-    return (
-      <span className="bg-status-warning-bg border border-status-warning/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-warning-text" title="Changes Requested">
-        <AlertTriangle className="h-2.5 w-2.5 text-status-warning" />
-        <span>changes</span>
-      </span>
-    );
-  }
-
-  if (status === 'rejected') {
-    return (
-      <span className="bg-status-danger-bg border border-status-danger/30 rounded-full px-1.5 py-0.5 text-2xs font-bold uppercase flex items-center gap-0.5 text-status-danger-text" title="Rejected">
-        <XCircle className="h-2.5 w-2.5 text-status-danger" />
-        <span>rejected</span>
-      </span>
-    );
-  }
-
-  return null;
-}
-
-function WorkflowCanvas({ graphData }) {
-  const safeNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-  const safeEdges = Array.isArray(graphData?.edges) ? graphData.edges : [];
-  const { nodeMap, columns } = computeWorkflowLayout(safeNodes, safeEdges);
-  const colIndices = Object.keys(columns).map(Number).sort((a, b) => a - b);
-  const numCols = colIndices.length || 1;
-  const maxNodesInAnyCol = Math.max(...Object.values(columns).map((column) => column.length), 1);
-  const canvasWidth = numCols * COLUMN_WIDTH + PADDING_X * 2;
-  const canvasHeight = maxNodesInAnyCol * ROW_HEIGHT + PADDING_Y * 2;
-  const currentNode = graphData.run?.current_graph_node || graphData.run?.current_node;
-  const nextNode = graphData.run?.next_graph_node || graphData.run?.next_node;
-
+function EdgeLegend() {
+  const statuses = ['active', 'queued', 'idle'];
   return (
-    <div
-      className="relative select-none"
-      style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}
-    >
-      <svg
-        className="absolute inset-0 pointer-events-none z-0"
-        style={{ width: '100%', height: '100%' }}
-      >
-        <defs>
-          <marker id="arrow-approved" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-            <path d="M0,0 L0,6 L9,3 z" fill="var(--success)" />
-          </marker>
-          <marker id="arrow-changes_requested" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-            <path d="M0,0 L0,6 L9,3 z" fill="var(--warning)" />
-          </marker>
-          <marker id="arrow-rejected" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-            <path d="M0,0 L0,6 L9,3 z" fill="var(--danger)" />
-          </marker>
-          <marker id="arrow-error" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-            <path d="M0,0 L0,6 L9,3 z" fill="var(--danger)" />
-          </marker>
-          <marker id="arrow-blocked" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-            <path d="M0,0 L0,6 L9,3 z" fill="var(--warning)" />
-          </marker>
-          <marker id="arrow-default" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-            <path d="M0,0 L0,6 L9,3 z" fill="var(--text-muted)" />
-          </marker>
-        </defs>
-
-        {safeEdges.map((edge, idx) => {
-          const fromNode = nodeMap[edge.from];
-          const toNode = nodeMap[edge.to];
-          if (!fromNode || !toNode) return null;
-
-          const { path } = createEdgePath(fromNode, toNode);
-          const strokeColor = getEdgeColor(edge.type);
-          const marker = getEdgeMarker(edge.type);
-
-          return (
-            <path
-              key={idx}
-              d={path}
-              fill="none"
-              stroke={strokeColor}
-              strokeWidth="2.5"
-              markerEnd={marker}
-              className="transition-all duration-300 opacity-80"
-            />
-          );
-        })}
-      </svg>
-
-      {safeEdges.map((edge, idx) => {
-        const fromNode = nodeMap[edge.from];
-        const toNode = nodeMap[edge.to];
-        if (!fromNode || !toNode) return null;
-
-        const { midX, midY } = createEdgePath(fromNode, toNode);
-        const color = getEdgeColor(edge.type);
-
+    <div className="flex flex-wrap items-center gap-2 text-2xs font-bold uppercase text-text-muted">
+      {statuses.map((status) => {
+        const meta = STATUS_META[status];
         return (
-          <div
-            key={idx}
-            className="absolute bg-surface-raised border border-border-subtle rounded-full px-2 py-0.5 text-2xs font-bold shadow-card select-none pointer-events-none z-10"
-            style={{
-              left: `${midX}px`,
-              top: `${midY}px`,
-              transform: 'translate(-50%, -50%)',
-              color,
-            }}
-          >
-            {edge.type}
-          </div>
-        );
-      })}
-
-      {Object.values(nodeMap).map((node) => {
-        const isCurrent = currentNode === node.name;
-        const isNext = nextNode === node.name;
-        const approvalStatus = node.gate && graphData.run?.approvals
-          ? graphData.run.approvals[node.gate]
-          : null;
-        const left = PADDING_X + node.rank * COLUMN_WIDTH;
-        const top = PADDING_Y + node.index * ROW_HEIGHT;
-        const nodeTone = getNodeTone({ isCurrent, isNext, node, approvalStatus });
-
-        return (
-          <div
-            key={node.name}
-            className={`absolute border-2 rounded-xl p-4 flex flex-col justify-between z-20 shadow-card ${nodeTone}`}
-            style={{
-              left: `${left}px`,
-              top: `${top}px`,
-              width: `${NODE_WIDTH}px`,
-              height: `${NODE_HEIGHT}px`,
-            }}
-          >
-            <div className="flex justify-between items-start gap-1">
-              <span
-                className="font-mono text-2xs font-bold text-text-primary truncate select-all"
-                title={node.name}
-              >
-                {node.name}
-              </span>
-
-              <div className="flex items-center space-x-1 shrink-0">
-                {node.gate ? <ApprovalBadge status={approvalStatus} /> : null}
-                {isCurrent ? (
-                  <span className="h-2 w-2 rounded-full bg-status-success animate-pulse" title="Current Node" />
-                ) : isNext ? (
-                  <span className="h-2 w-2 rounded-full bg-status-info animate-pulse" title="Next Node" />
-                ) : null}
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              {node.gate && (
-                <div className="flex items-center text-2xs text-text-secondary font-bold">
-                  <Lock className="h-3 w-3 mr-1 text-text-muted" />
-                  <span className="uppercase">{node.gate} Gate</span>
-                </div>
-              )}
-              <div className="flex justify-between items-center text-2xs font-bold uppercase tracking-wider text-text-muted">
-                <span>{node.kind}</span>
-                {node.runner && (
-                  <span className="font-mono text-2xs max-w-[100px] truncate" title={node.runner}>
-                    {node.runner}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+          <span key={status} className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-surface-raised px-2 py-1">
+            <span className={`h-2 w-2 rounded-full ${meta.railClass}`} />
+            {meta.label}
+          </span>
         );
       })}
     </div>
   );
 }
 
+function StatusPill({ status }) {
+  const meta = STATUS_META[status] || STATUS_META.idle;
+  const Icon = meta.icon || Circle;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-bold uppercase ${meta.textClass}`}>
+      <Icon className="h-3 w-3" />
+      {meta.label}
+    </span>
+  );
+}
+
+function WorkerNode({ node, compact = false }) {
+  const meta = STATUS_META[node.status] || STATUS_META.idle;
+  return (
+    <div
+      className={`relative min-w-[170px] overflow-hidden rounded-lg border-2 p-3 transition-all ${meta.nodeClass}`}
+      title={`${displayWorkflowName(node.name)} · ${node.runner || node.kind || 'workflow node'}`}
+    >
+      <span className={`absolute inset-y-0 left-0 w-1.5 ${meta.railClass}`} />
+      <div className="flex items-start justify-between gap-3 pl-2">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-extrabold text-text-primary">{displayWorkflowName(node.name)}</div>
+          <div className="mt-1 truncate text-2xs font-bold uppercase text-text-muted">
+            {compact ? node.kind : node.gate ? `${node.gate} gate` : node.kind}
+          </div>
+        </div>
+        <StatusPill status={node.status} />
+      </div>
+    </div>
+  );
+}
+
+function Connector({ muted = false }) {
+  const lineClass = muted ? 'border-t-2 border-dashed border-border-subtle' : 'bg-border-strong';
+  const arrowClass = muted ? 'border-border-subtle' : 'border-border-strong';
+  return (
+    <div className="hidden min-w-8 flex-1 items-center md:flex" aria-hidden="true">
+      <div className={`h-0.5 w-full ${lineClass}`} />
+      <div className={`h-2 w-2 rotate-45 border-r-2 border-t-2 ${arrowClass}`} />
+    </div>
+  );
+}
+
 function ActiveRunHeader({ run }) {
-  const currentNode = run.current_graph_node || run.current_node;
-  const nextNode = run.next_graph_node || run.next_node;
+  const current = currentWorkflowNodeName(run);
+  const next = nextWorkflowNodeName(run);
 
   return (
-    <div className="mb-6 bg-surface-sunken p-4 rounded-xl border border-border-subtle flex flex-col gap-3 text-xs font-bold">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center space-x-2">
-          <span className="text-text-muted uppercase tracking-wider">Active Run:</span>
-          <span className="font-mono text-text-primary">{run.run_id}</span>
-        </div>
-        <div className="flex flex-wrap gap-4">
-          {currentNode && (
-            <div className="flex items-center space-x-1.5">
-              <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
-              <span className="text-text-muted">Current Node:</span>
-              <span className="text-accent-text font-mono">{currentNode}</span>
-            </div>
-          )}
-          {nextNode && (
-            <div className="flex items-center space-x-1.5">
-              <span className="h-2 w-2 rounded-full bg-status-info animate-pulse" />
-              <span className="text-text-muted">Next Node:</span>
-              <span className="text-status-info-text font-mono">{nextNode}</span>
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="border-t border-border-subtle pt-2 flex items-center space-x-1.5 text-2xs text-text-secondary font-normal">
-        <Info className="h-3.5 w-3.5 text-text-muted shrink-0" />
-        <span className="text-text-primary">
-          Note: Colored edge pills represent transition path types, not the project's actual gate decisions.
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-subtle bg-surface-sunken px-4 py-3 text-xs font-bold">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="inline-flex items-center gap-2 text-status-success-text">
+          <span className="h-2.5 w-2.5 rounded-full bg-status-success animate-pulse" />
+          Run active
         </span>
+        {current ? <span className="font-mono text-text-primary">Current: {current}</span> : null}
+        {next ? <span className="font-mono text-text-secondary">Next: {next}</span> : null}
       </div>
+      <span className="truncate font-mono text-2xs text-text-muted" title={run.run_id}>
+        {run.run_id}
+      </span>
+    </div>
+  );
+}
+
+function EmptyRunHeader() {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-sunken px-4 py-3 text-xs font-bold text-text-secondary">
+      <Info className="h-4 w-4 text-text-muted" />
+      No active run; showing enabled workflow capabilities.
+    </div>
+  );
+}
+
+function DynamicWorkflowMap({ graphData }) {
+  const { primary, idle } = relevantWorkflowNodes(graphData);
+  const activeRun = graphData?.run;
+
+  return (
+    <div className="rounded-2xl border-2 border-border-subtle bg-surface-raised p-5 shadow-card">
+      <div className="mb-5 space-y-4">
+        {activeRun ? <ActiveRunHeader run={activeRun} /> : <EmptyRunHeader />}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-extrabold text-text-primary">Run Focus</h3>
+            <p className="text-2xs text-text-muted">
+              Nodes are weighted by the current run; inactive enabled workers stay visible below.
+            </p>
+          </div>
+          <EdgeLegend />
+        </div>
+      </div>
+
+      <div className="overflow-x-auto pb-2">
+        <div className="flex min-w-max items-stretch gap-0">
+          {primary.map((node, index) => (
+            <div key={node.name} className="flex items-center">
+              <WorkerNode node={node} />
+              {index < primary.length - 1 ? <Connector /> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {idle.length > 0 ? (
+        <div className="mt-6 border-t border-border-subtle pt-4">
+          <div className="mb-3 flex items-center gap-2 text-2xs font-extrabold uppercase text-text-muted">
+            <GitBranch className="h-3.5 w-3.5" />
+            Enabled but idle
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {idle.map((node) => (
+              <WorkerNode key={node.name} node={node} compact />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -394,14 +201,16 @@ export default function WorkflowGraphTab({ loadingGraph, graphError, graphData, 
     <div className="space-y-6">
       <div className="border-b-2 border-border-subtle pb-2">
         <h2 className="text-base font-extrabold text-text-primary">Workflow Graph</h2>
-        <p className="text-xs text-text-muted">Visual topology of pipeline nodes, decision gates, transition edges, and active execution run path.</p>
+        <p className="text-xs text-text-muted">
+          Dynamic view of active run focus and enabled workflow capabilities.
+        </p>
       </div>
 
       {loadingGraph ? (
         <Spinner />
       ) : graphError ? (
         <div className="bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl text-status-danger-text flex items-center space-x-3 shadow-card">
-          <AlertTriangle className="h-6 w-6 shrink-0" />
+          <XCircle className="h-6 w-6 shrink-0" />
           <span className="font-bold text-sm">{graphError}</span>
         </div>
       ) : !hasGraphData ? (
@@ -409,10 +218,7 @@ export default function WorkflowGraphTab({ loadingGraph, graphError, graphData, 
           No workflow graph nodes or edges recorded for this project yet.
         </div>
       ) : (
-        <div className="bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-6 overflow-x-auto relative">
-          {graphData.run ? <ActiveRunHeader run={graphData.run} /> : null}
-          <WorkflowCanvas graphData={graphData} />
-        </div>
+        <DynamicWorkflowMap graphData={graphData} />
       )}
     </div>
   );
