@@ -2635,6 +2635,30 @@ def _dashboard_stepper_steps() -> list[dict[str, str]]:
     return steps
 
 
+def _latest_archived_run_summary(workspace: Path, project_key: str) -> dict[str, str]:
+    key = normalize_project_key(project_key)
+    archive_dir = StateStore(workspace).project_state_dir(key) / "archived"
+    if not archive_dir.is_dir():
+        return {}
+    archived_paths = sorted(
+        archive_dir.glob("*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in archived_paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        return {
+            "run_id": str(data.get("run_id", "") or ""),
+            "idea": str(data.get("idea", "") or ""),
+            "source_type": str(data.get("source_type", "") or ""),
+            "archive_path": str(path),
+        }
+    return {}
+
+
 def _dashboard_stepper_node_sequence(steps: list[dict[str, str]]) -> dict[str, int]:
     sequence: dict[str, int] = {}
     for index, step in enumerate(steps, start=1):
@@ -3648,6 +3672,7 @@ def build_start_console_context(
         "worker_roles": WORKER_ROLES,
         "deployment_backend": deployment_backend,
         "delivery_contract": delivery_contract,
+        "latest_archived_run": _latest_archived_run_summary(workspace, str(project.get("key", "GTO") or "GTO")),
         "project_base": str(directory_base),
         "candidate_dirs": discover_project_directories(directory_base),
     }

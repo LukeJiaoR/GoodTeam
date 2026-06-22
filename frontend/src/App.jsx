@@ -285,6 +285,14 @@ export default function App() {
         setDeliveryMode(sc.delivery_mode || 'init_project');
         setProjectConfig(sc.project_config || '');
         setWorkerBackendMode(sc.worker_backend?.mode || 'codex');
+        const archivedIdea = String(sc.latest_archived_run?.idea || '').trim();
+        const archivedSourceType = String(sc.latest_archived_run?.source_type || '').trim();
+        if (!payload.active_run && archivedIdea) {
+          setStartMode(archivedSourceType === 'existing_project' ? 'existing_project' : 'new_project');
+          setIdea(previous => {
+            return previous.trim() ? previous : archivedIdea;
+          });
+        }
 
         const repos = sc.project_report?.repos || {};
         setProjectRoot(resolveProjectRootFromRepos(repos));
