@@ -1572,6 +1572,37 @@ def test_build_start_console_context_reads_project_and_model_config(tmp_path):
     assert context["deployment_backend"]["staging_ssh_target"] == "real-staging"
     assert context["delivery_contract"]["required"] is True
     assert context["delivery_contract"]["acceptance_count"] == 1
+
+
+def test_build_start_console_context_exposes_latest_archived_run_for_restart(tmp_path):
+    workspace = tmp_path / "goodteam"
+    project_config = workspace / "projects" / "contentops.local.yaml"
+    project_config.parent.mkdir(parents=True)
+    project_config.write_text(
+        "name: AI Content Studio\nkey: CONTENTOPS\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CONTENTOPS", "Restart this exact workflow goal")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    StateStore(workspace).write_project_current(state)
+
+    terminate_project_run(workspace=workspace, project_key="CONTENTOPS")
+
+    context = build_start_console_context(
+        workspace=workspace,
+        model_config=Path("models.yaml"),
+        project_config=project_config,
+    )
+
+    assert context["latest_archived_run"] == {
+        "run_id": "run-1",
+        "idea": "Restart this exact workflow goal",
+        "source_type": "idea",
+        "archive_path": str(workspace / "state" / "projects" / "CONTENTOPS" / "archived" / "run-1-cancelled.json"),
+    }
+
+
 def test_build_start_console_context_scopes_directory_candidates_to_project_repos(tmp_path):
     project_root = tmp_path / "contentops"
     docs = project_root / "docs"
@@ -3055,6 +3086,17 @@ def test_dispatch_track_form_hook_is_extracted_from_app_shell():
         "dispatchSuccess",
     ]:
         assert f"const [{state_name}" not in app
+
+
+def test_frontend_prefills_restart_goal_from_latest_archived_run_without_overwriting_user_text():
+    root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+
+    assert "const archivedIdea = String(sc.latest_archived_run?.idea || '').trim();" in app
+    assert "const archivedSourceType = String(sc.latest_archived_run?.source_type || '').trim();" in app
+    assert "if (!payload.active_run && archivedIdea) {" in app
+    assert "return previous.trim() ? previous : archivedIdea;" in app
+    assert "setStartMode(archivedSourceType === 'existing_project' ? 'existing_project' : 'new_project');" in app
 
 
 def test_clipboard_feedback_hook_is_extracted_from_app_shell():
@@ -4874,6 +4916,28 @@ def test_start_workflow_rejects_new_run_when_current_run_is_active(tmp_path):
         assert "active run already exists" in str(exc)
     else:
         raise AssertionError("Expected active run guard to reject a new run")
+
+
+def test_start_workflow_allows_new_run_after_project_run_is_terminated(tmp_path):
+    existing = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
+    existing.current_node = "prd_review_gate"
+    existing.next_node = "await_prd_approval"
+    StateStore(tmp_path).write_project_current(existing)
+
+    terminate_project_run(workspace=tmp_path, project_key="CONTENTOPS")
+
+    payload = start_workflow(
+        workspace=tmp_path,
+        idea="Restart the AI content studio workflow",
+        project_key="CONTENTOPS",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+    )
+
+    assert payload["project_key"] == "CONTENTOPS"
+    assert payload["run_id"] != "run-1"
+    assert payload["next_node"] == "await_prd_approval"
+    assert StateStore(tmp_path).read_project_current("CONTENTOPS").run_id == payload["run_id"]
 
 
 def test_start_workflow_dry_run_does_not_write_state(tmp_path):
