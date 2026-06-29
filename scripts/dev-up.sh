@@ -14,7 +14,7 @@
 #   scripts/dev-up.sh --port=9000
 #
 # For frontend hot-reload: keep this running, then in another tab
-#   cd frontend && npm run dev      # opens :5173, proxies /api to this server
+#   cd frontend && npm run dev      # opens :8790, proxies /api to this server
 #
 set -euo pipefail
 
@@ -110,6 +110,6 @@ echo ""
 echo "[dev-up] GoodTeam dev instance is alive:"
 echo "          Dashboard    : http://localhost:$PORT/"
 echo "          DEMO detail  : http://localhost:$PORT/?project=DEMO"
-echo "          (Ctrl-C to stop. FE hot-reload: cd frontend && npm run dev → :5173)"
+echo "          (Ctrl-C to stop. FE hot-reload: cd frontend && npm run dev → :8790)"
 echo ""
 run serve --workspace "$WS" --port "$PORT"

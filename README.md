@@ -109,7 +109,7 @@ cd frontend
 npm install
 npm run dev
 ```
-Open `http://localhost:5173/` in your browser. All operations (e.g., loading project overview, submitting approvals, starts, and edits) will route seamlessly through the dev server proxy to the backend.
+Open `http://localhost:8790/` in your browser. GoodTeam pins the local frontend dev server to port 8790 so it does not collide with Vite's default 5173 used by other workspaces. All operations (e.g., loading project overview, submitting approvals, starts, and edits) will route seamlessly through the dev server proxy to the backend.
 
 #### 3. Production Hosting (Backend Static File Serving)
 To deploy or host the React dashboard directly via the Python backend, compile the static files:
