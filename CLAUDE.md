@@ -100,6 +100,7 @@ after tests + lint pass and a human bless.
 ## Key docs (read as needed)
 
 - `docs/plans/workflow-role-division.md` — your operating mode + role chain + prompt rules.
+- `docs/development-branch-hygiene.md` — branch / PR / worktree cleanup rules after merges.
 - `docs/current-progress.md` — **rolling project memory / footprint log. Check here for "where we are now."**
 - `docs/product-vision.md` — strategy & the two moats (multi-agent graph; compounding memory); see §5.3 status.
 - `docs/plans/` — active PRDs, per-track handoffs, QA plans, patch handoffs.
