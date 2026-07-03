@@ -443,10 +443,14 @@ def build_approval_recommendation(
 def _derive_smoke_status(workspace: Path) -> str:
     """Aggregate recent smoke report verdicts; failure-safe, defaults to "unknown"."""
     try:
-        items = build_smoke_run_items(workspace)
-        if not items:
+        latest = _latest_smoke_report(workspace)
+        if latest is None:
             return "unknown"
-        statuses = [str(item.get("report_status", "") or "").lower() for item in items]
+        _, report, wrapper = latest
+        statuses = [str(report.get("status", wrapper.get("status", "")) or "").lower()]
+        for run in report.get("runs", []):
+            if isinstance(run, dict):
+                statuses.append(str(run.get("status", "") or "").lower())
         if any(status == "failed" for status in statuses):
             return "failed"
         if any(status == "passed" for status in statuses):
@@ -454,6 +458,88 @@ def _derive_smoke_status(workspace: Path) -> str:
         return "unknown"
     except Exception:
         return "unknown"
+
+
+def _latest_smoke_report(workspace: Path) -> tuple[Path, dict[str, object], dict[str, object]] | None:
+    root = workspace / "state" / "smoke-runs"
+    if not root.is_dir():
+        return None
+    for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            wrapper = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(wrapper, dict):
+            continue
+        nested = wrapper.get("report")
+        report = nested if isinstance(nested, dict) and nested else wrapper
+        if isinstance(report.get("runs", []), list):
+            return path, report, wrapper
+    return None
+
+
+def _smoke_command_refs(commands: object) -> list[dict[str, object]]:
+    if not isinstance(commands, list):
+        return []
+    refs: list[dict[str, object]] = []
+    for raw in commands:
+        if not isinstance(raw, dict):
+            continue
+        refs.append(
+            {
+                "name": str(raw.get("name", "") or ""),
+                "command": str(raw.get("command", "") or ""),
+                "cwd": str(raw.get("cwd", "") or ""),
+                "exit_code": raw.get("exit_code", ""),
+            }
+        )
+    return refs
+
+
+def _build_smoke_refs(workspace: Path, project_key: str) -> list[dict[str, object]]:
+    latest = _latest_smoke_report(workspace)
+    if latest is None:
+        return []
+    report_path, report, wrapper = latest
+    report_status = str(report.get("status", wrapper.get("status", "")) or "")
+    refs: list[dict[str, object]] = []
+    for raw in report.get("runs", []):
+        if not isinstance(raw, dict):
+            continue
+        run_project = str(raw.get("project_key", "") or "")
+        if project_key and run_project and run_project != project_key:
+            continue
+        evidence = raw.get("evidence", {})
+        evidence = evidence if isinstance(evidence, dict) else {}
+        smoke_report_path = str(evidence.get("smoke_report", "") or report_path)
+        refs.append(
+            {
+                "report_path": smoke_report_path,
+                "report_status": report_status,
+                "project_key": run_project,
+                "suite": str(raw.get("suite", "") or ""),
+                "cycle": raw.get("cycle", ""),
+                "status": str(raw.get("status", "") or ""),
+                "classification": str(raw.get("classification", "") or ""),
+                "run_id": str(raw.get("run_id", "") or ""),
+                "worker_job_ids": [str(item) for item in raw.get("worker_job_ids", []) if str(item)],
+                "worker_result_paths": [str(item) for item in evidence.get("worker_result_paths", []) if str(item)],
+                "commands": _smoke_command_refs(raw.get("commands", [])),
+            }
+        )
+    return refs
+
+
+def _derive_smoke_status_from_refs(smoke_refs: list[dict[str, object]]) -> str:
+    statuses: list[str] = []
+    for ref in smoke_refs:
+        statuses.append(str(ref.get("status", "") or "").lower())
+        statuses.append(str(ref.get("report_status", "") or "").lower())
+    if any(status == "failed" for status in statuses):
+        return "failed"
+    if any(status == "passed" for status in statuses):
+        return "passed"
+    return "unknown"
 
 
 def _derive_qa_status(state: AgileDevState | object | None) -> str:
@@ -551,6 +637,7 @@ def build_approval_evidence_snapshot(
         "debate_refs": [debate_ref] if debate_ref else [],
         "blocker_count": 0,
         "provenance_refs": [],
+        "smoke_refs": [],
     }
     try:
         artifacts = getattr(state, "artifacts", {}) if state is not None else {}
@@ -581,8 +668,10 @@ def build_approval_evidence_snapshot(
         snapshot["provenance_refs"] = []
 
     try:
-        snapshot["smoke_status"] = _derive_smoke_status(workspace)
+        snapshot["smoke_refs"] = _build_smoke_refs(workspace, project_key)
+        snapshot["smoke_status"] = _derive_smoke_status_from_refs(list(snapshot["smoke_refs"]))
     except Exception:
+        snapshot["smoke_refs"] = []
         snapshot["smoke_status"] = "unknown"
 
     try:

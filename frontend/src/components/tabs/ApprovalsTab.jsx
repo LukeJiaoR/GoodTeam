@@ -636,6 +636,57 @@ export default function ApprovalsTab({
                                          </div>
                                        )}
                                      </div>
+
+                                     {/* Smoke Evidence */}
+                                     {Array.isArray(evidenceSnapshot?.smoke_refs) && evidenceSnapshot.smoke_refs.length > 0 && (
+                                       <div className="border border-border-subtle rounded-xl p-3 bg-surface-raised space-y-3">
+                                         <div>
+                                           <h4 className="text-2xs font-extrabold uppercase tracking-wider text-text-primary">Smoke Evidence</h4>
+                                           <p className="text-2xs text-text-muted">Latest smoke run evidence captured for this approval.</p>
+                                         </div>
+                                         <div className="space-y-2">
+                                           {evidenceSnapshot.smoke_refs.map((ref, idx) => {
+                                             const sb = statusBadge(ref?.status || ref?.report_status);
+                                             const workerPaths = Array.isArray(ref?.worker_result_paths) ? ref.worker_result_paths : [];
+                                             const commands = Array.isArray(ref?.commands) ? ref.commands : [];
+                                             return (
+                                               <div key={`${ref?.report_path || 'smoke'}-${idx}`} className="border border-border-subtle rounded-lg bg-surface-base p-3 space-y-2">
+                                                 <div className="flex flex-wrap items-center gap-2">
+                                                   <span className={`text-2xs font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${sb.cls}`}>{sb.label}</span>
+                                                   {ref?.suite && <span className="text-2xs text-text-muted">Suite: {ref.suite}</span>}
+                                                   {ref?.cycle && <span className="text-2xs text-text-muted">Cycle: {ref.cycle}</span>}
+                                                   {ref?.run_id && <span className="text-2xs text-text-muted">Run: {ref.run_id}</span>}
+                                                 </div>
+                                                 {ref?.report_path && (
+                                                   <div className="text-2xs text-text-secondary">Report: <FilePath path={ref.report_path} segments={1} /></div>
+                                                 )}
+                                                 {workerPaths.length > 0 && (
+                                                   <div className="space-y-1">
+                                                     <div className="text-2xs font-bold uppercase tracking-wider text-text-muted">Worker Results</div>
+                                                     {workerPaths.slice(0, 3).map((path) => (
+                                                       <div key={path} className="text-2xs text-text-secondary"><FilePath path={path} segments={1} /></div>
+                                                     ))}
+                                                     {workerPaths.length > 3 && <div className="text-2xs text-text-muted">+{workerPaths.length - 3} more</div>}
+                                                   </div>
+                                                 )}
+                                                 {commands.length > 0 && (
+                                                   <div className="space-y-1">
+                                                     <div className="text-2xs font-bold uppercase tracking-wider text-text-muted">Commands</div>
+                                                     {commands.slice(0, 3).map((command, commandIdx) => (
+                                                       <div key={`${command?.command || 'command'}-${commandIdx}`} className="flex flex-wrap gap-x-2 gap-y-1 text-2xs text-text-secondary">
+                                                         <span>{command?.name || 'command'}</span>
+                                                         <span className={Number(command?.exit_code) === 0 ? 'text-status-success-text' : 'text-status-danger-text'}>exit {command?.exit_code ?? 'unknown'}</span>
+                                                         {command?.command && <code className="break-all text-text-muted">{command.command}</code>}
+                                                       </div>
+                                                     ))}
+                                                   </div>
+                                                 )}
+                                               </div>
+                                             );
+                                           })}
+                                         </div>
+                                       </div>
+                                     )}
                                    </div>
 
                                     {/* Provenance Section */}
