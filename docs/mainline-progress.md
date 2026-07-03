@@ -21,19 +21,58 @@ reference, verification evidence, and follow-up status.
 
 ## Active Increment
 
-No active backlog increment remains. Remaining work is parked behind explicit gates
-or deliberate incremental tracks: D3 real fan-in execution plus live-smoke
-evidence after the now-explicit worktree-per-worker isolation strategy, deeper
-dynamic-plan/topological runner ownership beyond the now-wired sequential and
-read-only/fake parallel slices, server-action live-use evidence after the CP19
-execution-policy report, broader G3 routing application after quality review, future
-G3 shadow LLM triage after readiness review, external Codex auth recovery,
-shared-worktree edit-collision need, optional full research/review memory
-ingestion, and continued Theme panel/component token cleanup with visual review.
+No active backlog increment remains. Remaining work is parked behind explicit
+gates or deliberate incremental tracks. CP20 completed the D3/G3
+readiness-review kickoff and exposed G3 routing-quality thresholds in the CLI,
+but D3 real fan-in execution still requires fake/read-only live-smoke evidence
+after the now-explicit worktree-per-worker isolation strategy. Deeper
+dynamic-plan/topological runner ownership remains beyond the now-wired
+sequential and read-only/fake parallel slices. Server-action live-use evidence
+remains after the CP19 execution-policy report, broader G3 routing application
+remains after quality review, future G3 shadow LLM triage remains after
+readiness review, and external Codex auth recovery, shared-worktree
+edit-collision need, optional full research/review memory ingestion, and
+continued Theme panel/component token cleanup remain parked.
 Theme System no longer has a Vivid-vs-Minimal winner gate; both themes stay
 productized, with Vivid as default.
 
 ## Completed Increments
+
+### 2026-07-04 - D3/G3 readiness review kickoff
+
+**Intent:** start the gated D3 real-parallel and G3 LLM-triage tracks without
+bypassing their evidence gates.
+
+**Implemented:**
+- Added CP20 to `docs/plans/d3-server-land-g3-checkpoints.md` as the readiness
+  review kickoff.
+- Exposed `--min-confirmed` and `--max-false-positive-rate` on
+  `goodteam-os failure-patterns` so G3 routing-quality readiness can be
+  reproduced from the CLI.
+- Confirmed the local G3 ledger is not ready for LLM triage:
+  `total_patterns=0`,
+  `routing_quality_gate.status=insufficient_quality_evidence`,
+  `llm_triage_readiness.status=collect_more_samples`, and
+  `candidate_sample_count=0`.
+- Kept D3 real worker execution, G3 routing, G3 LLM model invocation, endpoints,
+  UI, and theme behavior unchanged.
+
+**Verification evidence:**
+- Red CLI evidence:
+  `PYTHONPATH=src .venv/bin/python -m goodteam_os.cli failure-patterns --project-root /Users/luke/WorkSpace/codeAi/GoodTeam --min-hits 1 --min-confirmed 1 --max-false-positive-rate 0.2 --min-llm-triage-samples 2`
+  initially failed because the quality threshold flags were not recognized.
+- Focused G3 CLI:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_cli.py -q -k 'failure_patterns'`
+  -> `3 passed, 18 deselected`.
+- Focused D3 guard:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'parallel_execution_plan'`
+  -> `2 passed, 26 deselected`.
+
+**Deferred from this increment:**
+- D3 real worker fan-out/fan-in execution.
+- D3 fake/read-only fan-in live smoke report.
+- G3 shadow LLM triage worker or any model invocation.
+- Broader G3 routing application beyond the CP8 canary boundary.
 
 ### 2026-06-10 — i18n rollout: Approvals tab summary slice
 

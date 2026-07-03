@@ -1,5 +1,19 @@
 # Current Progress
 
+- Footprint 2026-07-04 - D3/G3 readiness review kickoff. Started the gated
+  D3 real-parallel and G3 LLM-triage tracks as evidence work, not execution
+  enablement. Added CP20 to `docs/plans/d3-server-land-g3-checkpoints.md`;
+  exposed `--min-confirmed` and `--max-false-positive-rate` on
+  `goodteam-os failure-patterns` so G3 routing-quality review can reproduce
+  threshold inputs from the CLI. Local readiness remains blocked:
+  `total_patterns=0`, `routing_quality_gate.status=insufficient_quality_evidence`,
+  `llm_triage_readiness.status=collect_more_samples`, and
+  `candidate_sample_count=0`. D3 real worker execution, G3 routing, model
+  invocation, endpoints, UI, and theme behavior are unchanged. Verification:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_cli.py -q -k 'failure_patterns'`
+  -> `3 passed, 18 deselected`;
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'parallel_execution_plan'`
+  -> `2 passed, 26 deselected`.
 - Footprint 2026-07-03 — external project config discovery closeout. Fixed an
   existing-project adoption edge where configs outside the runtime workspace
   could be used to start a run but then disappear from project discovery because
