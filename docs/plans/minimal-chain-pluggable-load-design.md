@@ -138,6 +138,10 @@ These are not mode-specific; they harden the minimal chain for every profile:
    (today ci/smoke/qa are `unknown`). Every real bug this session passed unit
    tests + CI and was caught only by live smoke. Make live smoke a gate input, not
    an afterthought — this is what makes "evidence-backed approval" true.
+   - Increment landed: approval snapshots now preserve latest project-scoped smoke
+     evidence refs (`smoke_refs`: report path, run/cycle/status, worker results,
+     worker job ids, and command exits) and the Review Workbench renders those refs.
+     Still separate: automatically triggering live smoke from the verify step.
 3. **Dispatch capability preflight** — before `dispatch`, check the adapter can run
    here (auth, model, TTY/PTY for agy, env). Would have caught the agy-PTY, codex
    gpt-5.5, and Telegram-localhost-URL losses.

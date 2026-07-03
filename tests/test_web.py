@@ -5854,6 +5854,7 @@ def test_decide_approval_writes_default_web_audit_metadata(tmp_path, monkeypatch
         "debate_refs": ["debate-1"],
         "blocker_count": 1,
         "provenance_refs": [],
+        "smoke_refs": [],
     }
 
     items = build_action_items(tmp_path, project_key="CONTENTOPS")
@@ -5940,6 +5941,7 @@ def test_build_approval_evidence_snapshot_is_failure_safe_on_missing_data(tmp_pa
         "debate_refs": [],
         "blocker_count": 0,
         "provenance_refs": [],
+        "smoke_refs": [],
     }
 
 
@@ -5958,6 +5960,21 @@ def _seed_smoke_report(workspace, status):
                     "suite": "contentops",
                     "cycle": 1,
                     "status": status,
+                    "run_id": "run-smoke",
+                    "classification": "",
+                    "commands": [
+                        {
+                            "name": "build",
+                            "command": "npm run build",
+                            "cwd": str(workspace / "contentops"),
+                            "exit_code": 0 if status == "passed" else 1,
+                        }
+                    ],
+                    "evidence": {
+                        "smoke_report": str(workspace / "state" / "smoke-runs" / "latest.json"),
+                        "worker_result_paths": [str(workspace / "contentops" / ".goodteam" / "workers" / "jobs" / "job-1" / "result.md")]
+                    },
+                    "worker_job_ids": ["job-1"],
                 }
             ],
         },
@@ -5971,6 +5988,11 @@ def test_build_approval_evidence_snapshot_smoke_status_passed(tmp_path):
     snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="CONTENTOPS")
 
     assert snapshot["smoke_status"] == "passed"
+    assert snapshot["smoke_refs"][0]["report_path"] == str(tmp_path / "state" / "smoke-runs" / "latest.json")
+    assert snapshot["smoke_refs"][0]["run_id"] == "run-smoke"
+    assert snapshot["smoke_refs"][0]["worker_job_ids"] == ["job-1"]
+    assert snapshot["smoke_refs"][0]["worker_result_paths"]
+    assert snapshot["smoke_refs"][0]["commands"][0]["command"] == "npm run build"
 
 
 def test_build_approval_evidence_snapshot_smoke_status_failed(tmp_path):
@@ -5988,6 +6010,17 @@ def test_build_approval_evidence_snapshot_smoke_status_unknown_when_no_reports(t
     snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="CONTENTOPS")
 
     assert snapshot["smoke_status"] == "unknown"
+    assert snapshot["smoke_refs"] == []
+
+
+def test_build_approval_evidence_snapshot_smoke_status_ignores_other_projects(tmp_path):
+    _seed_smoke_report(tmp_path, "passed")
+    state = create_initial_state("run-smoke", "GTO", "Smoke run")
+
+    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
+
+    assert snapshot["smoke_status"] == "unknown"
+    assert snapshot["smoke_refs"] == []
 
 
 def test_build_approval_evidence_snapshot_qa_status_passed_on_approved(tmp_path):
