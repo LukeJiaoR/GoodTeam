@@ -4867,6 +4867,52 @@ def test_start_workflow_can_adopt_existing_project_first(tmp_path):
     assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", payload["run_id"], "takeover_review_gate").is_file()
 
 
+def test_start_workflow_keeps_external_project_config_discoverable(tmp_path, monkeypatch):
+    monkeypatch.setattr(web, "notify_current_approval_gate", lambda *args, **kwargs: {"status": "skipped"})
+    workspace = tmp_path / "run"
+    project_dir = tmp_path / "projects"
+    target_root = tmp_path / "target"
+    project_dir.mkdir()
+    target_root.mkdir()
+    project_config = project_dir / "check.local.yaml"
+    project_config.write_text(
+        f"name: Runtime Check\nkey: CHECK\nrepos:\n  app: {target_root}\nworker_backend:\n  mode: fake\n",
+        encoding="utf-8",
+    )
+
+    payload = start_workflow(
+        workspace=workspace,
+        idea="Build a task tracker",
+        project_key="CHECK",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+        project_config=project_config,
+    )
+
+    assert payload["source_ref"] == str(project_config.resolve())
+    assert web._project_config_for_key(workspace, "CHECK") == project_config.resolve()
+    assert build_project_overview_items(workspace)[0]["project_key"] == "CHECK"
+
+
+def test_discover_project_configs_reads_sibling_projects_for_legacy_runs(tmp_path):
+    workspace = tmp_path / "run"
+    project_dir = tmp_path / "projects"
+    target_root = tmp_path / "target"
+    workspace.mkdir()
+    project_dir.mkdir()
+    target_root.mkdir()
+    project_config = project_dir / "check.local.yaml"
+    project_config.write_text(
+        f"name: Runtime Check\nkey: CHECK\nrepos:\n  app: {target_root}\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "CHECK", "Build a task tracker")
+    StateStore(workspace).write_project_current(state)
+
+    assert web._project_config_for_key(workspace, "CHECK") == project_config.resolve()
+    assert build_project_overview_items(workspace)[0]["project_key"] == "CHECK"
+
+
 def test_start_workflow_notifies_when_takeover_approval_gate_is_ready(tmp_path, monkeypatch):
     notifications = []
 

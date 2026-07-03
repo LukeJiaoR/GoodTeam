@@ -1,5 +1,17 @@
 # Current Progress
 
+- Footprint 2026-07-03 — external project config discovery closeout. Fixed an
+  existing-project adoption edge where configs outside the runtime workspace
+  could be used to start a run but then disappear from project discovery because
+  only `workspace/projects/*.local.yaml` was scanned. `start_workflow` now
+  resolves file-backed `project_config` paths before writing `source_ref`;
+  discovery reads both `workspace/projects` and sibling `projects`, and also
+  rehydrates file-backed configs from project `current.json` state. Unknown
+  `/?project=...` dashboard requests now return a clear HTTP 400 instead of
+  bubbling a connection-closing exception. Verification:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests -q` -> `752 passed`;
+  `.venv/bin/ruff check src/goodteam_os/ tests/` passed; `git diff --check`
+  clean.
 - Footprint 2026-06-29 — branch / PR hygiene rulebook. After cleaning up stale
   squash-merged branches and auditing old mixed-history branches, added a
   project-level branch hygiene standard so future PR landings finish with remote
