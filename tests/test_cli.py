@@ -129,6 +129,55 @@ def test_cli_failure_patterns_outputs_routing_readiness_json(tmp_path, capsys):
     assert payload["candidate_patterns"][0]["classifier_hint"] == "network"
 
 
+def test_cli_failure_patterns_accepts_routing_quality_thresholds(tmp_path, capsys):
+    from goodteam_os import cli
+    from goodteam_os.failure_patterns import FailurePatternLibrary
+
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    library = FailurePatternLibrary(project_root)
+    for index in range(2):
+        library.record_failure(
+            failure_class="network",
+            summary="503 Service Unavailable from registry.npmmirror.com",
+            disposition="retry_same_role",
+            role="implementation",
+            node="implementation",
+            source=f"worker_failure:run-{index}:implementation:implementation",
+        )
+    pattern = library.list_patterns()[0]
+    for index in range(2):
+        library.record_routing_outcome(
+            signature=str(pattern["signature"]),
+            applied=True,
+            disposition="retry_same_role",
+            deterministic_disposition="block",
+            reason="canary_allowed",
+            outcome="confirmed",
+            source=f"triage_decided:run-{index}:implementation",
+        )
+
+    result = cli.main(
+        [
+            "failure-patterns",
+            "--project-root",
+            str(project_root),
+            "--min-hits",
+            "1",
+            "--min-confirmed",
+            "2",
+            "--max-false-positive-rate",
+            "0.5",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert payload["routing_quality_gate"]["min_confirmed"] == 2
+    assert payload["routing_quality_gate"]["max_false_positive_rate"] == 0.5
+    assert payload["routing_quality_gate"]["status"] == "satisfied_for_review"
+
+
 def test_cli_failure_patterns_outputs_llm_triage_readiness_json(tmp_path, capsys):
     from goodteam_os import cli
     from goodteam_os.failure_patterns import FailurePatternLibrary

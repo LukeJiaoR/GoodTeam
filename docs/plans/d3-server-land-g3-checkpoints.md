@@ -772,3 +772,56 @@ CP13/CP14 audit visibility exists, and CP15 keeps `tag_release` report-only.
 
 **Rollback:** Revert CP19; guarded execution remains as CP9/CP15 defined, but the
 read-only execution policy report disappears.
+
+### CP20 - D3/G3 Readiness Review Kickoff
+
+**Status:** completed locally 2026-07-04.
+
+**Scope:** Convert the D3 real-parallel and G3 LLM-triage parking-lot language
+into an executable readiness review without enabling real parallel workers,
+invoking models, or changing routing behavior. Expose the existing G3 routing
+quality thresholds through the `failure-patterns` CLI so readiness reviews can
+reproduce the same threshold inputs as `FailurePatternLibrary`.
+
+**Entry Gate:** CP16 worker-isolation evidence, CP17 routing quality, CP18 LLM
+triage readiness data, and CP19 server-action execution policy are present.
+
+**Implementation Notes:**
+- Keep D3 real worker execution blocked. The next D3 evidence step is a
+  fake/read-only multi-worker fan-out/fan-in smoke that records per-worker
+  isolation paths, one write-domain owner per worker, and the merge/review
+  fan-in step.
+- Keep G3 LLM triage blocked. The current local ledger has zero
+  unknown/ambiguous failure-pattern samples, so the readiness status remains
+  `collect_more_samples`.
+- Add CLI flags `--min-confirmed` and `--max-false-positive-rate` to
+  `goodteam-os failure-patterns`, forwarding them to
+  `routing_readiness_report()`.
+- Do not touch `workflow_parallel_execution_plan` runtime behavior,
+  `triage_worker_failure`, `canary_routing_decision`, graph routing, worker
+  dispatch, endpoints, UI, or theme code.
+
+**Evidence Captured:**
+- Red CLI evidence:
+  `PYTHONPATH=src .venv/bin/python -m goodteam_os.cli failure-patterns --project-root /Users/luke/WorkSpace/codeAi/GoodTeam --min-hits 1 --min-confirmed 1 --max-false-positive-rate 0.2 --min-llm-triage-samples 2`
+  initially failed because `--min-confirmed` and
+  `--max-false-positive-rate` were not recognized.
+- Focused G3 CLI green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_cli.py -q -k 'failure_patterns'`
+  -> `3 passed, 18 deselected`.
+- Focused D3 guard green:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/test_workflow_table.py -q -k 'parallel_execution_plan'`
+  -> `2 passed, 26 deselected`.
+- Local readiness command after the CLI exposure:
+  `PYTHONPATH=src .venv/bin/python -m goodteam_os.cli failure-patterns --project-root /Users/luke/WorkSpace/codeAi/GoodTeam --min-hits 1 --min-confirmed 1 --max-false-positive-rate 0.2 --min-llm-triage-samples 2`
+  -> `total_patterns=0`, `routing_quality_gate.status=insufficient_quality_evidence`,
+  `llm_triage_readiness.status=collect_more_samples`, and
+  `candidate_sample_count=0`.
+
+**Next Gate:** Do not implement D3 real parallel execution until a fake/read-only
+fan-in smoke report exists. Do not implement G3 shadow LLM triage until
+unknown/ambiguous samples reach the configured readiness threshold and a
+shadow-mode cost/control review is accepted.
+
+**Rollback:** Revert the CLI flag exposure and this checkpoint note. Existing
+CP16-CP19 readiness reports remain intact.
