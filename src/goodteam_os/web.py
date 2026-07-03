@@ -2710,6 +2710,10 @@ def start_workflow(
     if source_type == "existing_project" and project_config is None:
         raise ValueError("Project config is required for existing project adoption.")
 
+    if project_config is not None:
+        project_config = project_config.expanduser()
+        if project_config.is_file():
+            project_config = project_config.resolve()
     target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
     resolved_profile, role_models = resolve_project_model_profile(
         model_config,
@@ -2723,7 +2727,7 @@ def start_workflow(
         idea=idea.strip(),
     )
     state.source_type = source_type
-    state.source_ref = str(project_config) if source_type == "existing_project" and project_config is not None else "manual"
+    state.source_ref = str(project_config) if project_config is not None and project_config.is_file() else "manual"
     state.model_profile = resolved_profile
     state.delivery_mode = normalize_delivery_mode(delivery_mode or str(target.get("delivery_mode", "") or "init_project"))
     state.delivery_standards = _normalize_start_delivery_standards(delivery_standards) if state.delivery_mode == "custom" else []
@@ -3679,12 +3683,45 @@ def build_start_console_context(
 
 
 def discover_project_configs(workspace: Path) -> list[Path]:
-    project_dir = workspace / "projects"
-    if not project_dir.is_dir():
-        return []
-    paths = [*project_dir.glob("*.local.yaml")]
-    unique = sorted({path.resolve(): path for path in paths}.values(), key=lambda item: item.name.lower())
+    paths: list[Path] = []
+    for project_dir in _project_config_dirs(workspace):
+        if project_dir.is_dir():
+            paths.extend(project_dir.glob("*.local.yaml"))
+    paths.extend(_project_configs_from_state_sources(workspace))
+    unique = sorted({path.resolve(): path.resolve() for path in paths if path.is_file()}.values(), key=lambda item: item.name.lower())
     return unique
+
+
+def _project_config_dirs(workspace: Path) -> list[Path]:
+    candidates = [workspace / "projects", workspace.parent / "projects"]
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(candidate)
+    return unique
+
+
+def _project_configs_from_state_sources(workspace: Path) -> list[Path]:
+    state_projects_dir = workspace / "state" / "projects"
+    if not state_projects_dir.is_dir():
+        return []
+    store = StateStore(workspace)
+    paths: list[Path] = []
+    for current_path in state_projects_dir.glob("*/current.json"):
+        state = store.read_project_current(current_path.parent.name)
+        if state is None:
+            continue
+        source_ref = str(state.source_ref or "").strip()
+        if not source_ref or source_ref == "manual":
+            continue
+        source_path = Path(source_ref).expanduser()
+        if source_path.is_file():
+            paths.append(source_path)
+    return paths
 
 
 def build_project_overview_items(workspace: Path, model_config: Path = Path("models.yaml")) -> list[dict[str, str]]:
@@ -7960,9 +7997,13 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if not project_key:
                 body = render_project_overview(workspace).encode("utf-8")
             else:
-                project_config = _project_config_for_key(workspace, project_key)
-                start_context = build_start_console_context(workspace, project_config=project_config)
-                body = render_dashboard(resolve_dashboard_state(workspace, project_key=project_key), start_context).encode("utf-8")
+                try:
+                    project_config = _project_config_for_key(workspace, project_key)
+                    start_context = build_start_console_context(workspace, project_config=project_config)
+                    body = render_dashboard(resolve_dashboard_state(workspace, project_key=project_key), start_context).encode("utf-8")
+                except Exception as exc:
+                    self.send_error(400, str(exc))
+                    return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

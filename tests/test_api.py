@@ -1112,7 +1112,11 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert handler.response_headers.get("Content-Type") == "text/html; charset=utf-8"
     assert b"<!doctype html>" in handler.wfile.getvalue()
 
-    # 5. Test static file serving when file exists in frontend/dist
+    # 5. Test unknown project pages return an HTTP error instead of closing the connection.
+    handler = simulate_get("/?project=UNKNOWN")
+    assert 400 in handler.responses
+
+    # 6. Test static file serving when file exists in frontend/dist
     dist_dir = tmp_path / "frontend" / "dist"
     dist_dir.mkdir(parents=True)
     index_html = dist_dir / "index.html"
