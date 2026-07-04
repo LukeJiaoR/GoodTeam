@@ -32,6 +32,20 @@ def test_execution_id_is_stable_from_task_and_attempt():
     assert first == "exec_d72afff76d2f4d481f00f65f9018fdce"
     assert len(first.removeprefix("exec_")) == 32
     assert execution_id_from_task(task_id, attempt=2) != first
+    assert execution_id_from_task(task_id) == first
+
+
+def test_execution_attempt_must_be_strict_positive_int():
+    task_id = task_id_from_github_issue("LukeJiaoR/GoodTeam", 220)
+    invalid_attempts = [0, -1, True, False, 1.9, "1"]
+
+    for attempt in invalid_attempts:
+        try:
+            execution_id_from_task(task_id, attempt=attempt)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"accepted invalid attempt: {attempt!r}")
 
 
 def test_execution_id_accepts_run_seed_instead_of_attempt():

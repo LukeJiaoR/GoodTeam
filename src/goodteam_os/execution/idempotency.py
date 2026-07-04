@@ -25,7 +25,8 @@ def execution_id_from_task(
     if run_seed is not None:
         seed = f"seed:{_normalize_non_empty(run_seed, 'run_seed')}"
     else:
-        seed = f"attempt:{1 if attempt is None else int(attempt)}"
+        normalized_attempt = 1 if attempt is None else _validate_positive_int(attempt, "attempt")
+        seed = f"attempt:{normalized_attempt}"
     return f"exec_{_digest(f'execution|{normalized_task_id}|{seed}')}"
 
 
@@ -58,6 +59,10 @@ def _normalize_non_empty(value: object, field_name: str) -> str:
 
 
 def _validate_issue_number(issue_number: int) -> int:
-    if not isinstance(issue_number, int) or isinstance(issue_number, bool) or issue_number <= 0:
-        raise ValueError("issue_number must be a positive int")
-    return issue_number
+    return _validate_positive_int(issue_number, "issue_number")
+
+
+def _validate_positive_int(value: int, field_name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{field_name} must be a positive int")
+    return value
