@@ -1,4 +1,15 @@
-from goodteam_os.execution.models import ExecutionRun, ExecutionTask, GitHubBinding, LedgerEvent
+import pytest
+
+from goodteam_os.execution.models import (
+    ExecutionActor,
+    ExecutionRun,
+    ExecutionRunStatus,
+    ExecutionTask,
+    ExecutionTaskStatus,
+    LedgerEvent,
+    LedgerEventType,
+    GitHubBinding,
+)
 
 
 def test_execution_task_serializes_to_stable_json_and_roundtrips():
@@ -30,6 +41,7 @@ def test_execution_task_serializes_to_stable_json_and_roundtrips():
         '"updated_at":"2026-07-04T03:16:40Z"}'
     )
     assert ExecutionTask.from_json(payload) == task
+    assert task.status is ExecutionTaskStatus.QUEUED
 
 
 def test_execution_run_serializes_to_stable_json_and_roundtrips():
@@ -59,6 +71,7 @@ def test_execution_run_serializes_to_stable_json_and_roundtrips():
         '"worker_job_id":"worker_789"}'
     )
     assert ExecutionRun.from_json(payload) == run
+    assert run.status is ExecutionRunStatus.RUNNING
 
 
 def test_ledger_event_serializes_payload_and_roundtrips():
@@ -84,6 +97,8 @@ def test_ledger_event_serializes_payload_and_roundtrips():
         '"task_id":"task_123"}'
     )
     assert LedgerEvent.from_json(payload) == event
+    assert event.event_type is LedgerEventType.STATUS_CHANGED
+    assert event.actor is ExecutionActor.ORCHESTRATOR
 
 
 def test_github_binding_serializes_to_stable_json_and_roundtrips():
@@ -105,3 +120,54 @@ def test_github_binding_serializes_to_stable_json_and_roundtrips():
         '"repo":"LukeJiaoR/GoodTeam"}'
     )
     assert GitHubBinding.from_json(payload) == binding
+
+
+def test_execution_models_reject_unknown_status_event_type_and_actor():
+    with pytest.raises(ValueError, match="ExecutionTask.status"):
+        ExecutionTask(
+            task_id="task_123",
+            source_type="github_issue",
+            repo="LukeJiaoR/GoodTeam",
+            issue_number=220,
+            title="Title",
+            body="Body",
+            goal="Goal",
+            status="queded",
+            created_at="2026-07-04T03:16:40Z",
+            updated_at="2026-07-04T03:16:40Z",
+        )
+
+    with pytest.raises(ValueError, match="ExecutionRun.status"):
+        ExecutionRun(
+            execution_id="exec_456",
+            task_id="task_123",
+            worker_job_id="worker_789",
+            adapter="codex",
+            status="done",
+            branch_name="goodteam/exec_456",
+            pr_number=None,
+            created_at="2026-07-04T04:00:00Z",
+            updated_at="2026-07-04T04:10:00Z",
+        )
+
+    with pytest.raises(ValueError, match="LedgerEvent.event_type"):
+        LedgerEvent(
+            event_id="evt_001",
+            execution_id="exec_456",
+            task_id="task_123",
+            event_type="status_chagned",
+            actor="orchestrator",
+            payload={},
+            created_at="2026-07-04T04:00:00Z",
+        )
+
+    with pytest.raises(ValueError, match="LedgerEvent.actor"):
+        LedgerEvent(
+            event_id="evt_001",
+            execution_id="exec_456",
+            task_id="task_123",
+            event_type="status_changed",
+            actor="orchstrator",
+            payload={},
+            created_at="2026-07-04T04:00:00Z",
+        )

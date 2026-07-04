@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 
 
-_DIGEST_LENGTH = 16
+_DIGEST_LENGTH = 32
 
 
 def task_id_from_github_issue(repo: str, issue_number: int) -> str:
     normalized_repo = _normalize_repo(repo)
-    return f"task_{_digest(f'github_issue|{normalized_repo}|{int(issue_number)}')}"
+    normalized_issue_number = _validate_issue_number(issue_number)
+    return f"task_{_digest(f'github_issue|{normalized_repo}|{normalized_issue_number}')}"
 
 
 def execution_id_from_task(
@@ -35,8 +36,9 @@ def branch_name_from_execution_id(execution_id: str) -> str:
 
 def idempotency_key_for_operation(repo: str, issue_number: int, operation: str) -> str:
     normalized_repo = _normalize_repo(repo)
+    normalized_issue_number = _validate_issue_number(issue_number)
     normalized_operation = _normalize_non_empty(operation, "operation").lower()
-    seed = f"idempotency|{normalized_repo}|{int(issue_number)}|{normalized_operation}"
+    seed = f"idempotency|{normalized_repo}|{normalized_issue_number}|{normalized_operation}"
     return f"idem_{_digest(seed)}"
 
 
@@ -53,3 +55,9 @@ def _normalize_non_empty(value: object, field_name: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} must not be empty")
     return normalized
+
+
+def _validate_issue_number(issue_number: int) -> int:
+    if not isinstance(issue_number, int) or isinstance(issue_number, bool) or issue_number <= 0:
+        raise ValueError("issue_number must be a positive int")
+    return issue_number
