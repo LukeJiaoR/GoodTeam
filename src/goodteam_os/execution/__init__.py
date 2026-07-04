@@ -4,6 +4,7 @@ from goodteam_os.execution.idempotency import (
     idempotency_key_for_operation,
     task_id_from_github_issue,
 )
+from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.models import (
     ExecutionActor,
     ExecutionRun,
@@ -18,6 +19,7 @@ from goodteam_os.execution.models import (
 
 __all__ = [
     "ExecutionActor",
+    "ExecutionLedger",
     "ExecutionRun",
     "ExecutionRunStatus",
     "ExecutionTask",
