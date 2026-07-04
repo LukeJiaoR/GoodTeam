@@ -25,11 +25,13 @@ from goodteam_os.execution.models import (
     LedgerEvent,
     LedgerEventType,
 )
+from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 
 
 __all__ = [
     "ExecutionActor",
     "ExecutionLedger",
+    "ExecutionOrchestrator",
     "ExecutionRun",
     "ExecutionRunStatus",
     "ExecutionTask",
