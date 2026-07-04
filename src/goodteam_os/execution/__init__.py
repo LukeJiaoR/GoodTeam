@@ -26,6 +26,8 @@ from goodteam_os.execution.models import (
     LedgerEventType,
 )
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
+from goodteam_os.execution.pr import PullRequestBindingService
+from goodteam_os.execution.ci import CIStatusService
 
 
 __all__ = [
@@ -45,6 +47,8 @@ __all__ = [
     "GitHubIssueSnapshot",
     "LedgerEvent",
     "LedgerEventType",
+    "PullRequestBindingService",
+    "CIStatusService",
     "branch_name_from_execution_id",
     "execution_id_from_task",
     "execution_task_from_github_issue",

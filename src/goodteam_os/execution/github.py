@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from goodteam_os.execution.idempotency import (
     branch_name_from_execution_id,
@@ -53,16 +53,38 @@ class GitHubClient(Protocol):
     def fetch_issue(self, repo: str, issue_number: int) -> GitHubIssueSnapshot:
         raise NotImplementedError
 
+    def create_or_update_branch(
+        self,
+        *,
+        repo: str,
+        branch_name: str,
+        base_ref: str = "main",
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def commit_files(
+        self,
+        *,
+        repo: str,
+        branch_name: str,
+        message: str,
+        files: dict[str, str],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
     def create_pr(
         self,
         *,
         repo: str,
-        issue_number: int,
+        issue_number: int | None,
         branch_name: str,
         execution_id: str,
         title: str,
         body: str,
     ) -> GitHubBinding:
+        raise NotImplementedError
+
+    def fetch_checks(self, repo: str, ref: str) -> dict[str, Any]:
         raise NotImplementedError
 
 
@@ -99,6 +121,13 @@ class GitHubExecutionBindingStore:
             ):
                 return binding
         return None
+
+    def read_binding(self, execution_id: str) -> GitHubBinding | None:
+        _validate_non_empty_string(execution_id, "execution_id")
+        path = self.executions_root / execution_id / "bindings.json"
+        if not path.exists():
+            return None
+        return self._read_binding(path)
 
     def write_binding(self, binding: GitHubBinding) -> Path:
         _validate_binding(binding)
