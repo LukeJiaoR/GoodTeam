@@ -10,7 +10,11 @@ from goodteam_os.execution.github import (
     execution_task_from_github_issue,
     intake_github_issue,
 )
-from goodteam_os.execution.idempotency import execution_id_from_task, task_id_from_github_issue
+from goodteam_os.execution.idempotency import (
+    branch_name_from_execution_id,
+    execution_id_from_task,
+    task_id_from_github_issue,
+)
 from goodteam_os.execution.models import ExecutionTaskStatus, GitHubBinding
 
 
@@ -102,19 +106,48 @@ def test_write_binding_then_existing_for_issue_returns_same_binding(tmp_path):
     assert store.existing_for_issue(" lukejiaor/goodteam ", 227) == binding
 
 
-def test_duplicate_intake_returns_existing_binding_without_second_binding(tmp_path):
+def test_first_intake_writes_durable_issue_binding(tmp_path):
     store = GitHubExecutionBindingStore(tmp_path)
+    client = FakeGitHubClient({("lukejiaor/goodteam", 227): _snapshot()})
     task_id = task_id_from_github_issue("LukeJiaoR/GoodTeam", 227)
-    existing = GitHubBinding(
+    execution_id = execution_id_from_task(task_id)
+
+    result = intake_github_issue(
+        client,
+        store,
+        GitHubIssueRef(repo="LukeJiaoR/GoodTeam", issue_number=227),
+        clock=fixed_clock,
+    )
+
+    assert result.task_id == task_id
+    assert store.existing_for_issue(" lukejiaor/goodteam ", 227) == GitHubBinding(
         repo="LukeJiaoR/GoodTeam",
         issue_number=227,
         pr_number=None,
-        branch_name="goodteam/exec_existing",
-        execution_id=execution_id_from_task(task_id),
+        branch_name=branch_name_from_execution_id(execution_id),
+        execution_id=execution_id,
     )
-    store.write_binding(existing)
+
+
+def test_duplicate_intake_returns_existing_binding_without_second_binding(tmp_path):
+    store = GitHubExecutionBindingStore(tmp_path)
+    task_id = task_id_from_github_issue("LukeJiaoR/GoodTeam", 227)
+    execution_id = execution_id_from_task(task_id)
+    expected_binding = GitHubBinding(
+        repo="LukeJiaoR/GoodTeam",
+        issue_number=227,
+        pr_number=None,
+        branch_name=branch_name_from_execution_id(execution_id),
+        execution_id=execution_id,
+    )
     client = FakeGitHubClient({("lukejiaor/goodteam", 227): _snapshot()})
 
+    first = intake_github_issue(
+        client,
+        store,
+        GitHubIssueRef(repo="LukeJiaoR/GoodTeam", issue_number=227),
+        clock=fixed_clock,
+    )
     result = intake_github_issue(
         client,
         store,
@@ -122,8 +155,9 @@ def test_duplicate_intake_returns_existing_binding_without_second_binding(tmp_pa
         clock=fixed_clock,
     )
 
-    assert result == existing
-    assert client.fetches == []
+    assert first.task_id == task_id
+    assert result == expected_binding
+    assert client.fetches == [("LukeJiaoR/GoodTeam", 227)]
     assert len(list((tmp_path / ".goodteam" / "executions").glob("*/bindings.json"))) == 1
 
 

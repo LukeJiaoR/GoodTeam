@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from goodteam_os.execution.idempotency import task_id_from_github_issue
+from goodteam_os.execution.idempotency import (
+    branch_name_from_execution_id,
+    execution_id_from_task,
+    task_id_from_github_issue,
+)
 from goodteam_os.execution.models import ExecutionTask, ExecutionTaskStatus, GitHubBinding
 
 
@@ -145,7 +149,18 @@ def intake_github_issue(
         return existing
 
     snapshot = client.fetch_issue(issue_ref.repo, issue_ref.issue_number)
-    return execution_task_from_github_issue(snapshot, clock=clock)
+    task = execution_task_from_github_issue(snapshot, clock=clock)
+    execution_id = execution_id_from_task(task.task_id)
+    binding_store.write_binding(
+        GitHubBinding(
+            repo=task.repo,
+            issue_number=task.issue_number,
+            pr_number=None,
+            branch_name=branch_name_from_execution_id(execution_id),
+            execution_id=execution_id,
+        )
+    )
+    return task
 
 
 def _validate_binding(binding: GitHubBinding) -> None:
