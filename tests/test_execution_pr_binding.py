@@ -152,9 +152,9 @@ def test_completed_execution_creates_pr_once_and_persists_binding(tmp_path):
     assert len(client.branches) == 1
     assert len(client.commits) == 1
     assert len(client.prs) == 1
-    assert ".goodteam/executions/" + run.execution_id + "/summary.md" in client.commits[0]["files"]
+    assert f"docs/dogfood/generated/{run.execution_id}.md" in client.commits[0]["files"]
     assert events[-1].event_type is LedgerEventType.PR_OPENED
-    assert events[-1].payload["transition"] == "pr_created"
+    assert events[-1].payload["transition"] == "pr_opened"
     assert events[-1].payload["pr_number"] == 123
     assert events[-1].payload["worker_job_id"] == run.worker_job_id
 
@@ -172,8 +172,11 @@ def test_retry_reuses_existing_pr_binding_without_second_create(tmp_path):
     assert len(client.prs) == 1
     assert len(client.branches) == 1
     assert len(client.commits) == 1
-    assert [event.payload["transition"] for event in events[-2:]] == ["pr_created", "pr_reused"]
-    assert events[-1].event_type is LedgerEventType.STATUS_CHANGED
+    assert [event.payload["transition"] for event in events[-2:]] == [
+        "execution_completed",
+        "pr_opened",
+    ]
+    assert [event.event_type for event in events].count(LedgerEventType.PR_OPENED) == 1
 
 
 def test_pr_body_includes_execution_issue_worker_and_event_summary(tmp_path):
