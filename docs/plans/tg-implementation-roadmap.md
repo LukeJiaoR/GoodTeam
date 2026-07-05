@@ -124,6 +124,7 @@ Open details to resolve inside #252:
 Parent issue: #253
 
 This is a design spike before implementation. It should decide product and engineering policy for explicit role answers from Telegram.
+Policy spike: `docs/plans/tg-role-answer-policy-spike.md`.
 
 Questions to answer:
 
