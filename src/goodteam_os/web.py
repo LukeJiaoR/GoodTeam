@@ -3752,6 +3752,8 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             reviewer_target=reviewer_target,
             reviewer_statuses=reviewer_statuses,
             review_evidence_policy_config=_review_evidence_policy_config(reviewer_target),
+            artifact_key=artifact,
+            artifact_path=artifact_path,
         )
         advisors = advisors_for_gate(approval)
         if advisors:

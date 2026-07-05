@@ -3,9 +3,11 @@ from pathlib import Path
 import pytest
 
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
+from goodteam_os.graph import run_fix_qa
 from goodteam_os.reviewer_dispatch import (
     dispatch_reviewer_jobs_for_gate,
     normalize_reviewer_dispatch_config,
+    reviewer_dispatch_rollout_status,
 )
 from goodteam_os.state import create_initial_state
 from goodteam_os.workers import WorkerJobStore
@@ -31,12 +33,94 @@ def _artifact(tmp_path: Path, name: str = "staging-report.md", content: str = "#
 
 
 def _parallel_dispatch() -> dict[str, object]:
+    return {
+        "mode": "parallel",
+        "rollout": {
+            "enabled": True,
+            "acknowledge": "parallel-reviewer-dispatch-is-advisory",
+        },
+        "phases": {"implementation": "parallel"},
+    }
+
+
+def _parallel_dispatch_without_ack() -> dict[str, object]:
     return {"mode": "parallel", "phases": {"implementation": "parallel"}}
+
+
+def _project_config(tmp_path: Path, *, dispatch: dict[str, object] | None = None) -> tuple[Path, Path]:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    config = tmp_path / "projects" / "demo.local.yaml"
+    config.parent.mkdir()
+    lines = [
+        "name: Demo",
+        "key: DEMO",
+        "repos:",
+        f"  app: {project_root}",
+        "reviewer_profiles:",
+        "  implementation:",
+        "    - correctness-security",
+        "    - architecture-maintainability",
+    ]
+    if dispatch is not None:
+        lines.extend(
+            [
+                "reviewer_dispatch:",
+                f"  mode: {dispatch.get('mode', 'single')}",
+            ]
+        )
+        rollout = dispatch.get("rollout")
+        if isinstance(rollout, dict):
+            lines.extend(
+                [
+                    "  rollout:",
+                    f"    enabled: {str(rollout.get('enabled', False)).lower()}",
+                    f"    acknowledge: {rollout.get('acknowledge', '')}",
+                ]
+            )
+        lines.extend(["  phases:", "    implementation: parallel"])
+    config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return config, project_root
 
 
 def test_missing_dispatch_config_defaults_to_single_mode():
     assert normalize_reviewer_dispatch_config({}) == {"mode": "single", "phases": {}}
     assert normalize_reviewer_dispatch_config(None) == {"mode": "single", "phases": {}}
+
+
+def test_rollout_status_requires_second_acknowledgement_for_parallel_mode():
+    status = reviewer_dispatch_rollout_status({"reviewer_dispatch": _parallel_dispatch_without_ack()})
+
+    assert status["parallel_requested"] is True
+    assert status["parallel_enabled"] is False
+    assert status["errors"] == []
+    assert status["warnings"] == [
+        "reviewer_dispatch.mode: parallel requires rollout.enabled: true and "
+        'rollout.acknowledge: "parallel-reviewer-dispatch-is-advisory".'
+    ]
+
+
+def test_rollout_status_accepts_full_explicit_parallel_acknowledgement():
+    status = reviewer_dispatch_rollout_status({"reviewer_dispatch": _parallel_dispatch()})
+
+    assert status == {
+        "parallel_requested": True,
+        "parallel_enabled": True,
+        "warnings": [],
+        "errors": [],
+    }
+
+
+def test_rollout_status_accepts_project_loader_true_string():
+    dispatch = _parallel_dispatch()
+    dispatch["rollout"] = {
+        "enabled": "true",
+        "acknowledge": "parallel-reviewer-dispatch-is-advisory",
+    }
+
+    status = reviewer_dispatch_rollout_status({"reviewer_dispatch": dispatch})
+
+    assert status["parallel_enabled"] is True
 
 
 def test_unknown_dispatch_mode_fails_clearly():
@@ -107,6 +191,71 @@ def test_parallel_phase_opt_in_creates_one_job_per_profile_with_identity(tmp_pat
     assert {job["artifact_path"] for job in jobs} == {str(artifact)}
     assert all(str(job["artifact_version"]).startswith("sha256:") for job in jobs)
     assert len({job["dispatch_group_id"] for job in jobs}) == 1
+    assert all(job["idempotency_key"] for job in jobs)
+
+
+def test_parallel_mode_without_rollout_acknowledgement_does_not_create_jobs(tmp_path: Path):
+    store = WorkerJobStore(tmp_path)
+    artifact = _artifact(tmp_path)
+
+    results = dispatch_reviewer_jobs_for_gate(
+        store=store,
+        state=_state(),
+        target=_target(
+            "correctness-security",
+            "architecture-maintainability",
+            dispatch=_parallel_dispatch_without_ack(),
+        ),
+        approval="staging",
+        artifact_key="staging_report",
+        artifact_path=str(artifact),
+        context="review context",
+    )
+
+    assert results == []
+    assert store.list_jobs() == []
+
+
+def test_graph_default_project_config_does_not_create_reviewer_jobs(tmp_path: Path):
+    config, project_root = _project_config(tmp_path)
+    state = _state()
+
+    result = run_fix_qa(state, tmp_path, config)
+
+    assert result.current_node == "qa_review_gate"
+    assert result.next_node == "await_qa_approval"
+    assert WorkerJobStore(project_root).list_jobs() == []
+
+
+def test_graph_parallel_mode_without_rollout_acknowledgement_does_not_create_reviewer_jobs(tmp_path: Path):
+    config, project_root = _project_config(tmp_path, dispatch=_parallel_dispatch_without_ack())
+    state = _state()
+
+    run_fix_qa(state, tmp_path, config)
+
+    assert WorkerJobStore(project_root).list_jobs() == []
+
+
+def test_graph_full_parallel_opt_in_creates_idempotent_reviewer_jobs_with_identity(tmp_path: Path):
+    config, project_root = _project_config(tmp_path, dispatch=_parallel_dispatch())
+    state = _state()
+
+    run_fix_qa(state, tmp_path, config)
+    run_fix_qa(state, tmp_path, config)
+
+    jobs = sorted(WorkerJobStore(project_root).list_jobs(), key=lambda job: str(job.get("profile_id", "")))
+    assert [job["profile_id"] for job in jobs] == [
+        "architecture-maintainability",
+        "correctness-security",
+    ]
+    assert {job["approval"] for job in jobs} == {"qa"}
+    assert {job["gate"] for job in jobs} == {"qa"}
+    assert {job["phase"] for job in jobs} == {"implementation"}
+    assert {job["artifact_key"] for job in jobs} == {"qa_report"}
+    assert {job["artifact_path"] for job in jobs} == {state.artifacts["qa_report"]}
+    assert all(str(job["artifact_version"]).startswith("sha256:") for job in jobs)
+    assert len({job["dispatch_group_id"] for job in jobs}) == 1
+    assert len({job["idempotency_key"] for job in jobs}) == 2
 
 
 def test_repeated_parallel_dispatch_reuses_existing_reviewer_jobs(tmp_path: Path):

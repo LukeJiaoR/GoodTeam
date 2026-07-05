@@ -11,6 +11,11 @@ from goodteam_os.workers import WorkerJobStore
 
 DISPATCH_MODES = ("single", "parallel")
 REVIEWER_ROLE_BY_PHASE = {"implementation": "code_review", "release": "release"}
+PARALLEL_ROLLOUT_ACKNOWLEDGEMENT = "parallel-reviewer-dispatch-is-advisory"
+PARALLEL_ROLLOUT_WARNING = (
+    "reviewer_dispatch.mode: parallel requires rollout.enabled: true and "
+    'rollout.acknowledge: "parallel-reviewer-dispatch-is-advisory".'
+)
 
 
 def normalize_reviewer_dispatch_config(target: Mapping[str, object] | None) -> dict[str, object]:
@@ -37,6 +42,42 @@ def normalize_reviewer_dispatch_config(target: Mapping[str, object] | None) -> d
             raise ValueError(f"Unknown reviewer dispatch phase {phase!r}. Use one of: {allowed}.")
         phases[phase] = _clean_mode(raw_mode, f"reviewer_dispatch.phases.{phase}")
     return {"mode": mode, "phases": phases}
+
+
+def reviewer_dispatch_rollout_status(target: Mapping[str, object] | None) -> dict[str, object]:
+    warnings: list[str] = []
+    errors: list[str] = []
+    try:
+        config = normalize_reviewer_dispatch_config(target)
+    except ValueError as exc:
+        return {
+            "parallel_requested": False,
+            "parallel_enabled": False,
+            "warnings": warnings,
+            "errors": [str(exc)],
+        }
+
+    parallel_requested = config["mode"] == "parallel"
+    parallel_enabled = False
+    if parallel_requested:
+        raw_config = _raw_dispatch_config(target)
+        rollout = raw_config.get("rollout", {})
+        rollout = rollout if isinstance(rollout, Mapping) else {}
+        acknowledged = (
+            _truthy_bool(rollout.get("enabled"))
+            and str(rollout.get("acknowledge", "") or "").strip() == PARALLEL_ROLLOUT_ACKNOWLEDGEMENT
+        )
+        if acknowledged:
+            parallel_enabled = True
+        else:
+            warnings.append(PARALLEL_ROLLOUT_WARNING)
+
+    return {
+        "parallel_requested": parallel_requested,
+        "parallel_enabled": parallel_enabled,
+        "warnings": warnings,
+        "errors": errors,
+    }
 
 
 def dispatch_reviewer_jobs_for_gate(
@@ -89,7 +130,12 @@ def dispatch_reviewer_jobs_for_gate(
 
 def _parallel_enabled(target: Mapping[str, object] | None, phase: str) -> bool:
     config = normalize_reviewer_dispatch_config(target)
-    return config["mode"] == "parallel" and dict(config["phases"]).get(phase) == "parallel"
+    rollout = reviewer_dispatch_rollout_status(target)
+    return (
+        config["mode"] == "parallel"
+        and rollout["parallel_enabled"] is True
+        and dict(config["phases"]).get(phase) == "parallel"
+    )
 
 
 def _configured_profiles(target: Mapping[str, object] | None, phase: str) -> list[ReviewerProfile]:
@@ -196,3 +242,16 @@ def _clean_mode(value: object, field: str) -> str:
         modes = ", ".join(DISPATCH_MODES)
         raise ValueError(f"{field} must be one of: {modes}.")
     return mode
+
+
+def _raw_dispatch_config(target: Mapping[str, object] | None) -> Mapping[str, object]:
+    if target is None:
+        return {}
+    raw_config = target.get("reviewer_dispatch", {})
+    return raw_config if isinstance(raw_config, Mapping) else {}
+
+
+def _truthy_bool(value: object) -> bool:
+    if value is True:
+        return True
+    return str(value).strip().lower() == "true"
