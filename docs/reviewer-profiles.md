@@ -136,12 +136,29 @@ not dispatch jobs, run workers, write ledger/action events, approve, reject, or
 disable approval controls. Reviewer evidence remains advisory, and the human
 operator remains authoritative.
 
+Queued reviewer jobs are executed only by an explicit operator action. When the
+current pending approval gate has matching queued reviewer jobs, Review
+Workbench shows `Run queued reviewer jobs` on that approval review card. The
+button runs only existing queued reviewer jobs for the active run, current
+actionable gate, and current artifact identity. It does not create reviewer
+jobs, dispatch missing reviewers, run on page refresh, write approval ledger
+events, approve, reject, or disable the human approval controls.
+
 To validate a rollout, move a real implementation-side gate such as staging,
 code review, or QA to its pending approval state and inspect
 `.goodteam/workers/jobs/*/job.json` under the project runtime root. Reviewer jobs
 should carry `profile_id`, `approval` / `gate`, `phase`, `artifact_key`,
 `artifact_path`, `artifact_version`, `dispatch_group_id`, and
 `idempotency_key`.
+
+After running queued reviewer jobs, refresh Workbench and inspect the existing
+provenance, review evidence policy, and multi-reviewer projection sections on
+the same approval card. Result handles such as `result_path`, `stdout_path`, and
+`stderr_path` remain advisory evidence. If reviewer execution fails, inspect the
+failed job's stderr/result handles, fix adapter availability or project
+preconditions, and explicitly run the remaining queued reviewer jobs again if
+they are still queued. Failed reviewer evidence does not auto-reject; the human
+operator still decides the approval.
 
 Rollback is immediate for future gate transitions:
 
@@ -235,9 +252,10 @@ override after reviewing the visible evidence.
 
 ## Non-Goals
 
-- No runtime dispatch behavior changes.
-- No worker invocation behavior changes.
+- No automatic reviewer execution.
+- No background polling or scheduler rewrite.
+- No dispatch from Workbench render or the explicit execution action.
 - No execution orchestrator changes.
 - No autonomous approval gate enforcement.
 - No approval action behavior changes.
-- No parallel reviewer execution.
+- No approval auto-approve, auto-reject, or button disabling.

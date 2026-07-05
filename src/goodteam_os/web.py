@@ -47,7 +47,12 @@ from goodteam_os.models import list_model_profiles, resolve_project_model_profil
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
-from goodteam_os.reviewer_dispatch import reviewer_dispatch_diagnostics
+from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
+from goodteam_os.reviewer_dispatch import (
+    reviewer_dispatch_diagnostics,
+    run_queued_reviewer_jobs_for_gate,
+    select_queued_reviewer_jobs_for_gate,
+)
 from goodteam_os.resources import (
     ResourceCapability,
     ResourceKind,
@@ -58,6 +63,7 @@ from goodteam_os.resources import (
 from goodteam_os.review_provenance import (
     build_reviewer_provenance,
     latest_reviewer_status_for_approval,
+    reviewer_phase_for_approval,
     reviewer_profile_for_approval,
 )
 from goodteam_os.review_policy import evaluate_review_evidence_policy
@@ -241,6 +247,84 @@ def current_approval_gate(state: AgileDevState | None) -> str:
     if str(state.approvals.get(gate, "")) != ApprovalDecision.PENDING:
         return ""
     return gate
+
+
+def run_queued_reviewer_jobs_action(workspace: Path, request: Mapping[str, object]) -> tuple[int, dict[str, object]]:
+    project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
+    if not project_key:
+        return 400, {"error": "project_key is required"}
+    state = resolve_dashboard_state(workspace, project_key=project_key)
+    if state is None:
+        return 404, {"error": f"Unknown project or no active run: {project_key}"}
+
+    requested_run_id = str(request.get("run_id", "") or "").strip()
+    if requested_run_id and requested_run_id != state.run_id:
+        return 409, {"error": "run_id does not match the active project run"}
+
+    current_gate = current_approval_gate(state)
+    requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
+    if not current_gate or requested_gate != current_gate:
+        return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
+
+    artifact_key = _approval_artifact_for_gate(current_gate)
+    requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
+    if requested_artifact_key and requested_artifact_key != artifact_key:
+        return 409, {"error": "artifact_key does not match the current approval gate"}
+    artifact_path = str(state.artifacts.get(artifact_key, "") or "")
+    profile_id = str(request.get("profile_id", "") or "").strip()
+    artifact_version = str(request.get("artifact_version", "") or "").strip()
+    target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
+    profile_order = _reviewer_profile_order_for_gate(target, current_gate)
+
+    aggregate = {
+        "selected_count": 0,
+        "ran_count": 0,
+        "skipped_count": 0,
+        "results": [],
+        "errors": [],
+    }
+    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
+    for root in roots:
+        store = WorkerJobStore(root)
+        result = run_queued_reviewer_jobs_for_gate(
+            store=store,
+            jobs=store.list_jobs(),
+            run_id=state.run_id,
+            approval=current_gate,
+            artifact_key=artifact_key,
+            artifact_path=artifact_path,
+            artifact_version=artifact_version,
+            profile_id=profile_id,
+            profile_order=profile_order,
+        )
+        aggregate["selected_count"] = int(aggregate["selected_count"]) + int(result.get("selected_count", 0) or 0)
+        aggregate["ran_count"] = int(aggregate["ran_count"]) + int(result.get("ran_count", 0) or 0)
+        aggregate["skipped_count"] = int(aggregate["skipped_count"]) + int(result.get("skipped_count", 0) or 0)
+        aggregate["results"] = [*list(aggregate["results"]), *list(result.get("results", []))]
+        aggregate["errors"] = [*list(aggregate["errors"]), *list(result.get("errors", []))]
+
+    return 200, {
+        **aggregate,
+        "project_key": project_key,
+        "run_id": state.run_id,
+        "approval": current_gate,
+        "artifact_key": artifact_key,
+        "artifact_path": artifact_path,
+        "advisory_only": True,
+        "approval_unchanged": True,
+        "operator_message": "Reviewer evidence remains advisory. Human operator decides.",
+    }
+
+
+def _reviewer_profile_order_for_gate(target: Mapping[str, object], gate: str) -> list[str]:
+    phase = reviewer_phase_for_approval(gate)
+    if phase is None:
+        return []
+    try:
+        configured = normalize_reviewer_profile_config(target)
+    except ValueError:
+        return []
+    return list(configured.get(phase, ()))
 
 
 def _mask_advisory_text(text: object) -> str:
@@ -3756,6 +3840,14 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             artifact_key=artifact,
             artifact_path=artifact_path,
         )
+        review["queued_reviewer_jobs"] = select_queued_reviewer_jobs_for_gate(
+            reviewer_statuses,
+            run_id=state.run_id,
+            approval=approval,
+            artifact_key=artifact,
+            artifact_path=artifact_path,
+            profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
+        )
         advisors = advisors_for_gate(approval)
         if advisors:
             messages = [
@@ -6743,6 +6835,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     if not approval_items:
         approval_items = '<li class="empty-state">No approvals recorded</li>'
 
+    project_key = state.project_key if state is not None else str(start_context.get("project_key", ""))
+
     approval_review_cards = "\
 ".join(
         f"""
@@ -6759,6 +6853,18 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           {render_reviewer_provenance(review.get("reviewer_provenance"))}
           {render_review_evidence_policy(review.get("review_evidence_policy"))}
           {render_multi_reviewer_projection(review.get("multi_reviewer_projection"))}
+          {f'''
+          <div class="approval-actions reviewer-job-actions">
+            <button class="primary run-queued-reviewer-jobs"
+              data-action="run-queued-reviewer-jobs"
+              data-project="{escape(project_key)}"
+              data-run="{escape(state.run_id if state is not None else "")}"
+              data-approval="{escape(review["approval"])}"
+              data-artifact="{escape(review["artifact"])}"
+              type="button">Run queued reviewer jobs</button>
+            <code class="reviewer-job-status">{len(review.get("queued_reviewer_jobs", []))} queued</code>
+          </div>
+          ''' if review["is_actionable"] and len(review.get("queued_reviewer_jobs", [])) > 0 else ''}
           {f'''
           <div class="artifact-editor" id="editor-{escape(review["artifact"])}" hidden>
             <textarea data-editor-for="{escape(review["artifact"])}" spellcheck="false"></textarea>
@@ -6785,8 +6891,6 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
     )
     if not approval_review_cards:
         approval_review_cards = '<div class="empty-state">No approval review items available.</div>'
-    
-    project_key = state.project_key if state is not None else str(start_context.get("project_key", ""))
     
     # Empty State for Actions
     if not build_action_items(workspace, project_key=project_key if state is not None else ""):
@@ -7717,6 +7821,34 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         }}
       }});
     }});
+    document.querySelectorAll(".run-queued-reviewer-jobs").forEach((button) => {{
+      button.addEventListener("click", async () => {{
+        button.disabled = true;
+        const status = button.closest(".reviewer-job-actions")?.querySelector(".reviewer-job-status");
+        if (status) status.textContent = "Running...";
+        try {{
+          const response = await fetch("/reviewer-jobs/run", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{
+              project_key: button.dataset.project || window.GOODTEAM_PROJECT_KEY,
+              run_id: button.dataset.run,
+              approval: button.dataset.approval,
+              artifact_key: button.dataset.artifact
+            }})
+          }});
+          const payload = await response.json();
+          if (!response.ok) {{
+            throw new Error(payload.error || "Failed to run reviewer jobs.");
+          }}
+          if (status) status.textContent = `${{payload.ran_count || 0}} reviewer jobs ran`;
+          window.setTimeout(() => window.location.reload(), 300);
+        }} catch (error) {{
+          button.disabled = false;
+          if (status) status.textContent = error.message;
+        }}
+      }});
+    }});
     document.querySelectorAll(".approval-decision").forEach((button) => {{
       button.addEventListener("click", async () => {{
         button.disabled = true;
@@ -8576,7 +8708,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 re.fullmatch(r"/executions/[^/]+/(run|pr|ci)", normalized_path)
             )
 
-            if not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
+            if not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -8647,6 +8779,10 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                         debate_ref=str(request.get("debate_ref", "")),
                         note=str(request.get("note", "")),
                     )
+                elif normalized_path == "/reviewer-jobs/run":
+                    status, result = run_queued_reviewer_jobs_action(workspace, request)
+                    self._send_json(status, result)
+                    return
                 elif normalized_path == "/debate":
                     project_key = str(request.get("project_key", ""))
                     run_id = str(request.get("run", ""))

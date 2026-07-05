@@ -331,6 +331,21 @@ informational snapshots from the existing worker job store when available.
 Diagnostics are read-only and do not dispatch jobs, run workers, or write
 ledger/action events.
 
+Reviewer job execution is a separate explicit operator step. When a current
+pending approval gate has matching queued reviewer jobs, Workbench shows
+`Run queued reviewer jobs` on that approval review card. The action runs only
+existing queued reviewer jobs for the active run, current actionable gate, and
+current artifact identity. It does not create jobs, dispatch missing profiles,
+run during render, run on refresh, approve, reject, or change approval
+authority. Completed reviewer jobs flow back through the existing reviewer
+provenance, review evidence policy, and multi-reviewer projection.
+
+If execution fails, inspect the failed job's `stderr_path`, `stdout_path`, and
+`result_path` from Workbench or `.goodteam/workers/jobs/<job-id>/status.json`.
+Fix adapter availability, credentials, or project preconditions, then rerun the
+explicit action for any jobs that remain queued. Failed reviewer evidence is
+advisory and human-decidable; it does not auto-reject the gate.
+
 Rollback by returning to single mode:
 
 ```yaml
@@ -415,6 +430,9 @@ Break follow-up work into separate issues:
 - #265: Surface reviewer dispatch rollout diagnostics in Workbench/project
   status so operators can see single, guarded, enabled, invalid-config, and
   queued-job states without changing dispatch or approval behavior.
+- #267: Add explicit reviewer job execution controls for queued reviewer jobs
+  that already exist. Workbench render remains read-only; the explicit action
+  does not create jobs, dispatch jobs, or change approval authority.
 
 Each phase should preserve the existing evidence-first workflow and should be
 mergeable without enabling global parallel dispatch.
