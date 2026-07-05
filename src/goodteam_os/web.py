@@ -4476,6 +4476,103 @@ def render_review_evidence_policy(policy: object) -> str:
     """
 
 
+def render_multi_reviewer_projection(projection: Mapping[str, object] | None) -> str:
+    if not isinstance(projection, Mapping):
+        return ""
+    aggregate = projection.get("aggregate_policy", {})
+    aggregate = aggregate if isinstance(aggregate, Mapping) else {}
+    state_counts = aggregate.get("state_counts", {})
+    state_counts = state_counts if isinstance(state_counts, Mapping) else {}
+    reviewers = projection.get("reviewers", [])
+    reviewer_items = reviewers if isinstance(reviewers, list) else []
+    severity = str(aggregate.get("severity", "ok") or "ok").lower()
+    operator_message = str(projection.get("operator_message", "") or "")
+    state_count_labels = [f"{state}: {count}" for state, count in state_counts.items()]
+    reviewer_cards = "\n".join(
+        _render_multi_reviewer_card(reviewer)
+        for reviewer in reviewer_items
+        if isinstance(reviewer, Mapping)
+    )
+    if not reviewer_cards:
+        reviewer_cards = '<div class="empty-state">No reviewer evidence available.</div>'
+    return f"""
+      <div class="multi-reviewer-projection">
+        <div class="review-evidence-policy-top">
+          <span>Multi-reviewer evidence</span>
+          <span class="policy-badge policy-{escape(severity)}">{escape(severity.upper())}</span>
+        </div>
+        <dl class="role-meta provenance-meta">
+          <dt>Aggregate severity</dt><dd>{escape(severity.upper())}</dd>
+          <dt>Authority</dt><dd>Reviewer evidence remains advisory. Human operator decides.</dd>
+          <dt>Override</dt><dd>{escape(str(aggregate.get("can_human_override", True)))}</dd>
+          <dt>Advisory</dt><dd>{escape(str(aggregate.get("advisory_only", True)))}</dd>
+        </dl>
+        {render_inline_list("State counts", state_count_labels)}
+        {f'<p>{escape(operator_message)}</p>' if operator_message else ''}
+        <div class="multi-reviewer-cards">
+          {reviewer_cards}
+        </div>
+      </div>
+    """
+
+
+def _render_multi_reviewer_card(reviewer: Mapping[str, object]) -> str:
+    policy = reviewer.get("policy", {})
+    provenance = reviewer.get("provenance", {})
+    status = reviewer.get("status", {})
+    evidence = reviewer.get("evidence_handles", {})
+    policy = policy if isinstance(policy, Mapping) else {}
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    status = status if isinstance(status, Mapping) else {}
+    evidence = evidence if isinstance(evidence, Mapping) else {}
+    badge = provenance.get("badge", {})
+    invocation = provenance.get("invocation", {})
+    badge = badge if isinstance(badge, Mapping) else {}
+    invocation = invocation if isinstance(invocation, Mapping) else {}
+    evidence_payload = policy.get("evidence", {})
+    evidence_payload = evidence_payload if isinstance(evidence_payload, Mapping) else {}
+    severity = str(policy.get("severity", "warning") or "warning").lower()
+    state = str(policy.get("state", "missing_evidence") or "missing_evidence")
+    profile_id = str(reviewer.get("profile_id", "") or "")
+    profile_label = str(reviewer.get("profile_label", "") or profile_id or "Reviewer")
+    badge_kind = str(badge.get("kind", evidence_payload.get("badge_kind", "missing")) or "missing")
+    badge_label = _multi_reviewer_evidence_label(badge_kind)
+    handles = _reviewer_evidence_handle_labels(dict(evidence))
+    return f"""
+      <article class="multi-reviewer-card">
+        <div class="reviewer-provenance-top">
+          <span class="policy-badge policy-{escape(severity)}">{escape(severity.upper())}</span>
+          <span>{escape(profile_label)}</span>
+        </div>
+        <dl class="role-meta provenance-meta">
+          <dt>profile_id</dt><dd>{escape(profile_id or "unmatched")}</dd>
+          <dt>Order</dt><dd>{escape(str(reviewer.get("order", "")))}</dd>
+          <dt>Match</dt><dd>{escape(str(reviewer.get("match_kind", "missing") or "missing"))}</dd>
+          <dt>Policy state</dt><dd>{escape(state)}</dd>
+          <dt>Policy severity</dt><dd>{escape(severity)}</dd>
+          <dt>Evidence</dt><dd>{escape(badge_label)}</dd>
+          <dt>Badge kind</dt><dd>{escape(badge_kind)}</dd>
+          <dt>Adapter</dt><dd>{escape(str(badge.get("adapter", evidence_payload.get("adapter", status.get("adapter", "unknown"))) or "unknown"))}</dd>
+          <dt>Provider</dt><dd>{escape(str(badge.get("provider", evidence_payload.get("provider", "unknown")) or "unknown"))}</dd>
+          <dt>Invocation</dt><dd>{escape(str(invocation.get("status", evidence_payload.get("invocation_status", status.get("status", "missing"))) or "missing"))}</dd>
+        </dl>
+        {render_inline_list("Evidence handles", handles, code=True)}
+      </article>
+    """
+
+
+def _multi_reviewer_evidence_label(kind: str) -> str:
+    labels = {
+        "missing": "Missing evidence",
+        "fallback": "Fallback evidence",
+        "failed": "Failed invocation",
+        "provider": "Provider-backed evidence",
+        "builtin": "Non-provider evidence",
+        "manual": "Non-provider evidence",
+    }
+    return labels.get(str(kind).lower(), str(kind) or "Missing evidence")
+
+
 def _reviewer_evidence_handle_labels(evidence: dict[object, object]) -> list[str]:
     labels = [
         f"{key}: {value}"
@@ -6589,6 +6686,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           {render_review_roles(review["review_roles"])}
           {render_reviewer_provenance(review.get("reviewer_provenance"))}
           {render_review_evidence_policy(review.get("review_evidence_policy"))}
+          {render_multi_reviewer_projection(review.get("multi_reviewer_projection"))}
           {f'''
           <div class="artifact-editor" id="editor-{escape(review["artifact"])}" hidden>
             <textarea data-editor-for="{escape(review["artifact"])}" spellcheck="false"></textarea>

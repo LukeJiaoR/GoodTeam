@@ -2675,6 +2675,28 @@ def test_frontend_contract_approvals_tab_recommendation_and_provenance():
     assert "provenanceRefs.length === 0" in approvals_tab
 
 
+def test_frontend_contract_approvals_tab_multi_reviewer_projection():
+    root = Path(__file__).resolve().parents[1]
+    approvals_tab = (root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx").read_text(encoding="utf-8")
+
+    assert "selectedReview.multi_reviewer_projection" in approvals_tab
+    assert "Multi-reviewer evidence" in approvals_tab
+    assert "Aggregate severity" in approvals_tab
+    assert "State counts" in approvals_tab
+    assert "Reviewer evidence remains advisory" in approvals_tab
+    assert "Human operator decides" in approvals_tab
+    assert "Missing evidence" in approvals_tab
+    assert "Fallback evidence" in approvals_tab
+    assert "Failed invocation" in approvals_tab
+    assert "Provider-backed evidence" in approvals_tab
+    assert "multiReviewerProjection.reviewers.map" in approvals_tab
+    assert "getPolicyBadgeStyle(multiReviewerAggregate.severity)" in approvals_tab
+    assert "getPolicyBadgeStyle(reviewerPolicy.severity)" in approvals_tab
+    assert "multiReviewerProjection && (" in approvals_tab
+    assert "disabled={actionLoading}" in approvals_tab
+    assert "disabled={actionLoading || (showChangesRequestedNoteKey === selectedReview.approval && changesRequestedNote.trim() === '')}" in approvals_tab
+
+
 def test_status_helpers_are_extracted_from_app_shell():
     root = Path(__file__).resolve().parents[1]
     app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
