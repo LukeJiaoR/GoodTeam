@@ -62,6 +62,9 @@ def build_multi_reviewer_projection(
                     statuses=statuses,
                     approval=gate,
                     current_status=matched_status,
+                    artifact_key=str(artifact_key or "").strip(),
+                    artifact_path=str(artifact_path or "").strip(),
+                    artifact_version=current_artifact_version,
                 ),
                 match_kind=match_kind,
                 policy_config=review_evidence_policy_config,
@@ -273,6 +276,9 @@ def _previous_failures_for_profile(
     statuses: list[dict[str, object]],
     approval: str,
     current_status: Mapping[str, object] | None,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
 ) -> list[dict[str, object]]:
     current_id = id(current_status) if current_status is not None else None
     failures = [
@@ -281,8 +287,31 @@ def _previous_failures_for_profile(
         if id(status) != current_id
         and str(status.get("profile_id", "") or "").strip() == profile.profile_id
         and str(status.get("status", "") or "").strip().lower() == "failed"
+        and _matches_current_artifact_identity(
+            status,
+            artifact_key=artifact_key,
+            artifact_path=artifact_path,
+            artifact_version=artifact_version,
+        )
     ]
     return [_failure_summary(status) for status in sorted(failures, key=lambda item: str(item.get("updated_at", "") or ""))]
+
+
+def _matches_current_artifact_identity(
+    status: Mapping[str, object],
+    *,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
+) -> bool:
+    for field, current_value in (
+        ("artifact_key", artifact_key),
+        ("artifact_path", artifact_path),
+        ("artifact_version", artifact_version),
+    ):
+        if current_value and str(status.get(field, "") or "").strip() != current_value:
+            return False
+    return True
 
 
 def _failure_summary(status: Mapping[str, object]) -> dict[str, object]:
