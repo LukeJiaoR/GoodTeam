@@ -1,5 +1,7 @@
+import hashlib
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 
 from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
 from goodteam_os.review_policy import evaluate_review_evidence_policy
@@ -22,10 +24,19 @@ def build_multi_reviewer_projection(
     reviewer_target: Mapping[str, object] | None,
     reviewer_statuses: Iterable[Mapping[str, object]],
     review_evidence_policy_config: object = None,
+    artifact_key: str = "",
+    artifact_path: str = "",
+    artifact_version: str = "",
 ) -> dict[str, object]:
     gate = str(approval)
     phase = reviewer_phase_for_approval(gate)
-    statuses = [dict(status) for status in reviewer_statuses]
+    current_artifact_version = str(artifact_version or "").strip() or _artifact_version(artifact_path)
+    statuses = _statuses_for_current_artifact(
+        [dict(status) for status in reviewer_statuses],
+        artifact_key=str(artifact_key or "").strip(),
+        artifact_path=str(artifact_path or "").strip(),
+        artifact_version=current_artifact_version,
+    )
     profiles = _configured_profiles(reviewer_target, phase)
     used_status_ids: set[int] = set()
     reviewers: list[dict[str, object]] = []
@@ -198,6 +209,31 @@ def _statuses_for_approval(statuses: list[dict[str, object]], approval: str) -> 
     return explicit + [status for status in legacy if str(status.get("role", "")).strip() in roles]
 
 
+def _statuses_for_current_artifact(
+    statuses: list[dict[str, object]],
+    *,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
+) -> list[dict[str, object]]:
+    if not any((artifact_key, artifact_path, artifact_version)):
+        return statuses
+    return [
+        status
+        for status in statuses
+        if not _artifact_identity_mismatch(status, "artifact_key", artifact_key)
+        and not _artifact_identity_mismatch(status, "artifact_path", artifact_path)
+        and not _artifact_identity_mismatch(status, "artifact_version", artifact_version)
+    ]
+
+
+def _artifact_identity_mismatch(status: Mapping[str, object], field: str, current_value: str) -> bool:
+    if not current_value:
+        return False
+    status_value = str(status.get(field, "") or "").strip()
+    return bool(status_value) and status_value != current_value
+
+
 def _aggregate_policy(reviewers: list[dict[str, object]]) -> dict[str, object]:
     states = [
         str(policy.get("state", "") or "")
@@ -237,3 +273,10 @@ def _has_profile_id(status: Mapping[str, object]) -> bool:
 def _explicit_gate(status: Mapping[str, object]) -> str | None:
     gate = str(status.get("approval", "") or status.get("gate", "")).strip()
     return gate or None
+
+
+def _artifact_version(artifact_path: str) -> str:
+    path = Path(artifact_path).expanduser() if artifact_path else None
+    if path is None or not path.is_file():
+        return ""
+    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"

@@ -264,12 +264,89 @@ reviewer_profiles:
 
 reviewer_dispatch:
   mode: single # single | parallel
+  rollout:
+    enabled: true
+    acknowledge: "parallel-reviewer-dispatch-is-advisory"
   phases:
     implementation: parallel
 ```
 
 The extra `reviewer_dispatch` opt-in avoids changing the meaning of existing
 multi-profile metadata before duplicate and aggregation safeguards exist.
+Parallel dispatch also requires the rollout acknowledgement above. If
+`mode: parallel` is configured without `rollout.enabled: true` and the exact
+acknowledgement string, GoodTeam keeps reviewer dispatch single/no-fan-out and
+surfaces the rollout guard diagnostic in tests and helper output.
+
+## Operator Rollout Guide
+
+Default behavior remains single-reviewer. Projects that omit
+`reviewer_dispatch`, set `reviewer_dispatch.mode: single`, or configure
+`mode: parallel` without the rollout acknowledgement do not create parallel
+reviewer jobs. Reviewer evidence is advisory only, and the human operator
+remains authoritative for every approval decision.
+
+Enable implementation-phase parallel reviewer dispatch only after configuring
+reviewer profiles and the rollout acknowledgement:
+
+```yaml
+reviewer_profiles:
+  implementation:
+    - correctness-security
+    - architecture-maintainability
+
+reviewer_dispatch:
+  mode: parallel
+  rollout:
+    enabled: true
+    acknowledge: "parallel-reviewer-dispatch-is-advisory"
+  phases:
+    implementation: parallel
+```
+
+Validate locally by advancing a real implementation-side gate such as staging,
+code review, or QA, then inspect the runtime root:
+
+```bash
+find .goodteam/workers/jobs -name job.json -maxdepth 2
+```
+
+Each queued reviewer job should include `profile_id`, `approval` / `gate`,
+`phase`, `artifact_key`, `artifact_path`, `artifact_version`,
+`dispatch_group_id`, and `idempotency_key`. Repeating the same gate transition
+for the same artifact version should reuse the same reviewer jobs instead of
+creating duplicates.
+
+Inspect Workbench evidence at the pending approval gate. It should show the
+multi-reviewer aggregate severity, per-reviewer policy states, evidence
+handles, and the advisory human-authority copy. Missing evidence,
+fallback/non-provider evidence, and failed invocations remain visible for the
+operator; they do not auto-approve, auto-reject, or disable approval actions.
+
+Rollback by returning to single mode:
+
+```yaml
+reviewer_dispatch:
+  mode: single
+```
+
+or remove `reviewer_dispatch` entirely. Existing queued reviewer evidence may
+still appear in Workbench as historical advisory evidence for the same run, but
+new gate transitions will not fan out unless the explicit parallel config and
+rollout acknowledgement are restored.
+
+Troubleshooting:
+
+- No reviewer jobs: confirm `reviewer_profiles.<phase>` has valid profile IDs,
+  `reviewer_dispatch.mode` is `parallel`, rollout acknowledgement is exact, and
+  `reviewer_dispatch.phases.<phase>` is `parallel`.
+- Missing evidence: verify the worker status has `invocation_evidence` and
+  local `result_path` / `stdout_path` / `stderr_path` handles.
+- Fallback or non-provider evidence: check adapter availability and command
+  readiness; the evidence remains advisory until the operator decides.
+- Failed reviewer evidence: inspect stderr/result handles and use strict
+  `review_evidence_policy` only as a visible blocker signal. Human override
+  remains available.
 
 ## Required Tests Before Implementation
 
@@ -325,8 +402,8 @@ Break follow-up work into separate issues:
   queued reviewer job identity, duplicate protection, and no approval authority
   changes. Implemented as explicit `reviewer_dispatch` opt-in; render and
   approval projection paths remain read-only/advisory.
-- #242E: Add rollout guard, strict aggregation tests, and operator-facing
-  documentation for parallel reviewer dispatch.
+- #242E / #263: Add rollout guard, strict aggregation tests, and
+  operator-facing documentation for parallel reviewer dispatch.
 
 Each phase should preserve the existing evidence-first workflow and should be
 mergeable without enabling global parallel dispatch.

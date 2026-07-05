@@ -90,6 +90,52 @@ adapter, command evidence when available, readiness, fallback policy, and
 message. For now that warning is evidence only; policy enforcement belongs to a
 later gate.
 
+## Parallel Reviewer Dispatch Rollout
+
+Reviewer profiles do not fan out by themselves. The default remains
+single-reviewer/no-fan-out when `reviewer_dispatch` is omitted or set to
+`mode: single`.
+
+Parallel reviewer dispatch requires an explicit dispatch mode, phase opt-in,
+and rollout acknowledgement:
+
+```yaml
+reviewer_profiles:
+  implementation:
+    - correctness-security
+    - architecture-maintainability
+
+reviewer_dispatch:
+  mode: parallel
+  rollout:
+    enabled: true
+    acknowledge: "parallel-reviewer-dispatch-is-advisory"
+  phases:
+    implementation: parallel
+```
+
+If `mode: parallel` is present without the rollout acknowledgement, GoodTeam
+does not create parallel reviewer jobs. This makes accidental enablement easier
+to audit while preserving single-reviewer compatibility.
+
+To validate a rollout, move a real implementation-side gate such as staging,
+code review, or QA to its pending approval state and inspect
+`.goodteam/workers/jobs/*/job.json` under the project runtime root. Reviewer jobs
+should carry `profile_id`, `approval` / `gate`, `phase`, `artifact_key`,
+`artifact_path`, `artifact_version`, `dispatch_group_id`, and
+`idempotency_key`.
+
+Rollback is immediate for future gate transitions:
+
+```yaml
+reviewer_dispatch:
+  mode: single
+```
+
+or remove `reviewer_dispatch`. Workbench may still show previously queued
+reviewer evidence for the current run when it matches the current gate and
+artifact identity. That evidence remains advisory only.
+
 ## Review Workbench Provenance
 
 Review Workbench shows reviewer provenance as an advisory signal for each
@@ -127,6 +173,11 @@ Evidence handles are shown locally when present:
 Every provenance payload includes `advisory_only: true` and the operator message
 `Human operator decides; this reviewer is advisory only.` Approval actions remain
 human decisions.
+
+For parallel reviewer dispatch, Workbench displays each configured reviewer in
+profile order plus an aggregate severity. Missing evidence, fallback evidence,
+non-provider evidence, and failed invocations remain visible to the operator.
+They do not approve, reject, dispatch, or disable human approval actions.
 
 ## Review Evidence Policy Gates
 

@@ -270,6 +270,80 @@ def test_failed_fallback_and_non_provider_states_contribute_to_deterministic_agg
     }
 
 
+def test_all_reviewers_ok_aggregates_to_ok():
+    projection = build_multi_reviewer_projection(
+        approval="staging",
+        reviewer_target=_target("correctness-security", "architecture-maintainability"),
+        reviewer_statuses=[
+            _provider_status(profile_id="correctness-security", job_id="job-correctness"),
+            _provider_status(profile_id="architecture-maintainability", job_id="job-architecture"),
+        ],
+    )
+
+    assert projection["aggregate_policy"]["severity"] == "ok"
+    assert projection["aggregate_policy"]["state_counts"] == {"ok": 2}
+
+
+def test_strict_failed_invocation_blocker_is_deterministic_across_completion_order():
+    statuses = [
+        _provider_status(
+            profile_id="correctness-security",
+            job_id="job-correctness",
+            updated_at="2026-07-05T10:00:00+00:00",
+        ),
+        _provider_status(
+            profile_id="architecture-maintainability",
+            job_id="job-architecture",
+            adapter="claude",
+            status="failed",
+            summary="Claude reviewer failed.",
+            updated_at="2026-07-05T11:00:00+00:00",
+        ),
+    ]
+
+    first = build_multi_reviewer_projection(
+        approval="staging",
+        reviewer_target=_target("correctness-security", "architecture-maintainability"),
+        reviewer_statuses=statuses,
+        review_evidence_policy_config={"mode": "strict", "blockers": ["failed_invocation"]},
+    )
+    second = build_multi_reviewer_projection(
+        approval="staging",
+        reviewer_target=_target("correctness-security", "architecture-maintainability"),
+        reviewer_statuses=list(reversed(statuses)),
+        review_evidence_policy_config={"mode": "strict", "blockers": ["failed_invocation"]},
+    )
+
+    assert first["aggregate_policy"] == second["aggregate_policy"]
+    assert first["aggregate_policy"]["severity"] == "blocker"
+    assert first["aggregate_policy"]["state_counts"] == {"ok": 1, "failed_invocation": 1}
+
+
+def test_same_gate_status_from_different_artifact_version_does_not_match_current_artifact():
+    projection = build_multi_reviewer_projection(
+        approval="staging",
+        reviewer_target=_target("correctness-security"),
+        reviewer_statuses=[
+            _provider_status(
+                profile_id="correctness-security",
+                job_id="job-old-artifact",
+                approval="staging",
+                artifact_key="staging_report",
+                artifact_path="/tmp/staging-report.md",
+                artifact_version="sha256:old",
+            )
+        ],
+        artifact_key="staging_report",
+        artifact_path="/tmp/staging-report.md",
+        artifact_version="sha256:current",
+    )
+
+    reviewer = projection["reviewers"][0]
+    assert reviewer["status"] is None
+    assert reviewer["match_kind"] == "missing"
+    assert reviewer["policy"]["state"] == "missing_evidence"
+
+
 def test_ambiguous_legacy_status_is_not_silently_assigned_to_multiple_profiles():
     projection = build_multi_reviewer_projection(
         approval="staging",
