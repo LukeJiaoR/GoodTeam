@@ -42,8 +42,8 @@ Items marked `proposed` or `open` must not be treated as shipped behavior.
 | Single-role Telegram inbox design | Proposed | `/gt ask <role>` and `/gt tell <role>` are designed in `tg-role-interaction-design.md`; no command is shipped yet. |
 | Reply-to-card command binding | Proposed | Commands should bind through the replied card's `message_id`, but this is not fully shipped. |
 | Bare-command live-session disambiguation | Proposed | 0/1/N live-session handling is required before mutating text commands are multi-project safe. |
-| Multi role bot identities | Proposed | Role bot usernames such as `@GoodTeamArchitectBot` are UX identities routed by one Gateway, not independent GoodTeam systems. |
-| Group mention routing | Proposed | `@GoodTeamArchitectBot why SQLite?` should route to `architect` when a run context can be bound. |
+| Multi role bot identities | Proposed | Role bot usernames should be project-scoped, short, and collision-resistant, such as `@contentops_arch_a1b2bot`; they are UX identities routed by one Gateway, not independent GoodTeam systems. |
+| Group mention routing | Proposed | `@contentops_arch_a1b2bot why SQLite?` should route to `architect` when a run context can be bound. |
 | Group reply routing | Proposed | Replying to a GoodTeam message should inherit that message's project/run/gate context when available. |
 | Role-to-role group replies | Proposed | Worker-authored role messages can appear as bot replies in the group, but they must still write through the message bus. |
 | Group progress broadcasting | Proposed | Roles can post short progress updates to the group, ideally by editing existing run/status messages when possible. |
@@ -97,7 +97,7 @@ Next: architect should confirm rollback shape.
 
 ```text
 human:
-@GoodTeamArchitectBot is SQLite still the right first storage layer?
+@contentops_arch_a1b2bot is SQLite still the right first storage layer?
 ```
 
 ```text
@@ -133,11 +133,11 @@ GoodTeam control planes.
 Recommended model:
 
 ```text
-@GoodTeamPlannerBot        -> role key: planner
-@GoodTeamArchitectBot      -> role key: architect
-@GoodTeamReviewBot         -> role key: review
-@GoodTeamQABot             -> role key: qa
-@GoodTeamReleaseBot        -> role key: release
+@contentops_plan_a1b2bot   -> role key: planner
+@contentops_arch_a1b2bot   -> role key: architect
+@contentops_rev_a1b2bot    -> role key: review
+@contentops_qa_a1b2bot     -> role key: qa
+@contentops_rel_a1b2bot    -> role key: release
 ```
 
 All of them route into one GoodTeam Telegram Gateway. The Gateway owns:
@@ -149,6 +149,53 @@ All of them route into one GoodTeam Telegram Gateway. The Gateway owns:
 - Message bus writes.
 - Approval callback forwarding to the existing approval path.
 - Worker answer dispatch only when explicitly enabled in a later milestone.
+
+### Bot Username Strategy
+
+The important identifier is the Telegram bot username, because humans mention it
+with `@...` and Telegram uses it for deep links. Display name can be friendlier,
+but username should be deterministic, short, and project-scoped.
+
+Recommended generated shape:
+
+```text
+@<project_slug>_<role_slug>_<hash>bot
+```
+
+Rules:
+
+- Start with a normalized project slug so the bot clearly belongs to the project
+  or workspace.
+- Use short role slugs to preserve room for the project name:
+  `plan`, `arch`, `rev`, `qa`, `rel`, `ui`, `impl`.
+- Add a short stable hash or UUID fragment, for example 4 to 6 lowercase
+  hex/base32 characters, to avoid global Telegram username collisions.
+- Keep the full username short enough for Telegram username limits and for human
+  readability in group chat.
+- End with `bot`, matching Telegram bot username convention.
+- If the generated username is unavailable, keep the project and role portions
+  stable and rotate only the hash fragment.
+
+Example policy:
+
+```text
+project_key: CONTENTOPS
+project_slug: contentops
+hash: a1b2
+
+planner        -> @contentops_plan_a1b2bot
+architect      -> @contentops_arch_a1b2bot
+review         -> @contentops_rev_a1b2bot
+qa             -> @contentops_qa_a1b2bot
+release        -> @contentops_rel_a1b2bot
+implementation -> @contentops_impl_a1b2bot
+```
+
+If the project slug is long, truncate it before adding role and hash:
+
+```text
+customer-data-platform -> custdata_arch_a1b2bot
+```
 
 ### Identity Is Not Authority
 
@@ -245,7 +292,7 @@ Recommended message bus row for a human mention:
   "refs": [
     "telegram:chat:12345/message:678",
     "telegram:user:111",
-    "telegram:bot:GoodTeamArchitectBot",
+    "telegram:bot:contentops_arch_a1b2bot",
     "goodteam:project:CONTENTOPS",
     "goodteam:run:run-123",
     "goodteam:gate:rfc"
@@ -369,7 +416,7 @@ workflow logic. Telegram is displaying the flow, not inventing it.
 
 ```text
 human:
-@GoodTeamQABot what should I check before approving staging?
+@contentops_qa_a1b2bot what should I check before approving staging?
 ```
 
 M1 behavior:
@@ -421,6 +468,8 @@ Required outcome:
 Required outcome:
 
 - Add role bot identity mapping in configuration design.
+- Generate candidate bot usernames from project slug, role slug, and a short
+  stable hash/UUID fragment.
 - Route group mentions to role keys.
 - Route replies by stored Telegram message context.
 - Continue writing through the same run-scoped message bus.
@@ -481,6 +530,8 @@ acceptance names for later milestones.
 - `test_role_bot_cannot_approve_gate`
 - `test_stale_group_button_fails_safe`
 - `test_group_message_masks_sensitive_body`
+- `test_role_bot_username_uses_project_role_hash_and_bot_suffix`
+- `test_role_bot_username_truncates_long_project_slug`
 - `test_multi_bot_credentials_are_not_persisted`
 - `test_group_answer_dispatch_reports_adapter_failure`
 
@@ -504,10 +555,9 @@ acceptance names for later milestones.
    planner, architect, review, qa, release?
 2. Should GoodTeam use one Telegram group for all projects, one group per
    project, or Telegram forum topics per run?
-3. Should role bot usernames be configured explicitly or generated from role
-   keys?
-4. Should mentions support aliases such as `@GoodTeamArchBot`, or only canonical
-   bot usernames?
+3. How long should the default hash/UUID fragment be: 4, 5, or 6 characters?
+4. Should mentions support aliases such as shorter project-local aliases, or
+   only canonical bot usernames?
 5. What is the default adapter/model for an explicit role answer?
 6. Can a role answer command include adapter/model selection, or should that stay
    server-side only?
