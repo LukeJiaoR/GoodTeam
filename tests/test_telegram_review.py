@@ -11,6 +11,29 @@ from goodteam_os.telegram import (
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore
 
 
+def _review_session_data(
+    session_id: str,
+    *,
+    chat_id: int = 12345,
+    message_id: int = 9999,
+    decided: bool = False,
+    expires_delta: timedelta = timedelta(hours=1),
+) -> dict[str, object]:
+    return {
+        "session_id": session_id,
+        "run_id": "run-xyz",
+        "project_key": "CONTENTOPS",
+        "gate": "staging",
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "cursor": 0,
+        "items": [],
+        "decided": decided,
+        "created_at": datetime.now(UTC).isoformat(),
+        "expires_at": (datetime.now(UTC) + expires_delta).isoformat(),
+    }
+
+
 def test_session_store_lifecycle(tmp_path):
     store = TelegramReviewSessionStore(tmp_path)
     session_id = "test12"
@@ -52,6 +75,61 @@ def test_session_store_lifecycle(tmp_path):
     store.save("exp123", session_data_expired)
     assert store.get("exp123") is None  # Should be expired and deleted
     assert (tmp_path / "state" / "tg-reviews" / "exp123.json").exists() is False
+
+
+def test_session_store_finds_live_session_by_chat_and_card_message_id(tmp_path):
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("target", _review_session_data("target", chat_id=12345, message_id=777))
+    store.save("other-chat", _review_session_data("other-chat", chat_id=54321, message_id=777))
+
+    found = store.find_live_by_card_message(12345, 777)
+
+    assert found is not None
+    assert found["session_id"] == "target"
+    assert store.find_live_by_card_message(12345, 778) is None
+
+
+def test_session_store_card_message_lookup_does_not_cross_chats(tmp_path):
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("target", _review_session_data("target", chat_id=12345, message_id=777))
+    store.save("same-message-other-chat", _review_session_data("same-message-other-chat", chat_id=54321, message_id=777))
+
+    found = store.find_live_by_card_message(54321, 777)
+
+    assert found is not None
+    assert found["session_id"] == "same-message-other-chat"
+
+
+def test_session_store_card_message_lookup_ignores_expired_sessions(tmp_path):
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("expired", _review_session_data("expired", message_id=777, expires_delta=timedelta(minutes=-1)))
+
+    assert store.find_live_by_card_message(12345, 777) is None
+    assert (tmp_path / "state" / "tg-reviews" / "expired.json").exists() is False
+
+
+def test_session_store_lists_only_live_sessions_for_chat(tmp_path):
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("live-a", _review_session_data("live-a", chat_id=12345, message_id=701))
+    store.save("live-b", _review_session_data("live-b", chat_id=12345, message_id=702))
+    store.save("decided", _review_session_data("decided", chat_id=12345, message_id=703, decided=True))
+    store.save("expired", _review_session_data("expired", chat_id=12345, message_id=704, expires_delta=timedelta(minutes=-1)))
+    store.save("other-chat", _review_session_data("other-chat", chat_id=54321, message_id=705))
+
+    sessions = store.list_live_for_chat(12345)
+
+    assert [session["session_id"] for session in sessions] == ["live-a", "live-b"]
+    assert (tmp_path / "state" / "tg-reviews" / "expired.json").exists() is False
+
+
+def test_session_store_existing_live_gate_lookup_still_works(tmp_path):
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("target", _review_session_data("target", message_id=777))
+
+    found = store.find_live_for_gate("CONTENTOPS", "run-xyz", "staging")
+
+    assert found is not None
+    assert found["session_id"] == "target"
 
 
 def test_mask_sensitive_data():
