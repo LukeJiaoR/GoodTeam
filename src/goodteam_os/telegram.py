@@ -597,14 +597,32 @@ def _parse_telegram_command(text: str) -> str:
         command = head[1:]
     else:
         return ""
-    return command if command in {"status", "approvals", "workers", "evidence", "view", "approve", "reject", "changes", "bug"} else ""
+    return command if command in {
+        "status",
+        "approvals",
+        "workers",
+        "evidence",
+        "view",
+        "approve",
+        "reject",
+        "changes",
+        "bug",
+        "ask",
+        "tell",
+    } else ""
 
 
 TG_COMMAND_CONTEXT_CHOOSER_REQUIRED = "__tg_command_context_chooser_required__"
+TG_ROLE_INBOX_NO_CONTEXT = (
+    "M1 is run-scoped: no live Telegram approval context is available. "
+    "No message was recorded. Reply to an approval card or start a run before using /gt ask or /gt tell."
+)
 CHOOSER_COMMAND_CODES = {
     "approve": "A",
     "reject": "J",
     "changes": "C",
+    "ask": "K",
+    "tell": "T",
 }
 CHOOSER_COMMANDS_BY_CODE = {value: key for key, value in CHOOSER_COMMAND_CODES.items()}
 
@@ -653,6 +671,7 @@ def _attach_command_chooser_intent(
     command: str,
     raw_text: str,
     chat_id: object,
+    message_id: object = "",
 ) -> dict[str, str]:
     intent_ids_by_session = {}
     for session in sessions:
@@ -667,6 +686,7 @@ def _attach_command_chooser_intent(
             "command": command,
             "raw_text": raw_text,
             "chat_id": str(chat_id),
+            "message_id": str(message_id) if message_id else "",
             "session_id": session_id,
             "created_at": datetime.now(UTC).isoformat(),
         }
@@ -684,6 +704,7 @@ def _send_command_context_chooser(
     raw_text: str,
     user_id: str,
     project_key: str,
+    message_id: object = "",
 ) -> dict[str, object]:
     store = TelegramReviewSessionStore(workspace)
     live_sessions = store.list_live_for_chat(int(chat_id))
@@ -700,6 +721,7 @@ def _send_command_context_chooser(
             raw_text=raw_text,
             user_id=user_id,
             context_session=live_sessions[0],
+            command_message_id=message_id,
         )
 
     intent_ids_by_session = _attach_command_chooser_intent(
@@ -708,6 +730,7 @@ def _send_command_context_chooser(
         command=command,
         raw_text=raw_text,
         chat_id=chat_id,
+        message_id=message_id,
     )
     _telegram_request(
         token,
@@ -733,10 +756,11 @@ def _resolve_tg_command_session(
     reply_to_message_id: int = 0,
     project_key: str = "",
 ) -> tuple[dict[str, object] | None, str]:
-    if command not in {"view", "approve", "reject", "changes"}:
+    if command not in {"view", "approve", "reject", "changes", "ask", "tell"}:
         return None, ""
 
-    mutating = command in {"approve", "reject", "changes"}
+    role_inbox_command = command in {"ask", "tell"}
+    mutating = command in {"approve", "reject", "changes", "ask", "tell"}
     store = TelegramReviewSessionStore(workspace)
     if reply_to_message_id:
         session = store.find_live_by_card_message(chat_id, reply_to_message_id)
@@ -751,6 +775,8 @@ def _resolve_tg_command_session(
         return live_sessions[0], ""
     if len(live_sessions) > 1 and mutating:
         return None, TG_COMMAND_CONTEXT_CHOOSER_REQUIRED
+    if role_inbox_command:
+        return None, TG_ROLE_INBOX_NO_CONTEXT
     if mutating:
         return None, "No pending approval gate."
     return None, ""
@@ -993,6 +1019,103 @@ def _extract_command_arg(raw_text: str, command: str) -> str:
     return ""
 
 
+def _canonical_role_keys() -> tuple[str, ...]:
+    from goodteam_os.roles import list_role_definitions
+
+    return tuple(str(role.get("key", "")).strip() for role in list_role_definitions() if role.get("key"))
+
+
+def _role_command_usage(command: str) -> str:
+    body_label = "question" if command == "ask" else "instruction"
+    return f"Usage: /gt {command} <role> <{body_label}>"
+
+
+def _parse_role_command_args(raw_text: str, command: str) -> tuple[str, str, str]:
+    arg = _extract_command_arg(raw_text, command)
+    if not arg:
+        return "", "", _role_command_usage(command)
+
+    parts = arg.split(maxsplit=1)
+    role_key = parts[0].strip() if parts else ""
+    body = parts[1].strip() if len(parts) > 1 else ""
+    if not role_key or not body:
+        return "", "", _role_command_usage(command)
+
+    valid_roles = _canonical_role_keys()
+    if role_key not in valid_roles:
+        return "", "", f"Unknown role: {role_key}\nValid role keys: {', '.join(valid_roles)}"
+
+    return role_key, mask_sensitive_data(body), ""
+
+
+def _telegram_role_message_refs(
+    *,
+    chat_id: object,
+    message_id: object = "",
+    user_id: str = "",
+    session: dict[str, object],
+) -> list[str]:
+    refs = []
+    if chat_id and message_id:
+        refs.append(f"telegram:chat:{chat_id}/message:{message_id}")
+    if user_id:
+        refs.append(f"telegram:user:{user_id}")
+
+    session_id = str(session.get("session_id", "") or "")
+    if session_id:
+        refs.append(f"tg-session:{session_id}")
+
+    gate = str(session.get("gate", "") or "").strip()
+    if gate:
+        refs.append(f"approval:{gate}")
+        try:
+            from goodteam_os.roles import approval_artifact_map
+
+            artifact_key = approval_artifact_map().get(gate, gate)
+        except Exception:
+            artifact_key = gate
+        if artifact_key:
+            refs.append(f"artifact:{artifact_key}")
+
+    return refs
+
+
+def _record_tg_role_message(
+    *,
+    workspace: Path,
+    session: dict[str, object],
+    command: str,
+    role_key: str,
+    body: str,
+    chat_id: object,
+    message_id: object = "",
+    user_id: str = "",
+) -> dict[str, object]:
+    from goodteam_os.messages import append_message
+
+    project_key = str(session.get("project_key", "") or "").strip()
+    run_id = str(session.get("run_id", "") or "").strip()
+    if not project_key or not run_id:
+        raise ValueError(TG_ROLE_INBOX_NO_CONTEXT)
+
+    return append_message(
+        workspace,
+        project_key,
+        run_id,
+        from_role="human",
+        to=[role_key],
+        kind="ask" if command == "ask" else "propose",
+        gate=str(session.get("gate", "") or "").strip(),
+        body=body,
+        refs=_telegram_role_message_refs(
+            chat_id=chat_id,
+            message_id=message_id,
+            user_id=user_id,
+            session=session,
+        ),
+    )
+
+
 def _process_telegram_command(
     command: str,
     *,
@@ -1004,9 +1127,67 @@ def _process_telegram_command(
     user_id: str = "",
     context_session: dict[str, object] | None = None,
     context_error_text: str = "",
+    command_message_id: object = "",
 ) -> dict[str, object]:
     if context_session is not None:
         project_key = str(context_session.get("project_key", project_key) or project_key)
+
+    if command in {"ask", "tell"}:
+        role_key, body, parse_error = _parse_role_command_args(raw_text, command)
+        if parse_error:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text=parse_error)
+            return {"status": "processed", "command": command}
+
+        if context_error_text == TG_COMMAND_CONTEXT_CHOOSER_REQUIRED:
+            return _send_command_context_chooser(
+                token=token,
+                chat_id=chat_id,
+                workspace=workspace,
+                command=command,
+                raw_text=raw_text,
+                user_id=user_id,
+                project_key=project_key,
+                message_id=command_message_id,
+            )
+
+        if context_error_text:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text=context_error_text)
+            return {"status": "processed", "command": command}
+
+        if context_session is None:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text=TG_ROLE_INBOX_NO_CONTEXT)
+            return {"status": "processed", "command": command}
+
+        try:
+            message = _record_tg_role_message(
+                workspace=workspace,
+                session=context_session,
+                command=command,
+                role_key=role_key,
+                body=body,
+                chat_id=chat_id,
+                message_id=command_message_id,
+                user_id=user_id,
+            )
+        except ValueError as exc:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text=str(exc))
+            return {"status": "processed", "command": command}
+
+        gate = str(message.get("gate", "") or "none").upper()
+        project_label = str(context_session.get("project_key", project_key) or project_key or "unknown")
+        _send_masked_telegram_message(
+            token=token,
+            chat_id=chat_id,
+            text="\n".join(
+                [
+                    f"Recorded for {role_key}.",
+                    f"Project: {project_label}",
+                    f"Gate: {gate}",
+                    "No worker was started.",
+                ]
+            ),
+        )
+        return {"status": "processed", "command": command}
 
     if command == "approvals":
         state = _read_command_state(workspace, project_key)
@@ -1124,6 +1305,7 @@ def _process_telegram_command(
                 raw_text=raw_text,
                 user_id=user_id,
                 project_key=project_key,
+                message_id=command_message_id,
             )
 
         if context_error_text:
@@ -1634,6 +1816,7 @@ def _process_command_context_chooser_callback(
     command_code: str,
     intent_id: str,
     chat_id: int,
+    message_id: int,
     user_id: str,
     project_key: str,
 ) -> dict[str, object]:
@@ -1659,6 +1842,7 @@ def _process_command_context_chooser_callback(
         return _send_chooser_stale_message(token=token, chat_id=chat_id)
 
     raw_text = str(intent.get("raw_text", "") or f"/gt {command}")
+    command_message_id = str(intent.get("message_id", "") or "")
     if command != str(intent.get("command", "") or command):
         return {"status": "ignored", "reason": "chooser command mismatch"}
 
@@ -1676,6 +1860,7 @@ def _process_command_context_chooser_callback(
         raw_text=raw_text,
         user_id=user_id,
         context_session=session,
+        command_message_id=command_message_id or message_id,
     )
     if result.get("status") == "processed":
         processed_callbacks.add(callback_id)
@@ -1794,6 +1979,7 @@ def process_telegram_update(
                 user_id=user_id,
                 context_session=context_session,
                 context_error_text=context_error_text,
+                command_message_id=message.get("message_id", ""),
             )
 
         return {"status": "ignored", "reason": "not a reply message"}
@@ -1837,6 +2023,7 @@ def process_telegram_update(
                 command_code=arg,
                 intent_id=intent_id,
                 chat_id=chat_id,
+                message_id=message_id,
                 user_id=user_id,
                 project_key=project_key,
             )

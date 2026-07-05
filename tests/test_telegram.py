@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from goodteam_os.messages import read_messages
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 import goodteam_os.telegram as telegram
 from goodteam_os.telegram import (
@@ -1113,6 +1114,372 @@ def _save_live_tg_session(
             "expires_at": (datetime.now(UTC) + expires_delta).isoformat(),
         },
     )
+
+
+def test_gt_ask_role_reply_to_card_records_ask_message(tmp_path, monkeypatch):
+    calls = []
+    _save_live_tg_session(tmp_path, "reply-card", gate="rfc", message_id=9001)
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update(
+            "/gt ask architect why did you choose SQLite first?",
+            message_id=501,
+            reply_to_message_id=9001,
+        ),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="OTHER",
+    )
+
+    messages = read_messages(tmp_path, "CONTENTOPS", "run-1")
+    assert result == {"status": "processed", "command": "ask"}
+    assert len(messages) == 1
+    assert messages[0]["from_role"] == "human"
+    assert messages[0]["to"] == ["architect"]
+    assert messages[0]["kind"] == "ask"
+    assert messages[0]["gate"] == "rfc"
+    assert messages[0]["body"] == "why did you choose SQLite first?"
+    assert "telegram:chat:12345/message:501" in messages[0]["refs"]
+    assert "telegram:user:111" in messages[0]["refs"]
+    assert "tg-session:reply-card" in messages[0]["refs"]
+    assert "approval:rfc" in messages[0]["refs"]
+    assert "artifact:rfc" in messages[0]["refs"]
+    confirm_text = calls[0]["params"]["text"]
+    assert "Recorded for architect" in confirm_text
+    assert "No worker was started" in confirm_text
+
+
+def test_gt_tell_role_reply_to_card_records_propose_message(tmp_path, monkeypatch):
+    calls = []
+    _save_live_tg_session(tmp_path, "reply-card", gate="staging", message_id=9001)
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update(
+            "/gt tell qa focus regression on login and billing",
+            reply_to_message_id=9001,
+        ),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    messages = read_messages(tmp_path, "CONTENTOPS", "run-1")
+    assert result == {"status": "processed", "command": "tell"}
+    assert len(messages) == 1
+    assert messages[0]["to"] == ["qa"]
+    assert messages[0]["kind"] == "propose"
+    assert messages[0]["gate"] == "staging"
+    assert messages[0]["body"] == "focus regression on login and billing"
+    assert "Recorded for qa" in calls[0]["params"]["text"]
+    assert "No worker was started" in calls[0]["params"]["text"]
+
+
+def test_gt_ask_role_bare_command_with_one_live_session_records_against_session(tmp_path, monkeypatch):
+    calls = []
+    _save_live_tg_session(
+        tmp_path,
+        "only-live-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="release",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt ask release what is the rollback path?"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "ask"}
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1") == []
+    messages = read_messages(tmp_path, "OTHER", "run-other")
+    assert len(messages) == 1
+    assert messages[0]["to"] == ["release"]
+    assert messages[0]["kind"] == "ask"
+    assert messages[0]["gate"] == "release"
+    assert "Project: OTHER" in calls[0]["params"]["text"]
+
+
+def test_gt_ask_role_bare_command_with_multiple_live_sessions_sends_chooser_without_write(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt ask qa what should I inspect?"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "processed", "command": "ask"}
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1") == []
+    assert read_messages(tmp_path, "OTHER", "run-other") == []
+    assert calls[0]["method"] == "sendMessage"
+    assert "Choose the approval context" in calls[0]["params"]["text"]
+    keyboard = calls[0]["params"]["reply_markup"]["inline_keyboard"]
+    assert keyboard[0][0]["callback_data"].startswith("v1:Q:first-card:K:")
+    assert keyboard[1][0]["callback_data"].startswith("v1:Q:second-card:K:")
+
+
+def test_gt_ask_role_context_chooser_callback_records_selected_session_only(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True, "result": {"message_id": 4242}}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    process_telegram_update(
+        telegram_text_update("/gt ask qa what should I inspect?", message_id=600),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+    selected_callback = calls[0]["params"]["reply_markup"]["inline_keyboard"][1][0]["callback_data"]
+
+    result = process_telegram_update(
+        telegram_callback_update(selected_callback),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "processed", "callback_id": "callback-chooser"}
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1") == []
+    messages = read_messages(tmp_path, "OTHER", "run-other")
+    assert len(messages) == 1
+    assert messages[0]["to"] == ["qa"]
+    assert messages[0]["body"] == "what should I inspect?"
+    assert "telegram:chat:12345/message:600" in messages[0]["refs"]
+
+
+def test_gt_ask_role_context_chooser_callback_rejects_stale_session_without_write(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True, "result": {"message_id": 4242}}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    process_telegram_update(
+        telegram_text_update("/gt ask qa what should I inspect?"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+    selected_callback = calls[0]["params"]["reply_markup"]["inline_keyboard"][1][0]["callback_data"]
+    store = telegram.TelegramReviewSessionStore(tmp_path)
+    session = store.get("second-card")
+    session["decided"] = True
+    store.save("second-card", session)
+    calls.clear()
+
+    result = process_telegram_update(
+        telegram_callback_update(selected_callback),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "ignored", "reason": "session no longer active"}
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1") == []
+    assert read_messages(tmp_path, "OTHER", "run-other") == []
+    assert "no longer active" in calls[0]["params"]["text"]
+
+
+def test_gt_ask_role_zero_live_sessions_sends_run_scoped_no_record_message(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt ask architect should we use Postgres?"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "ask"}
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1") == []
+    text = calls[0]["params"]["text"]
+    assert "M1 is run-scoped" in text
+    assert "No message was recorded" in text
+
+
+def test_gt_ask_role_unknown_role_returns_valid_role_hint_without_write(tmp_path, monkeypatch):
+    calls = []
+    _save_live_tg_session(tmp_path, "reply-card", message_id=9001)
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt ask designer can you polish this?", reply_to_message_id=9001),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "processed", "command": "ask"}
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1") == []
+    text = calls[0]["params"]["text"]
+    assert "Unknown role: designer" in text
+    assert "Valid role keys:" in text
+    assert "architect" in text
+    assert "qa" in text
+
+
+def test_gt_ask_role_empty_body_returns_usage_without_write(tmp_path, monkeypatch):
+    calls = []
+    _save_live_tg_session(tmp_path, "reply-card", message_id=9001)
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt ask architect", reply_to_message_id=9001),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "processed", "command": "ask"}
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1") == []
+    assert "Usage: /gt ask <role> <question>" in calls[0]["params"]["text"]
+
+
+def test_gt_tell_role_missing_role_returns_usage_without_write(tmp_path, monkeypatch):
+    calls = []
+    _save_live_tg_session(tmp_path, "reply-card", message_id=9001)
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt tell", reply_to_message_id=9001),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "processed", "command": "tell"}
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1") == []
+    assert "Usage: /gt tell <role> <instruction>" in calls[0]["params"]["text"]
+
+
+def test_gt_ask_role_masks_body_before_append(tmp_path, monkeypatch):
+    _save_live_tg_session(tmp_path, "reply-card", message_id=9001)
+
+    def fake_request(token, method, params):
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    process_telegram_update(
+        telegram_text_update(
+            "/gt ask qa inspect /Users/luke/private/app and 10.0.0.7",
+            reply_to_message_id=9001,
+        ),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    messages = read_messages(tmp_path, "CONTENTOPS", "run-1")
+    assert messages[0]["body"] == "inspect local-workspace-dir and staging-ip"
 
 
 def test_gt_view_sends_artifact_content(tmp_path, monkeypatch):
