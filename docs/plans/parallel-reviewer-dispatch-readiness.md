@@ -314,8 +314,11 @@ Break follow-up work into separate issues:
 
 - #242A: Document semantics and required tests only. This document satisfies
   that phase.
-- #242B: Add multi-reviewer projection data model with no runtime fan-out.
-  Include per-reviewer provenance and policy aggregation tests.
+- #242B / #257: Add multi-reviewer projection data model with no runtime
+  fan-out. This phase adds backend projection payload
+  `multi_reviewer_projection` with per-reviewer provenance, per-reviewer
+  policy, and aggregate policy counts while preserving the existing
+  single-reviewer fields.
 - #242C: Update Workbench UI to render multiple reviewer cards and aggregate
   badge from existing synthetic statuses only.
 - #242D: Add opt-in profile-driven dispatch fan-out with idempotent job

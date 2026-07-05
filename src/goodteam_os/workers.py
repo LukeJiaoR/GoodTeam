@@ -799,6 +799,7 @@ class WorkerJobStore:
                             "failure_class",
                             "disposition",
                             "invocation_evidence",
+                            "profile_id",
                         }
                     },
                 }
