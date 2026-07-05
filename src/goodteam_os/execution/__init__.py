@@ -28,10 +28,12 @@ from goodteam_os.execution.models import (
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
 from goodteam_os.execution.ci import CIStatusService
+from goodteam_os.execution.api import ExecutionAPI
 
 
 __all__ = [
     "ExecutionActor",
+    "ExecutionAPI",
     "ExecutionLedger",
     "ExecutionOrchestrator",
     "ExecutionRun",

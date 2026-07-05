@@ -22,6 +22,7 @@ from goodteam_os.dispatch import (
     parse_dispatch_track_spec,
     parse_dispatch_verify_spec,
 )
+from goodteam_os.execution import ExecutionAPI
 from goodteam_os.graph import (
     accept_refinement,
     advance_approved_workflow,
@@ -4130,6 +4131,88 @@ def build_dashboard_handler(workspace: Path):
     return DashboardHandler
 
 
+def handle_execution_get(path: str, query: dict[str, list[str]]) -> tuple[int, dict[str, object]] | None:
+    match = re.fullmatch(r"/api/executions/([^/]+)(?:/ledger)?", path)
+    if match is None:
+        return None
+    execution_id = match.group(1)
+    try:
+        api = ExecutionAPI(_execution_project_root_from_query(query))
+        if path.endswith("/ledger"):
+            return 200, api.ledger(execution_id)
+        return 200, api.replay(execution_id)
+    except ValueError as exc:
+        return _execution_error_response(exc)
+
+
+def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, dict[str, object]] | None:
+    try:
+        if path == "/executions/github/issues/intake":
+            api = ExecutionAPI(_execution_project_root_from_body(request))
+            repo = _required_str(request, "repo")
+            issue_number = _required_int(request.get("issue_number", request.get("issue")), "issue_number")
+            return 200, api.intake_github_issue(
+                repo=repo,
+                issue_number=issue_number,
+                adapter=str(request.get("adapter", "fake")),
+                role=str(request.get("role", "implementation")),
+            )
+
+        match = re.fullmatch(r"/executions/([^/]+)/(run|pr|ci)", path)
+        if match is None:
+            return None
+        execution_id = match.group(1)
+        api = ExecutionAPI(_execution_project_root_from_body(request))
+        command = match.group(2)
+        if command == "run":
+            return 200, api.run_execution(execution_id)
+        if command == "pr":
+            return 200, api.create_or_reuse_pr(execution_id)
+        return 200, api.observe_ci(execution_id)
+    except ValueError as exc:
+        return _execution_error_response(exc)
+
+
+def _execution_project_root_from_query(query: dict[str, list[str]]) -> Path:
+    values = query.get("project_root", [])
+    value = values[0] if values else ""
+    if not value.strip():
+        raise ValueError("project_root is required")
+    return Path(value)
+
+
+def _execution_project_root_from_body(request: dict[str, object]) -> Path:
+    value = str(request.get("project_root", "")).strip()
+    if not value:
+        raise ValueError("project_root is required")
+    return Path(value)
+
+
+def _required_str(request: dict[str, object], field_name: str) -> str:
+    value = str(request.get(field_name, "")).strip()
+    if not value:
+        raise ValueError(f"{field_name} is required")
+    return value
+
+
+def _required_int(value: object, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a positive int")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a positive int") from exc
+    if parsed <= 0:
+        raise ValueError(f"{field_name} must be a positive int")
+    return parsed
+
+
+def _execution_error_response(exc: ValueError) -> tuple[int, dict[str, object]]:
+    message = str(exc)
+    status = 404 if message.startswith("Execution run not found: ") else 400
+    return status, {"status": "error", "error": message}
+
+
 def normalize_task_backend(value: object) -> dict[str, object]:
     backend = dict(value) if isinstance(value, dict) else {}
     mode = str(backend.get("mode", "local") or "local")
@@ -7818,6 +7901,11 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             project_key = query.get("project", [""])[0]
             if maybe_send_favicon_response(self, parsed.path):
                 return
+            execution_response = handle_execution_get(parsed.path, query)
+            if execution_response is not None:
+                status, payload = execution_response
+                self._send_json(status, payload)
+                return
             if parsed.path in {"/artifact", "/api/artifact"}:
                 try:
                     artifact_key = query.get("key", [""])[0]
@@ -8104,8 +8192,11 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             normalized_path = self.path
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
+            is_execution_path = normalized_path == "/executions/github/issues/intake" or bool(
+                re.fullmatch(r"/executions/[^/]+/(run|pr|ci)", normalized_path)
+            )
 
-            if normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
+            if not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -8118,6 +8209,14 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length)
                 request = json.loads(raw_body.decode("utf-8") or "{}")
+                if is_execution_path:
+                    execution_response = handle_execution_post(normalized_path, request)
+                    if execution_response is None:
+                        self.send_error(404)
+                        return
+                    status, result = execution_response
+                    self._send_json(status, result)
+                    return
                 if normalized_path == "/fs/mkdir":
                     try:
                         result = create_subdirectory(
