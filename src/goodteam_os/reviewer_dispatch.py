@@ -153,7 +153,7 @@ def dispatch_reviewer_jobs_for_gate(
         return []
 
     run_id = str(getattr(state, "run_id", "") or "")
-    artifact_version = _artifact_version(artifact_path)
+    artifact_version = artifact_version_for_path(artifact_path)
     dispatch_group_id = _dispatch_group_id(
         run_id=run_id,
         approval=approval,
@@ -180,6 +180,95 @@ def dispatch_reviewer_jobs_for_gate(
         result.setdefault("job_id", str(job.get("id", "")))
         results.append({**result, **_identity_payload(job)})
     return results
+
+
+def select_queued_reviewer_jobs_for_gate(
+    jobs: Iterable[Mapping[str, object]],
+    *,
+    run_id: str,
+    approval: str,
+    artifact_key: str = "",
+    artifact_path: str = "",
+    artifact_version: str = "",
+    profile_id: str = "",
+    profile_order: Iterable[str] = (),
+) -> list[dict[str, object]]:
+    wanted_run_id = _clean_text(run_id)
+    wanted_gate = _clean_text(approval)
+    wanted_artifact_key = _clean_text(artifact_key)
+    wanted_artifact_path = _clean_text(artifact_path)
+    wanted_artifact_version = _clean_text(artifact_version)
+    wanted_profile_id = _clean_text(profile_id)
+    order = {_clean_text(value): index for index, value in enumerate(profile_order) if _clean_text(value)}
+    selected = [
+        dict(job)
+        for job in jobs
+        if _is_executable_queued_reviewer_job(job)
+        and _clean_text(job.get("run_id")) == wanted_run_id
+        and _job_gate(job) == wanted_gate
+        and _matches_supplied_identity(job, "artifact_key", wanted_artifact_key)
+        and _matches_supplied_identity(job, "artifact_path", wanted_artifact_path)
+        and _matches_supplied_identity(job, "artifact_version", wanted_artifact_version)
+        and _matches_supplied_identity(job, "profile_id", wanted_profile_id)
+    ]
+    return sorted(selected, key=lambda job: _reviewer_job_sort_key(job, order))
+
+
+def run_queued_reviewer_jobs_for_gate(
+    *,
+    store: WorkerJobStore,
+    jobs: Iterable[Mapping[str, object]],
+    run_id: str,
+    approval: str,
+    artifact_key: str = "",
+    artifact_path: str = "",
+    artifact_version: str = "",
+    profile_id: str = "",
+    max_jobs: int | None = None,
+    profile_order: Iterable[str] = (),
+) -> dict[str, object]:
+    job_list = [dict(job) for job in jobs]
+    selected = select_queued_reviewer_jobs_for_gate(
+        job_list,
+        run_id=run_id,
+        approval=approval,
+        artifact_key=artifact_key,
+        artifact_path=artifact_path,
+        artifact_version=artifact_version,
+        profile_id=profile_id,
+        profile_order=profile_order,
+    )
+    runnable = selected[:max_jobs] if max_jobs is not None and max_jobs >= 0 else selected
+    results: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+    for job in runnable:
+        job_id = _job_id(job)
+        if not job_id:
+            errors.append({"job_id": "", "error": "missing job id"})
+            continue
+        try:
+            status = dict(store.run_job(job_id))
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            errors.append({"job_id": job_id, "error": str(exc)})
+            continue
+        results.append(
+            {
+                "job_id": job_id,
+                "status": _clean_text(status.get("status")),
+                "summary": _clean_text(status.get("summary")),
+                "profile_id": _clean_text(status.get("profile_id") or job.get("profile_id")),
+                "approval": _clean_text(status.get("approval") or status.get("gate") or job.get("approval") or job.get("gate")),
+                "artifact_key": _clean_text(status.get("artifact_key") or job.get("artifact_key")),
+                "result_path": _clean_text(status.get("result_path")),
+            }
+        )
+    return {
+        "selected_count": len(selected),
+        "ran_count": len(results),
+        "skipped_count": max(0, len(job_list) - len(results)),
+        "results": results,
+        "errors": errors,
+    }
 
 
 def _parallel_enabled(target: Mapping[str, object] | None, phase: str) -> bool:
@@ -255,7 +344,7 @@ def _reviewer_task(*, profile: ReviewerProfile, approval: str, artifact_key: str
     )
 
 
-def _artifact_version(artifact_path: str) -> str:
+def artifact_version_for_path(artifact_path: str) -> str:
     path = Path(artifact_path).expanduser() if artifact_path else None
     if path is None or not path.is_file():
         return "missing"
@@ -334,3 +423,48 @@ def _is_queued_reviewer_job(job: Mapping[str, object]) -> bool:
     if str(job.get("phase", "") or "").strip() in REVIEWER_PROFILE_PHASES:
         return True
     return str(job.get("role", "") or "").strip() in set(REVIEWER_ROLE_BY_PHASE.values())
+
+
+def _is_executable_queued_reviewer_job(job: Mapping[str, object]) -> bool:
+    if str(job.get("status", "") or "").strip().lower() != "queued":
+        return False
+    if not _clean_text(job.get("profile_id")):
+        return False
+    if _clean_text(job.get("phase")) not in REVIEWER_PROFILE_PHASES:
+        return False
+    if not _clean_text(job.get("dispatch_group_id")):
+        return False
+    if not _clean_text(job.get("idempotency_key")):
+        return False
+    return True
+
+
+def _clean_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _job_gate(job: Mapping[str, object]) -> str:
+    return _clean_text(job.get("gate") or job.get("approval"))
+
+
+def _job_id(job: Mapping[str, object]) -> str:
+    return _clean_text(job.get("id") or job.get("job_id"))
+
+
+def _matches_supplied_identity(job: Mapping[str, object], field: str, wanted: str) -> bool:
+    if not wanted:
+        return True
+    return _clean_text(job.get(field)) == wanted
+
+
+def _reviewer_job_sort_key(job: Mapping[str, object], profile_order: Mapping[str, int]) -> tuple[object, ...]:
+    profile_id = _clean_text(job.get("profile_id"))
+    configured_index = profile_order.get(profile_id)
+    return (
+        configured_index is None,
+        configured_index if configured_index is not None else 0,
+        _job_gate(job),
+        profile_id,
+        _clean_text(job.get("created_at")),
+        _job_id(job),
+    )

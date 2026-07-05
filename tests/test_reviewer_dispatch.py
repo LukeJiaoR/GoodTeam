@@ -9,6 +9,8 @@ from goodteam_os.reviewer_dispatch import (
     normalize_reviewer_dispatch_config,
     reviewer_dispatch_diagnostics,
     reviewer_dispatch_rollout_status,
+    run_queued_reviewer_jobs_for_gate,
+    select_queued_reviewer_jobs_for_gate,
 )
 from goodteam_os.state import create_initial_state
 from goodteam_os.workers import WorkerJobStore
@@ -189,6 +191,243 @@ def test_dispatch_diagnostics_counts_queued_reviewer_jobs_by_gate_and_profile():
             "correctness-security": 1,
         },
     }
+
+
+def test_select_queued_reviewer_jobs_for_gate_filters_status_run_gate_artifact_and_profile():
+    jobs = [
+        {
+            "id": "job-1",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "correctness-security",
+            "phase": "implementation",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+            "dispatch_group_id": "reviewer-dispatch-current",
+            "idempotency_key": "job-1-key",
+            "created_at": "2026-07-05T10:00:00+00:00",
+        },
+        {
+            "id": "job-2",
+            "status": "completed",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "architecture-maintainability",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+        },
+        {
+            "id": "job-3",
+            "status": "queued",
+            "run_id": "run-2",
+            "gate": "qa",
+            "profile_id": "architecture-maintainability",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+        },
+        {
+            "id": "job-4",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "code_review",
+            "profile_id": "architecture-maintainability",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+        },
+        {
+            "id": "job-5",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "qa",
+            "role": "code_review",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+        },
+        {
+            "id": "job-6",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "qa",
+            "role": "implementation",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+        },
+        {
+            "id": "job-7",
+            "status": "running",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "product-operator",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+        },
+        {
+            "id": "job-8",
+            "status": "failed",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "correctness-security",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+        },
+        {
+            "id": "job-9",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "correctness-security",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/old-qa.md",
+            "artifact_version": "sha256:old",
+        },
+    ]
+
+    selected = select_queued_reviewer_jobs_for_gate(
+        jobs,
+        run_id="run-1",
+        approval="qa",
+        artifact_key="qa_report",
+        artifact_path="/tmp/qa.md",
+        artifact_version="sha256:1",
+        profile_id="correctness-security",
+    )
+
+    assert [job["id"] for job in selected] == ["job-1"]
+
+
+def test_select_queued_reviewer_jobs_for_gate_orders_by_profile_configuration_then_fallback():
+    jobs = [
+        {
+            "id": "job-b",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "product-operator",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-b-key",
+            "created_at": "2026-07-05T10:01:00+00:00",
+        },
+        {
+            "id": "job-a",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "correctness-security",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-a-key",
+            "created_at": "2026-07-05T10:02:00+00:00",
+        },
+        {
+            "id": "job-c",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "unknown-reviewer",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-c-key",
+            "created_at": "2026-07-05T10:00:00+00:00",
+        },
+    ]
+
+    selected = select_queued_reviewer_jobs_for_gate(
+        jobs,
+        run_id="run-1",
+        approval="qa",
+        profile_order=["correctness-security", "product-operator"],
+    )
+
+    assert [job["id"] for job in selected] == ["job-a", "job-b", "job-c"]
+
+
+def test_run_queued_reviewer_jobs_for_gate_runs_only_selected_jobs_without_creating_jobs(tmp_path: Path, monkeypatch):
+    store = WorkerJobStore(tmp_path)
+    selected = store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review QA",
+        context="Context",
+        profile_id="correctness-security",
+        approval="qa",
+        gate="qa",
+        phase="implementation",
+        artifact_key="qa_report",
+        dispatch_group_id="reviewer-dispatch-current",
+        idempotency_key="selected-key",
+    )
+    store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="fake",
+        task="Implement",
+        context="Context",
+        approval="qa",
+        gate="qa",
+        artifact_key="qa_report",
+    )
+    store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Legacy code review job without reviewer dispatch identity",
+        context="Context",
+        approval="qa",
+        gate="qa",
+        artifact_key="qa_report",
+    )
+    completed = store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review completed",
+        context="Context",
+        profile_id="architecture-maintainability",
+        approval="qa",
+        gate="qa",
+        phase="implementation",
+        artifact_key="qa_report",
+    )
+    completed_root = tmp_path / ".goodteam" / "workers" / "jobs" / completed["id"]
+    (completed_root / "status.json").write_text('{"status":"completed"}', encoding="utf-8")
+    ran: list[str] = []
+    original_run_job = WorkerJobStore.run_job
+
+    def spy_run_job(self: WorkerJobStore, job_id: str):
+        ran.append(job_id)
+        return original_run_job(self, job_id)
+
+    def fail_create_job(*_args, **_kwargs):
+        raise AssertionError("explicit reviewer execution must not create jobs")
+
+    monkeypatch.setattr(WorkerJobStore, "run_job", spy_run_job)
+    monkeypatch.setattr(WorkerJobStore, "create_job", fail_create_job)
+    monkeypatch.setattr(WorkerJobStore, "create_or_reuse_job", fail_create_job)
+
+    result = run_queued_reviewer_jobs_for_gate(
+        store=store,
+        jobs=store.list_jobs(),
+        run_id="run-1",
+        approval="qa",
+        artifact_key="qa_report",
+    )
+
+    assert ran == [selected["id"]]
+    assert result["selected_count"] == 1
+    assert result["ran_count"] == 1
+    assert result["skipped_count"] == 3
+    assert result["errors"] == []
 
 
 def test_rollout_status_requires_second_acknowledgement_for_parallel_mode():
