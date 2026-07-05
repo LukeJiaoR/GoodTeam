@@ -11,6 +11,7 @@ from goodteam_os.failure_patterns import FailurePatternLibrary, canary_routing_d
 from goodteam_os.memory import ProjectMemoryStore, RoleMemoryStore, summarize_markdown
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import load_project_target
+from goodteam_os.reviewer_dispatch import dispatch_reviewer_jobs_for_gate
 from goodteam_os.roles import (
     approval_artifact_map,
     artifact_contract,
@@ -1342,6 +1343,13 @@ def run_staging_until_gate(
 
     state.current_node = "staging_review_gate"
     state.next_node = gate_next_node(state, gate="staging", approved_next="release")
+    dispatch_gate_reviewer_jobs(
+        state=state,
+        project_config=project_config,
+        approval="staging",
+        artifact_key="staging_report",
+        artifact_path=staging_path,
+    )
     sync_project_stage_tasks(state, project_config)
     return state
 
@@ -1363,6 +1371,13 @@ def run_release_until_gate(
     _register_written_markdown(state, "release_notes", release_path)
     state.current_node = "release_review_gate"
     state.next_node = gate_next_node(state, gate="release", approved_next="retro_memory")
+    dispatch_gate_reviewer_jobs(
+        state=state,
+        project_config=project_config,
+        approval="release",
+        artifact_key="release_notes",
+        artifact_path=release_path,
+    )
     sync_project_stage_tasks(state, project_config)
     return state
 
@@ -1424,6 +1439,31 @@ def run_implementation_workers(
         )
         for job_spec in implementation_worker_job_specs(state, target)
     ]
+
+
+def dispatch_gate_reviewer_jobs(
+    *,
+    state: AgileDevState,
+    project_config: Path | None,
+    approval: str,
+    artifact_key: str,
+    artifact_path: Path,
+) -> list[dict[str, object]]:
+    if project_config is None or not project_config.is_file():
+        return []
+    target = load_project_target(project_config)
+    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    if runtime_root is None:
+        return []
+    return dispatch_reviewer_jobs_for_gate(
+        store=WorkerJobStore(runtime_root),
+        state=state,
+        target=target,
+        approval=approval,
+        artifact_key=artifact_key,
+        artifact_path=str(artifact_path),
+        context=worker_context(state),
+    )
 
 
 def implementation_worker_job_specs(state: AgileDevState, target: dict[object, object]) -> list[dict[str, object]]:
@@ -2232,6 +2272,13 @@ def run_fix_implementation(
     state.approvals["code_review"] = state.approvals.get("code_review", "pending")
     state.current_node = "code_review_review_gate"
     state.next_node = gate_next_node(state, gate="code_review", approved_next="fix_qa")
+    dispatch_gate_reviewer_jobs(
+        state=state,
+        project_config=project_config,
+        approval="code_review",
+        artifact_key="implementation_handoff",
+        artifact_path=handoff_path,
+    )
     sync_project_stage_tasks(state, project_config)
     return state
 
@@ -2252,6 +2299,13 @@ def run_fix_qa(
     state.approvals["qa"] = state.approvals.get("qa", "pending")
     state.current_node = "qa_review_gate"
     state.next_node = gate_next_node(state, gate="qa", approved_next="fix_close")
+    dispatch_gate_reviewer_jobs(
+        state=state,
+        project_config=project_config,
+        approval="qa",
+        artifact_key="qa_report",
+        artifact_path=qa_path,
+    )
     sync_project_stage_tasks(state, project_config)
     return state
 
