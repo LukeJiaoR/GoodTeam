@@ -201,9 +201,12 @@ def test_select_queued_reviewer_jobs_for_gate_filters_status_run_gate_artifact_a
             "run_id": "run-1",
             "gate": "qa",
             "profile_id": "correctness-security",
+            "phase": "implementation",
             "artifact_key": "qa_report",
             "artifact_path": "/tmp/qa.md",
             "artifact_version": "sha256:1",
+            "dispatch_group_id": "reviewer-dispatch-current",
+            "idempotency_key": "job-1-key",
             "created_at": "2026-07-05T10:00:00+00:00",
         },
         {
@@ -241,13 +244,23 @@ def test_select_queued_reviewer_jobs_for_gate_filters_status_run_gate_artifact_a
             "status": "queued",
             "run_id": "run-1",
             "gate": "qa",
-            "role": "implementation",
+            "role": "code_review",
             "artifact_key": "qa_report",
             "artifact_path": "/tmp/qa.md",
             "artifact_version": "sha256:1",
         },
         {
             "id": "job-6",
+            "status": "queued",
+            "run_id": "run-1",
+            "gate": "qa",
+            "role": "implementation",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:1",
+        },
+        {
+            "id": "job-7",
             "status": "running",
             "run_id": "run-1",
             "gate": "qa",
@@ -257,7 +270,7 @@ def test_select_queued_reviewer_jobs_for_gate_filters_status_run_gate_artifact_a
             "artifact_version": "sha256:1",
         },
         {
-            "id": "job-7",
+            "id": "job-8",
             "status": "failed",
             "run_id": "run-1",
             "gate": "qa",
@@ -267,7 +280,7 @@ def test_select_queued_reviewer_jobs_for_gate_filters_status_run_gate_artifact_a
             "artifact_version": "sha256:1",
         },
         {
-            "id": "job-8",
+            "id": "job-9",
             "status": "queued",
             "run_id": "run-1",
             "gate": "qa",
@@ -299,6 +312,9 @@ def test_select_queued_reviewer_jobs_for_gate_orders_by_profile_configuration_th
             "run_id": "run-1",
             "gate": "qa",
             "profile_id": "product-operator",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-b-key",
             "created_at": "2026-07-05T10:01:00+00:00",
         },
         {
@@ -307,6 +323,9 @@ def test_select_queued_reviewer_jobs_for_gate_orders_by_profile_configuration_th
             "run_id": "run-1",
             "gate": "qa",
             "profile_id": "correctness-security",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-a-key",
             "created_at": "2026-07-05T10:02:00+00:00",
         },
         {
@@ -315,6 +334,9 @@ def test_select_queued_reviewer_jobs_for_gate_orders_by_profile_configuration_th
             "run_id": "run-1",
             "gate": "qa",
             "profile_id": "unknown-reviewer",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-c-key",
             "created_at": "2026-07-05T10:00:00+00:00",
         },
     ]
@@ -342,12 +364,24 @@ def test_run_queued_reviewer_jobs_for_gate_runs_only_selected_jobs_without_creat
         gate="qa",
         phase="implementation",
         artifact_key="qa_report",
+        dispatch_group_id="reviewer-dispatch-current",
+        idempotency_key="selected-key",
     )
     store.create_job(
         run_id="run-1",
         role="implementation",
         adapter="fake",
         task="Implement",
+        context="Context",
+        approval="qa",
+        gate="qa",
+        artifact_key="qa_report",
+    )
+    store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Legacy code review job without reviewer dispatch identity",
         context="Context",
         approval="qa",
         gate="qa",
@@ -392,7 +426,7 @@ def test_run_queued_reviewer_jobs_for_gate_runs_only_selected_jobs_without_creat
     assert ran == [selected["id"]]
     assert result["selected_count"] == 1
     assert result["ran_count"] == 1
-    assert result["skipped_count"] == 2
+    assert result["skipped_count"] == 3
     assert result["errors"] == []
 
 

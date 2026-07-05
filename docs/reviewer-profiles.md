@@ -140,9 +140,12 @@ Queued reviewer jobs are executed only by an explicit operator action. When the
 current pending approval gate has matching queued reviewer jobs, Review
 Workbench shows `Run queued reviewer jobs` on that approval review card. The
 button runs only existing queued reviewer jobs for the active run, current
-actionable gate, and current artifact identity. It does not create reviewer
-jobs, dispatch missing reviewers, run on page refresh, write approval ledger
-events, approve, reject, or disable the human approval controls.
+actionable gate, and current artifact identity, including the current artifact
+content version. A queued job must carry reviewer dispatch identity such as
+`profile_id`, reviewer `phase`, `dispatch_group_id`, and `idempotency_key` before
+the execution action will run it. The button does not create reviewer jobs,
+dispatch missing reviewers, run on page refresh, write approval ledger events,
+approve, reject, or disable the human approval controls.
 
 To validate a rollout, move a real implementation-side gate such as staging,
 code review, or QA to its pending approval state and inspect

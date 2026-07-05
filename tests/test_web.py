@@ -986,6 +986,9 @@ def test_dashboard_shows_explicit_reviewer_job_run_button_without_running_jobs(t
         phase="implementation",
         artifact_key="staging_report",
         artifact_path=str(artifact),
+        artifact_version="sha256:be26be20d7c29c183f44a3637d4fd1f02697345e98bfcab39b9a01532eb7c594",
+        dispatch_group_id="reviewer-dispatch-render",
+        idempotency_key="render-key",
     )
     state = create_initial_state("run-1", "DEMO", "Build diagnostics")
     state.approvals["staging"] = ApprovalDecision.PENDING
@@ -1006,6 +1009,7 @@ def test_dashboard_shows_explicit_reviewer_job_run_button_without_running_jobs(t
 
     assert "Run queued reviewer jobs" in html
     assert 'data-action="run-queued-reviewer-jobs"' in html
+    assert 'data-artifact-version="sha256:be26be20d7c29c183f44a3637d4fd1f02697345e98bfcab39b9a01532eb7c594"' in html
     assert 'data-decision="approved"' in html
     assert 'data-decision="changes_requested"' in html
     assert 'data-decision="rejected"' in html
@@ -1030,6 +1034,9 @@ def test_explicit_reviewer_job_action_runs_matching_queued_jobs_only(tmp_path, m
         phase="implementation",
         artifact_key="staging_report",
         artifact_path=str(artifact),
+        artifact_version="sha256:be26be20d7c29c183f44a3637d4fd1f02697345e98bfcab39b9a01532eb7c594",
+        dispatch_group_id="reviewer-dispatch-current",
+        idempotency_key="matching-key",
     )
     store.create_job(
         run_id="run-1",
@@ -1097,6 +1104,76 @@ def test_explicit_reviewer_job_action_runs_matching_queued_jobs_only(tmp_path, m
     projection = staging["multi_reviewer_projection"]
     reviewer = next(item for item in projection["reviewers"] if item["profile_id"] == "correctness-security")
     assert reviewer["status"]["status"] == "completed"
+
+
+def test_explicit_reviewer_job_action_defaults_to_current_artifact_version(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
+    artifact = tmp_path / "staging.md"
+    artifact.write_text("# Staging\n\nCurrent.\n", encoding="utf-8")
+    current_version = "sha256:296b27c6f9f5f5b84a41bc01a79c5a80f59fb4048c6995b35f09519523cd6009"
+    store = WorkerJobStore(project_root)
+    current_job = store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review current staging",
+        context="Context",
+        profile_id="correctness-security",
+        approval="staging",
+        gate="staging",
+        phase="implementation",
+        artifact_key="staging_report",
+        artifact_path=str(artifact),
+        artifact_version=current_version,
+        dispatch_group_id="reviewer-dispatch-current",
+        idempotency_key="current-key",
+    )
+    store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review old staging",
+        context="Context",
+        profile_id="architecture-maintainability",
+        approval="staging",
+        gate="staging",
+        phase="implementation",
+        artifact_key="staging_report",
+        artifact_path=str(artifact),
+        artifact_version="sha256:old",
+        dispatch_group_id="reviewer-dispatch-old",
+        idempotency_key="old-key",
+    )
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    state.approvals["staging"] = ApprovalDecision.PENDING
+    state.next_node = "await_staging_approval"
+    state.artifacts["staging_report"] = str(artifact)
+    StateStore(tmp_path).write_project_current(state)
+    ran: list[str] = []
+    original_run_job = WorkerJobStore.run_job
+
+    def spy_run_job(self: WorkerJobStore, job_id: str):
+        ran.append(job_id)
+        return original_run_job(self, job_id)
+
+    monkeypatch.setattr(web.WorkerJobStore, "run_job", spy_run_job)
+
+    status, payload = web.run_queued_reviewer_jobs_action(
+        tmp_path,
+        {
+            "project_key": "DEMO",
+            "run_id": "run-1",
+            "approval": "staging",
+            "artifact_key": "staging_report",
+        },
+    )
+
+    assert status == 200
+    assert ran == [current_job["id"]]
+    assert payload["artifact_version"] == current_version
+    assert payload["selected_count"] == 1
 
 
 def test_explicit_reviewer_job_action_refuses_wrong_gate_and_wrong_run(tmp_path):

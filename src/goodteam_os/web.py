@@ -49,6 +49,7 @@ from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
 from goodteam_os.reviewer_dispatch import (
+    artifact_version_for_path,
     reviewer_dispatch_diagnostics,
     run_queued_reviewer_jobs_for_gate,
     select_queued_reviewer_jobs_for_gate,
@@ -272,7 +273,7 @@ def run_queued_reviewer_jobs_action(workspace: Path, request: Mapping[str, objec
         return 409, {"error": "artifact_key does not match the current approval gate"}
     artifact_path = str(state.artifacts.get(artifact_key, "") or "")
     profile_id = str(request.get("profile_id", "") or "").strip()
-    artifact_version = str(request.get("artifact_version", "") or "").strip()
+    artifact_version = str(request.get("artifact_version", "") or "").strip() or artifact_version_for_path(artifact_path)
     target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
     profile_order = _reviewer_profile_order_for_gate(target, current_gate)
 
@@ -310,6 +311,7 @@ def run_queued_reviewer_jobs_action(workspace: Path, request: Mapping[str, objec
         "approval": current_gate,
         "artifact_key": artifact_key,
         "artifact_path": artifact_path,
+        "artifact_version": artifact_version,
         "advisory_only": True,
         "approval_unchanged": True,
         "operator_message": "Reviewer evidence remains advisory. Human operator decides.",
@@ -3814,6 +3816,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             continue
         artifact = approval_artifacts.get(approval, approval)
         artifact_path = state.artifacts.get(artifact, "")
+        artifact_version = artifact_version_for_path(artifact_path)
         review = {
             "approval": approval,
             "decision": str(decision),
@@ -3821,6 +3824,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             "is_actionable": str(decision) == ApprovalDecision.PENDING and state.next_node == f"await_{approval}_approval",
             "artifact": artifact,
             "artifact_path": artifact_path,
+            "artifact_version": artifact_version,
             "content": read_artifact_preview(artifact_path),
             "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
         }
@@ -3839,6 +3843,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             review_evidence_policy_config=_review_evidence_policy_config(reviewer_target),
             artifact_key=artifact,
             artifact_path=artifact_path,
+            artifact_version=artifact_version,
         )
         review["queued_reviewer_jobs"] = select_queued_reviewer_jobs_for_gate(
             reviewer_statuses,
@@ -3846,6 +3851,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             approval=approval,
             artifact_key=artifact,
             artifact_path=artifact_path,
+            artifact_version=artifact_version,
             profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
         )
         advisors = advisors_for_gate(approval)
@@ -6861,6 +6867,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
               data-run="{escape(state.run_id if state is not None else "")}"
               data-approval="{escape(review["approval"])}"
               data-artifact="{escape(review["artifact"])}"
+              data-artifact-version="{escape(str(review.get("artifact_version", "")))}"
               type="button">Run queued reviewer jobs</button>
             <code class="reviewer-job-status">{len(review.get("queued_reviewer_jobs", []))} queued</code>
           </div>
@@ -7834,7 +7841,8 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
               project_key: button.dataset.project || window.GOODTEAM_PROJECT_KEY,
               run_id: button.dataset.run,
               approval: button.dataset.approval,
-              artifact_key: button.dataset.artifact
+              artifact_key: button.dataset.artifact,
+              artifact_version: button.dataset.artifactVersion
             }})
           }});
           const payload = await response.json();

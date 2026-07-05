@@ -335,10 +335,14 @@ Reviewer job execution is a separate explicit operator step. When a current
 pending approval gate has matching queued reviewer jobs, Workbench shows
 `Run queued reviewer jobs` on that approval review card. The action runs only
 existing queued reviewer jobs for the active run, current actionable gate, and
-current artifact identity. It does not create jobs, dispatch missing profiles,
-run during render, run on refresh, approve, reject, or change approval
-authority. Completed reviewer jobs flow back through the existing reviewer
-provenance, review evidence policy, and multi-reviewer projection.
+current artifact identity, including the current artifact content version. It
+requires reviewer dispatch identity such as `profile_id`, reviewer `phase`,
+`dispatch_group_id`, and `idempotency_key`; legacy queued `code_review` or
+`release` worker jobs without that identity are not executable through this
+action. It does not create jobs, dispatch missing profiles, run during render,
+run on refresh, approve, reject, or change approval authority. Completed
+reviewer jobs flow back through the existing reviewer provenance, review
+evidence policy, and multi-reviewer projection.
 
 If execution fails, inspect the failed job's `stderr_path`, `stdout_path`, and
 `result_path` from Workbench or `.goodteam/workers/jobs/<job-id>/status.json`.

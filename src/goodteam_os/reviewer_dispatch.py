@@ -153,7 +153,7 @@ def dispatch_reviewer_jobs_for_gate(
         return []
 
     run_id = str(getattr(state, "run_id", "") or "")
-    artifact_version = _artifact_version(artifact_path)
+    artifact_version = artifact_version_for_path(artifact_path)
     dispatch_group_id = _dispatch_group_id(
         run_id=run_id,
         approval=approval,
@@ -203,7 +203,7 @@ def select_queued_reviewer_jobs_for_gate(
     selected = [
         dict(job)
         for job in jobs
-        if _is_queued_reviewer_job(job)
+        if _is_executable_queued_reviewer_job(job)
         and _clean_text(job.get("run_id")) == wanted_run_id
         and _job_gate(job) == wanted_gate
         and _matches_supplied_identity(job, "artifact_key", wanted_artifact_key)
@@ -344,7 +344,7 @@ def _reviewer_task(*, profile: ReviewerProfile, approval: str, artifact_key: str
     )
 
 
-def _artifact_version(artifact_path: str) -> str:
+def artifact_version_for_path(artifact_path: str) -> str:
     path = Path(artifact_path).expanduser() if artifact_path else None
     if path is None or not path.is_file():
         return "missing"
@@ -423,6 +423,20 @@ def _is_queued_reviewer_job(job: Mapping[str, object]) -> bool:
     if str(job.get("phase", "") or "").strip() in REVIEWER_PROFILE_PHASES:
         return True
     return str(job.get("role", "") or "").strip() in set(REVIEWER_ROLE_BY_PHASE.values())
+
+
+def _is_executable_queued_reviewer_job(job: Mapping[str, object]) -> bool:
+    if str(job.get("status", "") or "").strip().lower() != "queued":
+        return False
+    if not _clean_text(job.get("profile_id")):
+        return False
+    if _clean_text(job.get("phase")) not in REVIEWER_PROFILE_PHASES:
+        return False
+    if not _clean_text(job.get("dispatch_group_id")):
+        return False
+    if not _clean_text(job.get("idempotency_key")):
+        return False
+    return True
 
 
 def _clean_text(value: object) -> str:
