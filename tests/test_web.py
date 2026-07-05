@@ -6481,6 +6481,142 @@ def test_decide_approval_accepts_existing_metadata_less_callers(tmp_path):
     assert actions[0]["actor_ref"] == "web:local"
 
 
+def test_decide_approval_attaches_reviewer_evidence_snapshot(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
+    artifact = tmp_path / "staging.md"
+    artifact.write_text("# Staging\n\nReady.\n", encoding="utf-8")
+    artifact_version = web.artifact_version_for_path(str(artifact))
+    job = WorkerJobStore(project_root).create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="codex",
+        task="Review staging",
+        context="Context",
+        profile_id="correctness-security",
+        approval="staging",
+        gate="staging",
+        phase="implementation",
+        artifact_key="staging_report",
+        artifact_path=str(artifact),
+        artifact_version=artifact_version,
+        dispatch_group_id="reviewer-dispatch-current",
+        idempotency_key="reviewer-key",
+    )
+    job_root = project_root / ".goodteam" / "workers" / "jobs" / job["id"]
+    (job_root / "status.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "summary": "Codex reviewer completed.",
+                "updated_at": "2026-07-05T10:00:00+00:00",
+                "result_path": str(job_root / "result.md"),
+                "invocation_evidence": {
+                    "kind": "provider",
+                    "adapter": "codex",
+                    "provider": "openai",
+                    "external_invocation": True,
+                    "command_available": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    state.approvals["staging"] = ApprovalDecision.PENDING
+    state.current_node = "staging_review_gate"
+    state.next_node = "await_staging_approval"
+    state.artifacts["staging_report"] = str(artifact)
+    StateStore(tmp_path).write_project_current(state)
+    monkeypatch.setattr(web, "notify_current_approval_gate", lambda *_args, **_kwargs: None)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="DEMO",
+        approval="staging",
+        decision="rejected",
+    )
+
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "DEMO" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    snapshot = actions[0]["reviewer_evidence_snapshot"]
+    assert actions[0]["action"] == "approval_decided"
+    assert actions[0]["decision"] == "rejected"
+    assert payload["decision"] == "rejected"
+    assert snapshot["schema"] == "reviewer_evidence_snapshot.v1"
+    assert snapshot["approval"] == "staging"
+    assert snapshot["artifact"]["key"] == "staging_report"
+    assert snapshot["reviewers"][0]["profile_id"] == "correctness-security"
+    assert snapshot["reviewers"][0]["job_id"] == job["id"]
+    assert snapshot["reviewers"][0]["status"] == "completed"
+    assert snapshot["operator_message"] == "Reviewer evidence is advisory. Human operator remains authoritative."
+
+
+def test_decide_approval_snapshot_error_does_not_block_human_decision(tmp_path, monkeypatch):
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    state.approvals["staging"] = ApprovalDecision.PENDING
+    state.current_node = "staging_review_gate"
+    state.next_node = "await_staging_approval"
+    StateStore(tmp_path).write_project_current(state)
+    monkeypatch.setattr(web, "notify_current_approval_gate", lambda *_args, **_kwargs: None)
+
+    def fail_snapshot(*_args, **_kwargs):
+        raise ValueError("malformed reviewer data")
+
+    def fail_worker_action(*_args, **_kwargs):
+        raise AssertionError("approval decision must not run, retry, or dispatch reviewer jobs")
+
+    monkeypatch.setattr(web, "build_reviewer_evidence_snapshot", fail_snapshot)
+    monkeypatch.setattr(web, "run_queued_reviewer_jobs_for_gate", fail_worker_action)
+    monkeypatch.setattr(web, "retry_failed_reviewer_jobs_for_gate", fail_worker_action)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="DEMO",
+        approval="staging",
+        decision="rejected",
+    )
+
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "DEMO" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    snapshot = actions[0]["reviewer_evidence_snapshot"]
+    assert payload["decision"] == "rejected"
+    assert snapshot["errors"] == ["malformed reviewer data"]
+    assert snapshot["operator_message"] == "Reviewer evidence is advisory. Human operator remains authoritative."
+
+
+def test_workbench_render_does_not_build_reviewer_evidence_snapshot_or_write_actions(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
+    artifact = tmp_path / "staging.md"
+    artifact.write_text("# Staging\n\nReady.\n", encoding="utf-8")
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    state.approvals["staging"] = ApprovalDecision.PENDING
+    state.next_node = "await_staging_approval"
+    state.artifacts["staging_report"] = str(artifact)
+    context = build_start_console_context(tmp_path, project_config=config)
+
+    def fail_snapshot(*_args, **_kwargs):
+        raise AssertionError("render must not build reviewer evidence approval snapshots")
+
+    def fail_append_action(*_args, **_kwargs):
+        raise AssertionError("render must not write action events")
+
+    monkeypatch.setattr(web, "build_reviewer_evidence_snapshot", fail_snapshot)
+    monkeypatch.setattr(web, "append_action", fail_append_action)
+
+    html = render_dashboard(state, start_context=context)
+
+    assert "Multi-reviewer evidence" in html
+    assert 'data-decision="approved"' in html
+
+
 def test_build_approval_evidence_snapshot_skips_worker_jobs_without_run_id(tmp_path):
     job = WorkerJobStore(tmp_path).create_job(
         run_id="run-other",

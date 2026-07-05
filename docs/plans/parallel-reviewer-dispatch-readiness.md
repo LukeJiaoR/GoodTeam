@@ -107,6 +107,8 @@ Recommended event model:
 - `reviewer_job_timed_out`
 - `reviewer_projection_viewed` should not be written during normal render
 - `approval_decided` remains human-authored and unchanged
+- `approval_decided.reviewer_evidence_snapshot` captures the advisory reviewer
+  evidence that existed when the human operator made the decision
 
 Risks to avoid:
 
@@ -116,6 +118,18 @@ Risks to avoid:
 - Treating reviewer failure as approval rejection.
 - Mutating ledger events after policy projection changes.
 - Using adapter or role as reviewer identity. Profile id must be preserved.
+
+As of #277, explicit approval decisions record a
+`reviewer_evidence_snapshot.v1` payload on the existing `approval_decided`
+action. The snapshot is scoped to the active run, current gate, and current
+artifact key/path/content version. It can include configured reviewer profiles,
+current policy/provenance status, completed reviewers, failed reviewers, queued
+reviewer jobs, missing evidence, and retry lineage for previous failures on the
+same artifact identity. This is an audit aid for what evidence was available at
+decision time. It does not create reviewer jobs, run workers, retry failures,
+poll in the background, approve, reject, enforce policy, block approval, or make
+reviewers authoritative. Normal Workbench render remains read-only and does not
+write snapshot events.
 
 ## Ordering Model
 

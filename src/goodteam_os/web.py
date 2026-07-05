@@ -48,6 +48,7 @@ from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projectio
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
+from goodteam_os.reviewer_evidence_snapshot import build_reviewer_evidence_snapshot
 from goodteam_os.reviewer_dispatch import (
     artifact_version_for_path,
     reviewer_dispatch_diagnostics,
@@ -152,6 +153,7 @@ def append_action(
     review_session_id: str = "",
     client_context: dict[str, object] | None = None,
     evidence_snapshot: dict[str, object] | None = None,
+    reviewer_evidence_snapshot: dict[str, object] | None = None,
     review_items: list[dict[str, object]] | None = None,
 ) -> None:
     action_log = _action_log_path(workspace, project_key)
@@ -184,6 +186,8 @@ def append_action(
         event["client_context"] = client_context
     if evidence_snapshot:
         event["evidence_snapshot"] = evidence_snapshot
+    if reviewer_evidence_snapshot:
+        event["reviewer_evidence_snapshot"] = reviewer_evidence_snapshot
     if review_items:
         event["review_items"] = review_items
     with action_log.open("a", encoding="utf-8") as handle:
@@ -481,6 +485,63 @@ def _reviewer_statuses_for_state(
     except Exception:
         return []
     return statuses
+
+
+def _safe_reviewer_evidence_snapshot_for_decision(
+    *,
+    state: AgileDevState,
+    workspace: Path,
+    project_key: str,
+    approval: str,
+) -> dict[str, object]:
+    reviewer_statuses = _reviewer_statuses_for_state(state=state, workspace=workspace, project_key=project_key)
+    reviewer_target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
+    try:
+        return build_reviewer_evidence_snapshot(
+            state=state,
+            approval=approval,
+            workspace=workspace,
+            worker_jobs=reviewer_statuses,
+            reviewer_statuses=reviewer_statuses,
+            reviewer_target=reviewer_target,
+        )
+    except Exception as exc:
+        artifact = _approval_artifact_for_gate(approval)
+        artifact_path = state.artifacts.get(artifact, "")
+        return {
+            "schema": "reviewer_evidence_snapshot.v1",
+            "run_id": state.run_id,
+            "approval": approval,
+            "artifact": {
+                "key": artifact,
+                "path": artifact_path,
+                "version": artifact_version_for_path(artifact_path),
+            },
+            "reviewer_dispatch": {
+                "mode": "unknown",
+                "parallel_requested": False,
+                "parallel_enabled": False,
+                "advisory_only": True,
+            },
+            "reviewers": [],
+            "jobs": {
+                "queued_total": 0,
+                "failed_total": 0,
+                "queued_by_profile": {},
+                "failed_by_profile": {},
+            },
+            "aggregate": {
+                "reviewer_count": 0,
+                "completed": 0,
+                "failed": 0,
+                "queued": 0,
+                "missing": 0,
+                "policy_blockers": 0,
+                "policy_warnings": 0,
+            },
+            "operator_message": "Reviewer evidence is advisory. Human operator remains authoritative.",
+            "errors": [str(exc)],
+        }
 
 
 def build_provenance_refs(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[dict[str, str]]:
@@ -3185,6 +3246,12 @@ def decide_approval(
         project_key=key,
         debate_ref=debate_ref,
     )
+    reviewer_evidence_snapshot = _safe_reviewer_evidence_snapshot_for_decision(
+        state=state,
+        workspace=workspace,
+        project_key=key,
+        approval=approval,
+    )
     before_node = state.next_node
     state.approvals[approval] = approval_decision
     state.current_node = f"{approval}_review_gate"
@@ -3209,6 +3276,7 @@ def decide_approval(
         review_session_id=review_session_id,
         client_context=client_context,
         evidence_snapshot=evidence_snapshot,
+        reviewer_evidence_snapshot=reviewer_evidence_snapshot,
         review_items=review_items,
     )
     if approval == "takeover" and approval_decision == ApprovalDecision.APPROVED:
