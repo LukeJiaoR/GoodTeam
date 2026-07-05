@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from goodteam_os.dispatch import dispatch_tracks, parse_dispatch_track_spec, parse_dispatch_verify_spec
+from goodteam_os.execution import ExecutionAPI
 from goodteam_os.failure_patterns import FailurePatternLibrary
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.projects import (
@@ -95,6 +96,21 @@ def build_parser() -> argparse.ArgumentParser:
     tg_poll.add_argument("--workspace", type=Path, default=Path("."))
     tg_poll.add_argument("--project-key", default="")
     tg_poll.add_argument("--once", action="store_true")
+
+    execution = subparsers.add_parser("execution")
+    execution_subparsers = execution.add_subparsers(dest="execution_command", required=True)
+
+    intake_github_issue = execution_subparsers.add_parser("intake-github-issue")
+    intake_github_issue.add_argument("--repo", required=True)
+    intake_github_issue.add_argument("--issue", type=int, required=True)
+    intake_github_issue.add_argument("--project-root", type=Path, required=True)
+    intake_github_issue.add_argument("--adapter", default="fake")
+    intake_github_issue.add_argument("--role", default="implementation")
+
+    for command in ("run", "pr", "ci", "replay"):
+        execution_command = execution_subparsers.add_parser(command)
+        execution_command.add_argument("--execution-id", required=True)
+        execution_command.add_argument("--project-root", type=Path, required=True)
     return parser
 
 
@@ -222,7 +238,35 @@ def main(argv: list[str] | None = None) -> int:
         payload = poll_telegram_approvals(workspace=args.workspace, project_key=args.project_key, once=args.once)
         print(json.dumps(payload, indent=2))
         return 0
+    if args.command == "execution":
+        try:
+            payload = _run_execution_command(args)
+        except ValueError as exc:
+            print(f"execution: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(payload, indent=2))
+        return 0
     return 1
+
+
+def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:
+    api = ExecutionAPI(args.project_root)
+    if args.execution_command == "intake-github-issue":
+        return api.intake_github_issue(
+            repo=args.repo,
+            issue_number=args.issue,
+            adapter=args.adapter,
+            role=args.role,
+        )
+    if args.execution_command == "run":
+        return api.run_execution(args.execution_id)
+    if args.execution_command == "pr":
+        return api.create_or_reuse_pr(args.execution_id)
+    if args.execution_command == "ci":
+        return api.observe_ci(args.execution_id)
+    if args.execution_command == "replay":
+        return api.replay(args.execution_id)
+    raise ValueError(f"Unknown execution command: {args.execution_command}")
 
 
 if __name__ == "__main__":
