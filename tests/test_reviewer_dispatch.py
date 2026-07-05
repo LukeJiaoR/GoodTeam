@@ -9,7 +9,9 @@ from goodteam_os.reviewer_dispatch import (
     normalize_reviewer_dispatch_config,
     reviewer_dispatch_diagnostics,
     reviewer_dispatch_rollout_status,
+    retry_failed_reviewer_jobs_for_gate,
     run_queued_reviewer_jobs_for_gate,
+    select_failed_reviewer_jobs_for_gate,
     select_queued_reviewer_jobs_for_gate,
 )
 from goodteam_os.state import create_initial_state
@@ -351,6 +353,102 @@ def test_select_queued_reviewer_jobs_for_gate_orders_by_profile_configuration_th
     assert [job["id"] for job in selected] == ["job-a", "job-b", "job-c"]
 
 
+def test_select_failed_reviewer_jobs_for_gate_filters_status_identity_and_artifact():
+    current = {
+        "id": "job-failed-current",
+        "status": "failed",
+        "run_id": "run-1",
+        "gate": "qa",
+        "profile_id": "correctness-security",
+        "phase": "implementation",
+        "artifact_key": "qa_report",
+        "artifact_path": "/tmp/qa.md",
+        "artifact_version": "sha256:current",
+        "dispatch_group_id": "reviewer-dispatch-current",
+        "idempotency_key": "failed-current-key",
+        "updated_at": "2026-07-05T10:00:00+00:00",
+    }
+    jobs = [
+        current,
+        {**current, "id": "job-queued", "status": "queued"},
+        {**current, "id": "job-running", "status": "running"},
+        {**current, "id": "job-completed", "status": "completed"},
+        {**current, "id": "job-wrong-run", "run_id": "run-2"},
+        {**current, "id": "job-wrong-gate", "gate": "code_review"},
+        {**current, "id": "job-wrong-artifact", "artifact_version": "sha256:old"},
+        {**current, "id": "job-wrong-profile", "profile_id": "architecture-maintainability"},
+        {
+            "id": "job-bare-code-review",
+            "status": "failed",
+            "run_id": "run-1",
+            "gate": "qa",
+            "role": "code_review",
+            "artifact_key": "qa_report",
+            "artifact_path": "/tmp/qa.md",
+            "artifact_version": "sha256:current",
+        },
+    ]
+
+    selected = select_failed_reviewer_jobs_for_gate(
+        jobs,
+        run_id="run-1",
+        approval="qa",
+        artifact_key="qa_report",
+        artifact_path="/tmp/qa.md",
+        artifact_version="sha256:current",
+        profile_id="correctness-security",
+    )
+
+    assert [job["id"] for job in selected] == ["job-failed-current"]
+
+
+def test_select_failed_reviewer_jobs_for_gate_orders_by_profile_then_fallback():
+    jobs = [
+        {
+            "id": "job-b",
+            "status": "failed",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "product-operator",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-b-key",
+            "updated_at": "2026-07-05T10:01:00+00:00",
+        },
+        {
+            "id": "job-a",
+            "status": "failed",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "correctness-security",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-a-key",
+            "updated_at": "2026-07-05T10:02:00+00:00",
+        },
+        {
+            "id": "job-c",
+            "status": "failed",
+            "run_id": "run-1",
+            "gate": "qa",
+            "profile_id": "unknown-reviewer",
+            "phase": "implementation",
+            "dispatch_group_id": "reviewer-dispatch-order",
+            "idempotency_key": "job-c-key",
+            "updated_at": "2026-07-05T10:00:00+00:00",
+        },
+    ]
+
+    selected = select_failed_reviewer_jobs_for_gate(
+        jobs,
+        run_id="run-1",
+        approval="qa",
+        profile_order=["correctness-security", "product-operator"],
+    )
+
+    assert [job["id"] for job in selected] == ["job-a", "job-b", "job-c"]
+
+
 def test_run_queued_reviewer_jobs_for_gate_runs_only_selected_jobs_without_creating_jobs(tmp_path: Path, monkeypatch):
     store = WorkerJobStore(tmp_path)
     selected = store.create_job(
@@ -428,6 +526,93 @@ def test_run_queued_reviewer_jobs_for_gate_runs_only_selected_jobs_without_creat
     assert result["ran_count"] == 1
     assert result["skipped_count"] == 3
     assert result["errors"] == []
+
+
+def test_retry_failed_reviewer_jobs_for_gate_creates_retry_jobs_without_running_or_duplicating(
+    tmp_path: Path,
+    monkeypatch,
+):
+    store = WorkerJobStore(tmp_path)
+    failed = store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review QA",
+        context="Context",
+        profile_id="correctness-security",
+        approval="qa",
+        gate="qa",
+        phase="implementation",
+        artifact_key="qa_report",
+        artifact_path="/tmp/qa.md",
+        artifact_version="sha256:current",
+        dispatch_group_id="reviewer-dispatch-current",
+        idempotency_key="failed-key",
+    )
+    failed_root = tmp_path / ".goodteam" / "workers" / "jobs" / failed["id"]
+    (failed_root / "status.json").write_text(
+        '{"status":"failed","summary":"Codex CLI exited with code 1.","updated_at":"2026-07-05T10:00:00+00:00"}',
+        encoding="utf-8",
+    )
+    queued = store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review queued",
+        context="Context",
+        profile_id="architecture-maintainability",
+        approval="qa",
+        gate="qa",
+        phase="implementation",
+        artifact_key="qa_report",
+        artifact_path="/tmp/qa.md",
+        artifact_version="sha256:current",
+        dispatch_group_id="reviewer-dispatch-current",
+        idempotency_key="queued-key",
+    )
+
+    def fail_run_job(*_args, **_kwargs):
+        raise AssertionError("retry helper must not run queued or failed jobs")
+
+    monkeypatch.setattr(WorkerJobStore, "run_job", fail_run_job)
+
+    first = retry_failed_reviewer_jobs_for_gate(
+        store=store,
+        jobs=store.list_jobs(),
+        run_id="run-1",
+        approval="qa",
+        artifact_key="qa_report",
+        artifact_path="/tmp/qa.md",
+        artifact_version="sha256:current",
+    )
+    second = retry_failed_reviewer_jobs_for_gate(
+        store=store,
+        jobs=store.list_jobs(),
+        run_id="run-1",
+        approval="qa",
+        artifact_key="qa_report",
+        artifact_path="/tmp/qa.md",
+        artifact_version="sha256:current",
+    )
+
+    retry_jobs = [
+        job
+        for job in store.list_jobs()
+        if job.get("original_failed_job_id") == failed["id"]
+    ]
+    assert first["selected_count"] == 1
+    assert first["retried_count"] == 1
+    assert first["skipped_count"] == 1
+    assert first["approval_unchanged"] is True
+    assert first["results"][0]["original_failed_job_id"] == failed["id"]
+    assert first["results"][0]["retry_attempt"] == "2"
+    assert first["results"][0]["profile_id"] == "correctness-security"
+    assert second["retried_count"] == 0
+    assert len(retry_jobs) == 1
+    assert retry_jobs[0]["status"] == "queued"
+    assert retry_jobs[0]["retry_of_idempotency_key"] == "failed-key"
+    assert retry_jobs[0]["idempotency_key"] != "failed-key"
+    assert queued["id"] in {job["id"] for job in store.list_jobs()}
 
 
 def test_rollout_status_requires_second_acknowledgement_for_parallel_mode():

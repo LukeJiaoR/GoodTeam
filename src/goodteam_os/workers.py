@@ -59,6 +59,9 @@ WORKER_JOB_IDENTITY_FIELDS = (
     "dispatch_group_id",
     "attempt",
     "idempotency_key",
+    "original_failed_job_id",
+    "retry_attempt",
+    "retry_of_idempotency_key",
 )
 MEMORY_WRITEBACK_SECTION_HORIZONS = {
     "decisions": "long-term",
@@ -744,6 +747,9 @@ class WorkerJobStore:
         dispatch_group_id: str = "",
         attempt: str | int = "",
         idempotency_key: str = "",
+        original_failed_job_id: str = "",
+        retry_attempt: str | int = "",
+        retry_of_idempotency_key: str = "",
     ) -> dict[str, Any]:
         job_id = f"job-{uuid4()}"
         job_root = self.root / job_id
@@ -776,6 +782,9 @@ class WorkerJobStore:
                     "dispatch_group_id": dispatch_group_id,
                     "attempt": attempt,
                     "idempotency_key": idempotency_key,
+                    "original_failed_job_id": original_failed_job_id,
+                    "retry_attempt": retry_attempt,
+                    "retry_of_idempotency_key": retry_of_idempotency_key,
                 }
             )
         )
@@ -864,6 +873,9 @@ class WorkerJobStore:
                             "dispatch_group_id",
                             "attempt",
                             "idempotency_key",
+                            "original_failed_job_id",
+                            "retry_attempt",
+                            "retry_of_idempotency_key",
                         }
                     },
                 }
@@ -1450,7 +1462,7 @@ def _clean_identity_fields(payload: dict[str, Any]) -> dict[str, Any]:
         value = payload.get(key)
         if value in (None, ""):
             continue
-        cleaned[key] = str(value) if key == "attempt" else value
+        cleaned[key] = str(value) if key in {"attempt", "retry_attempt"} else value
     return cleaned
 
 
