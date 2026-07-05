@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from goodteam_os.messages import append_message, read_messages
+from goodteam_os.messages import append_message, read_messages, read_role_messages
 
 
 def test_append_read_message_roundtrip(tmp_path):
@@ -123,3 +123,103 @@ def test_append_only_second_append_preserves_first_row(tmp_path):
     assert len(rows) == 2
     assert rows[0] == first_row
     assert json.loads(rows[0])["body"] == "Implement the message substrate only."
+
+
+def test_read_role_messages_filters_exact_role_project_run_gate_and_preserves_order(tmp_path):
+    first = append_message(
+        tmp_path,
+        "REAL",
+        "run-1",
+        from_role="human",
+        to=["qa"],
+        kind="ask",
+        body="Check billing regression first.",
+        gate="qa",
+    )
+    append_message(
+        tmp_path,
+        "REAL",
+        "run-1",
+        from_role="human",
+        to=["architect"],
+        kind="ask",
+        body="Confirm the data model.",
+        gate="qa",
+    )
+    append_message(
+        tmp_path,
+        "REAL",
+        "run-1",
+        from_role="human",
+        to=["qa-lead"],
+        kind="ask",
+        body="This is not for qa.",
+        gate="qa",
+    )
+    second = append_message(
+        tmp_path,
+        "REAL",
+        "run-1",
+        from_role="human",
+        to=["implementation", "qa"],
+        kind="propose",
+        body="Also inspect login.",
+        gate="qa",
+    )
+    append_message(
+        tmp_path,
+        "REAL",
+        "run-2",
+        from_role="human",
+        to=["qa"],
+        kind="ask",
+        body="Wrong run.",
+        gate="qa",
+    )
+    append_message(
+        tmp_path,
+        "OTHER",
+        "run-1",
+        from_role="human",
+        to=["qa"],
+        kind="ask",
+        body="Wrong project.",
+        gate="qa",
+    )
+    append_message(
+        tmp_path,
+        "REAL",
+        "run-1",
+        from_role="human",
+        to=["qa"],
+        kind="ask",
+        body="Wrong gate.",
+        gate="release",
+    )
+
+    assert read_role_messages(tmp_path, "REAL", "run-1", "qa", gate="qa") == [first, second]
+
+
+def test_read_role_messages_returns_all_role_messages_when_gate_is_not_provided(tmp_path):
+    prd = append_message(
+        tmp_path,
+        "REAL",
+        "run-1",
+        from_role="human",
+        to=["architect"],
+        kind="ask",
+        body="Use SQLite for the first pass?",
+        gate="prd",
+    )
+    rfc = append_message(
+        tmp_path,
+        "REAL",
+        "run-1",
+        from_role="human",
+        to=["architect"],
+        kind="propose",
+        body="Keep migrations reversible.",
+        gate="rfc",
+    )
+
+    assert read_role_messages(tmp_path, "REAL", "run-1", "architect") == [prd, rfc]
