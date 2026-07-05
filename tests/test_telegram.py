@@ -800,6 +800,50 @@ def test_poll_telegram_approvals_still_processes_approval_callback(tmp_path, mon
     }
 
 
+def test_poll_project_key_is_not_used_when_reply_session_is_available(tmp_path, monkeypatch):
+    decisions = []
+    telegram_requests = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "default-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "reply-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_decide_approval(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    def fake_telegram_request(token, method, params):
+        telegram_requests.append({"token": token, "method": method, "params": params})
+        if method == "getUpdates":
+            update = telegram_text_update("/gt approve", reply_to_message_id=9001)
+            update["update_id"] = 88
+            return {"ok": True, "result": [update]}
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
+    monkeypatch.setenv("GOODTEAM_TG_ALLOWED_USERS", "111")
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide_approval)
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
+
+    result = poll_telegram_approvals(workspace=tmp_path, project_key="CONTENTOPS", once=True)
+
+    assert result == {"processed": 1, "offset": 89}
+    assert len(decisions) == 1
+    assert decisions[0]["project_key"] == "OTHER"
+    assert decisions[0]["approval"] == "staging"
+    assert decisions[0]["review_session_id"] == "reply-card"
+    edited_cards = [call for call in telegram_requests if call["method"] == "editMessageText"]
+    assert edited_cards[0]["params"]["message_id"] == 9001
+
+
 def test_gt_status_command_sends_masked_active_run_summary(tmp_path, monkeypatch):
     calls = []
     project_root = tmp_path / "runtime"
@@ -1429,6 +1473,61 @@ def test_gt_mutating_note_commands_reply_to_card_use_exact_session(
     assert decisions[0]["review_session_id"] == "reply-card"
 
 
+@pytest.mark.parametrize(
+    ("command_text", "expected_decision", "expected_mode"),
+    [
+        ("/gt changes needs more detail", "changes_requested", "request_changes_with_notes"),
+        ("/gt reject security concern", "rejected", "reject_confirmed"),
+    ],
+)
+def test_reply_to_card_changes_and_reject_bind_exact_session_with_decoy_context(
+    tmp_path,
+    monkeypatch,
+    command_text,
+    expected_decision,
+    expected_mode,
+):
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "same-chat-decoy", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "reply-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    result = process_telegram_update(
+        telegram_text_update(command_text, reply_to_message_id=9001),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": command_text.split()[1]}
+    assert len(decisions) == 1
+    assert decisions[0]["project_key"] == "OTHER"
+    assert decisions[0]["approval"] == "staging"
+    assert decisions[0]["decision"] == expected_decision
+    assert decisions[0]["review_mode"] == expected_mode
+    assert decisions[0]["review_session_id"] == "reply-card"
+
+
 def test_gt_approve_reply_to_card_does_not_cross_chats(tmp_path, monkeypatch):
     decisions = []
     write_project_state(tmp_path)
@@ -1604,6 +1703,62 @@ def test_gt_approve_context_chooser_callback_uses_selected_session(tmp_path, mon
     assert decisions[0]["review_session_id"] == "second-card"
     edited_cards = [call for call in calls if call["method"] == "editMessageText"]
     assert edited_cards[0]["params"]["message_id"] == 9001
+
+
+def test_gt_approve_context_chooser_callback_intent_is_bound_to_selected_session(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True, "result": {"message_id": 4242}}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+    first_callback = calls[0]["params"]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    _, chooser_code, _first_session, command_code, intent_id = first_callback.split(":")
+    tampered_callback = f"v1:{chooser_code}:second-card:{command_code}:{intent_id}"
+    calls.clear()
+
+    result = process_telegram_update(
+        telegram_callback_update(tampered_callback),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "ignored", "reason": "session no longer active"}
+    assert decisions == []
+    assert calls[0]["method"] == "sendMessage"
+    assert "no longer active" in calls[0]["params"]["text"]
 
 
 def test_gt_approve_context_chooser_callback_rejects_stale_session(tmp_path, monkeypatch):

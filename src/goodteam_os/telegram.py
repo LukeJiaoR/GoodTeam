@@ -622,11 +622,12 @@ def _render_command_context_chooser_keyboard(
     *,
     command: str,
     sessions: list[dict[str, object]],
-    intent_id: str,
+    intent_ids_by_session: dict[str, str],
 ) -> dict[str, object]:
     command_code = CHOOSER_COMMAND_CODES[command]
     rows = []
     for session in sessions:
+        session_id = str(session["session_id"])
         label = " · ".join(
             [
                 str(session.get("project_key", "") or "unknown"),
@@ -638,7 +639,7 @@ def _render_command_context_chooser_keyboard(
             [
                 {
                     "text": label,
-                    "callback_data": f"v1:Q:{session['session_id']}:{command_code}:{intent_id}",
+                    "callback_data": f"v1:Q:{session_id}:{command_code}:{intent_ids_by_session[session_id]}",
                 }
             ]
         )
@@ -649,12 +650,15 @@ def _attach_command_chooser_intent(
     *,
     store: TelegramReviewSessionStore,
     sessions: list[dict[str, object]],
-    intent_id: str,
     command: str,
     raw_text: str,
     chat_id: object,
-) -> None:
+) -> dict[str, str]:
+    intent_ids_by_session = {}
     for session in sessions:
+        session_id = str(session["session_id"])
+        intent_id = uuid4().hex[:6]
+        intent_ids_by_session[session_id] = intent_id
         intents = session.get("chooser_intents", {})
         if not isinstance(intents, dict):
             intents = {}
@@ -663,10 +667,12 @@ def _attach_command_chooser_intent(
             "command": command,
             "raw_text": raw_text,
             "chat_id": str(chat_id),
+            "session_id": session_id,
             "created_at": datetime.now(UTC).isoformat(),
         }
         session["chooser_intents"] = intents
-        store.save(str(session["session_id"]), session)
+        store.save(session_id, session)
+    return intent_ids_by_session
 
 
 def _send_command_context_chooser(
@@ -696,11 +702,9 @@ def _send_command_context_chooser(
             context_session=live_sessions[0],
         )
 
-    intent_id = uuid4().hex[:6]
-    _attach_command_chooser_intent(
+    intent_ids_by_session = _attach_command_chooser_intent(
         store=store,
         sessions=live_sessions,
-        intent_id=intent_id,
         command=command,
         raw_text=raw_text,
         chat_id=chat_id,
@@ -714,7 +718,7 @@ def _send_command_context_chooser(
             "reply_markup": _render_command_context_chooser_keyboard(
                 command=command,
                 sessions=live_sessions,
-                intent_id=intent_id,
+                intent_ids_by_session=intent_ids_by_session,
             ),
         },
     )
@@ -1650,6 +1654,8 @@ def _process_command_context_chooser_callback(
     intents = session.get("chooser_intents", {})
     intent = intents.get(intent_id) if isinstance(intents, dict) else None
     if not isinstance(intent, dict) or str(intent.get("chat_id", "")) != str(chat_id):
+        return _send_chooser_stale_message(token=token, chat_id=chat_id)
+    if str(intent.get("session_id", "")) != str(session_id):
         return _send_chooser_stale_message(token=token, chat_id=chat_id)
 
     raw_text = str(intent.get("raw_text", "") or f"/gt {command}")
