@@ -11,6 +11,51 @@ import {
 } from 'lucide-react';
 import { formatHumanTime } from '../../utils/time';
 
+const parseObjectPayload = (payload) => {
+  if (payload && typeof payload === 'string') {
+    try {
+      return JSON.parse(payload);
+    } catch {
+      return null;
+    }
+  }
+  return payload && typeof payload === 'object' ? payload : null;
+};
+
+const getEvidenceLabel = (kind) => {
+  switch (String(kind || '').toLowerCase()) {
+    case 'provider':
+      return 'Provider-backed evidence';
+    case 'fallback':
+      return 'Fallback evidence';
+    case 'failed':
+      return 'Failed invocation';
+    case 'builtin':
+    case 'manual':
+      return 'Non-provider evidence';
+    case 'missing':
+    default:
+      return 'Missing evidence';
+  }
+};
+
+const getEvidenceHandleEntries = (handles) => {
+  if (!handles || typeof handles !== 'object') return [];
+  const entries = [
+    ['result', handles.result_path],
+    ['stdout', handles.stdout_path],
+    ['stderr', handles.stderr_path],
+  ].filter(([, value]) => typeof value === 'string' && value.trim() !== '');
+  if (Array.isArray(handles.changed_files)) {
+    handles.changed_files.forEach((path, index) => {
+      if (typeof path === 'string' && path.trim() !== '') {
+        entries.push([`changed ${index + 1}`, path]);
+      }
+    });
+  }
+  return entries;
+};
+
 export default function ApprovalsTab({
   actionItems = [],
   approvedCount,
@@ -464,6 +509,13 @@ export default function ApprovalsTab({
                           const reviewEvidencePolicy = selectedReview.review_evidence_policy && typeof selectedReview.review_evidence_policy === 'string'
                             ? (() => { try { return JSON.parse(selectedReview.review_evidence_policy); } catch { return null; } })()
                             : selectedReview.review_evidence_policy;
+                          const multiReviewerProjection = parseObjectPayload(selectedReview.multi_reviewer_projection);
+                          const multiReviewerAggregate = multiReviewerProjection?.aggregate_policy && typeof multiReviewerProjection.aggregate_policy === 'object'
+                            ? multiReviewerProjection.aggregate_policy
+                            : {};
+                          const multiReviewerStateCounts = multiReviewerAggregate.state_counts && typeof multiReviewerAggregate.state_counts === 'object'
+                            ? multiReviewerAggregate.state_counts
+                            : {};
                           const policyEvidence = reviewEvidencePolicy?.evidence && typeof reviewEvidencePolicy.evidence === 'object'
                             ? reviewEvidencePolicy.evidence
                             : {};
@@ -743,6 +795,125 @@ export default function ApprovalsTab({
                                        <div className="text-2xs font-bold text-text-muted bg-surface-sunken border border-border-subtle rounded-xl px-3 py-2">
                                          Human operator decides. This policy does not automatically approve or reject.
                                        </div>
+                                     </div>
+                                   )}
+
+                                   {multiReviewerProjection && (
+                                     <div className="border-2 border-border-subtle rounded-2xl p-5 bg-surface-base space-y-4">
+                                       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border-subtle pb-2">
+                                         <div>
+                                           <h4 className="text-xs font-extrabold uppercase tracking-wider text-text-primary">Multi-reviewer evidence</h4>
+                                           <p className="text-2xs text-text-muted">Reviewer evidence remains advisory. Human operator decides.</p>
+                                         </div>
+                                         <span className={`inline-flex px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${getPolicyBadgeStyle(multiReviewerAggregate.severity)}`}>
+                                           {multiReviewerAggregate.severity || 'ok'}
+                                         </span>
+                                       </div>
+
+                                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-2xs">
+                                         <div className="bg-surface-raised border border-border-subtle rounded-xl p-3">
+                                           <span className="block font-extrabold text-text-muted uppercase tracking-wider">Aggregate severity</span>
+                                           <span className="text-text-primary font-bold">{multiReviewerAggregate.severity || 'ok'}</span>
+                                         </div>
+                                         <div className="bg-surface-raised border border-border-subtle rounded-xl p-3">
+                                           <span className="block font-extrabold text-text-muted uppercase tracking-wider">State counts</span>
+                                           {Object.keys(multiReviewerStateCounts).length > 0 ? (
+                                             <div className="mt-1 flex flex-wrap gap-1.5">
+                                               {Object.entries(multiReviewerStateCounts).map(([state, count]) => (
+                                                 <span key={state} className="inline-flex rounded-lg border border-border-subtle bg-surface-sunken px-2 py-0.5 font-bold text-text-secondary">
+                                                   {state}: {count}
+                                                 </span>
+                                               ))}
+                                             </div>
+                                           ) : (
+                                             <span className="text-text-primary font-bold">none</span>
+                                           )}
+                                         </div>
+                                         <div className="bg-surface-raised border border-border-subtle rounded-xl p-3">
+                                           <span className="block font-extrabold text-text-muted uppercase tracking-wider">Authority</span>
+                                           <span className="text-text-primary font-bold">Human operator decides</span>
+                                         </div>
+                                       </div>
+
+                                       {multiReviewerProjection.operator_message && (
+                                         <p className="text-xs text-text-secondary leading-relaxed">{multiReviewerProjection.operator_message}</p>
+                                       )}
+
+                                       {Array.isArray(multiReviewerProjection.reviewers) && multiReviewerProjection.reviewers.length > 0 ? (
+                                         <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                                           {multiReviewerProjection.reviewers.map((reviewer, idx) => {
+                                             const reviewerPolicy = reviewer?.policy && typeof reviewer.policy === 'object' ? reviewer.policy : {};
+                                             const reviewerProvenance = reviewer?.provenance && typeof reviewer.provenance === 'object' ? reviewer.provenance : {};
+                                             const reviewerBadge = reviewerProvenance.badge && typeof reviewerProvenance.badge === 'object' ? reviewerProvenance.badge : {};
+                                             const reviewerInvocation = reviewerProvenance.invocation && typeof reviewerProvenance.invocation === 'object' ? reviewerProvenance.invocation : {};
+                                             const reviewerStatus = reviewer?.status && typeof reviewer.status === 'object' ? reviewer.status : {};
+                                             const reviewerEvidence = reviewerPolicy.evidence && typeof reviewerPolicy.evidence === 'object' ? reviewerPolicy.evidence : {};
+                                             const reviewerHandles = getEvidenceHandleEntries(reviewer?.evidence_handles);
+                                             const badgeKind = reviewerBadge.kind || reviewerEvidence.badge_kind || 'missing';
+                                             const reviewerName = reviewer?.profile_label || reviewer?.profile_id || 'Unmatched reviewer';
+                                             return (
+                                               <div key={`${reviewer?.profile_id || 'reviewer'}-${idx}`} className="border border-border-subtle rounded-xl p-3 bg-surface-raised space-y-3">
+                                                 <div className="flex flex-wrap items-start justify-between gap-2">
+                                                   <div>
+                                                     <h5 className="text-2xs font-extrabold uppercase tracking-wider text-text-primary">{reviewerName}</h5>
+                                                     <p className="text-2xs text-text-muted">{reviewer?.profile_id || 'unmatched profile'} · order {reviewer?.order ?? idx}</p>
+                                                   </div>
+                                                   <span className={`inline-flex px-2 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${getPolicyBadgeStyle(reviewerPolicy.severity)}`}>
+                                                     {reviewerPolicy.severity || 'warning'}
+                                                   </span>
+                                                 </div>
+                                                 <div className="grid grid-cols-2 gap-2 text-2xs">
+                                                   <div>
+                                                     <span className="block font-extrabold text-text-muted uppercase tracking-wider">Match kind</span>
+                                                     <span className="text-text-secondary font-bold">{reviewer?.match_kind || 'missing'}</span>
+                                                   </div>
+                                                   <div>
+                                                     <span className="block font-extrabold text-text-muted uppercase tracking-wider">Policy state</span>
+                                                     <span className="text-text-secondary font-bold">{reviewerPolicy.state || 'missing_evidence'}</span>
+                                                   </div>
+                                                   <div>
+                                                     <span className="block font-extrabold text-text-muted uppercase tracking-wider">Evidence badge</span>
+                                                     <span className="text-text-secondary font-bold">{getEvidenceLabel(badgeKind)}</span>
+                                                   </div>
+                                                   <div>
+                                                     <span className="block font-extrabold text-text-muted uppercase tracking-wider">Invocation</span>
+                                                     <span className="text-text-secondary font-bold">{reviewerInvocation.status || reviewerEvidence.invocation_status || reviewerStatus.status || 'missing'}</span>
+                                                   </div>
+                                                   <div>
+                                                     <span className="block font-extrabold text-text-muted uppercase tracking-wider">Adapter</span>
+                                                     <span className="text-text-secondary font-bold">{reviewerBadge.adapter || reviewerEvidence.adapter || reviewerStatus.adapter || 'unknown'}</span>
+                                                   </div>
+                                                   <div>
+                                                     <span className="block font-extrabold text-text-muted uppercase tracking-wider">Provider</span>
+                                                     <span className="text-text-secondary font-bold">{reviewerBadge.provider || reviewerEvidence.provider || 'unknown'}</span>
+                                                   </div>
+                                                 </div>
+                                                 {reviewerHandles.length > 0 ? (
+                                                   <div className="space-y-1.5 pt-2 border-t border-border-subtle">
+                                                     <span className="text-2xs font-extrabold uppercase tracking-wider text-text-muted">Evidence handles</span>
+                                                     <div className="space-y-1">
+                                                       {reviewerHandles.map(([label, path]) => (
+                                                         <div key={`${label}:${path}`} className="text-2xs text-text-secondary">
+                                                           <span className="font-bold uppercase tracking-wider text-text-muted">{label}: </span>
+                                                           <FilePath path={path} segments={1} />
+                                                         </div>
+                                                       ))}
+                                                     </div>
+                                                   </div>
+                                                 ) : (
+                                                   <div className="text-2xs font-bold text-text-muted bg-surface-sunken border border-border-subtle rounded-lg px-3 py-2">
+                                                     Missing evidence handles
+                                                   </div>
+                                                 )}
+                                               </div>
+                                             );
+                                           })}
+                                         </div>
+                                       ) : (
+                                         <div className="text-2xs font-bold text-text-muted bg-surface-sunken border border-border-subtle rounded-xl px-3 py-2">
+                                           No reviewer evidence available.
+                                         </div>
+                                       )}
                                      </div>
                                    )}
 
