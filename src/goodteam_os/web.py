@@ -44,6 +44,7 @@ from goodteam_os.graph import (
 )
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
+from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.resources import (
@@ -3745,6 +3746,12 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             review["reviewer_provenance"],
             gate=approval,
             config=_review_evidence_policy_config(reviewer_target),
+        )
+        review["multi_reviewer_projection"] = build_multi_reviewer_projection(
+            approval=approval,
+            reviewer_target=reviewer_target,
+            reviewer_statuses=reviewer_statuses,
+            review_evidence_policy_config=_review_evidence_policy_config(reviewer_target),
         )
         advisors = advisors_for_gate(approval)
         if advisors:
