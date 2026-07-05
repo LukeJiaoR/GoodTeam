@@ -344,6 +344,93 @@ def test_same_gate_status_from_different_artifact_version_does_not_match_current
     assert reviewer["policy"]["state"] == "missing_evidence"
 
 
+def test_newer_successful_retry_is_preferred_while_previous_failure_remains_visible():
+    projection = build_multi_reviewer_projection(
+        approval="staging",
+        reviewer_target=_target("correctness-security"),
+        reviewer_statuses=[
+            _provider_status(
+                profile_id="correctness-security",
+                job_id="job-original-failed",
+                approval="staging",
+                status="failed",
+                summary="Codex CLI exited with code 1.",
+                artifact_key="staging_report",
+                artifact_path="/tmp/staging-report.md",
+                artifact_version="sha256:current",
+                updated_at="2026-07-05T10:00:00+00:00",
+            ),
+            _provider_status(
+                profile_id="correctness-security",
+                job_id="job-retry-success",
+                approval="staging",
+                status="completed",
+                summary="Retry completed.",
+                artifact_key="staging_report",
+                artifact_path="/tmp/staging-report.md",
+                artifact_version="sha256:current",
+                original_failed_job_id="job-original-failed",
+                retry_attempt="2",
+                updated_at="2026-07-05T10:10:00+00:00",
+            ),
+        ],
+        artifact_key="staging_report",
+        artifact_path="/tmp/staging-report.md",
+        artifact_version="sha256:current",
+    )
+
+    reviewer = projection["reviewers"][0]
+    assert reviewer["status"]["job_id"] == "job-retry-success"
+    assert reviewer["policy"]["state"] == "ok"
+    assert reviewer["previous_failures"] == [
+        {
+            "job_id": "job-original-failed",
+            "summary": "Codex CLI exited with code 1.",
+            "updated_at": "2026-07-05T10:00:00+00:00",
+            "result_path": "/tmp/job-codex/result.md",
+            "original_failed_job_id": "",
+            "retry_attempt": "",
+        }
+    ]
+
+
+def test_previous_failures_exclude_stale_artifact_identity():
+    projection = build_multi_reviewer_projection(
+        approval="staging",
+        reviewer_target=_target("correctness-security"),
+        reviewer_statuses=[
+            _provider_status(
+                profile_id="correctness-security",
+                job_id="job-old-version-failed",
+                approval="staging",
+                status="failed",
+                summary="Old artifact version failed.",
+                artifact_key="staging_report",
+                artifact_path="/tmp/staging-report.md",
+                updated_at="2026-07-05T09:00:00+00:00",
+            ),
+            _provider_status(
+                profile_id="correctness-security",
+                job_id="job-current-retry-success",
+                approval="staging",
+                status="completed",
+                summary="Current retry completed.",
+                artifact_key="staging_report",
+                artifact_path="/tmp/staging-report.md",
+                artifact_version="sha256:current",
+                updated_at="2026-07-05T10:10:00+00:00",
+            ),
+        ],
+        artifact_key="staging_report",
+        artifact_path="/tmp/staging-report.md",
+        artifact_version="sha256:current",
+    )
+
+    reviewer = projection["reviewers"][0]
+    assert reviewer["status"]["job_id"] == "job-current-retry-success"
+    assert reviewer["previous_failures"] == []
+
+
 def test_ambiguous_legacy_status_is_not_silently_assigned_to_multiple_profiles():
     projection = build_multi_reviewer_projection(
         approval="staging",

@@ -1201,6 +1201,213 @@ def test_explicit_reviewer_job_action_refuses_wrong_gate_and_wrong_run(tmp_path)
     assert "run_id does not match" in wrong_run_payload["error"]
 
 
+def test_dashboard_shows_failed_reviewer_retry_button_without_retrying(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
+    artifact = tmp_path / "staging.md"
+    artifact.write_text("# Staging\n\nReady.\n", encoding="utf-8")
+    artifact_version = web.artifact_version_for_path(str(artifact))
+    failed = WorkerJobStore(project_root).create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review staging",
+        context="Context",
+        profile_id="correctness-security",
+        approval="staging",
+        gate="staging",
+        phase="implementation",
+        artifact_key="staging_report",
+        artifact_path=str(artifact),
+        artifact_version=artifact_version,
+        dispatch_group_id="reviewer-dispatch-render",
+        idempotency_key="failed-render-key",
+    )
+    failed_root = project_root / ".goodteam" / "workers" / "jobs" / failed["id"]
+    (failed_root / "status.json").write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "summary": "Codex CLI exited with code 1.",
+                "updated_at": "2026-07-05T10:00:00+00:00",
+                "result_path": str(failed_root / "result.md"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    state.approvals["staging"] = ApprovalDecision.PENDING
+    state.next_node = "await_staging_approval"
+    state.artifacts["staging_report"] = str(artifact)
+    context = build_start_console_context(tmp_path, project_config=config)
+
+    def fail_create_job(*_args, **_kwargs):
+        raise AssertionError("dashboard render must not create retry reviewer jobs")
+
+    def fail_run_job(*_args, **_kwargs):
+        raise AssertionError("dashboard render must not run reviewer jobs")
+
+    def fail_append_action(*_args, **_kwargs):
+        raise AssertionError("dashboard render must not write action events")
+
+    monkeypatch.setattr(web.WorkerJobStore, "create_job", fail_create_job)
+    monkeypatch.setattr(web.WorkerJobStore, "create_or_reuse_job", fail_create_job)
+    monkeypatch.setattr(web.WorkerJobStore, "run_job", fail_run_job)
+    monkeypatch.setattr(web, "append_action", fail_append_action)
+
+    html = render_dashboard(state, start_context=context)
+
+    assert "Retry failed reviewer jobs" in html
+    assert 'data-action="retry-failed-reviewer-jobs"' in html
+    assert failed["id"] in html
+    assert "Codex CLI exited with code 1." in html
+    assert 'data-decision="approved"' in html
+    assert 'data-decision="changes_requested"' in html
+    assert 'data-decision="rejected"' in html
+
+
+def test_failed_reviewer_retry_action_creates_retry_for_current_gate_only(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
+    artifact = tmp_path / "staging.md"
+    artifact.write_text("# Staging\n\nReady.\n", encoding="utf-8")
+    artifact_version = web.artifact_version_for_path(str(artifact))
+    store = WorkerJobStore(project_root)
+    failed = store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review staging",
+        context="Context",
+        profile_id="correctness-security",
+        approval="staging",
+        gate="staging",
+        phase="implementation",
+        artifact_key="staging_report",
+        artifact_path=str(artifact),
+        artifact_version=artifact_version,
+        dispatch_group_id="reviewer-dispatch-current",
+        idempotency_key="failed-key",
+    )
+    failed_root = project_root / ".goodteam" / "workers" / "jobs" / failed["id"]
+    (failed_root / "status.json").write_text(
+        '{"status":"failed","summary":"Codex CLI exited with code 1.","updated_at":"2026-07-05T10:00:00+00:00"}',
+        encoding="utf-8",
+    )
+    stale = store.create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="fake",
+        task="Review old staging",
+        context="Context",
+        profile_id="architecture-maintainability",
+        approval="staging",
+        gate="staging",
+        phase="implementation",
+        artifact_key="staging_report",
+        artifact_path=str(artifact),
+        artifact_version="sha256:old",
+        dispatch_group_id="reviewer-dispatch-old",
+        idempotency_key="old-failed-key",
+    )
+    stale_root = project_root / ".goodteam" / "workers" / "jobs" / stale["id"]
+    (stale_root / "status.json").write_text(
+        '{"status":"failed","summary":"Old artifact failed.","updated_at":"2026-07-05T09:00:00+00:00"}',
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    state.approvals["staging"] = ApprovalDecision.PENDING
+    state.next_node = "await_staging_approval"
+    state.artifacts["staging_report"] = str(artifact)
+    StateStore(tmp_path).write_project_current(state)
+
+    def fail_run_job(*_args, **_kwargs):
+        raise AssertionError("retry action must not run reviewer jobs")
+
+    monkeypatch.setattr(web.WorkerJobStore, "run_job", fail_run_job)
+
+    status, payload = web.retry_failed_reviewer_jobs_action(
+        tmp_path,
+        {
+            "project_key": "DEMO",
+            "run_id": "run-1",
+            "approval": "staging",
+            "artifact_key": "staging_report",
+            "artifact_version": artifact_version,
+        },
+    )
+
+    retry_jobs = [
+        job
+        for job in store.list_jobs()
+        if job.get("original_failed_job_id") == failed["id"]
+    ]
+    assert status == 200
+    assert payload["selected_count"] == 1
+    assert payload["retried_count"] == 1
+    assert payload["approval_unchanged"] is True
+    assert payload["advisory_only"] is True
+    assert payload["artifact_version"] == artifact_version
+    assert len(retry_jobs) == 1
+    assert retry_jobs[0]["status"] == "queued"
+    assert retry_jobs[0]["original_failed_job_id"] == failed["id"]
+    persisted_state = StateStore(tmp_path).read_project_current("DEMO")
+    assert persisted_state is not None
+    assert persisted_state.approvals["staging"] == ApprovalDecision.PENDING
+    assert persisted_state.next_node == "await_staging_approval"
+
+
+def test_failed_reviewer_retry_action_refuses_wrong_run_gate_and_stale_artifact(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
+    artifact = tmp_path / "staging.md"
+    artifact.write_text("# Staging\n\nReady.\n", encoding="utf-8")
+    current_version = web.artifact_version_for_path(str(artifact))
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    state.approvals["staging"] = ApprovalDecision.PENDING
+    state.approvals["security"] = ApprovalDecision.PENDING
+    state.next_node = "await_staging_approval"
+    state.artifacts["staging_report"] = str(artifact)
+    StateStore(tmp_path).write_project_current(state)
+
+    wrong_run_status, wrong_run_payload = web.retry_failed_reviewer_jobs_action(
+        tmp_path,
+        {"project_key": "DEMO", "run_id": "run-2", "approval": "staging"},
+    )
+    wrong_gate_status, wrong_gate_payload = web.retry_failed_reviewer_jobs_action(
+        tmp_path,
+        {"project_key": "DEMO", "run_id": "run-1", "approval": "security"},
+    )
+    stale_status, stale_payload = web.retry_failed_reviewer_jobs_action(
+        tmp_path,
+        {
+            "project_key": "DEMO",
+            "run_id": "run-1",
+            "approval": "staging",
+            "artifact_key": "staging_report",
+            "artifact_version": "sha256:old",
+        },
+    )
+
+    assert wrong_run_status == 409
+    assert "run_id does not match" in wrong_run_payload["error"]
+    assert wrong_gate_status == 409
+    assert "not currently actionable" in wrong_gate_payload["error"]
+    assert stale_status == 409
+    assert "artifact_version does not match" in stale_payload["error"]
+    assert current_version != "sha256:old"
+
+
+def test_failed_reviewer_retry_route_is_registered_in_post_dispatcher():
+    source = inspect.getsource(web.serve)
+
+    assert '"/reviewer-jobs/retry"' in source
+    assert 'retry_failed_reviewer_jobs_action(workspace, request)' in source
+
+
 def test_render_dashboard_shows_worker_blockers():
     state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
     state.current_node = "implementation"

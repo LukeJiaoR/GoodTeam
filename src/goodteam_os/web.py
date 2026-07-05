@@ -51,7 +51,9 @@ from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_con
 from goodteam_os.reviewer_dispatch import (
     artifact_version_for_path,
     reviewer_dispatch_diagnostics,
+    retry_failed_reviewer_jobs_for_gate,
     run_queued_reviewer_jobs_for_gate,
+    select_failed_reviewer_jobs_for_gate,
     select_queued_reviewer_jobs_for_gate,
 )
 from goodteam_os.resources import (
@@ -315,6 +317,77 @@ def run_queued_reviewer_jobs_action(workspace: Path, request: Mapping[str, objec
         "advisory_only": True,
         "approval_unchanged": True,
         "operator_message": "Reviewer evidence remains advisory. Human operator decides.",
+    }
+
+
+def retry_failed_reviewer_jobs_action(workspace: Path, request: Mapping[str, object]) -> tuple[int, dict[str, object]]:
+    project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
+    if not project_key:
+        return 400, {"error": "project_key is required"}
+    state = resolve_dashboard_state(workspace, project_key=project_key)
+    if state is None:
+        return 404, {"error": f"Unknown project or no active run: {project_key}"}
+
+    requested_run_id = str(request.get("run_id", "") or "").strip()
+    if requested_run_id and requested_run_id != state.run_id:
+        return 409, {"error": "run_id does not match the active project run"}
+
+    current_gate = current_approval_gate(state)
+    requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
+    if not current_gate or requested_gate != current_gate:
+        return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
+
+    artifact_key = _approval_artifact_for_gate(current_gate)
+    requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
+    if requested_artifact_key and requested_artifact_key != artifact_key:
+        return 409, {"error": "artifact_key does not match the current approval gate"}
+    artifact_path = str(state.artifacts.get(artifact_key, "") or "")
+    current_artifact_version = artifact_version_for_path(artifact_path)
+    requested_artifact_version = str(request.get("artifact_version", "") or "").strip()
+    if requested_artifact_version and requested_artifact_version != current_artifact_version:
+        return 409, {"error": "artifact_version does not match the current approval artifact"}
+
+    profile_id = str(request.get("profile_id", "") or "").strip()
+    target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
+    profile_order = _reviewer_profile_order_for_gate(target, current_gate)
+    aggregate = {
+        "selected_count": 0,
+        "retried_count": 0,
+        "skipped_count": 0,
+        "results": [],
+        "errors": [],
+    }
+    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
+    for root in roots:
+        store = WorkerJobStore(root)
+        result = retry_failed_reviewer_jobs_for_gate(
+            store=store,
+            jobs=store.list_jobs(),
+            run_id=state.run_id,
+            approval=current_gate,
+            artifact_key=artifact_key,
+            artifact_path=artifact_path,
+            artifact_version=current_artifact_version,
+            profile_id=profile_id,
+            profile_order=profile_order,
+        )
+        aggregate["selected_count"] = int(aggregate["selected_count"]) + int(result.get("selected_count", 0) or 0)
+        aggregate["retried_count"] = int(aggregate["retried_count"]) + int(result.get("retried_count", 0) or 0)
+        aggregate["skipped_count"] = int(aggregate["skipped_count"]) + int(result.get("skipped_count", 0) or 0)
+        aggregate["results"] = [*list(aggregate["results"]), *list(result.get("results", []))]
+        aggregate["errors"] = [*list(aggregate["errors"]), *list(result.get("errors", []))]
+
+    return 200, {
+        **aggregate,
+        "project_key": project_key,
+        "run_id": state.run_id,
+        "approval": current_gate,
+        "artifact_key": artifact_key,
+        "artifact_path": artifact_path,
+        "artifact_version": current_artifact_version,
+        "advisory_only": True,
+        "approval_unchanged": True,
+        "operator_message": "Retry queued reviewer-dispatch jobs only. Approval remains human-operated.",
     }
 
 
@@ -3854,6 +3927,15 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             artifact_version=artifact_version,
             profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
         )
+        review["failed_reviewer_jobs"] = select_failed_reviewer_jobs_for_gate(
+            reviewer_statuses,
+            run_id=state.run_id,
+            approval=approval,
+            artifact_key=artifact,
+            artifact_path=artifact_path,
+            artifact_version=artifact_version,
+            profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
+        )
         advisors = advisors_for_gate(approval)
         if advisors:
             messages = [
@@ -4586,6 +4668,8 @@ def render_reviewer_dispatch_diagnostics(diagnostics: object) -> str:
     phases = phases if isinstance(phases, Mapping) else {}
     queued = diagnostics.get("queued_reviewer_jobs", {})
     queued = queued if isinstance(queued, Mapping) else {}
+    failed = diagnostics.get("failed_reviewer_jobs", {})
+    failed = failed if isinstance(failed, Mapping) else {}
     badge_kind = "error" if errors else "warning" if warnings else "ok"
     phase_rows = "\n".join(
         _render_reviewer_dispatch_phase(phase, data)
@@ -4598,6 +4682,11 @@ def render_reviewer_dispatch_diagnostics(diagnostics: object) -> str:
         f"total: {queued.get('total', 0)}",
         *_count_labels(queued.get("by_gate", {}), prefix="gate"),
         *_count_labels(queued.get("by_profile", {}), prefix="profile"),
+    ]
+    failed_job_labels = [
+        f"total: {failed.get('total', 0)}",
+        *_count_labels(failed.get("by_gate", {}), prefix="gate"),
+        *_count_labels(failed.get("by_profile", {}), prefix="profile"),
     ]
     return f"""
       <section class="card reviewer-dispatch-diagnostics">
@@ -4615,6 +4704,7 @@ def render_reviewer_dispatch_diagnostics(diagnostics: object) -> str:
         {render_inline_list("Warnings", warnings)}
         {render_inline_list("Errors", errors)}
         {render_inline_list("Queued reviewer jobs", job_labels, code=True)}
+        {render_inline_list("Failed reviewer jobs", failed_job_labels, code=True)}
         <div class="multi-reviewer-cards">
           {phase_rows}
         </div>
@@ -4701,6 +4791,8 @@ def _render_multi_reviewer_card(reviewer: Mapping[str, object]) -> str:
     invocation = invocation if isinstance(invocation, Mapping) else {}
     evidence_payload = policy.get("evidence", {})
     evidence_payload = evidence_payload if isinstance(evidence_payload, Mapping) else {}
+    previous_failures = reviewer.get("previous_failures", [])
+    previous_failure_items = previous_failures if isinstance(previous_failures, list) else []
     severity = str(policy.get("severity", "warning") or "warning").lower()
     state = str(policy.get("state", "missing_evidence") or "missing_evidence")
     profile_id = str(reviewer.get("profile_id", "") or "")
@@ -4708,6 +4800,11 @@ def _render_multi_reviewer_card(reviewer: Mapping[str, object]) -> str:
     badge_kind = str(badge.get("kind", evidence_payload.get("badge_kind", "missing")) or "missing")
     badge_label = _multi_reviewer_evidence_label(badge_kind)
     handles = _reviewer_evidence_handle_labels(dict(evidence))
+    previous_failure_labels = [
+        _previous_failure_label(item)
+        for item in previous_failure_items
+        if isinstance(item, Mapping)
+    ]
     return f"""
       <article class="multi-reviewer-card">
         <div class="reviewer-provenance-top">
@@ -4727,6 +4824,7 @@ def _render_multi_reviewer_card(reviewer: Mapping[str, object]) -> str:
           <dt>Invocation</dt><dd>{escape(str(invocation.get("status", evidence_payload.get("invocation_status", status.get("status", "missing"))) or "missing"))}</dd>
         </dl>
         {render_inline_list("Evidence handles", handles, code=True)}
+        {render_inline_list("Previous failures", previous_failure_labels, code=True)}
       </article>
     """
 
@@ -4757,6 +4855,57 @@ def _reviewer_evidence_handle_labels(evidence: dict[object, object]) -> list[str
     if isinstance(changed_files, list):
         labels.extend(f"changed: {path}" for path in changed_files if str(path).strip())
     return labels
+
+
+def _previous_failure_label(failure: Mapping[str, object]) -> str:
+    job_id = str(failure.get("job_id", "") or "unknown")
+    summary = str(failure.get("summary", "") or "").strip()
+    retry_attempt = str(failure.get("retry_attempt", "") or "").strip()
+    updated_at = str(failure.get("updated_at", "") or "").strip()
+    parts = [job_id]
+    if retry_attempt:
+        parts.append(f"attempt {retry_attempt}")
+    if updated_at:
+        parts.append(updated_at)
+    if summary:
+        parts.append(summary)
+    return " | ".join(parts)
+
+
+def render_failed_reviewer_jobs(jobs: object) -> str:
+    job_items = jobs if isinstance(jobs, list) else []
+    labels = [
+        _failed_reviewer_job_label(job)
+        for job in job_items
+        if isinstance(job, Mapping)
+    ]
+    return render_inline_list("Failed reviewer jobs", labels, code=True)
+
+
+def _failed_reviewer_job_label(job: Mapping[str, object]) -> str:
+    parts = [
+        f"profile: {job.get('profile_id', '')}",
+        f"gate: {_job_display_value(job, 'gate') or _job_display_value(job, 'approval')}",
+        f"version: {job.get('artifact_version', '')}",
+        f"job: {job.get('id', '') or job.get('job_id', '')}",
+    ]
+    summary = str(job.get("summary", "") or "").strip()
+    result_path = str(job.get("result_path", "") or "").strip()
+    original_job = str(job.get("original_failed_job_id", "") or "").strip()
+    retry_attempt = str(job.get("retry_attempt", "") or job.get("attempt", "") or "").strip()
+    if retry_attempt:
+        parts.append(f"attempt: {retry_attempt}")
+    if original_job:
+        parts.append(f"original: {original_job}")
+    if summary:
+        parts.append(f"error: {summary}")
+    if result_path:
+        parts.append(f"result: {result_path}")
+    return " | ".join(str(part) for part in parts if str(part).strip())
+
+
+def _job_display_value(job: Mapping[str, object], key: str) -> str:
+    return str(job.get(key, "") or "").strip()
 
 
 def render_task_cards(tasks: list[dict[str, object]]) -> str:
@@ -6859,6 +7008,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           {render_reviewer_provenance(review.get("reviewer_provenance"))}
           {render_review_evidence_policy(review.get("review_evidence_policy"))}
           {render_multi_reviewer_projection(review.get("multi_reviewer_projection"))}
+          {render_failed_reviewer_jobs(review.get("failed_reviewer_jobs"))}
           {f'''
           <div class="approval-actions reviewer-job-actions">
             <button class="primary run-queued-reviewer-jobs"
@@ -6872,6 +7022,19 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <code class="reviewer-job-status">{len(review.get("queued_reviewer_jobs", []))} queued</code>
           </div>
           ''' if review["is_actionable"] and len(review.get("queued_reviewer_jobs", [])) > 0 else ''}
+          {f'''
+          <div class="approval-actions reviewer-job-actions">
+            <button class="primary retry-failed-reviewer-jobs"
+              data-action="retry-failed-reviewer-jobs"
+              data-project="{escape(project_key)}"
+              data-run="{escape(state.run_id if state is not None else "")}"
+              data-approval="{escape(review["approval"])}"
+              data-artifact="{escape(review["artifact"])}"
+              data-artifact-version="{escape(str(review.get("artifact_version", "")))}"
+              type="button">Retry failed reviewer jobs</button>
+            <code class="reviewer-job-status">{len(review.get("failed_reviewer_jobs", []))} failed</code>
+          </div>
+          ''' if review["is_actionable"] and len(review.get("failed_reviewer_jobs", [])) > 0 else ''}
           {f'''
           <div class="artifact-editor" id="editor-{escape(review["artifact"])}" hidden>
             <textarea data-editor-for="{escape(review["artifact"])}" spellcheck="false"></textarea>
@@ -7857,6 +8020,35 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         }}
       }});
     }});
+    document.querySelectorAll(".retry-failed-reviewer-jobs").forEach((button) => {{
+      button.addEventListener("click", async () => {{
+        button.disabled = true;
+        const status = button.closest(".reviewer-job-actions")?.querySelector(".reviewer-job-status");
+        if (status) status.textContent = "Retrying...";
+        try {{
+          const response = await fetch("/reviewer-jobs/retry", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{
+              project_key: button.dataset.project || window.GOODTEAM_PROJECT_KEY,
+              run_id: button.dataset.run,
+              approval: button.dataset.approval,
+              artifact_key: button.dataset.artifact,
+              artifact_version: button.dataset.artifactVersion
+            }})
+          }});
+          const payload = await response.json();
+          if (!response.ok) {{
+            throw new Error(payload.error || "Failed to retry reviewer jobs.");
+          }}
+          if (status) status.textContent = `${{payload.retried_count || 0}} reviewer retries queued`;
+          window.setTimeout(() => window.location.reload(), 300);
+        }} catch (error) {{
+          button.disabled = false;
+          if (status) status.textContent = error.message;
+        }}
+      }});
+    }});
     document.querySelectorAll(".approval-decision").forEach((button) => {{
       button.addEventListener("click", async () => {{
         button.disabled = true;
@@ -8716,7 +8908,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                 re.fullmatch(r"/executions/[^/]+/(run|pr|ci)", normalized_path)
             )
 
-            if not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/fs/mkdir", "/server-actions/run", "/git-init"}:
+            if not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -8789,6 +8981,10 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     )
                 elif normalized_path == "/reviewer-jobs/run":
                     status, result = run_queued_reviewer_jobs_action(workspace, request)
+                    self._send_json(status, result)
+                    return
+                elif normalized_path == "/reviewer-jobs/retry":
+                    status, result = retry_failed_reviewer_jobs_action(workspace, request)
                     self._send_json(status, result)
                     return
                 elif normalized_path == "/debate":

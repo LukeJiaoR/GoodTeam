@@ -326,10 +326,10 @@ Workbench also shows `Reviewer dispatch diagnostics` in the System tab. The
 diagnostics distinguish default single mode, parallel requested but guarded by
 missing rollout acknowledgement, fully enabled parallel mode, and invalid
 config errors. Configured phase/profile counts explain what can fan out on
-future gate transitions. Queued reviewer job counts by gate/profile are
-informational snapshots from the existing worker job store when available.
-Diagnostics are read-only and do not dispatch jobs, run workers, or write
-ledger/action events.
+future gate transitions. Queued and failed reviewer job counts by gate/profile
+are informational snapshots from the existing worker job store when available.
+Diagnostics are read-only and do not dispatch jobs, retry jobs, run workers, or
+write ledger/action events.
 
 Reviewer job execution is a separate explicit operator step. When a current
 pending approval gate has matching queued reviewer jobs, Workbench shows
@@ -346,9 +346,24 @@ evidence policy, and multi-reviewer projection.
 
 If execution fails, inspect the failed job's `stderr_path`, `stdout_path`, and
 `result_path` from Workbench or `.goodteam/workers/jobs/<job-id>/status.json`.
-Fix adapter availability, credentials, or project preconditions, then rerun the
-explicit action for any jobs that remain queued. Failed reviewer evidence is
-advisory and human-decidable; it does not auto-reject the gate.
+Fix adapter availability, credentials, or project preconditions, then use
+`Retry failed reviewer jobs` for the current pending gate. Retry is an explicit
+operator action only. It selects failed reviewer-dispatch jobs for the active
+run, current actionable gate, current artifact key/path/content version, and
+optional reviewer profile. It refuses stale artifact versions, wrong runs,
+wrong gates, queued/running/completed jobs, bare legacy reviewer jobs without
+dispatch identity, and non-reviewer jobs. The retry action creates a new queued
+retry job with `original_failed_job_id`, `retry_attempt`, and
+`retry_of_idempotency_key` so the original failed evidence remains inspectable.
+It does not run jobs, retry on refresh, dispatch unrelated reviewers, approve,
+reject, or change approval authority.
+
+After retry, Workbench prefers the newest valid attempt for the profile's
+current status and keeps older failed attempts visible as previous failure
+evidence when available. Partial success is valid: completed reviewer evidence,
+failed reviewer evidence, and queued retry attempts can coexist until the human
+operator decides. Failed reviewer evidence is advisory and human-decidable; it
+does not auto-reject the gate.
 
 Rollback by returning to single mode:
 
@@ -437,6 +452,9 @@ Break follow-up work into separate issues:
 - #267: Add explicit reviewer job execution controls for queued reviewer jobs
   that already exist. Workbench render remains read-only; the explicit action
   does not create jobs, dispatch jobs, or change approval authority.
+- #269: Harden failed reviewer job visibility and explicit retry recovery.
+  Retry is scoped to the current run/gate/artifact identity, creates only
+  lineage-preserving queued retry jobs, and leaves approval authority unchanged.
 
 Each phase should preserve the existing evidence-first workflow and should be
 mergeable without enabling global parallel dispatch.

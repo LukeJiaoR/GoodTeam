@@ -129,6 +129,7 @@ def reviewer_dispatch_diagnostics(
         "errors": errors,
         "phases": phases,
         "queued_reviewer_jobs": _queued_reviewer_job_counts(worker_jobs),
+        "failed_reviewer_jobs": _failed_reviewer_job_counts(worker_jobs),
         "advisory_only": True,
         "operator_message": "Reviewer evidence remains advisory. Human operator decides.",
     }
@@ -214,6 +215,40 @@ def select_queued_reviewer_jobs_for_gate(
     return sorted(selected, key=lambda job: _reviewer_job_sort_key(job, order))
 
 
+def select_failed_reviewer_jobs_for_gate(
+    jobs: Iterable[Mapping[str, object]],
+    *,
+    run_id: str,
+    approval: str,
+    artifact_key: str = "",
+    artifact_path: str = "",
+    artifact_version: str = "",
+    profile_id: str = "",
+    profile_order: Iterable[str] = (),
+) -> list[dict[str, object]]:
+    wanted_run_id = _clean_text(run_id)
+    wanted_gate = _clean_text(approval)
+    wanted_artifact_key = _clean_text(artifact_key)
+    wanted_artifact_path = _clean_text(artifact_path)
+    wanted_artifact_version = _clean_text(artifact_version)
+    wanted_profile_id = _clean_text(profile_id)
+    order = {_clean_text(value): index for index, value in enumerate(profile_order) if _clean_text(value)}
+    job_list = [dict(job) for job in jobs]
+    selected = [
+        dict(job)
+        for job in job_list
+        if _is_failed_reviewer_job(job)
+        and _clean_text(job.get("run_id")) == wanted_run_id
+        and _job_gate(job) == wanted_gate
+        and _matches_supplied_identity(job, "artifact_key", wanted_artifact_key)
+        and _matches_supplied_identity(job, "artifact_path", wanted_artifact_path)
+        and _matches_supplied_identity(job, "artifact_version", wanted_artifact_version)
+        and _matches_supplied_identity(job, "profile_id", wanted_profile_id)
+        and not _has_superseding_retry_or_result(job, job_list)
+    ]
+    return sorted(selected, key=lambda job: _reviewer_job_sort_key(job, order))
+
+
 def run_queued_reviewer_jobs_for_gate(
     *,
     store: WorkerJobStore,
@@ -268,6 +303,70 @@ def run_queued_reviewer_jobs_for_gate(
         "skipped_count": max(0, len(job_list) - len(results)),
         "results": results,
         "errors": errors,
+    }
+
+
+def retry_failed_reviewer_jobs_for_gate(
+    *,
+    store: WorkerJobStore,
+    jobs: Iterable[Mapping[str, object]],
+    run_id: str,
+    approval: str,
+    artifact_key: str = "",
+    artifact_path: str = "",
+    artifact_version: str = "",
+    profile_id: str = "",
+    max_jobs: int | None = None,
+    profile_order: Iterable[str] = (),
+) -> dict[str, object]:
+    job_list = [dict(job) for job in jobs]
+    selected = select_failed_reviewer_jobs_for_gate(
+        job_list,
+        run_id=run_id,
+        approval=approval,
+        artifact_key=artifact_key,
+        artifact_path=artifact_path,
+        artifact_version=artifact_version,
+        profile_id=profile_id,
+        profile_order=profile_order,
+    )
+    retryable = selected[:max_jobs] if max_jobs is not None and max_jobs >= 0 else selected
+    results: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+    for job in retryable:
+        original_job_id = _job_id(job)
+        if not original_job_id:
+            errors.append({"job_id": "", "error": "missing failed job id"})
+            continue
+        retry_attempt = _next_retry_attempt(job)
+        try:
+            retry_job, _created = store.create_or_reuse_job(
+                **_retry_reviewer_job_spec(job, retry_attempt=retry_attempt)
+            )
+        except (OSError, ValueError) as exc:
+            errors.append({"job_id": original_job_id, "error": str(exc)})
+            continue
+        results.append(
+            {
+                "job_id": _job_id(retry_job),
+                "status": _clean_text(retry_job.get("status")),
+                "profile_id": _clean_text(retry_job.get("profile_id") or job.get("profile_id")),
+                "approval": _job_gate(retry_job) or _job_gate(job),
+                "artifact_key": _clean_text(retry_job.get("artifact_key") or job.get("artifact_key")),
+                "artifact_version": _clean_text(retry_job.get("artifact_version") or job.get("artifact_version")),
+                "original_failed_job_id": original_job_id,
+                "retry_attempt": _clean_text(retry_job.get("retry_attempt") or retry_attempt),
+                "retry_idempotency_key": _clean_text(retry_job.get("idempotency_key")),
+            }
+        )
+    return {
+        "selected_count": len(selected),
+        "retried_count": len(results),
+        "skipped_count": max(0, len(job_list) - len(results)),
+        "results": results,
+        "errors": errors,
+        "advisory_only": True,
+        "approval_unchanged": True,
     }
 
 
@@ -344,6 +443,98 @@ def _reviewer_task(*, profile: ReviewerProfile, approval: str, artifact_key: str
     )
 
 
+def _retry_reviewer_job_spec(job: Mapping[str, object], *, retry_attempt: int) -> dict[str, Any]:
+    original_job_id = _job_id(job)
+    profile_id = _clean_text(job.get("profile_id"))
+    approval = _job_gate(job)
+    phase = _clean_text(job.get("phase"))
+    artifact_key = _clean_text(job.get("artifact_key"))
+    artifact_path = _clean_text(job.get("artifact_path"))
+    artifact_version = _clean_text(job.get("artifact_version"))
+    retry_idempotency_key = _retry_idempotency_key(job, retry_attempt=retry_attempt)
+    expected = job.get("expected_artifacts")
+    expected_artifacts = [str(item) for item in expected] if isinstance(expected, list) else []
+    if not expected_artifacts and profile_id:
+        expected_artifacts = [f"reviewer-report-{profile_id}.md"]
+    return {
+        "run_id": _clean_text(job.get("run_id")),
+        "role": _clean_text(job.get("role")) or REVIEWER_ROLE_BY_PHASE.get(phase, "review"),
+        "adapter": _clean_text(job.get("adapter")) or "fake",
+        "model": _clean_text(job.get("model")),
+        "task": _retry_reviewer_task(
+            original_job_id=original_job_id,
+            profile_id=profile_id,
+            approval=approval,
+            artifact_key=artifact_key,
+            artifact_path=artifact_path,
+            artifact_version=artifact_version,
+        ),
+        "context": _retry_reviewer_context(job),
+        "constraints": [
+            "Act as an advisory reviewer only; do not approve or reject the gate.",
+            "Retry only the failed reviewer-dispatch job identity carried by this job.",
+            "Review the named current artifact and report findings, evidence, and recommendation.",
+        ],
+        "expected_artifacts": expected_artifacts,
+        "profile_id": profile_id,
+        "approval": approval,
+        "gate": approval,
+        "phase": phase,
+        "artifact_key": artifact_key,
+        "artifact_path": artifact_path,
+        "artifact_version": artifact_version,
+        "dispatch_group_id": _clean_text(job.get("dispatch_group_id")),
+        "attempt": retry_attempt,
+        "idempotency_key": retry_idempotency_key,
+        "original_failed_job_id": original_job_id,
+        "retry_attempt": retry_attempt,
+        "retry_of_idempotency_key": _clean_text(job.get("idempotency_key")),
+    }
+
+
+def _retry_reviewer_task(
+    *,
+    original_job_id: str,
+    profile_id: str,
+    approval: str,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
+) -> str:
+    return "\n".join(
+        [
+            f"Retry failed reviewer job `{original_job_id}` for `{approval}`.",
+            f"Reviewer profile: `{profile_id}`",
+            f"Artifact key: `{artifact_key}`",
+            f"Artifact path: `{artifact_path}`",
+            f"Artifact version: `{artifact_version}`",
+            "",
+            "This is an explicit operator-controlled retry. It is advisory evidence only.",
+        ]
+    )
+
+
+def _retry_reviewer_context(job: Mapping[str, object]) -> str:
+    return "\n".join(
+        [
+            "Original failed reviewer-dispatch job evidence:",
+            f"- job_id: {_job_id(job)}",
+            f"- profile_id: {_clean_text(job.get('profile_id'))}",
+            f"- approval: {_job_gate(job)}",
+            f"- phase: {_clean_text(job.get('phase'))}",
+            f"- artifact_key: {_clean_text(job.get('artifact_key'))}",
+            f"- artifact_path: {_clean_text(job.get('artifact_path'))}",
+            f"- artifact_version: {_clean_text(job.get('artifact_version'))}",
+            f"- dispatch_group_id: {_clean_text(job.get('dispatch_group_id'))}",
+            f"- idempotency_key: {_clean_text(job.get('idempotency_key'))}",
+            f"- summary: {_clean_text(job.get('summary'))}",
+            f"- result_path: {_clean_text(job.get('result_path'))}",
+            f"- stdout_path: {_clean_text(job.get('stdout_path'))}",
+            f"- stderr_path: {_clean_text(job.get('stderr_path'))}",
+        ]
+    )
+
+
 def artifact_version_for_path(artifact_path: str) -> str:
     path = Path(artifact_path).expanduser() if artifact_path else None
     if path is None or not path.is_file():
@@ -415,6 +606,21 @@ def _queued_reviewer_job_counts(worker_jobs: Iterable[Mapping[str, object]]) -> 
     return {"total": total, "by_gate": by_gate, "by_profile": by_profile}
 
 
+def _failed_reviewer_job_counts(worker_jobs: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    by_gate: dict[str, int] = {}
+    by_profile: dict[str, int] = {}
+    total = 0
+    for job in worker_jobs:
+        if not _is_failed_reviewer_job(job):
+            continue
+        total += 1
+        gate = _job_gate(job) or "unknown"
+        profile_id = _clean_text(job.get("profile_id")) or "unknown"
+        by_gate[gate] = by_gate.get(gate, 0) + 1
+        by_profile[profile_id] = by_profile.get(profile_id, 0) + 1
+    return {"total": total, "by_gate": by_gate, "by_profile": by_profile}
+
+
 def _is_queued_reviewer_job(job: Mapping[str, object]) -> bool:
     if str(job.get("status", "") or "").strip().lower() != "queued":
         return False
@@ -428,15 +634,63 @@ def _is_queued_reviewer_job(job: Mapping[str, object]) -> bool:
 def _is_executable_queued_reviewer_job(job: Mapping[str, object]) -> bool:
     if str(job.get("status", "") or "").strip().lower() != "queued":
         return False
+    return _has_reviewer_dispatch_identity(job)
+
+
+def _is_failed_reviewer_job(job: Mapping[str, object]) -> bool:
+    if str(job.get("status", "") or "").strip().lower() != "failed":
+        return False
+    return _has_reviewer_dispatch_identity(job)
+
+
+def _has_reviewer_dispatch_identity(job: Mapping[str, object]) -> bool:
     if not _clean_text(job.get("profile_id")):
         return False
-    if _clean_text(job.get("phase")) not in REVIEWER_PROFILE_PHASES:
+    phase = _clean_text(job.get("phase"))
+    if phase not in REVIEWER_PROFILE_PHASES:
         return False
     if not _clean_text(job.get("dispatch_group_id")):
         return False
     if not _clean_text(job.get("idempotency_key")):
         return False
+    role = _clean_text(job.get("role"))
+    if role and role != REVIEWER_ROLE_BY_PHASE.get(phase, role):
+        return False
     return True
+
+
+def _has_superseding_retry_or_result(job: Mapping[str, object], jobs: Iterable[Mapping[str, object]]) -> bool:
+    job_id = _job_id(job)
+    job_stamp = _job_timestamp(job)
+    for candidate in jobs:
+        if _job_id(candidate) == job_id:
+            continue
+        if _clean_text(candidate.get("run_id")) != _clean_text(job.get("run_id")):
+            continue
+        if _job_gate(candidate) != _job_gate(job):
+            continue
+        if _clean_text(candidate.get("profile_id")) != _clean_text(job.get("profile_id")):
+            continue
+        if _clean_text(candidate.get("artifact_key")) != _clean_text(job.get("artifact_key")):
+            continue
+        if _clean_text(candidate.get("artifact_path")) != _clean_text(job.get("artifact_path")):
+            continue
+        if _clean_text(candidate.get("artifact_version")) != _clean_text(job.get("artifact_version")):
+            continue
+        status = str(candidate.get("status", "") or "").strip().lower()
+        if status not in {"queued", "running", "completed", "failed"}:
+            continue
+        retry_of_job = _clean_text(candidate.get("original_failed_job_id")) == job_id
+        retry_of_key = (
+            _clean_text(candidate.get("retry_of_idempotency_key"))
+            and _clean_text(candidate.get("retry_of_idempotency_key")) == _clean_text(job.get("idempotency_key"))
+        )
+        if not (retry_of_job or retry_of_key):
+            continue
+        candidate_stamp = _job_timestamp(candidate)
+        if not job_stamp or not candidate_stamp or candidate_stamp >= job_stamp:
+            return True
+    return False
 
 
 def _clean_text(value: object) -> str:
@@ -455,6 +709,35 @@ def _matches_supplied_identity(job: Mapping[str, object], field: str, wanted: st
     if not wanted:
         return True
     return _clean_text(job.get(field)) == wanted
+
+
+def _next_retry_attempt(job: Mapping[str, object]) -> int:
+    raw_attempt = _clean_text(job.get("retry_attempt") or job.get("attempt") or "1")
+    try:
+        attempt = int(raw_attempt)
+    except ValueError:
+        attempt = 1
+    return max(1, attempt) + 1
+
+
+def _retry_idempotency_key(job: Mapping[str, object], *, retry_attempt: int) -> str:
+    raw = "|".join(
+        (
+            "reviewer-retry",
+            _job_id(job),
+            str(retry_attempt),
+            _clean_text(job.get("run_id")),
+            _job_gate(job),
+            _clean_text(job.get("artifact_key")),
+            _clean_text(job.get("artifact_path")),
+            _clean_text(job.get("artifact_version")),
+        )
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _job_timestamp(job: Mapping[str, object]) -> str:
+    return _clean_text(job.get("updated_at") or job.get("created_at"))
 
 
 def _reviewer_job_sort_key(job: Mapping[str, object], profile_order: Mapping[str, int]) -> tuple[object, ...]:

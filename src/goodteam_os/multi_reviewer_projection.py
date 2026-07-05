@@ -57,6 +57,15 @@ def build_multi_reviewer_projection(
                 order=order,
                 profile=profile,
                 status=matched_status,
+                previous_failures=_previous_failures_for_profile(
+                    profile=profile,
+                    statuses=statuses,
+                    approval=gate,
+                    current_status=matched_status,
+                    artifact_key=str(artifact_key or "").strip(),
+                    artifact_path=str(artifact_path or "").strip(),
+                    artifact_version=current_artifact_version,
+                ),
                 match_kind=match_kind,
                 policy_config=review_evidence_policy_config,
             )
@@ -142,6 +151,7 @@ def _reviewer_entry(
     order: int,
     profile: ReviewerProfile,
     status: Mapping[str, object] | None,
+    previous_failures: list[dict[str, object]],
     match_kind: str,
     policy_config: object,
 ) -> dict[str, object]:
@@ -156,6 +166,7 @@ def _reviewer_entry(
         "provenance": provenance,
         "policy": policy,
         "evidence_handles": dict(provenance.get("evidence_handles", {})),
+        "previous_failures": previous_failures,
     }
 
 
@@ -179,6 +190,7 @@ def _unmatched_entry(
         "provenance": provenance,
         "policy": policy,
         "evidence_handles": dict(provenance.get("evidence_handles", {})),
+        "previous_failures": [],
     }
 
 
@@ -256,6 +268,61 @@ def _aggregate_policy(reviewers: list[dict[str, object]]) -> dict[str, object]:
 
 def _latest_status(statuses: list[dict[str, object]]) -> dict[str, object]:
     return max(statuses, key=lambda status: str(status.get("updated_at", "") or ""))
+
+
+def _previous_failures_for_profile(
+    *,
+    profile: ReviewerProfile,
+    statuses: list[dict[str, object]],
+    approval: str,
+    current_status: Mapping[str, object] | None,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
+) -> list[dict[str, object]]:
+    current_id = id(current_status) if current_status is not None else None
+    failures = [
+        status
+        for status in _statuses_for_approval(statuses, approval)
+        if id(status) != current_id
+        and str(status.get("profile_id", "") or "").strip() == profile.profile_id
+        and str(status.get("status", "") or "").strip().lower() == "failed"
+        and _matches_current_artifact_identity(
+            status,
+            artifact_key=artifact_key,
+            artifact_path=artifact_path,
+            artifact_version=artifact_version,
+        )
+    ]
+    return [_failure_summary(status) for status in sorted(failures, key=lambda item: str(item.get("updated_at", "") or ""))]
+
+
+def _matches_current_artifact_identity(
+    status: Mapping[str, object],
+    *,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
+) -> bool:
+    for field, current_value in (
+        ("artifact_key", artifact_key),
+        ("artifact_path", artifact_path),
+        ("artifact_version", artifact_version),
+    ):
+        if current_value and str(status.get(field, "") or "").strip() != current_value:
+            return False
+    return True
+
+
+def _failure_summary(status: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "job_id": str(status.get("job_id", "") or status.get("id", "") or ""),
+        "summary": str(status.get("summary", "") or ""),
+        "updated_at": str(status.get("updated_at", "") or ""),
+        "result_path": str(status.get("result_path", "") or ""),
+        "original_failed_job_id": str(status.get("original_failed_job_id", "") or ""),
+        "retry_attempt": str(status.get("retry_attempt", "") or status.get("attempt", "") or ""),
+    }
 
 
 def _fallback_status_key(status: Mapping[str, object]) -> tuple[str, str, str]:
