@@ -29,9 +29,9 @@ flowchart TD
     Reader --> External[External reader]
 
     Operator --> RootReadme[README.md]
-    Operator --> OperatorGuide[docs/operator-guide.md planned]
-    Operator --> ReviewGuide[docs/review-and-approval-guide.md planned]
-    Operator --> SmokePlaybook[docs/live-smoke-playbook.md planned]
+    Operator --> OperatorGuide[docs/operator-guide.md]
+    Operator --> ReviewGuide[docs/review-and-approval-guide.md]
+    Operator --> SmokePlaybook[docs/live-smoke-playbook.md]
 
     Contributor --> Agents[AGENTS.md]
     Contributor --> Claude[CLAUDE.md]
@@ -57,33 +57,22 @@ flowchart TD
     classDef historical fill:#eef3ff,stroke:#5c6bc0,color:#1a237e;
 
     class RootReadme,Architecture,Testing,Hygiene,Explainer,Agents,Claude stable;
-    class OperatorGuide,ReviewGuide,SmokePlaybook,ConfigReference,WorkerBackends,MemoryModel,ProvenanceLedger,ExecutionIdentity planned;
+    class OperatorGuide,ReviewGuide,SmokePlaybook,ConfigReference,WorkerBackends,MemoryModel,ProvenanceLedger,ExecutionIdentity stable;
     class ProductVision,Plans,HistoricalPlans,Current,RollingMemory,Backlog,ProductParkingLot historical;
 ```
 
+## Stable Manuals (Completed in this PR)
+
+- [`operator-guide.md`](operator-guide.md)
+- [`review-and-approval-guide.md`](review-and-approval-guide.md)
+- [`live-smoke-playbook.md`](live-smoke-playbook.md)
+
 ## Stable Manuals
 
-These are intended to remain current and authoritative.
-
-- [`architecture.md`](architecture.md): component map, control-plane model, and
-  adapter boundaries.
-- [`explainer.md`](explainer.md): concise, visual introduction for new readers.
-- [`testing-strategy.md`](testing-strategy.md): risk-tiered verification matrix
-  for PRs.
-- [`development-branch-hygiene.md`](development-branch-hygiene.md): branch,
-  PR, and worktree cleanup rules.
-
-Planned stable manuals from the visual docs roadmap:
-
-- `operator-guide.md`
-- `config-reference.md`
-- `review-and-approval-guide.md`
-- `live-smoke-playbook.md`
-- `telegram-operator-guide.md`
-- `worker-backends.md`
-- `memory-model.md`
-- `provenance-ledger.md`
-- `execution-identity.md`
+- [`architecture.md`](architecture.md)
+- [`explainer.md`](explainer.md)
+- [`testing-strategy.md`](testing-strategy.md)
+- [`development-branch-hygiene.md`](development-branch-hygiene.md)
 
 ## Historical And Rolling Memory
 
@@ -98,26 +87,12 @@ status snapshots or completed implementation plans.
 - [`backlog.md`](backlog.md): gated work, product parking lot, and resolved
   backlog notes.
 - [`plans/`](plans/): PRDs, design notes, implementation handoffs, and patch
-  prompts. These are source material for stable manuals, not automatically
-  current contracts.
+  prompts.
 
 ## Diagram Policy
 
-Use Mermaid or another text-source diagram format whenever possible. Diagrams
-should be reviewable in normal GitHub diffs and should not depend on binary
-images as the only source of truth.
-
-When adding or changing diagrams:
-
-1. Keep the source in Markdown.
-2. Prefer stable concepts over incidental implementation details.
-3. Label planned or gated behavior clearly.
-4. Link to the source modules or docs that make the diagram actionable.
+Use Mermaid or another text-source diagram format whenever possible.
 
 ## Documentation Tiers
 
-Documentation PRs usually fall under Tier 0 in
-[`testing-strategy.md`](testing-strategy.md). Run higher-tier validation when a
-document changes executable commands, agent rules, PR templates, CI workflows,
-config examples that are tested, frontend routes, or live-smoke procedures that
-affect operator safety.
+Documentation PRs usually fall under Tier 0 in testing strategy.
