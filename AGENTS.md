@@ -16,6 +16,20 @@ Do not merge old mixed-history branches wholesale. Audit them commit by commit
 against latest `origin/main`, and only keep patches that still have clear net
 value.
 
+## Verification Strategy
+
+Follow `docs/testing-strategy.md` when choosing local validation for a PR.
+Every PR should name its verification tier, the changed contract area, the
+commands that were run, and any skipped validation with a safety reason.
+
+Use focused tests for low-risk changes, but run the full backend suite and
+related frontend checks for control-plane work such as execution identity,
+ledger writes, approval decisions, evidence snapshots, reviewer provenance,
+worker dispatch boundaries, PR/CI binding, or security-sensitive server actions.
+
+Live-path changes need live smoke evidence from an isolated workspace; never run
+mutating smoke commands against an active real project workspace.
+
 ## Local Artifacts
 
 Do not delete untracked local output directories such as `output/` unless the
