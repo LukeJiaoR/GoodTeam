@@ -794,6 +794,7 @@ class WorkerJobStore:
                             "stdout_path",
                             "stderr_path",
                             "result_path",
+                            "changed_files",
                             "exit_code",
                             "failure_class",
                             "disposition",

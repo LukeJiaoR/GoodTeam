@@ -43,8 +43,9 @@ Current built-ins require:
 - `changed_files`
 - `verification_summary`
 
-This registry does not read worker status files or enforce evidence. It only
-declares what a later reviewer policy gate should expect.
+The registry itself does not enforce evidence. Review Workbench reads worker
+status records only to display provenance for human operators; later policy
+gates can reuse the same vocabulary without changing reviewer profile identity.
 
 ## Built-In Profiles
 
@@ -89,11 +90,49 @@ adapter, command evidence when available, readiness, fallback policy, and
 message. For now that warning is evidence only; policy enforcement belongs to a
 later gate.
 
+## Review Workbench Provenance
+
+Review Workbench shows reviewer provenance as an advisory signal for each
+approval review. It does not make any reviewer authoritative and does not
+approve, reject, dispatch, or create reviewer jobs.
+
+The workbench displays a badge derived from the worker status
+`invocation_evidence`:
+
+- `provider`: a provider-backed adapter invocation completed, such as `codex`
+  with provider `openai`.
+- `fallback`: adapter evidence says the command was unavailable or a configured
+  reviewer fell back to non-provider evidence.
+- `builtin`: local `fake` or `noop` adapter output, with no external
+  invocation.
+- `manual`: `human` adapter output supplied or awaited by the operator.
+- `missing`: no `invocation_evidence` was available for the review.
+- `failed`: the reviewer status failed; result and stderr handles are surfaced
+  when present.
+
+When a project opts into reviewer profiles, the workbench includes the selected
+profile label and focus areas for the matching phase. `implementation` profiles
+are shown for implementation-side approval reviews such as staging, security,
+QA, code review, and fix-plan review. `release` profiles are shown for release
+approval reviews. If profile metadata is missing or invalid, provenance still
+renders with the available worker evidence.
+
+Evidence handles are shown locally when present:
+
+- `result_path`
+- `stdout_path`
+- `stderr_path`
+- `changed_files`
+
+Every provenance payload includes `advisory_only: true` and the operator message
+`Human operator decides; this reviewer is advisory only.` Approval actions remain
+human decisions.
+
 ## Non-Goals
 
 - No runtime dispatch behavior changes.
 - No worker invocation behavior changes.
 - No execution orchestrator changes.
 - No approval gate or policy enforcement.
-- No Review Workbench UI changes.
+- No approval action behavior changes.
 - No parallel reviewer execution.

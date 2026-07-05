@@ -52,6 +52,11 @@ from goodteam_os.resources import (
     register_markdown_artifact,
     resource_to_dict,
 )
+from goodteam_os.review_provenance import (
+    build_reviewer_provenance,
+    latest_reviewer_status_for_approval,
+    reviewer_profile_for_approval,
+)
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import read_messages
@@ -281,6 +286,34 @@ def _project_runtime_roots_for_state(*, state: AgileDevState | object | None, wo
         seen_roots.add(resolved)
         roots.append(resolved)
     return roots
+
+
+def _reviewer_target_for_state(*, workspace: Path, project_key: str) -> dict[str, object]:
+    try:
+        return dict(load_project_target(_project_config_for_key(workspace, project_key)))
+    except Exception:
+        return {}
+
+
+def _reviewer_statuses_for_state(
+    *,
+    state: AgileDevState | object | None,
+    workspace: Path,
+    project_key: str,
+) -> list[dict[str, object]]:
+    run_id = str(getattr(state, "run_id", "") or "") if state is not None else ""
+    if not run_id:
+        return []
+    statuses: list[dict[str, object]] = []
+    try:
+        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
+        for root in roots:
+            for job in WorkerJobStore(root).list_jobs():
+                if str(job.get("run_id", "")) == run_id:
+                    statuses.append(dict(job))
+    except Exception:
+        return []
+    return statuses
 
 
 def build_provenance_refs(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[dict[str, str]]:
@@ -3682,6 +3715,8 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
     approval_artifacts = approval_artifact_map()
     profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
     relevant_gates = None if profile.name == "greenfield" else set(profile.gate_names())
+    reviewer_target = _reviewer_target_for_state(workspace=workspace, project_key=state.project_key)
+    reviewer_statuses = _reviewer_statuses_for_state(state=state, workspace=workspace, project_key=state.project_key)
     for approval, decision in state.approvals.items():
         if relevant_gates is not None and approval not in relevant_gates:
             continue
@@ -3697,6 +3732,9 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             "content": read_artifact_preview(artifact_path),
             "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
         }
+        reviewer_profile = reviewer_profile_for_approval(reviewer_target, approval)
+        reviewer_status = latest_reviewer_status_for_approval(reviewer_statuses, approval)
+        review["reviewer_provenance"] = build_reviewer_provenance(reviewer_status, profile=reviewer_profile)
         advisors = advisors_for_gate(approval)
         if advisors:
             messages = [
@@ -4352,6 +4390,54 @@ def render_review_roles(review_roles: list[str]) -> str:
         return ""
     items = "".join(f"<li>{escape(role)}</li>" for role in review_roles)
     return f'<div class="review-roles"><span>Review roles</span><ul>{items}</ul></div>'
+
+
+def render_reviewer_provenance(provenance: object) -> str:
+    if not isinstance(provenance, dict):
+        return ""
+    reviewer = provenance.get("reviewer", {})
+    badge = provenance.get("badge", {})
+    invocation = provenance.get("invocation", {})
+    evidence = provenance.get("evidence_handles", {})
+    reviewer = reviewer if isinstance(reviewer, dict) else {}
+    badge = badge if isinstance(badge, dict) else {}
+    invocation = invocation if isinstance(invocation, dict) else {}
+    evidence = evidence if isinstance(evidence, dict) else {}
+    badge_kind = str(badge.get("kind", "missing") or "missing")
+    focus = reviewer.get("focus_areas", [])
+    handles = _reviewer_evidence_handle_labels(evidence)
+    return f"""
+      <div class="reviewer-provenance">
+        <div class="reviewer-provenance-top">
+          <span class="provenance-badge provenance-{escape(badge_kind)}">{escape(str(badge.get("label", "missing evidence")))}</span>
+          <span>{escape(str(reviewer.get("label", "") or reviewer.get("profile_id", "") or "Reviewer provenance"))}</span>
+        </div>
+        <dl class="role-meta provenance-meta">
+          <dt>Provider</dt><dd>{escape(str(badge.get("provider", "unknown")))}</dd>
+          <dt>Adapter</dt><dd>{escape(str(badge.get("adapter", "unknown")))}</dd>
+          <dt>Status</dt><dd>{escape(str(invocation.get("status", "missing")))}</dd>
+          <dt>Advisory</dt><dd>{escape(str(provenance.get("operator_message", "")))}</dd>
+        </dl>
+        {render_inline_list("Focus", list(focus) if isinstance(focus, list) else [])}
+        {render_inline_list("Evidence handles", handles, code=True)}
+      </div>
+    """
+
+
+def _reviewer_evidence_handle_labels(evidence: dict[object, object]) -> list[str]:
+    labels = [
+        f"{key}: {value}"
+        for key, value in (
+            ("result", evidence.get("result_path", "")),
+            ("stdout", evidence.get("stdout_path", "")),
+            ("stderr", evidence.get("stderr_path", "")),
+        )
+        if str(value).strip()
+    ]
+    changed_files = evidence.get("changed_files", [])
+    if isinstance(changed_files, list):
+        labels.extend(f"changed: {path}" for path in changed_files if str(path).strip())
+    return labels
 
 
 def render_task_cards(tasks: list[dict[str, object]]) -> str:
@@ -5514,6 +5600,41 @@ h3 {
   border-radius: 6px;
   font-size: 11px;
 }
+.reviewer-provenance {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+.reviewer-provenance-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+.provenance-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  color: var(--neutral-dark);
+  background: var(--neutral-bg);
+}
+.provenance-provider { color: var(--success-dark); background: var(--success-bg); }
+.provenance-fallback, .provenance-missing { color: var(--warning-dark); background: var(--warning-bg); }
+.provenance-failed { color: var(--error-dark); background: var(--error-bg); }
+.provenance-builtin, .provenance-manual { color: var(--info-dark); background: var(--info-bg); }
+.provenance-meta {
+  margin: 0;
+}
 .idea {
   font-size: 18px;
   font-weight: 500;
@@ -6388,6 +6509,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
             <dt>Path</dt><dd>{render_file_path(review["artifact_path"], review["artifact"]) if review["artifact_path"] else 'not available'}</dd>
           </dl>
           {render_review_roles(review["review_roles"])}
+          {render_reviewer_provenance(review.get("reviewer_provenance"))}
           {f'''
           <div class="artifact-editor" id="editor-{escape(review["artifact"])}" hidden>
             <textarea data-editor-for="{escape(review["artifact"])}" spellcheck="false"></textarea>
