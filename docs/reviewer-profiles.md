@@ -179,6 +179,17 @@ reviewers and failed reviewers can appear side by side in the multi-reviewer
 projection. Failed reviewer evidence does not auto-reject; the human operator
 still decides the approval.
 
+When the operator explicitly approves, rejects, or requests changes on an
+approval gate, GoodTeam records a `reviewer_evidence_snapshot.v1` payload on the
+existing approval decision action. The snapshot captures the advisory reviewer
+state visible at decision time for the active run, current gate, and current
+artifact identity, including completed, failed, queued, missing, and retry
+lineage states. It stores summaries and local handles such as result/stdout/
+stderr paths instead of large raw outputs. Snapshot creation is audit-only: it
+does not run, retry, dispatch, approve, reject, enforce policy, or block the
+human decision. Workbench render remains read-only and does not create these
+snapshots.
+
 Rollback is immediate for future gate transitions:
 
 ```yaml
