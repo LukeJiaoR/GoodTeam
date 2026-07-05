@@ -183,6 +183,17 @@ def memory_events(project_root, role):
     return [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def assert_no_external_invocation(status, *, adapter, kind, reason):
+    evidence = status["invocation_evidence"]
+    assert evidence["adapter"] == adapter
+    assert evidence["kind"] == kind
+    assert evidence["provider"] == "none"
+    assert evidence["external_invocation"] is False
+    assert evidence["command"] == ""
+    assert evidence["command_available"] is None
+    assert evidence["reason"] == reason
+
+
 def test_parse_result_sections_maps_standard_sections_to_horizons():
     text = """
 Intro prose should not become memory.
@@ -760,9 +771,22 @@ def test_noop_adapter_completes_job_with_result(tmp_path):
 
     assert result["status"] == "completed"
     assert result["adapter"] == "noop"
+    assert_no_external_invocation(
+        result,
+        adapter="noop",
+        kind="builtin",
+        reason="noop adapter completed without external invocation",
+    )
     job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
     assert "noop adapter" in (job_root / "result.md").read_text(encoding="utf-8")
-    assert json.loads((job_root / "status.json").read_text(encoding="utf-8"))["status"] == "completed"
+    status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "completed"
+    assert_no_external_invocation(
+        status,
+        adapter="noop",
+        kind="builtin",
+        reason="noop adapter completed without external invocation",
+    )
 
 
 def test_fake_adapter_completes_without_memory_sections_as_noop(tmp_path):
@@ -781,6 +805,12 @@ def test_fake_adapter_completes_without_memory_sections_as_noop(tmp_path):
     assert result["memory_writeback"]["status"] == "skipped"
     assert result["memory_writeback"]["reason"] == "no_sections"
     assert result["memory_provenance"]["status"] == "ok"
+    assert_no_external_invocation(
+        result,
+        adapter="fake",
+        kind="builtin",
+        reason="fake adapter completed without external invocation",
+    )
     assert len(memory_events(tmp_path, "planner")) == 1
 
 
@@ -886,6 +916,12 @@ def test_human_adapter_marks_job_waiting_for_manual_result(tmp_path):
 
     assert result["status"] == "needs_review"
     assert "Fill result.md" in result["summary"]
+    assert_no_external_invocation(
+        result,
+        adapter="human",
+        kind="manual",
+        reason="human/manual adapter waits for operator-provided result",
+    )
     assert "memory_writeback" not in result
     assert memory_events(tmp_path, "product_requirement") == []
 
@@ -1097,6 +1133,16 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
     job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
     status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
     assert status["command"] == calls[0]["command"]
+    assert status["invocation_evidence"] == {
+        "kind": "provider",
+        "adapter": "codex",
+        "provider": "openai",
+        "external_invocation": True,
+        "command": "/fake/bin/codex",
+        "command_available": True,
+        "model": "gpt-5.4",
+        "reason": "Codex CLI invocation attempted",
+    }
     assert status["preflight"]["codex_available"] is True
     assert status["preflight"]["model"] == "gpt-5.4"
     assert "OPENAI_API_KEY" in status["preflight"]["auth_env"]
@@ -1652,6 +1698,9 @@ def test_codex_adapter_marks_job_running_before_cli_exits(tmp_path, monkeypatch)
     running = snapshots[0]
     assert running["status"] == "running"
     assert running["pid"] == 4242
+    assert running["invocation_evidence"]["external_invocation"] is True
+    assert running["invocation_evidence"]["kind"] == "provider"
+    assert running["invocation_evidence"]["command_available"] is True
     assert running["heartbeat_at"] == running["updated_at"]
     assert running["stdout_path"].endswith("/stdout.txt")
     assert running["stderr_path"].endswith("/stderr.txt")
@@ -1687,6 +1736,16 @@ def test_worker_job_store_list_jobs_merges_live_status(tmp_path):
                 "pid": 4242,
                 "stdout_path": str(job_root / "stdout.txt"),
                 "stderr_path": str(job_root / "stderr.txt"),
+                "invocation_evidence": {
+                    "kind": "provider",
+                    "adapter": "codex",
+                    "provider": "openai",
+                    "external_invocation": True,
+                    "command": "/fake/bin/codex",
+                    "command_available": True,
+                    "model": "gpt-5.4",
+                    "reason": "Codex CLI invocation attempted",
+                },
             }
         ),
         encoding="utf-8",
@@ -1698,6 +1757,7 @@ def test_worker_job_store_list_jobs_merges_live_status(tmp_path):
     assert listed["pid"] == 4242
     assert listed["heartbeat_at"] == heartbeat
     assert listed["summary"] == "Codex CLI is running."
+    assert listed["invocation_evidence"]["external_invocation"] is True
 
 
 def test_worker_job_store_flags_stale_running_jobs(tmp_path, monkeypatch):
@@ -2037,6 +2097,9 @@ def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
     status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
     assert status["status"] == "failed"
     assert status["timeout_seconds"] == 1800
+    assert status["invocation_evidence"]["external_invocation"] is True
+    assert status["invocation_evidence"]["kind"] == "provider"
+    assert status["invocation_evidence"]["command_available"] is True
 
 
 def test_classify_worker_failure_maps_known_summary_patterns():
@@ -2224,6 +2287,16 @@ def test_codex_adapter_fails_fast_when_codex_cli_is_missing(tmp_path, monkeypatc
     assert result["status"] == "failed"
     assert "Codex CLI is not available" in result["summary"]
     assert result["preflight"]["codex_available"] is False
+    assert result["invocation_evidence"] == {
+        "kind": "unavailable",
+        "adapter": "codex",
+        "provider": "openai",
+        "external_invocation": False,
+        "command": "/missing/codex",
+        "command_available": False,
+        "model": "gpt-5.4",
+        "reason": "Codex CLI is not available. Install codex or add it to PATH before running codex workers.",
+    }
     assert calls == []
 
 

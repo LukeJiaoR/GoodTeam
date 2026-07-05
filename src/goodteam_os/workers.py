@@ -618,6 +618,90 @@ CLI_BACKENDS: dict[str, CliBackendSpec] = {
     "opencode": OPENCODE_BACKEND,
 }
 
+PROVIDER_BY_ADAPTER = {
+    "codex": "openai",
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+    "gemini": "google",
+    "agy": "antigravity",
+    "antigravity": "antigravity",
+    "opencode": "opencode",
+}
+
+INVOCATION_ATTEMPT_REASON_BY_ADAPTER = {
+    "codex": "Codex CLI invocation attempted",
+    "anthropic": "Claude Code CLI invocation attempted",
+    "claude": "Claude Code CLI invocation attempted",
+    "gemini": "Gemini CLI invocation attempted",
+    "agy": "Antigravity CLI invocation attempted",
+    "antigravity": "Antigravity CLI invocation attempted",
+    "opencode": "OpenCode CLI invocation attempted",
+}
+
+BUILTIN_INVOCATION_EVIDENCE = {
+    "fake": {
+        "kind": "builtin",
+        "provider": "none",
+        "external_invocation": False,
+        "reason": "fake adapter completed without external invocation",
+    },
+    "noop": {
+        "kind": "builtin",
+        "provider": "none",
+        "external_invocation": False,
+        "reason": "noop adapter completed without external invocation",
+    },
+    "human": {
+        "kind": "manual",
+        "provider": "none",
+        "external_invocation": False,
+        "reason": "human/manual adapter waits for operator-provided result",
+    },
+}
+
+
+def _invocation_evidence(job: dict[str, Any], *, summary: str, extra: dict[str, Any]) -> dict[str, Any]:
+    adapter = str(job.get("adapter", ""))
+    if adapter in BUILTIN_INVOCATION_EVIDENCE:
+        return {
+            **BUILTIN_INVOCATION_EVIDENCE[adapter],
+            "adapter": adapter,
+            "command": "",
+            "command_available": None,
+            "model": str(job.get("model", "")),
+        }
+
+    command = _invocation_command(extra.get("command"))
+    preflight = extra.get("preflight") if isinstance(extra.get("preflight"), dict) else {}
+    spec = CLI_BACKENDS.get(adapter)
+    available_key = f"{spec.which_name}_available" if spec else ""
+    command_available = preflight.get(available_key) if available_key else None
+    if not isinstance(command_available, bool):
+        command_available = None
+    provider = PROVIDER_BY_ADAPTER.get(adapter, adapter or "unknown")
+    model = str(extra.get("model") or job.get("model") or "")
+    unavailable = command_available is False
+    return {
+        "kind": "unavailable" if unavailable else "provider",
+        "adapter": adapter,
+        "provider": provider,
+        "external_invocation": not unavailable,
+        "command": command,
+        "command_available": command_available,
+        "model": model,
+        "reason": summary
+        if unavailable
+        else INVOCATION_ATTEMPT_REASON_BY_ADAPTER.get(adapter, "provider invocation attempted"),
+    }
+
+
+def _invocation_command(command: object) -> str:
+    if isinstance(command, list) and command:
+        return str(command[0])
+    if isinstance(command, str):
+        return command
+    return ""
+
 
 class WorkerJobStore:
     def __init__(self, project_root: Path):
@@ -713,6 +797,7 @@ class WorkerJobStore:
                             "exit_code",
                             "failure_class",
                             "disposition",
+                            "invocation_evidence",
                         }
                     },
                 }
@@ -1256,6 +1341,13 @@ Keep each bullet short, factual, and free of secrets.""",
         }
         if extra_payload:
             status_payload.update(extra_payload)
+        provided_evidence = status_payload.get("invocation_evidence")
+        if not isinstance(provided_evidence, dict):
+            provided_evidence = {}
+        status_payload["invocation_evidence"] = {
+            **_invocation_evidence(job, summary=summary, extra=status_payload),
+            **provided_evidence,
+        }
         self._write_json(job_root / "job.json", job)
         self._write_json(job_root / "status.json", status_payload)
         return status_payload
