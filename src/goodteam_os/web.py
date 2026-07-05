@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import threading
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -57,6 +58,7 @@ from goodteam_os.review_provenance import (
     latest_reviewer_status_for_approval,
     reviewer_profile_for_approval,
 )
+from goodteam_os.review_policy import evaluate_review_evidence_policy
 from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import read_messages
@@ -293,6 +295,10 @@ def _reviewer_target_for_state(*, workspace: Path, project_key: str) -> dict[str
         return dict(load_project_target(_project_config_for_key(workspace, project_key)))
     except Exception:
         return {}
+
+
+def _review_evidence_policy_config(target: Mapping[str, object]) -> object:
+    return target.get("review_evidence_policy", {})
 
 
 def _reviewer_statuses_for_state(
@@ -3735,6 +3741,11 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
         reviewer_profile = reviewer_profile_for_approval(reviewer_target, approval)
         reviewer_status = latest_reviewer_status_for_approval(reviewer_statuses, approval)
         review["reviewer_provenance"] = build_reviewer_provenance(reviewer_status, profile=reviewer_profile)
+        review["review_evidence_policy"] = evaluate_review_evidence_policy(
+            review["reviewer_provenance"],
+            gate=approval,
+            config=_review_evidence_policy_config(reviewer_target),
+        )
         advisors = advisors_for_gate(approval)
         if advisors:
             messages = [
@@ -4420,6 +4431,40 @@ def render_reviewer_provenance(provenance: object) -> str:
         </dl>
         {render_inline_list("Focus", list(focus) if isinstance(focus, list) else [])}
         {render_inline_list("Evidence handles", handles, code=True)}
+      </div>
+    """
+
+
+def render_review_evidence_policy(policy: object) -> str:
+    if not isinstance(policy, dict):
+        return ""
+    evidence = policy.get("evidence", {})
+    evidence = evidence if isinstance(evidence, dict) else {}
+    severity = str(policy.get("severity", "warning") or "warning").lower()
+    state = str(policy.get("state", "missing_evidence") or "missing_evidence")
+    rationale = str(policy.get("rationale", "") or "")
+    badge_kind = str(evidence.get("badge_kind", "missing") or "missing")
+    adapter = str(evidence.get("adapter", "unknown") or "unknown")
+    provider = str(evidence.get("provider", "unknown") or "unknown")
+    invocation_status = str(evidence.get("invocation_status", "missing") or "missing")
+    external = str(evidence.get("external_invocation", False))
+    command = str(evidence.get("command_available", None))
+    return f"""
+      <div class="review-evidence-policy">
+        <div class="review-evidence-policy-top">
+          <span class="policy-badge policy-{escape(severity)}">{escape(severity.upper())}</span>
+          <span>{escape(state)}</span>
+        </div>
+        <p>{escape(rationale)}</p>
+        <dl class="role-meta provenance-meta">
+          <dt>Evidence</dt><dd>{escape(badge_kind)}</dd>
+          <dt>Adapter</dt><dd>{escape(adapter)}</dd>
+          <dt>Provider</dt><dd>{escape(provider)}</dd>
+          <dt>Invocation</dt><dd>{escape(invocation_status)}</dd>
+          <dt>External</dt><dd>{escape(external)}</dd>
+          <dt>Command</dt><dd>{escape(command)}</dd>
+          <dt>Authority</dt><dd>Human operator decides. This policy does not automatically approve or reject.</dd>
+        </dl>
       </div>
     """
 
@@ -5607,7 +5652,7 @@ h3 {
   display: grid;
   gap: 8px;
 }
-.reviewer-provenance-top {
+.reviewer-provenance-top, .review-evidence-policy-top {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5635,6 +5680,32 @@ h3 {
 .provenance-meta {
   margin: 0;
 }
+.review-evidence-policy {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+.review-evidence-policy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.policy-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.policy-ok { color: var(--success-dark); background: var(--success-bg); }
+.policy-warning { color: var(--warning-dark); background: var(--warning-bg); }
+.policy-blocker { color: var(--error-dark); background: var(--error-bg); }
 .idea {
   font-size: 18px;
   font-weight: 500;
@@ -6510,6 +6581,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
           </dl>
           {render_review_roles(review["review_roles"])}
           {render_reviewer_provenance(review.get("reviewer_provenance"))}
+          {render_review_evidence_policy(review.get("review_evidence_policy"))}
           {f'''
           <div class="artifact-editor" id="editor-{escape(review["artifact"])}" hidden>
             <textarea data-editor-for="{escape(review["artifact"])}" spellcheck="false"></textarea>
