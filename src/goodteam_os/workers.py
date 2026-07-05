@@ -48,6 +48,18 @@ WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
 WORKER_MAX_ATTEMPTS = 3
 WORKER_RETRY_BACKOFF_SECONDS = (2, 8, 30)
+WORKER_JOB_IDENTITY_FIELDS = (
+    "profile_id",
+    "approval",
+    "gate",
+    "phase",
+    "artifact_key",
+    "artifact_path",
+    "artifact_version",
+    "dispatch_group_id",
+    "attempt",
+    "idempotency_key",
+)
 MEMORY_WRITEBACK_SECTION_HORIZONS = {
     "decisions": "long-term",
     "learned": "mid-term",
@@ -722,6 +734,16 @@ class WorkerJobStore:
         research_report_source: str = "",
         constraints: list[str] | None = None,
         expected_artifacts: list[str] | None = None,
+        profile_id: str = "",
+        approval: str = "",
+        gate: str = "",
+        phase: str = "",
+        artifact_key: str = "",
+        artifact_path: str = "",
+        artifact_version: str = "",
+        dispatch_group_id: str = "",
+        attempt: str | int = "",
+        idempotency_key: str = "",
     ) -> dict[str, Any]:
         job_id = f"job-{uuid4()}"
         job_root = self.root / job_id
@@ -741,6 +763,22 @@ class WorkerJobStore:
             "research_report_source": research_report_source,
             "expected_artifacts": expected_artifacts or [],
         }
+        job.update(
+            _clean_identity_fields(
+                {
+                    "profile_id": profile_id,
+                    "approval": approval,
+                    "gate": gate,
+                    "phase": phase,
+                    "artifact_key": artifact_key,
+                    "artifact_path": artifact_path,
+                    "artifact_version": artifact_version,
+                    "dispatch_group_id": dispatch_group_id,
+                    "attempt": attempt,
+                    "idempotency_key": idempotency_key,
+                }
+            )
+        )
         self._write_json(job_root / "job.json", job)
         role_config, role_prompt = _role_prompt_for_job(role)
         (job_root / "role_prompt.md").write_text(role_prompt, encoding="utf-8")
@@ -766,6 +804,23 @@ class WorkerJobStore:
         (job_root / "expected_artifacts.json").write_text(json.dumps(expected_artifacts or [], indent=2), encoding="utf-8")
         (job_root / "result.md").write_text("", encoding="utf-8")
         return job
+
+    def create_or_reuse_job(self, **job_spec: Any) -> tuple[dict[str, Any], bool]:
+        idempotency_key = str(job_spec.get("idempotency_key", "") or "").strip()
+        if idempotency_key:
+            existing = self.find_job_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                return existing, False
+        return self.create_job(**job_spec), True
+
+    def find_job_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        wanted = str(idempotency_key).strip()
+        if not wanted:
+            return None
+        for job in self.list_jobs():
+            if str(job.get("idempotency_key", "") or "").strip() == wanted:
+                return job
+        return None
 
     def list_jobs(self) -> list[dict[str, Any]]:
         if not self.root.is_dir():
@@ -800,6 +855,15 @@ class WorkerJobStore:
                             "disposition",
                             "invocation_evidence",
                             "profile_id",
+                            "approval",
+                            "gate",
+                            "phase",
+                            "artifact_key",
+                            "artifact_path",
+                            "artifact_version",
+                            "dispatch_group_id",
+                            "attempt",
+                            "idempotency_key",
                         }
                     },
                 }
@@ -1341,6 +1405,7 @@ Keep each bullet short, factual, and free of secrets.""",
             "artifacts": [],
             "changed_files": [],
         }
+        status_payload.update(_clean_identity_fields(job))
         if extra_payload:
             status_payload.update(extra_payload)
         provided_evidence = status_payload.get("invocation_evidence")
@@ -1377,6 +1442,16 @@ def _codex_model_name(value: str) -> str:
     if ":" in model:
         return model.split(":", 1)[1].strip() or DEFAULT_CODEX_MODEL
     return model
+
+
+def _clean_identity_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    cleaned: dict[str, Any] = {}
+    for key in WORKER_JOB_IDENTITY_FIELDS:
+        value = payload.get(key)
+        if value in (None, ""):
+            continue
+        cleaned[key] = str(value) if key == "attempt" else value
+    return cleaned
 
 
 def worker_backend_doctor(mode: str) -> dict[str, Any]:

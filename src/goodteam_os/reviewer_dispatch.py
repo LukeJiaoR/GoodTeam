@@ -1,0 +1,198 @@
+import hashlib
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+from goodteam_os.project_reviewer_profiles import REVIEWER_PROFILE_PHASES, normalize_reviewer_profile_config
+from goodteam_os.review_provenance import reviewer_phase_for_approval
+from goodteam_os.reviewer_profiles import ReviewerProfile, get_reviewer_profile
+from goodteam_os.workers import WorkerJobStore
+
+
+DISPATCH_MODES = ("single", "parallel")
+REVIEWER_ROLE_BY_PHASE = {"implementation": "code_review", "release": "release"}
+
+
+def normalize_reviewer_dispatch_config(target: Mapping[str, object] | None) -> dict[str, object]:
+    if target is None:
+        return {"mode": "single", "phases": {}}
+    raw_config = target.get("reviewer_dispatch", {})
+    if raw_config in (None, ""):
+        return {"mode": "single", "phases": {}}
+    if not isinstance(raw_config, Mapping):
+        raise ValueError("reviewer_dispatch must be a mapping.")
+
+    mode = _clean_mode(raw_config.get("mode"), "reviewer_dispatch.mode")
+    raw_phases = raw_config.get("phases", {})
+    if raw_phases in (None, ""):
+        raw_phases = {}
+    if not isinstance(raw_phases, Mapping):
+        raise ValueError("reviewer_dispatch.phases must be a mapping of phase to mode.")
+
+    phases: dict[str, str] = {}
+    for raw_phase, raw_mode in raw_phases.items():
+        phase = str(raw_phase).strip()
+        if phase not in REVIEWER_PROFILE_PHASES:
+            allowed = ", ".join(REVIEWER_PROFILE_PHASES)
+            raise ValueError(f"Unknown reviewer dispatch phase {phase!r}. Use one of: {allowed}.")
+        phases[phase] = _clean_mode(raw_mode, f"reviewer_dispatch.phases.{phase}")
+    return {"mode": mode, "phases": phases}
+
+
+def dispatch_reviewer_jobs_for_gate(
+    *,
+    store: WorkerJobStore,
+    state: object,
+    target: Mapping[str, object] | None,
+    approval: str,
+    artifact_key: str,
+    artifact_path: str,
+    context: str,
+) -> list[dict[str, Any]]:
+    phase = reviewer_phase_for_approval(approval)
+    if phase is None or not _parallel_enabled(target, phase):
+        return []
+
+    profiles = _configured_profiles(target, phase)
+    if not profiles:
+        return []
+
+    run_id = str(getattr(state, "run_id", "") or "")
+    artifact_version = _artifact_version(artifact_path)
+    dispatch_group_id = _dispatch_group_id(
+        run_id=run_id,
+        approval=approval,
+        artifact_key=artifact_key,
+        artifact_path=artifact_path,
+        artifact_version=artifact_version,
+    )
+    results: list[dict[str, Any]] = []
+    for profile in profiles:
+        job, _created = store.create_or_reuse_job(
+            **_reviewer_job_spec(
+                run_id=run_id,
+                profile=profile,
+                approval=approval,
+                phase=phase,
+                artifact_key=artifact_key,
+                artifact_path=artifact_path,
+                artifact_version=artifact_version,
+                dispatch_group_id=dispatch_group_id,
+                context=context,
+            )
+        )
+        result = dict(job)
+        result.setdefault("job_id", str(job.get("id", "")))
+        results.append({**result, **_identity_payload(job)})
+    return results
+
+
+def _parallel_enabled(target: Mapping[str, object] | None, phase: str) -> bool:
+    config = normalize_reviewer_dispatch_config(target)
+    return config["mode"] == "parallel" and dict(config["phases"]).get(phase) == "parallel"
+
+
+def _configured_profiles(target: Mapping[str, object] | None, phase: str) -> list[ReviewerProfile]:
+    if target is None:
+        return []
+    configured = normalize_reviewer_profile_config(target)
+    return [get_reviewer_profile(profile_id) for profile_id in configured.get(phase, ())]
+
+
+def _reviewer_job_spec(
+    *,
+    run_id: str,
+    profile: ReviewerProfile,
+    approval: str,
+    phase: str,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
+    dispatch_group_id: str,
+    context: str,
+) -> dict[str, Any]:
+    identity_key = "|".join((run_id, approval, artifact_key, artifact_path, artifact_version, profile.profile_id))
+    return {
+        "run_id": run_id,
+        "role": REVIEWER_ROLE_BY_PHASE.get(phase, "review"),
+        "adapter": profile.adapter,
+        "model": profile.model or "",
+        "task": _reviewer_task(profile=profile, approval=approval, artifact_key=artifact_key, artifact_path=artifact_path),
+        "context": context,
+        "constraints": [
+            "Act as an advisory reviewer only; do not approve or reject the gate.",
+            "Review the named artifact and report findings, evidence, and recommendation.",
+            "Do not modify project files unless the task explicitly requests a patch.",
+        ],
+        "expected_artifacts": [f"reviewer-report-{profile.profile_id}.md"],
+        "profile_id": profile.profile_id,
+        "approval": approval,
+        "gate": approval,
+        "phase": phase,
+        "artifact_key": artifact_key,
+        "artifact_path": artifact_path,
+        "artifact_version": artifact_version,
+        "dispatch_group_id": dispatch_group_id,
+        "idempotency_key": hashlib.sha256(identity_key.encode("utf-8")).hexdigest(),
+    }
+
+
+def _reviewer_task(*, profile: ReviewerProfile, approval: str, artifact_key: str, artifact_path: str) -> str:
+    focus = "\n".join(f"- {item}" for item in profile.focus_areas)
+    sections = "\n".join(f"- {item}" for item in profile.required_report_sections)
+    return "\n".join(
+        [
+            f"Review `{artifact_key}` for the `{approval}` approval gate.",
+            f"Artifact path: `{artifact_path}`",
+            f"Reviewer profile: {profile.label} (`{profile.profile_id}`)",
+            "",
+            "Focus areas:",
+            focus,
+            "",
+            "Required report sections:",
+            sections,
+        ]
+    )
+
+
+def _artifact_version(artifact_path: str) -> str:
+    path = Path(artifact_path).expanduser() if artifact_path else None
+    if path is None or not path.is_file():
+        return "missing"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _dispatch_group_id(
+    *,
+    run_id: str,
+    approval: str,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
+) -> str:
+    raw = "|".join((run_id, approval, artifact_key, artifact_path, artifact_version))
+    return f"reviewer-dispatch-{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _identity_payload(job: Mapping[str, object]) -> dict[str, Any]:
+    keys = (
+        "profile_id",
+        "approval",
+        "gate",
+        "phase",
+        "artifact_key",
+        "artifact_path",
+        "artifact_version",
+        "dispatch_group_id",
+        "idempotency_key",
+    )
+    return {key: job[key] for key in keys if key in job}
+
+
+def _clean_mode(value: object, field: str) -> str:
+    mode = str(value or "single").strip().lower()
+    if mode not in DISPATCH_MODES:
+        modes = ", ".join(DISPATCH_MODES)
+        raise ValueError(f"{field} must be one of: {modes}.")
+    return mode

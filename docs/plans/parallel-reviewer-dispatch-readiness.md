@@ -321,8 +321,10 @@ Break follow-up work into separate issues:
   single-reviewer fields.
 - #242C: Update Workbench UI to render multiple reviewer cards and aggregate
   badge from existing synthetic statuses only.
-- #242D: Add opt-in profile-driven dispatch fan-out with idempotent job
-  identity, duplicate protection, and no approval authority changes.
+- #242D / #261: Add opt-in profile-driven dispatch fan-out with idempotent
+  queued reviewer job identity, duplicate protection, and no approval authority
+  changes. Implemented as explicit `reviewer_dispatch` opt-in; render and
+  approval projection paths remain read-only/advisory.
 - #242E: Add rollout guard, strict aggregation tests, and operator-facing
   documentation for parallel reviewer dispatch.
 
