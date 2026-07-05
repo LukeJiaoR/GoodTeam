@@ -74,6 +74,24 @@ def telegram_text_update(
     return message
 
 
+def telegram_callback_update(
+    callback_data: str,
+    *,
+    callback_id: str = "callback-chooser",
+    user_id: int = 111,
+    chat_id: int = 12345,
+    message_id: int = 4242,
+):
+    return {
+        "callback_query": {
+            "id": callback_id,
+            "from": {"id": user_id},
+            "message": {"chat": {"id": chat_id}, "message_id": message_id},
+            "data": callback_data,
+        }
+    }
+
+
 def test_telegram_config_reads_only_env_metadata(monkeypatch):
     monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
     monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
@@ -1031,6 +1049,8 @@ def _save_live_tg_session(
     gate: str = "prd",
     chat_id: int = 12345,
     message_id: int = 9999,
+    decided: bool = False,
+    expires_delta: timedelta = timedelta(hours=1),
 ):
     store = telegram.TelegramReviewSessionStore(tmp_path)
     store.save(
@@ -1044,9 +1064,9 @@ def _save_live_tg_session(
             "message_id": message_id,
             "cursor": 0,
             "items": [],
-            "decided": False,
+            "decided": decided,
             "created_at": datetime.now(UTC).isoformat(),
-            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            "expires_at": (datetime.now(UTC) + expires_delta).isoformat(),
         },
     )
 
@@ -1212,6 +1232,7 @@ def test_gt_approve_calls_decide_approval_and_sends_confirmation(tmp_path, monke
     calls = []
     decisions = []
     write_project_state(tmp_path)
+    _save_live_tg_session(tmp_path, "only-live-card")
 
     def fake_request(token, method, params):
         calls.append({"method": method, "params": params})
@@ -1248,6 +1269,7 @@ def test_gt_approve_calls_decide_approval_and_sends_confirmation(tmp_path, monke
 def test_gt_approve_with_note_captures_note(tmp_path, monkeypatch):
     decisions = []
     write_project_state(tmp_path)
+    _save_live_tg_session(tmp_path, "only-live-card")
 
     def fake_request(token, method, params):
         return {"ok": True}
@@ -1483,7 +1505,7 @@ def test_gt_approve_bare_command_with_one_live_session_uses_that_session(tmp_pat
     assert decisions[0]["review_session_id"] == "only-live-card"
 
 
-def test_gt_approve_bare_command_with_multiple_live_sessions_does_not_guess(tmp_path, monkeypatch):
+def test_gt_approve_bare_command_with_multiple_live_sessions_sends_context_chooser(tmp_path, monkeypatch):
     calls = []
     decisions = []
     write_project_state(tmp_path)
@@ -1520,7 +1542,219 @@ def test_gt_approve_bare_command_with_multiple_live_sessions_does_not_guess(tmp_
 
     assert result == {"status": "processed", "command": "approve"}
     assert decisions == []
-    assert "Multiple live approval cards" in calls[0]["params"]["text"]
+    assert calls[0]["method"] == "sendMessage"
+    assert "Choose the approval context" in calls[0]["params"]["text"]
+    keyboard = calls[0]["params"]["reply_markup"]["inline_keyboard"]
+    assert len(keyboard) == 2
+    assert keyboard[0][0]["text"] == "CONTENTOPS · PRD · run-1"
+    assert keyboard[1][0]["text"] == "OTHER · STAGING · …-other"
+    assert keyboard[0][0]["callback_data"].startswith("v1:Q:first-card:A:")
+    assert keyboard[1][0]["callback_data"].startswith("v1:Q:second-card:A:")
+
+
+def test_gt_approve_context_chooser_callback_uses_selected_session(tmp_path, monkeypatch):
+    calls = []
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True, "result": {"message_id": 4242}}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+    keyboard = calls[0]["params"]["reply_markup"]["inline_keyboard"]
+    selected_callback = keyboard[1][0]["callback_data"]
+
+    result = process_telegram_update(
+        telegram_callback_update(selected_callback),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "callback_id": "callback-chooser"}
+    assert len(decisions) == 1
+    assert decisions[0]["project_key"] == "OTHER"
+    assert decisions[0]["approval"] == "staging"
+    assert decisions[0]["review_session_id"] == "second-card"
+    edited_cards = [call for call in calls if call["method"] == "editMessageText"]
+    assert edited_cards[0]["params"]["message_id"] == 9001
+
+
+def test_gt_approve_context_chooser_callback_rejects_stale_session(tmp_path, monkeypatch):
+    calls = []
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True, "result": {"message_id": 4242}}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+    selected_callback = calls[0]["params"]["reply_markup"]["inline_keyboard"][1][0]["callback_data"]
+    store = telegram.TelegramReviewSessionStore(tmp_path)
+    session = store.get("second-card")
+    session["decided"] = True
+    store.save("second-card", session)
+    calls.clear()
+
+    result = process_telegram_update(
+        telegram_callback_update(selected_callback),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "ignored", "reason": "session no longer active"}
+    assert decisions == []
+    assert calls[0]["method"] == "sendMessage"
+    assert "no longer active" in calls[0]["params"]["text"]
+
+
+def test_gt_approve_context_chooser_callback_rejects_expired_session(tmp_path, monkeypatch):
+    calls = []
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True, "result": {"message_id": 4242}}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+    selected_callback = calls[0]["params"]["reply_markup"]["inline_keyboard"][1][0]["callback_data"]
+    store = telegram.TelegramReviewSessionStore(tmp_path)
+    session = store.get("second-card")
+    session["expires_at"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    store.save("second-card", session)
+    calls.clear()
+
+    result = process_telegram_update(
+        telegram_callback_update(selected_callback),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "ignored", "reason": "session no longer active"}
+    assert decisions == []
+    assert calls[0]["method"] == "sendMessage"
+    assert "no longer active" in calls[0]["params"]["text"]
+
+
+def test_gt_approve_context_chooser_callback_does_not_cross_chats(tmp_path, monkeypatch):
+    calls = []
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        chat_id=54321,
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    result = process_telegram_update(
+        telegram_callback_update("v1:Q:second-card:A:manual", chat_id=12345),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "ignored", "reason": "session no longer active"}
+    assert decisions == []
+    assert "no longer active" in calls[0]["params"]["text"]
 
 
 def test_gt_approve_without_live_context_or_default_project_sends_clear_message(tmp_path, monkeypatch):
@@ -1548,7 +1782,37 @@ def test_gt_approve_without_live_context_or_default_project_sends_clear_message(
 
     assert result == {"status": "processed", "command": "approve"}
     assert decisions == []
-    assert "Reply to an approval card" in calls[0]["params"]["text"]
+    assert "No pending approval gate" in calls[0]["params"]["text"]
+
+
+def test_gt_approve_with_default_project_but_no_live_context_sends_clear_message(tmp_path, monkeypatch):
+    calls = []
+    decisions = []
+    write_project_state(tmp_path)
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "approve"}
+    assert decisions == []
+    assert "No pending approval gate" in calls[0]["params"]["text"]
 
 
 # ---------------------------------------------------------------------------
@@ -1588,6 +1852,7 @@ def test_gt_reject_empty_reason_sends_usage_hint_and_no_decide(tmp_path, monkeyp
 def test_gt_reject_with_reason_calls_decide_approval(tmp_path, monkeypatch):
     decisions = []
     write_project_state(tmp_path)
+    _save_live_tg_session(tmp_path, "only-live-card")
 
     def fake_request(token, method, params):
         return {"ok": True}
@@ -1621,6 +1886,7 @@ def test_gt_reject_with_reason_calls_decide_approval(tmp_path, monkeypatch):
 def test_gt_changes_calls_decide_approval_changes_requested(tmp_path, monkeypatch):
     decisions = []
     write_project_state(tmp_path)
+    _save_live_tg_session(tmp_path, "only-live-card")
 
     def fake_request(token, method, params):
         return {"ok": True}
