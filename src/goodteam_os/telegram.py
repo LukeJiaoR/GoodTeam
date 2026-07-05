@@ -34,53 +34,77 @@ class TelegramReviewSessionStore:
     def _file_path(self, session_id: str) -> Path:
         return self.directory / f"{session_id}.json"
 
-    def get(self, session_id: str) -> dict[str, object] | None:
-        file_path = self._file_path(session_id)
-        if not file_path.is_file():
-            return None
+    def _read_session_file(self, file_path: Path, *, now: datetime | None = None) -> dict[str, object] | None:
         try:
             data = json.loads(file_path.read_text(encoding="utf-8"))
             expires_at = data.get("expires_at", "")
-            if expires_at and datetime.fromisoformat(expires_at) < datetime.now(UTC):
+            if expires_at and datetime.fromisoformat(str(expires_at)) < (now or datetime.now(UTC)):
                 file_path.unlink(missing_ok=True)
                 return None
             return data
         except Exception:
             return None
 
+    def _iter_sessions(self, *, now: datetime | None = None):
+        for file_path in sorted(self.directory.glob("*.json")):
+            data = self._read_session_file(file_path, now=now)
+            if data is not None:
+                yield data
+
+    def _is_live_card_session(self, data: dict[str, object]) -> bool:
+        return data.get("decided", False) is False and int(data.get("message_id", 0)) > 0
+
+    def get(self, session_id: str) -> dict[str, object] | None:
+        file_path = self._file_path(session_id)
+        if not file_path.is_file():
+            return None
+        return self._read_session_file(file_path)
+
     def save(self, session_id: str, data: dict[str, object]) -> None:
         file_path = self._file_path(session_id)
         file_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def find_by_chat_and_status(self, chat_id: int, decided: bool = False) -> dict[str, object] | None:
-        for file in self.directory.glob("*.json"):
+        for data in self._iter_sessions():
             try:
-                data = json.loads(file.read_text(encoding="utf-8"))
                 if int(data.get("chat_id", 0)) == chat_id and data.get("decided", False) == decided:
-                    expires_at = data.get("expires_at", "")
-                    if expires_at and datetime.fromisoformat(expires_at) < datetime.now(UTC):
-                        file.unlink(missing_ok=True)
-                        continue
                     return data
             except Exception:
                 continue
         return None
 
+    def find_live_by_card_message(self, chat_id: int, message_id: int) -> dict[str, object] | None:
+        for data in self._iter_sessions():
+            try:
+                if (
+                    int(data.get("chat_id", 0)) == chat_id
+                    and int(data.get("message_id", 0)) == message_id
+                    and self._is_live_card_session(data)
+                ):
+                    return data
+            except Exception:
+                continue
+        return None
+
+    def list_live_for_chat(self, chat_id: int) -> list[dict[str, object]]:
+        sessions = []
+        for data in self._iter_sessions():
+            try:
+                if int(data.get("chat_id", 0)) == chat_id and self._is_live_card_session(data):
+                    sessions.append(data)
+            except Exception:
+                continue
+        return sessions
+
     def find_live_for_gate(self, project_key: str, run_id: str, gate: str) -> dict[str, object] | None:
         now = datetime.now(UTC)
-        for file in self.directory.glob("*.json"):
+        for data in self._iter_sessions(now=now):
             try:
-                data = json.loads(file.read_text(encoding="utf-8"))
-                expires_at = data.get("expires_at", "")
-                if expires_at and datetime.fromisoformat(str(expires_at)) < now:
-                    file.unlink(missing_ok=True)
-                    continue
                 if (
                     data.get("project_key") == project_key
                     and data.get("run_id") == run_id
                     and data.get("gate") == gate
-                    and data.get("decided", False) is False
-                    and int(data.get("message_id", 0)) > 0
+                    and self._is_live_card_session(data)
                 ):
                     return data
             except Exception:
