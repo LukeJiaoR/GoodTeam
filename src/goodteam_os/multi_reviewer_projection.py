@@ -107,16 +107,17 @@ def _status_for_profile(
     used_status_ids: set[int],
     approval: str,
 ) -> tuple[dict[str, object] | None, str]:
+    gate_candidates = _statuses_for_approval(statuses, approval)
     explicit_matches = [
         status
-        for status in statuses
+        for status in gate_candidates
         if id(status) not in used_status_ids and str(status.get("profile_id", "")).strip() == profile.profile_id
     ]
     if explicit_matches:
         return _latest_status(explicit_matches), "profile_id"
     if len(profiles) == 1:
         legacy_match = latest_reviewer_status_for_approval(
-            [status for status in statuses if id(status) not in used_status_ids and not _has_profile_id(status)],
+            [status for status in gate_candidates if id(status) not in used_status_ids and not _has_profile_id(status)],
             approval,
         )
         if legacy_match is not None:
@@ -189,13 +190,12 @@ def _ambiguous_legacy_statuses(
 
 
 def _statuses_for_approval(statuses: list[dict[str, object]], approval: str) -> list[dict[str, object]]:
-    explicit = [status for status in statuses if str(status.get("approval", "") or status.get("gate", "")).strip() == approval]
-    if explicit:
-        return explicit
+    explicit = [status for status in statuses if _explicit_gate(status) == approval]
+    legacy = [status for status in statuses if _explicit_gate(status) is None]
     roles = set(REVIEW_ROLES_BY_APPROVAL.get(approval, ()))
     if not roles:
-        return []
-    return [status for status in statuses if str(status.get("role", "")).strip() in roles]
+        return explicit
+    return explicit + [status for status in legacy if str(status.get("role", "")).strip() in roles]
 
 
 def _aggregate_policy(reviewers: list[dict[str, object]]) -> dict[str, object]:
@@ -232,3 +232,8 @@ def _fallback_status_key(status: Mapping[str, object]) -> tuple[str, str, str]:
 
 def _has_profile_id(status: Mapping[str, object]) -> bool:
     return bool(str(status.get("profile_id", "") or "").strip())
+
+
+def _explicit_gate(status: Mapping[str, object]) -> str | None:
+    gate = str(status.get("approval", "") or status.get("gate", "")).strip()
+    return gate or None

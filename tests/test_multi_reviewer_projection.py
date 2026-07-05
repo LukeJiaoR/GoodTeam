@@ -150,6 +150,53 @@ def test_single_configured_profile_accepts_legacy_status_for_backward_compatibil
     assert reviewer["policy"]["state"] == "ok"
 
 
+def test_profile_id_match_is_scoped_to_current_approval_gate():
+    projection = build_multi_reviewer_projection(
+        approval="staging",
+        reviewer_target=_target("correctness-security"),
+        reviewer_statuses=[
+            _provider_status(
+                profile_id="correctness-security",
+                job_id="job-code-review",
+                approval="code_review",
+                role="code_review",
+            )
+        ],
+    )
+
+    reviewer = projection["reviewers"][0]
+    assert reviewer["profile_id"] == "correctness-security"
+    assert reviewer["status"] is None
+    assert reviewer["policy"]["state"] == "missing_evidence"
+
+
+def test_profile_id_match_uses_current_gate_status_when_present():
+    projection = build_multi_reviewer_projection(
+        approval="staging",
+        reviewer_target=_target("correctness-security"),
+        reviewer_statuses=[
+            _provider_status(
+                profile_id="correctness-security",
+                job_id="job-code-review",
+                approval="code_review",
+                role="code_review",
+                updated_at="2026-07-05T11:00:00+00:00",
+            ),
+            _provider_status(
+                profile_id="correctness-security",
+                job_id="job-staging",
+                approval="staging",
+                role="code_review",
+                updated_at="2026-07-05T10:00:00+00:00",
+            ),
+        ],
+    )
+
+    reviewer = projection["reviewers"][0]
+    assert reviewer["status"]["job_id"] == "job-staging"
+    assert reviewer["policy"]["state"] == "ok"
+
+
 def test_omitted_reviewer_profiles_produces_compatible_empty_projection_without_statuses():
     projection = build_multi_reviewer_projection(
         approval="staging",
