@@ -7,6 +7,7 @@ from goodteam_os.graph import run_fix_qa
 from goodteam_os.reviewer_dispatch import (
     dispatch_reviewer_jobs_for_gate,
     normalize_reviewer_dispatch_config,
+    reviewer_dispatch_diagnostics,
     reviewer_dispatch_rollout_status,
 )
 from goodteam_os.state import create_initial_state
@@ -86,6 +87,108 @@ def _project_config(tmp_path: Path, *, dispatch: dict[str, object] | None = None
 def test_missing_dispatch_config_defaults_to_single_mode():
     assert normalize_reviewer_dispatch_config({}) == {"mode": "single", "phases": {}}
     assert normalize_reviewer_dispatch_config(None) == {"mode": "single", "phases": {}}
+
+
+def test_dispatch_diagnostics_default_single_has_no_warnings_or_errors():
+    diagnostics = reviewer_dispatch_diagnostics({})
+
+    assert diagnostics["mode"] == "single"
+    assert diagnostics["parallel_requested"] is False
+    assert diagnostics["parallel_enabled"] is False
+    assert diagnostics["warnings"] == []
+    assert diagnostics["errors"] == []
+    assert diagnostics["queued_reviewer_jobs"] == {"total": 0, "by_gate": {}, "by_profile": {}}
+    assert diagnostics["advisory_only"] is True
+
+
+def test_dispatch_diagnostics_single_mode_reports_no_fanout():
+    diagnostics = reviewer_dispatch_diagnostics({"reviewer_dispatch": {"mode": "single"}})
+
+    assert diagnostics["mode"] == "single"
+    assert diagnostics["parallel_requested"] is False
+    assert diagnostics["parallel_enabled"] is False
+    assert diagnostics["warnings"] == []
+    assert diagnostics["errors"] == []
+
+
+def test_dispatch_diagnostics_parallel_without_acknowledgement_is_guarded():
+    diagnostics = reviewer_dispatch_diagnostics({"reviewer_dispatch": _parallel_dispatch_without_ack()})
+
+    assert diagnostics["mode"] == "parallel"
+    assert diagnostics["parallel_requested"] is True
+    assert diagnostics["parallel_enabled"] is False
+    assert diagnostics["errors"] == []
+    assert diagnostics["warnings"] == [
+        "reviewer_dispatch.mode: parallel requires rollout.enabled: true and "
+        'rollout.acknowledge: "parallel-reviewer-dispatch-is-advisory".'
+    ]
+
+
+def test_dispatch_diagnostics_full_acknowledgement_is_enabled():
+    diagnostics = reviewer_dispatch_diagnostics({"reviewer_dispatch": _parallel_dispatch()})
+
+    assert diagnostics["mode"] == "parallel"
+    assert diagnostics["parallel_requested"] is True
+    assert diagnostics["parallel_enabled"] is True
+    assert diagnostics["warnings"] == []
+    assert diagnostics["errors"] == []
+
+
+def test_dispatch_diagnostics_invalid_config_reports_error_without_crashing():
+    diagnostics = reviewer_dispatch_diagnostics({"reviewer_dispatch": {"mode": "fast"}})
+
+    assert diagnostics["mode"] == "single"
+    assert diagnostics["parallel_requested"] is False
+    assert diagnostics["parallel_enabled"] is False
+    assert diagnostics["warnings"] == []
+    assert diagnostics["errors"] == ["reviewer_dispatch.mode must be one of: single, parallel."]
+
+
+def test_dispatch_diagnostics_includes_profile_counts_by_phase():
+    diagnostics = reviewer_dispatch_diagnostics(
+        {
+            "reviewer_profiles": {
+                "implementation": ["correctness-security", "architecture-maintainability"],
+                "release": ["product-operator"],
+            },
+            "reviewer_dispatch": {
+                "mode": "single",
+                "phases": {"implementation": "parallel", "release": "single"},
+            },
+        }
+    )
+
+    assert diagnostics["phases"]["implementation"] == {
+        "dispatch_mode": "parallel",
+        "configured_profiles": ["correctness-security", "architecture-maintainability"],
+        "profile_count": 2,
+    }
+    assert diagnostics["phases"]["release"] == {
+        "dispatch_mode": "single",
+        "configured_profiles": ["product-operator"],
+        "profile_count": 1,
+    }
+
+
+def test_dispatch_diagnostics_counts_queued_reviewer_jobs_by_gate_and_profile():
+    diagnostics = reviewer_dispatch_diagnostics(
+        {},
+        worker_jobs=[
+            {"status": "queued", "gate": "qa", "profile_id": "correctness-security"},
+            {"status": "queued", "approval": "qa", "profile_id": "architecture-maintainability"},
+            {"status": "completed", "gate": "qa", "profile_id": "correctness-security"},
+            {"status": "queued", "role": "implementation"},
+        ],
+    )
+
+    assert diagnostics["queued_reviewer_jobs"] == {
+        "total": 2,
+        "by_gate": {"qa": 2},
+        "by_profile": {
+            "architecture-maintainability": 1,
+            "correctness-security": 1,
+        },
+    }
 
 
 def test_rollout_status_requires_second_acknowledgement_for_parallel_mode():

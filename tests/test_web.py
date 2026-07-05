@@ -73,6 +73,43 @@ def _write_context_project(workspace: Path, project_root: Path, key: str = "CTX"
     return config
 
 
+def _write_reviewer_dispatch_project(
+    workspace: Path,
+    project_root: Path,
+    *,
+    dispatch_mode: str = "parallel",
+    acknowledged: bool = False,
+) -> Path:
+    projects = workspace / "projects"
+    projects.mkdir(exist_ok=True)
+    config = projects / "demo.local.yaml"
+    lines = [
+        "name: Demo",
+        "key: DEMO",
+        "repos:",
+        f"  app: {project_root}",
+        "worker_backend:",
+        "  mode: fake",
+        "reviewer_profiles:",
+        "  implementation:",
+        "    - correctness-security",
+        "    - architecture-maintainability",
+        "reviewer_dispatch:",
+        f"  mode: {dispatch_mode}",
+    ]
+    if acknowledged:
+        lines.extend(
+            [
+                "  rollout:",
+                "    enabled: true",
+                '    acknowledge: "parallel-reviewer-dispatch-is-advisory"',
+            ]
+        )
+    lines.extend(["  phases:", "    implementation: parallel"])
+    config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return config
+
+
 def _post_web_json(workspace: Path, route: str, payload: dict[str, object], *, origin: str | None = None):
     server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(workspace))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -856,6 +893,79 @@ def test_dashboard_worker_tab_shows_live_worker_metadata(tmp_path):
     assert "4242" in html
     assert "Codex CLI is running." in html
     assert "heartbeat" in html.lower()
+
+
+def test_dashboard_reviewer_dispatch_diagnostics_show_guarded_warning(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=False)
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    context = build_start_console_context(tmp_path, project_config=config)
+
+    html = render_dashboard(state, start_context=context)
+
+    assert "Reviewer dispatch diagnostics" in html
+    assert "reviewer_dispatch.mode: parallel requires rollout.enabled: true" in html
+    assert "<dt>Mode</dt><dd>parallel</dd>" in html
+    assert "<dt>Parallel requested</dt><dd>True</dd>" in html
+    assert "<dt>Parallel enabled</dt><dd>False</dd>" in html
+    assert "correctness-security" in html
+    assert "architecture-maintainability" in html
+
+
+def test_dashboard_reviewer_dispatch_diagnostics_show_enabled_state_and_queue_counts(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
+    WorkerJobStore(project_root).create_job(
+        run_id="run-1",
+        role="code_review",
+        adapter="codex",
+        task="Review QA report",
+        context="Context",
+        profile_id="correctness-security",
+        approval="qa",
+        gate="qa",
+        phase="implementation",
+    )
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    context = build_start_console_context(tmp_path, project_config=config)
+
+    html = render_dashboard(state, start_context=context)
+
+    assert "Reviewer dispatch diagnostics" in html
+    assert "<dt>Parallel enabled</dt><dd>True</dd>" in html
+    assert "total: 1" in html
+    assert "gate qa: 1" in html
+    assert "profile correctness-security: 1" in html
+    assert "Reviewer evidence remains advisory. Human operator decides." in html
+
+
+def test_dashboard_reviewer_dispatch_diagnostics_are_render_only(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
+    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
+    state.next_node = "await_prd_approval"
+    context = build_start_console_context(tmp_path, project_config=config)
+
+    def fail_create_job(*_args, **_kwargs):
+        raise AssertionError("dashboard diagnostics must not dispatch reviewer jobs")
+
+    def fail_append_action(*_args, **_kwargs):
+        raise AssertionError("dashboard diagnostics must not write action events")
+
+    monkeypatch.setattr(web.WorkerJobStore, "create_job", fail_create_job)
+    monkeypatch.setattr(web.WorkerJobStore, "create_or_reuse_job", fail_create_job)
+    monkeypatch.setattr(web, "append_action", fail_append_action)
+
+    html = render_dashboard(state, start_context=context)
+
+    assert "Reviewer dispatch diagnostics" in html
+    assert "Approve" in html
+    assert "Request Changes" in html
+    assert "Reject" in html
+    assert not (tmp_path / "actions.jsonl").exists()
 
 
 def test_render_dashboard_shows_worker_blockers():

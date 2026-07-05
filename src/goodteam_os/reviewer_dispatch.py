@@ -1,5 +1,5 @@
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +77,60 @@ def reviewer_dispatch_rollout_status(target: Mapping[str, object] | None) -> dic
         "parallel_enabled": parallel_enabled,
         "warnings": warnings,
         "errors": errors,
+    }
+
+
+def reviewer_dispatch_diagnostics(
+    target: Mapping[str, object] | None,
+    *,
+    worker_jobs: Iterable[Mapping[str, object]] = (),
+) -> dict[str, object]:
+    warnings: list[str] = []
+    errors: list[str] = []
+    config = {"mode": "single", "phases": {}}
+    rollout = {
+        "parallel_requested": False,
+        "parallel_enabled": False,
+        "warnings": [],
+        "errors": [],
+    }
+
+    try:
+        config = normalize_reviewer_dispatch_config(target)
+        rollout = reviewer_dispatch_rollout_status(target)
+    except ValueError as exc:
+        errors.append(str(exc))
+
+    warnings.extend(str(warning) for warning in rollout.get("warnings", []) if str(warning))
+    errors.extend(str(error) for error in rollout.get("errors", []) if str(error))
+
+    profile_config: dict[str, tuple[str, ...]] = {}
+    if target is not None:
+        try:
+            profile_config = normalize_reviewer_profile_config(target)
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    phases = {}
+    configured_phases = dict(config.get("phases", {}))
+    for phase in REVIEWER_PROFILE_PHASES:
+        configured_profiles = list(profile_config.get(phase, ()))
+        phases[phase] = {
+            "dispatch_mode": str(configured_phases.get(phase, "")),
+            "configured_profiles": configured_profiles,
+            "profile_count": len(configured_profiles),
+        }
+
+    return {
+        "mode": str(config.get("mode", "single") or "single"),
+        "parallel_requested": bool(rollout.get("parallel_requested", False)),
+        "parallel_enabled": bool(rollout.get("parallel_enabled", False)),
+        "warnings": warnings,
+        "errors": errors,
+        "phases": phases,
+        "queued_reviewer_jobs": _queued_reviewer_job_counts(worker_jobs),
+        "advisory_only": True,
+        "operator_message": "Reviewer evidence remains advisory. Human operator decides.",
     }
 
 
@@ -255,3 +309,28 @@ def _truthy_bool(value: object) -> bool:
     if value is True:
         return True
     return str(value).strip().lower() == "true"
+
+
+def _queued_reviewer_job_counts(worker_jobs: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    by_gate: dict[str, int] = {}
+    by_profile: dict[str, int] = {}
+    total = 0
+    for job in worker_jobs:
+        if not _is_queued_reviewer_job(job):
+            continue
+        total += 1
+        gate = str(job.get("gate") or job.get("approval") or "unknown")
+        profile_id = str(job.get("profile_id") or "unknown")
+        by_gate[gate] = by_gate.get(gate, 0) + 1
+        by_profile[profile_id] = by_profile.get(profile_id, 0) + 1
+    return {"total": total, "by_gate": by_gate, "by_profile": by_profile}
+
+
+def _is_queued_reviewer_job(job: Mapping[str, object]) -> bool:
+    if str(job.get("status", "") or "").strip().lower() != "queued":
+        return False
+    if str(job.get("profile_id", "") or "").strip():
+        return True
+    if str(job.get("phase", "") or "").strip() in REVIEWER_PROFILE_PHASES:
+        return True
+    return str(job.get("role", "") or "").strip() in set(REVIEWER_ROLE_BY_PHASE.values())
