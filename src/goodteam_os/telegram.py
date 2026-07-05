@@ -86,6 +86,22 @@ class TelegramReviewSessionStore:
                 continue
         return None
 
+    def find_live_by_note_reply_message(self, chat_id: int, message_id: int) -> dict[str, object] | None:
+        if message_id <= 0:
+            return None
+        for data in self._iter_sessions():
+            try:
+                if (
+                    int(data.get("chat_id", 0)) == chat_id
+                    and int(data.get("awaiting_note_message_id", 0) or 0) == message_id
+                    and data.get("awaiting_note_for") is not None
+                    and self._is_live_card_session(data)
+                ):
+                    return data
+            except Exception:
+                continue
+        return None
+
     def list_live_for_chat(self, chat_id: int) -> list[dict[str, object]]:
         sessions = []
         for data in self._iter_sessions():
@@ -734,6 +750,45 @@ def _resolve_tg_command_session(
     if mutating:
         return None, "No pending approval gate."
     return None, ""
+
+
+def _resolve_tg_note_reply_session(
+    *,
+    store: TelegramReviewSessionStore,
+    chat_id: int,
+    reply_to_message_id: int,
+) -> dict[str, object] | None:
+    if reply_to_message_id <= 0:
+        return None
+
+    session = store.find_live_by_note_reply_message(chat_id, reply_to_message_id)
+    if session is not None:
+        return session
+
+    session = store.find_live_by_card_message(chat_id, reply_to_message_id)
+    if session is None or session.get("awaiting_note_for") is None:
+        return None
+
+    expected_card_id = int(session.get("awaiting_note_card_message_id", session.get("message_id", 0)) or 0)
+    if expected_card_id != reply_to_message_id:
+        return None
+    return session
+
+
+def _send_stale_note_reply_message(*, token: str, chat_id: object) -> dict[str, object]:
+    if token:
+        _telegram_request(
+            token,
+            "sendMessage",
+            {
+                "chat_id": str(chat_id),
+                "text": (
+                    "That review note reply is no longer active (stale context). "
+                    "Open the latest review card and request a note again."
+                ),
+            },
+        )
+    return {"status": "processed", "reason": "stale note reply context"}
 
 
 def _send_masked_telegram_message(*, token: str, chat_id: object, text: str) -> None:
@@ -1643,16 +1698,27 @@ def process_telegram_update(
                 return {"status": "ignored", "reason": "unauthorized user"}
 
             chat_id = int(message.get("chat", {}).get("id", 0))
+            reply_to_message_id = int(reply_to.get("message_id", 0) or 0)
+            reply_text = str(message.get("text", "") or "")
 
-            store = TelegramReviewSessionStore(workspace)
-            session = store.find_by_chat_and_status(chat_id, decided=False)
-            if session and session.get("awaiting_note_for") is not None:
+            if not _parse_telegram_command(reply_text):
+                store = TelegramReviewSessionStore(workspace)
+                session = _resolve_tg_note_reply_session(
+                    store=store,
+                    chat_id=chat_id,
+                    reply_to_message_id=reply_to_message_id,
+                )
+                if session is None:
+                    return _send_stale_note_reply_message(token=token, chat_id=chat_id)
+
                 cursor = int(session["awaiting_note_for"])
-                note_text = str(message.get("text", "")).strip()
+                note_text = reply_text.strip()
 
                 session["items"][cursor]["state"] = "flagged"
                 session["items"][cursor]["note"] = note_text
                 session["awaiting_note_for"] = None
+                session.pop("awaiting_note_message_id", None)
+                session.pop("awaiting_note_card_message_id", None)
 
                 next_cursor = get_next_pending_cursor(session)
                 session["cursor"] = next_cursor
@@ -1980,7 +2046,7 @@ def process_telegram_update(
         elif action == "F":
             cursor = int(arg) if arg else session.get("cursor", 0)
 
-            _telegram_request(
+            reply_message = _telegram_request(
                 token,
                 "sendMessage",
                 {
@@ -1993,6 +2059,10 @@ def process_telegram_update(
                 }
             )
             session["awaiting_note_for"] = cursor
+            session["awaiting_note_card_message_id"] = message_id
+            note_message_id = int(dict(reply_message.get("result", {}) or {}).get("message_id", 0) or 0)
+            if note_message_id:
+                session["awaiting_note_message_id"] = note_message_id
             store.save(session_id, session)
 
         processed_callbacks.add(callback_id)

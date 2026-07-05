@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, UTC, timedelta
 
+import pytest
+
 from goodteam_os.telegram import (
     TelegramReviewSessionStore,
     mask_sensitive_data,
@@ -32,6 +34,36 @@ def _review_session_data(
         "created_at": datetime.now(UTC).isoformat(),
         "expires_at": (datetime.now(UTC) + expires_delta).isoformat(),
     }
+
+
+def _review_note_session_data(
+    session_id: str,
+    *,
+    chat_id: int = 12345,
+    card_message_id: int = 9999,
+    note_message_id: int = 8888,
+    decided: bool = False,
+    expires_delta: timedelta = timedelta(hours=1),
+) -> dict[str, object]:
+    data = _review_session_data(
+        session_id,
+        chat_id=chat_id,
+        message_id=card_message_id,
+        decided=decided,
+        expires_delta=expires_delta,
+    )
+    data.update(
+        {
+            "cursor": 1,
+            "items": [
+                {"id": "acceptance", "title": "验收", "body": "OK", "state": "ok", "note": None},
+                {"id": "health", "title": "健康", "body": "OK", "state": "pending", "note": None},
+            ],
+            "awaiting_note_for": 1,
+            "awaiting_note_message_id": note_message_id,
+        }
+    )
+    return data
 
 
 def test_session_store_lifecycle(tmp_path):
@@ -202,6 +234,8 @@ def test_interactive_review_callbacks(tmp_path, monkeypatch):
 
     def fake_tg_request(token, method, params):
         tg_calls.append({"method": method, "params": params})
+        if method == "sendMessage":
+            return {"ok": True, "result": {"message_id": 8888}}
         return {"ok": True, "result": {"message_id": 9999}}
 
     monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_tg_request)
@@ -273,6 +307,8 @@ def test_interactive_review_callbacks(tmp_path, monkeypatch):
     assert tg_calls[-1]["params"]["reply_markup"]["force_reply"] is True
     session = store.get(session_id)
     assert session["awaiting_note_for"] == 1
+    assert session["awaiting_note_message_id"] == 8888
+    assert session["awaiting_note_card_message_id"] == 9999
 
 
 def test_forcereply_update_handling(tmp_path, monkeypatch):
@@ -300,6 +336,7 @@ def test_forcereply_update_handling(tmp_path, monkeypatch):
             {"id": "health", "title": "健康", "body": "OK", "state": "pending", "note": None},
         ],
         "awaiting_note_for": 1,
+        "awaiting_note_message_id": 8888,
         "decided": False,
         "created_at": datetime.now(UTC).isoformat(),
         "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
@@ -333,6 +370,194 @@ def test_forcereply_update_handling(tmp_path, monkeypatch):
     assert tg_calls[0]["method"] == "editMessageText"
     assert "Review 完成" in tg_calls[0]["params"]["text"]
     assert "Redis connection timed out twice" in tg_calls[0]["params"]["text"]
+
+
+def test_forcereply_note_reply_uses_exact_replied_prompt_session(tmp_path, monkeypatch):
+    tg_calls = []
+
+    def fake_tg_request(token, method, params):
+        tg_calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_tg_request)
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "fake-token")
+
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("aaa-wrong", _review_note_session_data("aaa-wrong", card_message_id=7000, note_message_id=7001))
+    store.save("zzz-target", _review_note_session_data("zzz-target", card_message_id=9000, note_message_id=9001))
+
+    update = {
+        "message": {
+            "message_id": 12000,
+            "from": {"id": 111},
+            "chat": {"id": 12345},
+            "text": "Target card only",
+            "reply_to_message": {"message_id": 9001},
+        }
+    }
+
+    res = process_telegram_update(update, workspace=tmp_path, allowed_users=["111"], processed_callbacks=set())
+
+    assert res["status"] == "processed"
+    wrong = store.get("aaa-wrong")
+    target = store.get("zzz-target")
+    assert wrong["items"][1]["state"] == "pending"
+    assert wrong["items"][1]["note"] is None
+    assert wrong["awaiting_note_for"] == 1
+    assert target["items"][1]["state"] == "flagged"
+    assert target["items"][1]["note"] == "Target card only"
+    assert target["awaiting_note_for"] is None
+    assert tg_calls[0]["method"] == "editMessageText"
+    assert tg_calls[0]["params"]["message_id"] == 9000
+
+
+def test_forcereply_note_reply_does_not_attach_to_another_live_session(tmp_path, monkeypatch):
+    tg_calls = []
+
+    def fake_tg_request(token, method, params):
+        tg_calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_tg_request)
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "fake-token")
+
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("same-chat-live", _review_note_session_data("same-chat-live", note_message_id=7001))
+
+    update = {
+        "message": {
+            "message_id": 12000,
+            "from": {"id": 111},
+            "chat": {"id": 12345},
+            "text": "Should not attach",
+            "reply_to_message": {"message_id": 999001},
+        }
+    }
+
+    res = process_telegram_update(update, workspace=tmp_path, allowed_users=["111"], processed_callbacks=set())
+
+    assert res["status"] == "processed"
+    session = store.get("same-chat-live")
+    assert session["items"][1]["state"] == "pending"
+    assert session["items"][1]["note"] is None
+    assert tg_calls[0]["method"] == "sendMessage"
+    assert "no longer active" in tg_calls[0]["params"]["text"]
+    assert "stale context" in tg_calls[0]["params"]["text"]
+
+
+def test_forcereply_note_reply_does_not_cross_chats(tmp_path, monkeypatch):
+    tg_calls = []
+
+    def fake_tg_request(token, method, params):
+        tg_calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_tg_request)
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "fake-token")
+
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("same-chat-live", _review_note_session_data("same-chat-live", chat_id=12345, note_message_id=7001))
+    store.save("other-chat-target", _review_note_session_data("other-chat-target", chat_id=54321, note_message_id=9001))
+
+    update = {
+        "message": {
+            "message_id": 12000,
+            "from": {"id": 111},
+            "chat": {"id": 12345},
+            "text": "Wrong chat",
+            "reply_to_message": {"message_id": 9001},
+        }
+    }
+
+    res = process_telegram_update(update, workspace=tmp_path, allowed_users=["111"], processed_callbacks=set())
+
+    assert res["status"] == "processed"
+    same_chat = store.get("same-chat-live")
+    other_chat = store.get("other-chat-target")
+    assert same_chat["items"][1]["note"] is None
+    assert other_chat["items"][1]["note"] is None
+    assert tg_calls[0]["method"] == "sendMessage"
+    assert "no longer active" in tg_calls[0]["params"]["text"]
+
+
+@pytest.mark.parametrize(
+    ("session_data", "expected_missing_after_read"),
+    [
+        (_review_note_session_data("expired", expires_delta=timedelta(minutes=-1)), True),
+        (_review_note_session_data("decided", decided=True), False),
+        (None, False),
+    ],
+)
+def test_forcereply_note_reply_reports_stale_context(
+    tmp_path,
+    monkeypatch,
+    session_data,
+    expected_missing_after_read,
+):
+    tg_calls = []
+
+    def fake_tg_request(token, method, params):
+        tg_calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_tg_request)
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "fake-token")
+
+    store = TelegramReviewSessionStore(tmp_path)
+    if session_data is not None:
+        store.save(session_data["session_id"], session_data)
+
+    update = {
+        "message": {
+            "message_id": 12000,
+            "from": {"id": 111},
+            "chat": {"id": 12345},
+            "text": "Stale reply",
+            "reply_to_message": {"message_id": 8888},
+        }
+    }
+
+    res = process_telegram_update(update, workspace=tmp_path, allowed_users=["111"], processed_callbacks=set())
+
+    assert res["status"] == "processed"
+    assert tg_calls[0]["method"] == "sendMessage"
+    assert "no longer active" in tg_calls[0]["params"]["text"]
+    if session_data is not None:
+        loaded = store.get(session_data["session_id"])
+        assert (loaded is None) is expected_missing_after_read
+
+
+def test_forcereply_note_reply_does_not_use_chat_first_lookup_when_reply_context_exists(
+    tmp_path,
+    monkeypatch,
+):
+    def fake_tg_request(token, method, params):
+        return {"ok": True}
+
+    def fail_chat_first_lookup(self, chat_id, decided=False):
+        raise AssertionError("chat-first lookup must not be used for note replies with reply context")
+
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_tg_request)
+    monkeypatch.setattr(TelegramReviewSessionStore, "find_by_chat_and_status", fail_chat_first_lookup)
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "fake-token")
+
+    store = TelegramReviewSessionStore(tmp_path)
+    store.save("target", _review_note_session_data("target", note_message_id=9001))
+
+    update = {
+        "message": {
+            "message_id": 12000,
+            "from": {"id": 111},
+            "chat": {"id": 12345},
+            "text": "Exact context",
+            "reply_to_message": {"message_id": 9001},
+        }
+    }
+
+    res = process_telegram_update(update, workspace=tmp_path, allowed_users=["111"], processed_callbacks=set())
+
+    assert res["status"] == "processed"
+    assert store.get("target")["items"][1]["note"] == "Exact context"
 
 
 def test_final_decision_approves_workflow(tmp_path, monkeypatch):
