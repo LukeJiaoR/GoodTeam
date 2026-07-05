@@ -128,11 +128,47 @@ Every provenance payload includes `advisory_only: true` and the operator message
 `Human operator decides; this reviewer is advisory only.` Approval actions remain
 human decisions.
 
+## Review Evidence Policy Gates
+
+Review Workbench also projects reviewer provenance into
+`review_evidence_policy`. This is a visible gate-quality signal, not an
+approval authority. The policy always includes a rationale, sets
+`visible_to_operator: true`, keeps `can_human_override: true`, and repeats that
+the human operator decides.
+
+Default behavior is compatible and advisory. If a project omits
+`review_evidence_policy`, existing approval paths are not blocked or hardened.
+The default severities are:
+
+- `ok`: provider-backed evidence completed; severity `ok`.
+- `missing_evidence`: no invocation evidence is available; severity `warning`.
+- `fallback_evidence`: evidence came from fallback or incomplete provider
+  evidence; severity `warning`.
+- `non_provider_evidence`: builtin `fake` / `noop` or manual human evidence;
+  severity `warning`.
+- `failed_invocation`: provider invocation failed; severity `warning` by
+  default with visible failure rationale.
+
+Projects can opt into strict projection for selected states:
+
+```yaml
+review_evidence_policy:
+  mode: strict
+  blockers:
+    - failed_invocation
+    - missing_evidence
+```
+
+Strict mode marks only the configured states as `blocker`, and the Workbench
+payload/UI explains the strict rationale. This still does not automatically
+approve, reject, dispatch, or disable human approval actions. The operator can
+override after reviewing the visible evidence.
+
 ## Non-Goals
 
 - No runtime dispatch behavior changes.
 - No worker invocation behavior changes.
 - No execution orchestrator changes.
-- No approval gate or policy enforcement.
+- No autonomous approval gate enforcement.
 - No approval action behavior changes.
 - No parallel reviewer execution.

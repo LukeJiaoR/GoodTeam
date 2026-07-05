@@ -73,6 +73,19 @@ export default function ApprovalsTab({
     }
   };
 
+  const getPolicyBadgeStyle = (severity) => {
+    switch (severity?.toLowerCase()) {
+      case 'ok':
+        return 'bg-status-success-bg text-status-success-text border-status-success/30';
+      case 'blocker':
+        return 'bg-status-danger-bg text-status-danger-text border-status-danger/30';
+      case 'warning':
+        return 'bg-status-warning-bg text-status-warning-text border-status-warning/30';
+      default:
+        return 'bg-surface-sunken text-text-muted border-border-subtle';
+    }
+  };
+
   return (
                 <div className="space-y-6">
                   <div className="border-b-2 border-border-subtle pb-2">
@@ -448,6 +461,12 @@ export default function ApprovalsTab({
                           const evidenceSnapshot = selectedReview.evidence_snapshot && typeof selectedReview.evidence_snapshot === 'string'
                             ? (() => { try { return JSON.parse(selectedReview.evidence_snapshot); } catch { return null; } })()
                             : selectedReview.evidence_snapshot;
+                          const reviewEvidencePolicy = selectedReview.review_evidence_policy && typeof selectedReview.review_evidence_policy === 'string'
+                            ? (() => { try { return JSON.parse(selectedReview.review_evidence_policy); } catch { return null; } })()
+                            : selectedReview.review_evidence_policy;
+                          const policyEvidence = reviewEvidencePolicy?.evidence && typeof reviewEvidencePolicy.evidence === 'object'
+                            ? reviewEvidencePolicy.evidence
+                            : {};
                           const statusBadge = (status) => {
                             if (status === 'passed') {
                               return { cls: 'text-status-success-text bg-status-success-bg border-status-success/30', label: 'Passed' };
@@ -688,6 +707,44 @@ export default function ApprovalsTab({
                                        </div>
                                      )}
                                    </div>
+
+                                   {reviewEvidencePolicy && typeof reviewEvidencePolicy === 'object' && (
+                                     <div className="border-2 border-border-subtle rounded-2xl p-5 bg-surface-base space-y-3">
+                                       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border-subtle pb-2">
+                                         <div>
+                                           <h4 className="text-xs font-extrabold uppercase tracking-wider text-text-primary">Review Evidence Policy</h4>
+                                           <p className="text-2xs text-text-muted">Evidence quality projected from reviewer provenance.</p>
+                                         </div>
+                                         <span className={`inline-flex px-2.5 py-0.5 rounded-full text-2xs font-extrabold border uppercase tracking-wider leading-none ${getPolicyBadgeStyle(reviewEvidencePolicy.severity)}`}>
+                                           {reviewEvidencePolicy.severity || 'warning'}
+                                         </span>
+                                       </div>
+                                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-2xs">
+                                         <div className="bg-surface-raised border border-border-subtle rounded-xl p-3">
+                                           <span className="block font-extrabold text-text-muted uppercase tracking-wider">State</span>
+                                           <span className="text-text-primary font-bold">{reviewEvidencePolicy.state || 'missing_evidence'}</span>
+                                         </div>
+                                         <div className="bg-surface-raised border border-border-subtle rounded-xl p-3">
+                                           <span className="block font-extrabold text-text-muted uppercase tracking-wider">Evidence</span>
+                                           <span className="text-text-primary font-bold">{policyEvidence.badge_kind || 'missing'}</span>
+                                         </div>
+                                         <div className="bg-surface-raised border border-border-subtle rounded-xl p-3">
+                                           <span className="block font-extrabold text-text-muted uppercase tracking-wider">Adapter</span>
+                                           <span className="text-text-primary font-bold">{policyEvidence.adapter || 'unknown'}</span>
+                                         </div>
+                                         <div className="bg-surface-raised border border-border-subtle rounded-xl p-3">
+                                           <span className="block font-extrabold text-text-muted uppercase tracking-wider">Provider</span>
+                                           <span className="text-text-primary font-bold">{policyEvidence.provider || 'unknown'}</span>
+                                         </div>
+                                       </div>
+                                       {reviewEvidencePolicy.rationale && (
+                                         <p className="text-xs text-text-secondary leading-relaxed">{reviewEvidencePolicy.rationale}</p>
+                                       )}
+                                       <div className="text-2xs font-bold text-text-muted bg-surface-sunken border border-border-subtle rounded-xl px-3 py-2">
+                                         Human operator decides. This policy does not automatically approve or reject.
+                                       </div>
+                                     </div>
+                                   )}
 
                                     {/* Provenance Section */}
                                     {(() => {

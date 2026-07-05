@@ -2663,6 +2663,13 @@ def test_frontend_contract_approvals_tab_recommendation_and_provenance():
     assert "uniquePaths" in approvals_tab
     assert "<FilePath path={path}" in approvals_tab
 
+    # Assert reviewer evidence policy projection is visible but non-authoritative
+    assert "selectedReview.review_evidence_policy" in approvals_tab
+    assert "Review Evidence Policy" in approvals_tab
+    assert "getPolicyBadgeStyle(reviewEvidencePolicy.severity)" in approvals_tab
+    assert "Human operator decides" in approvals_tab
+    assert "does not automatically approve or reject" in approvals_tab
+
     # Assert both degrade cleanly (sections omitted when missing)
     assert "recommendation && (" in approvals_tab
     assert "provenanceRefs.length === 0" in approvals_tab
