@@ -1,4 +1,7 @@
 
+import pytest
+
+from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
 from goodteam_os.projects import check_project_target, load_project_target, update_worker_backend_config
 
 
@@ -51,6 +54,31 @@ providers:
     assert target["role_model_overrides"]["architect"] == "claude:opusplan"
 
 
+def test_load_project_target_reads_reviewer_profile_lists(tmp_path):
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        """
+name: Real Product
+key: REAL
+reviewer_profiles:
+  implementation:
+    - correctness-security
+    - architecture-maintainability
+  release:
+    - product-operator
+""",
+        encoding="utf-8",
+    )
+
+    target = load_project_target(config)
+
+    assert target["reviewer_profiles"]["implementation"] == [
+        "correctness-security",
+        "architecture-maintainability",
+    ]
+    assert target["reviewer_profiles"]["release"] == ["product-operator"]
+
+
 def test_check_project_target_reports_repo_and_cli_status():
     target = {
         "repos": {"docs": "/tmp/does-not-exist"},
@@ -61,6 +89,117 @@ def test_check_project_target_reports_repo_and_cli_status():
 
     assert report["repos"]["docs"]["exists"] is False
     assert report["workers"]["backend"]["available"] is False
+
+
+def test_reviewer_profile_config_is_optional():
+    assert normalize_reviewer_profile_config({}) == {}
+
+    report = check_project_target({"worker_backend": {"mode": "fake"}})
+
+    assert report["reviewer_profiles"] == {
+        "configured": {},
+        "profiles": [],
+        "errors": [],
+        "warnings": [],
+    }
+
+
+def test_reviewer_profile_config_accepts_explicit_empty_phases():
+    target = {"reviewer_profiles": {"implementation": [], "release": "[]"}}
+
+    assert normalize_reviewer_profile_config(target) == {"implementation": (), "release": ()}
+
+
+def test_reviewer_profile_config_dedupes_ids_and_accepts_comma_strings():
+    target = {
+        "reviewer_profiles": {
+            "implementation": [
+                "correctness-security",
+                "architecture-maintainability",
+                "correctness-security",
+            ],
+            "release": "product-operator, correctness-security",
+        }
+    }
+
+    assert normalize_reviewer_profile_config(target) == {
+        "implementation": ("correctness-security", "architecture-maintainability"),
+        "release": ("product-operator", "correctness-security"),
+    }
+
+
+def test_reviewer_profile_config_rejects_unknown_profile_ids_clearly():
+    target = {"reviewer_profiles": {"implementation": ["missing-reviewer"]}}
+
+    with pytest.raises(ValueError, match="Unknown reviewer profile 'missing-reviewer'"):
+        normalize_reviewer_profile_config(target)
+
+    report = check_project_target(target)
+    assert report["reviewer_profiles"]["errors"] == ["Unknown reviewer profile 'missing-reviewer'"]
+
+
+def test_reviewer_profile_config_rejects_unknown_phases_clearly():
+    target = {"reviewer_profiles": {"design": ["correctness-security"]}}
+
+    with pytest.raises(ValueError, match="Unknown reviewer profile phase 'design'"):
+        normalize_reviewer_profile_config(target)
+
+
+def test_check_project_target_reports_reviewer_adapter_evidence_without_worker_side_effects(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def fake_worker_backend_doctor(mode):
+        calls.append(mode)
+        if mode == "codex":
+            return {
+                "mode": "codex",
+                "kind": "cli",
+                "command": "codex",
+                "command_path": "",
+                "available": False,
+                "ready": False,
+                "hint": "Codex CLI not found.",
+            }
+        return {"mode": mode, "kind": "builtin", "ready": True, "hint": "ready"}
+
+    import goodteam_os.dispatch as dispatch
+
+    def fail_dispatch(*_args, **_kwargs):
+        raise AssertionError("reviewer profile config must not dispatch worker jobs")
+
+    monkeypatch.setattr(dispatch, "dispatch_tracks", fail_dispatch)
+    monkeypatch.setattr("goodteam_os.projects.worker_backend_doctor", fake_worker_backend_doctor)
+    target = {
+        "worker_backend": {"mode": "fake"},
+        "reviewer_profiles": {"implementation": ["correctness-security"]},
+    }
+
+    report = check_project_target(target)
+
+    assert report["worker_backends_preflight"] == {
+        "fake": {"mode": "fake", "kind": "builtin", "ready": True, "hint": "ready"}
+    }
+    assert "codex" not in report["worker_backends_preflight"]
+    reviewer_report = report["reviewer_profiles"]
+    assert reviewer_report["configured"] == {"implementation": ["correctness-security"]}
+    [profile] = reviewer_report["profiles"]
+    assert profile["phase"] == "implementation"
+    assert profile["profile_id"] == "correctness-security"
+    assert profile["adapter"] == "codex"
+    assert profile["available"] is False
+    assert profile["ready"] is False
+    assert profile["fallback_policy"] == "manual_review_required_on_missing_evidence"
+    assert profile["evidence"]["command"] == "codex"
+    assert profile["evidence"]["ready"] is False
+    [warning] = reviewer_report["warnings"]
+    assert warning["profile_id"] == "correctness-security"
+    assert warning["adapter"] == "codex"
+    assert warning["fallback_policy"] == "manual_review_required_on_missing_evidence"
+    assert warning["evidence"]["command"] == "codex"
+    assert "not ready" in warning["message"]
+    assert calls == ["fake", "fake", "codex"]
+    assert not (tmp_path / ".goodteam").exists()
 
 
 def test_check_project_target_reports_per_role_worker_backends(monkeypatch):

@@ -58,12 +58,42 @@ The listed adapters are examples for the built-in defaults. They are not the
 only supported reviewer shapes, and the profile IDs intentionally avoid vendor
 names.
 
+## Project Config Opt-In
+
+Reviewer profiles are optional project routing metadata. A project can configure
+zero profiles by omitting the block, one profile for a review moment, or many
+profiles in order:
+
+```yaml
+reviewer_profiles:
+  implementation:
+    - correctness-security
+    - architecture-maintainability
+  release:
+    - product-operator
+```
+
+Both `implementation` and `release` are optional. Empty phases are valid:
+
+```yaml
+reviewer_profiles:
+  implementation: []
+  release: []
+```
+
+Unknown profile IDs are validation errors. Configured profiles are checked
+against the worker backend doctor for their adapter, but this remains separate
+from `worker_backend.mode` and per-role worker routing. If an adapter is missing
+or not ready, the project check reports an explicit warning with the profile ID,
+adapter, command evidence when available, readiness, fallback policy, and
+message. For now that warning is evidence only; policy enforcement belongs to a
+later gate.
+
 ## Non-Goals
 
 - No runtime dispatch behavior changes.
 - No worker invocation behavior changes.
 - No execution orchestrator changes.
 - No approval gate or policy enforcement.
-- No project config opt-in or schema changes.
 - No Review Workbench UI changes.
 - No parallel reviewer execution.
