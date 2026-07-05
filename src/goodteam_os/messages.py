@@ -85,6 +85,25 @@ def read_messages(
     return messages
 
 
+def read_role_messages(
+    workspace: Path,
+    project_key: str,
+    run_id: str,
+    role_key: str,
+    *,
+    gate: str | None = None,
+) -> list[dict]:
+    role_value = _required_text(role_key, "role_key")
+    messages = []
+    for message in read_messages(workspace, project_key, run_id, gate=gate):
+        targets = message.get("to", [])
+        if not isinstance(targets, list):
+            continue
+        if role_value in [str(target).strip() for target in targets]:
+            messages.append(message)
+    return messages
+
+
 def _message_path(workspace: Path, project_key: str, run_id: str) -> Path:
     if Path(run_id).name != run_id:
         raise ValueError("run_id must not contain path separators.")

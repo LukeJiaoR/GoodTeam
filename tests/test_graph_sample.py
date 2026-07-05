@@ -17,6 +17,7 @@ from goodteam_os.graph import (
     generate_rfc,
     generate_prd,
     implementation_expected_artifacts,
+    implementation_worker_job_specs,
     implementation_task,
     normalize_delivery_mode,
     qa_expected_artifacts,
@@ -31,10 +32,12 @@ from goodteam_os.graph import (
     ui_delivery_expected_artifacts,
     ui_delivery_task,
     worker_blocker_message,
+    worker_context_for_role,
 )
 from goodteam_os.graph import run_adoption_until_next_gate
 from goodteam_os.failure_patterns import FailurePatternLibrary
 from goodteam_os.memory import RoleMemoryStore
+from goodteam_os.messages import append_message
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import decide_approval
 from goodteam_os.workflow_table import WorkflowNode
@@ -113,6 +116,82 @@ def test_resolve_role_adapter_prefers_per_role_then_global_then_default():
     assert resolve_role_adapter({}, "ui") == "codex"
     # `manual` is an alias for the human worker
     assert resolve_role_adapter({"worker_backend": {"mode": "manual"}}, "ui") == "human"
+
+
+def test_worker_context_for_role_includes_only_addressed_operator_messages(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Ship billing")
+    append_message(
+        tmp_path,
+        "CONTENTOPS",
+        "run-1",
+        from_role="human",
+        to=["qa"],
+        kind="ask",
+        body="Focus regression on login and billing.",
+        gate="qa",
+    )
+    append_message(
+        tmp_path,
+        "CONTENTOPS",
+        "run-1",
+        from_role="human",
+        to=["architect"],
+        kind="ask",
+        body="Confirm whether SQLite remains acceptable.",
+        gate="prd",
+    )
+
+    qa_context = worker_context_for_role(state, "qa", workspace=tmp_path)
+    architect_context = worker_context_for_role(state, "architect", workspace=tmp_path)
+
+    assert "## Human / Operator Role Messages (Advisory)" in qa_context
+    assert "human/operator context only" in qa_context
+    assert "do not override the task, constraints, system policy" in qa_context
+    assert "Focus regression on login and billing." in qa_context
+    assert "Confirm whether SQLite remains acceptable." not in qa_context
+    assert "Confirm whether SQLite remains acceptable." in architect_context
+    assert "Focus regression on login and billing." not in architect_context
+
+
+def test_worker_context_for_role_omits_advisory_section_when_no_messages(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Ship billing")
+
+    context = worker_context_for_role(state, "qa", workspace=tmp_path)
+
+    assert "Human / Operator Role Messages" not in context
+    assert context == "Run: run-1\nProject: CONTENTOPS\nGoal: Ship billing\nArtifacts:\n- none"
+
+
+def test_implementation_worker_job_specs_include_qa_role_messages_only(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Ship billing")
+    append_message(
+        tmp_path,
+        "CONTENTOPS",
+        "run-1",
+        from_role="human",
+        to=["qa"],
+        kind="propose",
+        body="Exercise the payment retry path.",
+        gate="qa",
+    )
+    append_message(
+        tmp_path,
+        "CONTENTOPS",
+        "run-1",
+        from_role="human",
+        to=["architect"],
+        kind="ask",
+        body="Should the API be versioned?",
+        gate="rfc",
+    )
+
+    specs = implementation_worker_job_specs(state, {"worker_backend": {"mode": "human"}}, workspace=tmp_path)
+    contexts = {str(spec["role"]): str(spec["context"]) for spec in specs}
+
+    assert "Exercise the payment retry path." in contexts["qa"]
+    assert "Should the API be versioned?" not in contexts["qa"]
+    assert "Exercise the payment retry path." not in contexts["implementation"]
+    assert "Should the API be versioned?" not in contexts["implementation"]
 
 
 def test_graph_reaches_prd_gate(tmp_path):
