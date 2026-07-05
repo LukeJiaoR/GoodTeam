@@ -102,6 +102,9 @@ def test_reviewer_profile_config_is_optional():
         "errors": [],
         "warnings": [],
     }
+    assert report["reviewer_dispatch"]["mode"] == "single"
+    assert report["reviewer_dispatch"]["warnings"] == []
+    assert report["reviewer_dispatch"]["errors"] == []
 
 
 def test_reviewer_profile_config_accepts_explicit_empty_phases():

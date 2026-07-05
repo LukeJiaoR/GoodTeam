@@ -322,6 +322,14 @@ multi-reviewer aggregate severity, per-reviewer policy states, evidence
 handles, and the advisory human-authority copy. Missing evidence,
 fallback/non-provider evidence, and failed invocations remain visible for the
 operator; they do not auto-approve, auto-reject, or disable approval actions.
+Workbench also shows `Reviewer dispatch diagnostics` in the System tab. The
+diagnostics distinguish default single mode, parallel requested but guarded by
+missing rollout acknowledgement, fully enabled parallel mode, and invalid
+config errors. Configured phase/profile counts explain what can fan out on
+future gate transitions. Queued reviewer job counts by gate/profile are
+informational snapshots from the existing worker job store when available.
+Diagnostics are read-only and do not dispatch jobs, run workers, or write
+ledger/action events.
 
 Rollback by returning to single mode:
 
@@ -404,6 +412,9 @@ Break follow-up work into separate issues:
   approval projection paths remain read-only/advisory.
 - #242E / #263: Add rollout guard, strict aggregation tests, and
   operator-facing documentation for parallel reviewer dispatch.
+- #265: Surface reviewer dispatch rollout diagnostics in Workbench/project
+  status so operators can see single, guarded, enabled, invalid-config, and
+  queued-job states without changing dispatch or approval behavior.
 
 Each phase should preserve the existing evidence-first workflow and should be
 mergeable without enabling global parallel dispatch.

@@ -47,6 +47,7 @@ from goodteam_os.models import list_model_profiles, resolve_project_model_profil
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
+from goodteam_os.reviewer_dispatch import reviewer_dispatch_diagnostics
 from goodteam_os.resources import (
     ResourceCapability,
     ResourceKind,
@@ -4478,6 +4479,75 @@ def render_review_evidence_policy(policy: object) -> str:
     """
 
 
+def render_reviewer_dispatch_diagnostics(diagnostics: object) -> str:
+    if not isinstance(diagnostics, Mapping):
+        return ""
+    warnings = [str(item) for item in diagnostics.get("warnings", []) if str(item)]
+    errors = [str(item) for item in diagnostics.get("errors", []) if str(item)]
+    phases = diagnostics.get("phases", {})
+    phases = phases if isinstance(phases, Mapping) else {}
+    queued = diagnostics.get("queued_reviewer_jobs", {})
+    queued = queued if isinstance(queued, Mapping) else {}
+    badge_kind = "error" if errors else "warning" if warnings else "ok"
+    phase_rows = "\n".join(
+        _render_reviewer_dispatch_phase(phase, data)
+        for phase, data in phases.items()
+        if isinstance(data, Mapping)
+    )
+    if not phase_rows:
+        phase_rows = '<div class="empty-state">No reviewer dispatch phases configured.</div>'
+    job_labels = [
+        f"total: {queued.get('total', 0)}",
+        *_count_labels(queued.get("by_gate", {}), prefix="gate"),
+        *_count_labels(queued.get("by_profile", {}), prefix="profile"),
+    ]
+    return f"""
+      <section class="card reviewer-dispatch-diagnostics">
+        <div class="review-evidence-policy-top">
+          <span>Reviewer dispatch diagnostics</span>
+          <span class="policy-badge policy-{escape(badge_kind)}">{escape(badge_kind.upper())}</span>
+        </div>
+        <dl class="role-meta provenance-meta">
+          <dt>Mode</dt><dd>{escape(str(diagnostics.get("mode", "single") or "single"))}</dd>
+          <dt>Parallel requested</dt><dd>{escape(str(diagnostics.get("parallel_requested", False)))}</dd>
+          <dt>Parallel enabled</dt><dd>{escape(str(diagnostics.get("parallel_enabled", False)))}</dd>
+          <dt>Advisory</dt><dd>{escape(str(diagnostics.get("advisory_only", True)))}</dd>
+          <dt>Authority</dt><dd>{escape(str(diagnostics.get("operator_message", "")))}</dd>
+        </dl>
+        {render_inline_list("Warnings", warnings)}
+        {render_inline_list("Errors", errors)}
+        {render_inline_list("Queued reviewer jobs", job_labels, code=True)}
+        <div class="multi-reviewer-cards">
+          {phase_rows}
+        </div>
+      </section>
+    """
+
+
+def _render_reviewer_dispatch_phase(phase: object, data: Mapping[str, object]) -> str:
+    profiles = data.get("configured_profiles", [])
+    profile_labels = [str(profile) for profile in profiles] if isinstance(profiles, list) else []
+    return f"""
+      <article class="multi-reviewer-card">
+        <div class="reviewer-provenance-top">
+          <span>{escape(str(phase).upper())}</span>
+          <span>{escape(str(data.get("dispatch_mode", "") or "default"))}</span>
+        </div>
+        <dl class="role-meta provenance-meta">
+          <dt>Dispatch mode</dt><dd>{escape(str(data.get("dispatch_mode", "") or "default single"))}</dd>
+          <dt>Profile count</dt><dd>{escape(str(data.get("profile_count", 0)))}</dd>
+        </dl>
+        {render_inline_list("Configured profiles", profile_labels, code=True)}
+      </article>
+    """
+
+
+def _count_labels(value: object, *, prefix: str) -> list[str]:
+    if not isinstance(value, Mapping):
+        return []
+    return [f"{prefix} {key}: {count}" for key, count in sorted(value.items())]
+
+
 def render_multi_reviewer_projection(projection: Mapping[str, object] | None) -> str:
     if not isinstance(projection, Mapping):
         return ""
@@ -5811,7 +5881,7 @@ h3 {
 }
 .policy-ok { color: var(--success-dark); background: var(--success-bg); }
 .policy-warning { color: var(--warning-dark); background: var(--warning-bg); }
-.policy-blocker { color: var(--error-dark); background: var(--error-bg); }
+.policy-blocker, .policy-error { color: var(--error-dark); background: var(--error-bg); }
 .idea {
   font-size: 18px;
   font-weight: 500;
@@ -6881,6 +6951,14 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         else ""
     )
     project_report = dict(start_context.get("project_report", {}))
+    if state is not None:
+        dispatch_diagnostics = reviewer_dispatch_diagnostics(
+            _reviewer_target_for_state(workspace=workspace, project_key=state.project_key),
+            worker_jobs=_reviewer_statuses_for_state(state=state, workspace=workspace, project_key=state.project_key),
+        )
+    else:
+        dispatch_diagnostics = project_report.get("reviewer_dispatch", reviewer_dispatch_diagnostics({}))
+    reviewer_dispatch_diagnostics_html = render_reviewer_dispatch_diagnostics(dispatch_diagnostics)
     task_backend = normalize_task_backend(start_context.get("task_backend", {"mode": "local", "sync": []}))
     task_sync_values = [str(value) for value in task_backend.get("sync", [])]
     task_sync_label = "Local only" if not task_sync_values else "Local + " + ", ".join(task_sync_values)
@@ -7570,6 +7648,7 @@ def render_dashboard(state: AgileDevState | None, start_context: dict[str, objec
         </div>
         
         <div class="tab-panel" id="tab-system">
+          {reviewer_dispatch_diagnostics_html}
           <div class="grid">
             <section>
               <h2>State</h2>

@@ -118,6 +118,24 @@ If `mode: parallel` is present without the rollout acknowledgement, GoodTeam
 does not create parallel reviewer jobs. This makes accidental enablement easier
 to audit while preserving single-reviewer compatibility.
 
+Review Workbench shows `Reviewer dispatch diagnostics` in the System tab. Use
+that section to interpret rollout state:
+
+- Default single: `mode` is `single`, parallel is not requested, and no warning
+  is expected.
+- Guarded parallel: `mode` is `parallel`, parallel is requested, but parallel is
+  not enabled because the rollout acknowledgement is missing or incomplete.
+- Enabled parallel: `mode` is `parallel`, parallel is requested and enabled, and
+  configured phase/profile counts show what can fan out on future gate
+  transitions.
+- Invalid config: diagnostics render errors instead of crashing Workbench.
+
+Queued reviewer job counts are informational and grouped by gate/profile when
+the existing worker job store is available. Diagnostics are read-only: they do
+not dispatch jobs, run workers, write ledger/action events, approve, reject, or
+disable approval controls. Reviewer evidence remains advisory, and the human
+operator remains authoritative.
+
 To validate a rollout, move a real implementation-side gate such as staging,
 code review, or QA to its pending approval state and inspect
 `.goodteam/workers/jobs/*/job.json` under the project runtime root. Reviewer jobs

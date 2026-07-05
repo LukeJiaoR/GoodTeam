@@ -4,6 +4,7 @@ from shutil import which
 
 from goodteam_os.models import _parse_simple_yaml
 from goodteam_os.project_reviewer_profiles import reviewer_profiles_report
+from goodteam_os.reviewer_dispatch import reviewer_dispatch_diagnostics
 from goodteam_os.staging import deployment_backend_report, delivery_contract_report
 from goodteam_os.workers import worker_backend_doctor
 
@@ -279,6 +280,7 @@ def check_project_target(target: ProjectTarget) -> dict[str, object]:
         "role_worker_backends": role_worker_backends,
         "worker_backends_preflight": {backend: worker_backend_doctor(backend) for backend in distinct_backends},
         "reviewer_profiles": reviewer_profiles_report(target, backend_doctor=worker_backend_doctor),
+        "reviewer_dispatch": reviewer_dispatch_diagnostics(target),
         "deployment_backend": deployment_backend_report(target, ssh_available=bool(which("ssh"))),
         "delivery_contract": delivery_contract_report(target),
     }
