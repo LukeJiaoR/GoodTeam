@@ -584,6 +584,127 @@ def _parse_telegram_command(text: str) -> str:
     return command if command in {"status", "approvals", "workers", "evidence", "view", "approve", "reject", "changes", "bug"} else ""
 
 
+TG_COMMAND_CONTEXT_CHOOSER_REQUIRED = "__tg_command_context_chooser_required__"
+CHOOSER_COMMAND_CODES = {
+    "approve": "A",
+    "reject": "J",
+    "changes": "C",
+}
+CHOOSER_COMMANDS_BY_CODE = {value: key for key, value in CHOOSER_COMMAND_CODES.items()}
+
+
+def _session_run_tail(session: dict[str, object]) -> str:
+    run_id = str(session.get("run_id", "") or "")
+    if not run_id:
+        return "unknown"
+    if len(run_id) <= 6:
+        return run_id
+    return f"…{run_id[-6:]}"
+
+
+def _render_command_context_chooser_keyboard(
+    *,
+    command: str,
+    sessions: list[dict[str, object]],
+    intent_id: str,
+) -> dict[str, object]:
+    command_code = CHOOSER_COMMAND_CODES[command]
+    rows = []
+    for session in sessions:
+        label = " · ".join(
+            [
+                str(session.get("project_key", "") or "unknown"),
+                str(session.get("gate", "") or "unknown").upper(),
+                _session_run_tail(session),
+            ]
+        )
+        rows.append(
+            [
+                {
+                    "text": label,
+                    "callback_data": f"v1:Q:{session['session_id']}:{command_code}:{intent_id}",
+                }
+            ]
+        )
+    return {"inline_keyboard": rows}
+
+
+def _attach_command_chooser_intent(
+    *,
+    store: TelegramReviewSessionStore,
+    sessions: list[dict[str, object]],
+    intent_id: str,
+    command: str,
+    raw_text: str,
+    chat_id: object,
+) -> None:
+    for session in sessions:
+        intents = session.get("chooser_intents", {})
+        if not isinstance(intents, dict):
+            intents = {}
+        intents = dict(list(intents.items())[-4:])
+        intents[intent_id] = {
+            "command": command,
+            "raw_text": raw_text,
+            "chat_id": str(chat_id),
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        session["chooser_intents"] = intents
+        store.save(str(session["session_id"]), session)
+
+
+def _send_command_context_chooser(
+    *,
+    token: str,
+    chat_id: object,
+    workspace: Path,
+    command: str,
+    raw_text: str,
+    user_id: str,
+    project_key: str,
+) -> dict[str, object]:
+    store = TelegramReviewSessionStore(workspace)
+    live_sessions = store.list_live_for_chat(int(chat_id))
+    if not live_sessions:
+        _send_masked_telegram_message(token=token, chat_id=chat_id, text="No pending approval gate.")
+        return {"status": "processed", "command": command}
+    if len(live_sessions) == 1:
+        return _process_telegram_command(
+            command,
+            token=token,
+            chat_id=chat_id,
+            workspace=workspace,
+            project_key=project_key,
+            raw_text=raw_text,
+            user_id=user_id,
+            context_session=live_sessions[0],
+        )
+
+    intent_id = uuid4().hex[:6]
+    _attach_command_chooser_intent(
+        store=store,
+        sessions=live_sessions,
+        intent_id=intent_id,
+        command=command,
+        raw_text=raw_text,
+        chat_id=chat_id,
+    )
+    _telegram_request(
+        token,
+        "sendMessage",
+        {
+            "chat_id": str(chat_id),
+            "text": "Choose the approval context for this command:",
+            "reply_markup": _render_command_context_chooser_keyboard(
+                command=command,
+                sessions=live_sessions,
+                intent_id=intent_id,
+            ),
+        },
+    )
+    return {"status": "processed", "command": command}
+
+
 def _resolve_tg_command_session(
     *,
     command: str,
@@ -609,12 +730,9 @@ def _resolve_tg_command_session(
     if len(live_sessions) == 1:
         return live_sessions[0], ""
     if len(live_sessions) > 1 and mutating:
-        return None, (
-            "Multiple live approval cards are active in this chat. "
-            "Reply to the approval card you want to use, then send the command again."
-        )
-    if mutating and not project_key:
-        return None, "Reply to an approval card before using approval commands."
+        return None, TG_COMMAND_CONTEXT_CHOOSER_REQUIRED
+    if mutating:
+        return None, "No pending approval gate."
     return None, ""
 
 
@@ -937,6 +1055,17 @@ def _process_telegram_command(
                 text="Usage: /gt changes <note>"
             )
             return {"status": "processed", "command": command}
+
+        if context_error_text == TG_COMMAND_CONTEXT_CHOOSER_REQUIRED:
+            return _send_command_context_chooser(
+                token=token,
+                chat_id=chat_id,
+                workspace=workspace,
+                command=command,
+                raw_text=raw_text,
+                user_id=user_id,
+                project_key=project_key,
+            )
 
         if context_error_text:
             _send_masked_telegram_message(token=token, chat_id=chat_id, text=context_error_text)
@@ -1427,6 +1556,72 @@ def poll_telegram_approvals(*, workspace: Path, project_key: str = "", once: boo
             return {"processed": processed, "offset": offset}
 
 
+def _send_chooser_stale_message(*, token: str, chat_id: object) -> dict[str, object]:
+    _send_masked_telegram_message(
+        token=token,
+        chat_id=chat_id,
+        text="That approval context is no longer active. Send the command again to choose a live approval.",
+    )
+    return {"status": "ignored", "reason": "session no longer active"}
+
+
+def _process_command_context_chooser_callback(
+    *,
+    token: str,
+    callback_id: str,
+    processed_callbacks: set[str],
+    workspace: Path,
+    session_id: str,
+    command_code: str,
+    intent_id: str,
+    chat_id: int,
+    user_id: str,
+    project_key: str,
+) -> dict[str, object]:
+    store = TelegramReviewSessionStore(workspace)
+    session = store.get(session_id)
+    if (
+        session is None
+        or session.get("decided", False)
+        or int(session.get("message_id", 0) or 0) <= 0
+        or int(session.get("chat_id", 0) or 0) != chat_id
+    ):
+        return _send_chooser_stale_message(token=token, chat_id=chat_id)
+
+    command = CHOOSER_COMMANDS_BY_CODE.get(command_code)
+    if command is None:
+        return {"status": "ignored", "reason": "invalid chooser command"}
+
+    intents = session.get("chooser_intents", {})
+    intent = intents.get(intent_id) if isinstance(intents, dict) else None
+    if not isinstance(intent, dict) or str(intent.get("chat_id", "")) != str(chat_id):
+        return _send_chooser_stale_message(token=token, chat_id=chat_id)
+
+    raw_text = str(intent.get("raw_text", "") or f"/gt {command}")
+    if command != str(intent.get("command", "") or command):
+        return {"status": "ignored", "reason": "chooser command mismatch"}
+
+    remaining_intents = dict(intents)
+    remaining_intents.pop(intent_id, None)
+    session["chooser_intents"] = remaining_intents
+    store.save(session_id, session)
+
+    result = _process_telegram_command(
+        command,
+        token=token,
+        chat_id=chat_id,
+        workspace=workspace,
+        project_key=project_key,
+        raw_text=raw_text,
+        user_id=user_id,
+        context_session=session,
+    )
+    if result.get("status") == "processed":
+        processed_callbacks.add(callback_id)
+        return {"status": "processed", "callback_id": callback_id}
+    return result
+
+
 def process_telegram_update(
     update: dict[str, object],
     *,
@@ -1556,15 +1751,30 @@ def process_telegram_update(
         arg = parts[3] if len(parts) > 3 else ""
 
         store = TelegramReviewSessionStore(workspace)
+        chat_id = int(callback.get("message", {}).get("chat", {}).get("id", 0))
+        message_id = int(callback.get("message", {}).get("message_id", 0))
+
+        if action == "Q":
+            intent_id = parts[4] if len(parts) > 4 else ""
+            return _process_command_context_chooser_callback(
+                token=token,
+                callback_id=callback_id,
+                processed_callbacks=processed_callbacks,
+                workspace=workspace,
+                session_id=session_id,
+                command_code=arg,
+                intent_id=intent_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                project_key=project_key,
+            )
+
         session = store.get(session_id)
         if not session:
             return {"status": "ignored", "reason": "session expired or not found"}
 
         if session.get("decided", False):
             return {"status": "ignored", "reason": "already decided"}
-
-        chat_id = int(callback.get("message", {}).get("chat", {}).get("id", 0))
-        message_id = int(callback.get("message", {}).get("message_id", 0))
 
         if action == "A":
             review_mode = "step_by_step" if _session_was_reviewed(session) else "quick"
