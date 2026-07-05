@@ -27,6 +27,7 @@ def test_build_project_config_round_trips_through_parser(tmp_path):
         "qa": "fake",
     }
     assert parsed["repos"]["app"] == "/home/dev/myapp"
+    assert "reviewer_profiles" not in parsed
 
 
 def test_parse_simple_yaml_decodes_json_style_quoted_scalars(tmp_path):
@@ -58,6 +59,16 @@ def test_build_project_config_defaults_repo_to_cwd_placeholder():
     assert "repos:" in text
     assert "app:" in text
     assert "app:\n" not in text  # never emit a dangling empty key
+
+
+def test_build_project_config_documents_optional_reviewer_profile_opt_in():
+    text = build_project_config(key="GTO", name="GoodTeam")
+    active_lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+
+    assert "# Optional reviewer profile opt-in." in text
+    assert "# reviewer_profiles:" in text
+    assert "#     - correctness-security" in text
+    assert not any(line.startswith("reviewer_profiles:") for line in active_lines)
 
 
 def test_write_project_config_creates_local_yaml_and_refuses_overwrite(tmp_path):
