@@ -20,11 +20,12 @@ from goodteam_os.telegram import (
 def write_project_state(
     tmp_path,
     *,
+    project_key: str = "CONTENTOPS",
     run_id: str = "run-1",
     next_node: str = "await_prd_approval",
     approvals: dict[str, ApprovalDecision] | None = None,
 ):
-    state = create_initial_state(run_id, "CONTENTOPS", "Build AI Content Studio")
+    state = create_initial_state(run_id, project_key, "Build AI Content Studio")
     state.next_node = next_node
     if approvals:
         state.approvals.update(approvals)
@@ -52,8 +53,15 @@ def write_project_config(tmp_path, project_root: Path) -> Path:
     return config_path
 
 
-def telegram_text_update(text: str, *, user_id: int = 111, chat_id: int = 12345, message_id: int = 10):
-    return {
+def telegram_text_update(
+    text: str,
+    *,
+    user_id: int = 111,
+    chat_id: int = 12345,
+    message_id: int = 10,
+    reply_to_message_id: int | None = None,
+):
+    message = {
         "message": {
             "message_id": message_id,
             "from": {"id": user_id},
@@ -61,6 +69,9 @@ def telegram_text_update(text: str, *, user_id: int = 111, chat_id: int = 12345,
             "text": text,
         }
     }
+    if reply_to_message_id is not None:
+        message["message"]["reply_to_message"] = {"message_id": reply_to_message_id}
+    return message
 
 
 def test_telegram_config_reads_only_env_metadata(monkeypatch):
@@ -991,12 +1002,53 @@ def _write_prd_artifact(tmp_path: Path, content: str = "# PRD\n\nThis is the PRD
     return prd_file
 
 
-def _write_state_with_artifact(tmp_path, artifact_path: Path):
+def _write_state_with_artifact(
+    tmp_path,
+    artifact_path: Path,
+    *,
+    project_key: str = "CONTENTOPS",
+    gate: str = "prd",
+    run_id: str = "run-1",
+):
     """Write project state with a prd artifact pointing to artifact_path."""
-    state = write_project_state(tmp_path)
-    state.artifacts["prd"] = str(artifact_path)
+    state = write_project_state(
+        tmp_path,
+        project_key=project_key,
+        run_id=run_id,
+        next_node=f"await_{gate}_approval",
+    )
+    state.artifacts[gate] = str(artifact_path)
     StateStore(tmp_path).write_project_current(state)
     return state
+
+
+def _save_live_tg_session(
+    tmp_path,
+    session_id: str,
+    *,
+    project_key: str = "CONTENTOPS",
+    run_id: str = "run-1",
+    gate: str = "prd",
+    chat_id: int = 12345,
+    message_id: int = 9999,
+):
+    store = telegram.TelegramReviewSessionStore(tmp_path)
+    store.save(
+        session_id,
+        {
+            "session_id": session_id,
+            "run_id": run_id,
+            "project_key": project_key,
+            "gate": gate,
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "cursor": 0,
+            "items": [],
+            "decided": False,
+            "created_at": datetime.now(UTC).isoformat(),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        },
+    )
 
 
 def test_gt_view_sends_artifact_content(tmp_path, monkeypatch):
@@ -1025,6 +1077,49 @@ def test_gt_view_sends_artifact_content(tmp_path, monkeypatch):
     text = calls[0]["params"]["text"]
     assert text.startswith("📄 prd:\n\n")
     assert "PRD content" in text
+
+
+def test_gt_view_reply_to_card_uses_replied_session_context(tmp_path, monkeypatch):
+    calls = []
+    default_file = _write_prd_artifact(tmp_path, "# PRD\n\nDefault project content.")
+    _write_state_with_artifact(tmp_path, default_file)
+    other_file = _write_prd_artifact(tmp_path / "other", "# RFC\n\nReply-card project content.")
+    _write_state_with_artifact(
+        tmp_path,
+        other_file,
+        project_key="OTHER",
+        run_id="run-other",
+        gate="rfc",
+    )
+    _save_live_tg_session(
+        tmp_path,
+        "replyctx",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="rfc",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt view", reply_to_message_id=9001),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "view"}
+    text = calls[0]["params"]["text"]
+    assert text.startswith("📄 rfc:\n\n")
+    assert "Reply-card project content" in text
+    assert "Default project content" not in text
 
 
 def test_gt_view_no_pending_gate(tmp_path, monkeypatch):
@@ -1214,6 +1309,246 @@ def test_gt_approve_edits_live_card_if_session_exists(tmp_path, monkeypatch):
     assert result == {"status": "processed", "command": "approve"}
     methods = [c["method"] for c in calls]
     assert "editMessageText" in methods
+
+
+def test_gt_approve_reply_to_card_uses_exact_replied_session(tmp_path, monkeypatch):
+    calls = []
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "default-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "reply-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt approve", reply_to_message_id=9001),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "approve"}
+    assert decisions[0]["project_key"] == "OTHER"
+    assert decisions[0]["approval"] == "staging"
+    assert decisions[0]["review_session_id"] == "reply-card"
+    edited = [call for call in calls if call["method"] == "editMessageText"]
+    assert edited[0]["params"]["message_id"] == 9001
+
+
+@pytest.mark.parametrize(
+    ("command_text", "expected_decision", "expected_mode"),
+    [
+        ("/gt changes needs more detail", "changes_requested", "request_changes_with_notes"),
+        ("/gt reject security concern", "rejected", "reject_confirmed"),
+    ],
+)
+def test_gt_mutating_note_commands_reply_to_card_use_exact_session(
+    tmp_path,
+    monkeypatch,
+    command_text,
+    expected_decision,
+    expected_mode,
+):
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(
+        tmp_path,
+        "reply-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    result = process_telegram_update(
+        telegram_text_update(command_text, reply_to_message_id=9001),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": command_text.split()[1]}
+    assert decisions[0]["project_key"] == "OTHER"
+    assert decisions[0]["approval"] == "staging"
+    assert decisions[0]["decision"] == expected_decision
+    assert decisions[0]["review_mode"] == expected_mode
+    assert decisions[0]["review_session_id"] == "reply-card"
+
+
+def test_gt_approve_reply_to_card_does_not_cross_chats(tmp_path, monkeypatch):
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "same-chat-card", chat_id=12345, message_id=777)
+    _save_live_tg_session(
+        tmp_path,
+        "other-chat-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        chat_id=54321,
+        message_id=777,
+    )
+
+    def fake_request(token, method, params):
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    process_telegram_update(
+        telegram_text_update("/gt approve", chat_id=12345, reply_to_message_id=777),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="OTHER",
+    )
+
+    assert decisions[0]["project_key"] == "CONTENTOPS"
+    assert decisions[0]["review_session_id"] == "same-chat-card"
+
+
+def test_gt_approve_bare_command_with_one_live_session_uses_that_session(tmp_path, monkeypatch):
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(
+        tmp_path,
+        "only-live-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "approve"}
+    assert decisions[0]["project_key"] == "OTHER"
+    assert decisions[0]["approval"] == "staging"
+    assert decisions[0]["review_session_id"] == "only-live-card"
+
+
+def test_gt_approve_bare_command_with_multiple_live_sessions_does_not_guess(tmp_path, monkeypatch):
+    calls = []
+    decisions = []
+    write_project_state(tmp_path)
+    write_project_state(tmp_path, project_key="OTHER", run_id="run-other", next_node="await_staging_approval")
+    _save_live_tg_session(tmp_path, "first-card", message_id=9000)
+    _save_live_tg_session(
+        tmp_path,
+        "second-card",
+        project_key="OTHER",
+        run_id="run-other",
+        gate="staging",
+        message_id=9001,
+    )
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert result == {"status": "processed", "command": "approve"}
+    assert decisions == []
+    assert "Multiple live approval cards" in calls[0]["params"]["text"]
+
+
+def test_gt_approve_without_live_context_or_default_project_sends_clear_message(tmp_path, monkeypatch):
+    calls = []
+    decisions = []
+
+    def fake_request(token, method, params):
+        calls.append({"method": method, "params": params})
+        return {"ok": True}
+
+    def fake_decide(**kwargs):
+        decisions.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
+    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
+
+    result = process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+    )
+
+    assert result == {"status": "processed", "command": "approve"}
+    assert decisions == []
+    assert "Reply to an approval card" in calls[0]["params"]["text"]
 
 
 # ---------------------------------------------------------------------------

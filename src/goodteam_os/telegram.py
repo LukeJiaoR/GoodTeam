@@ -584,6 +584,40 @@ def _parse_telegram_command(text: str) -> str:
     return command if command in {"status", "approvals", "workers", "evidence", "view", "approve", "reject", "changes", "bug"} else ""
 
 
+def _resolve_tg_command_session(
+    *,
+    command: str,
+    workspace: Path,
+    chat_id: int,
+    reply_to_message_id: int = 0,
+    project_key: str = "",
+) -> tuple[dict[str, object] | None, str]:
+    if command not in {"view", "approve", "reject", "changes"}:
+        return None, ""
+
+    mutating = command in {"approve", "reject", "changes"}
+    store = TelegramReviewSessionStore(workspace)
+    if reply_to_message_id:
+        session = store.find_live_by_card_message(chat_id, reply_to_message_id)
+        if session is not None:
+            return session, ""
+        if mutating:
+            return None, "That reply is not attached to an active approval card. Reply to an approval card and try again."
+        return None, ""
+
+    live_sessions = store.list_live_for_chat(chat_id)
+    if len(live_sessions) == 1:
+        return live_sessions[0], ""
+    if len(live_sessions) > 1 and mutating:
+        return None, (
+            "Multiple live approval cards are active in this chat. "
+            "Reply to the approval card you want to use, then send the command again."
+        )
+    if mutating and not project_key:
+        return None, "Reply to an approval card before using approval commands."
+    return None, ""
+
+
 def _send_masked_telegram_message(*, token: str, chat_id: object, text: str) -> None:
     _telegram_request(
         token,
@@ -791,7 +825,12 @@ def _process_telegram_command(
     project_key: str,
     raw_text: str = "",
     user_id: str = "",
+    context_session: dict[str, object] | None = None,
+    context_error_text: str = "",
 ) -> dict[str, object]:
+    if context_session is not None:
+        project_key = str(context_session.get("project_key", project_key) or project_key)
+
     if command == "approvals":
         state = _read_command_state(workspace, project_key)
         if state is None:
@@ -818,8 +857,11 @@ def _process_telegram_command(
 
         state = _read_command_state(workspace, project_key)
         gate_arg = _extract_command_arg(raw_text, "view")
+        session_gate = str(context_session.get("gate", "") or "") if context_session else ""
 
-        if gate_arg:
+        if session_gate:
+            gate = session_gate
+        elif gate_arg:
             # Verify it's a real key in state.approvals
             approvals = getattr(state, "approvals", {}) if state is not None else {}
             if gate_arg not in approvals:
@@ -896,8 +938,13 @@ def _process_telegram_command(
             )
             return {"status": "processed", "command": command}
 
+        if context_error_text:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text=context_error_text)
+            return {"status": "processed", "command": command}
+
         state = _read_command_state(workspace, project_key)
-        gate = current_approval_gate(state) if state is not None else ""
+        session_gate = str(context_session.get("gate", "") or "") if context_session else ""
+        gate = session_gate or (current_approval_gate(state) if state is not None else "")
         if not gate:
             _send_masked_telegram_message(
                 token=token, chat_id=chat_id,
@@ -916,25 +963,34 @@ def _process_telegram_command(
             "changes": "request_changes_with_notes",
         }
         decision = decision_map[command]
-        review_mode = review_mode_map[command]
+        if context_session is not None and command == "approve" and _session_was_reviewed(context_session):
+            review_mode = "step_by_step"
+        else:
+            review_mode = review_mode_map[command]
+        review_session_id = str(context_session.get("session_id", "") or "") if context_session else ""
+        review_items = _session_review_items(context_session) if context_session is not None and review_mode != "quick" else []
+        card_message_id = context_session.get("message_id", "") if context_session is not None else ""
 
         decide_approval(
             workspace=workspace,
             project_key=project_key,
             approval=gate,
             decision=decision,
-            decision_origin="telegram",
-            actor_ref=f"telegram:user:{user_id}",
-            review_mode=review_mode,
-            review_session_id="",
-            client_context={"chat_id": str(chat_id), "user_id": user_id},
+            **_telegram_decision_audit_kwargs(
+                user_id=user_id,
+                chat_id=chat_id,
+                message_id=card_message_id,
+                review_mode=review_mode,
+                review_session_id=review_session_id,
+                review_items=review_items,
+            ),
             note=note,
         )
 
         # Try to find and mark the live session, then edit the card
         run_id = str(getattr(state, "run_id", "") if state is not None else "")
         store = TelegramReviewSessionStore(workspace)
-        live_session = store.find_live_for_gate(project_key, run_id, gate)
+        live_session = context_session or store.find_live_for_gate(project_key, run_id, gate)
         if live_session:
             live_session["decided"] = True
             store.save(str(live_session["session_id"]), live_session)
@@ -1453,6 +1509,14 @@ def process_telegram_update(
             if allowed_users and user_id not in allowed_users:
                 return {"status": "ignored", "reason": "unauthorized user"}
             chat_id = int(message.get("chat", {}).get("id", 0))
+            reply_to_message_id = int(dict(message.get("reply_to_message", {}) or {}).get("message_id", 0) or 0)
+            context_session, context_error_text = _resolve_tg_command_session(
+                command=command,
+                workspace=workspace,
+                chat_id=chat_id,
+                reply_to_message_id=reply_to_message_id,
+                project_key=project_key,
+            )
             return _process_telegram_command(
                 command,
                 token=token,
@@ -1461,6 +1525,8 @@ def process_telegram_update(
                 project_key=project_key,
                 raw_text=msg_text,
                 user_id=user_id,
+                context_session=context_session,
+                context_error_text=context_error_text,
             )
 
         return {"status": "ignored", "reason": "not a reply message"}
