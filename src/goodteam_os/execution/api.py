@@ -102,6 +102,12 @@ class ExecutionAPI:
             clock=self.clock,
         ).finalize_provenance(execution_id)
 
+    def get_evidence(self, execution_id: str) -> dict[str, Any]:
+        return ExecutionEvidenceService(
+            self.project_root,
+            clock=self.clock,
+        ).get_evidence(execution_id)
+
     def replay(self, execution_id: str) -> dict[str, Any]:
         run = self.ledger_store.read_run(execution_id)
         if run is None:
