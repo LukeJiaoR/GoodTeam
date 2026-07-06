@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -101,9 +102,12 @@ class CIStatusService:
             "ref": ref,
             "state": summary["state"],
             "summary": summary,
+            "observation_key": _observation_key(repo=repo, ref=ref, summary=summary, reason=reason),
         }
         if reason is not None:
             payload["reason"] = reason
+        if _has_observation(self.ledger, execution_id, payload["observation_key"]):
+            return
         self.ledger.append_event(
             _ledger_event(
                 self.ledger,
@@ -155,3 +159,32 @@ def _ledger_event(
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _observation_key(
+    *,
+    repo: str,
+    ref: str,
+    summary: dict[str, Any],
+    reason: str | None,
+) -> str:
+    payload = {
+        "repo": repo,
+        "ref": ref,
+        "state": summary.get("state"),
+        "total": summary.get("total"),
+        "passed": summary.get("passed"),
+        "failed": summary.get("failed"),
+        "pending": summary.get("pending"),
+        "raw": summary.get("raw"),
+        "reason": reason,
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _has_observation(ledger: ExecutionLedger, execution_id: str, observation_key: str) -> bool:
+    return any(
+        event.payload.get("transition") == "ci_observed"
+        and event.payload.get("observation_key") == observation_key
+        for event in ledger.read_events(execution_id)
+    )

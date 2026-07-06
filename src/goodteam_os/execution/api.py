@@ -77,6 +77,24 @@ class ExecutionAPI:
         ).observe_execution_checks(execution_id)
         return self._status_payload(execution_id, ci=summary)
 
+    def sync_reviews(self, execution_id: str) -> dict[str, Any]:
+        self._require_github_client()
+        result = PullRequestBindingService(
+            self.project_root,
+            self.github_client,
+            clock=self.clock,
+        ).sync_reviews_for_execution(execution_id)
+        return self._status_payload(execution_id, reviews=result)
+
+    def sync_merge(self, execution_id: str) -> dict[str, Any]:
+        self._require_github_client()
+        result = PullRequestBindingService(
+            self.project_root,
+            self.github_client,
+            clock=self.clock,
+        ).sync_merge_for_execution(execution_id)
+        return self._status_payload(execution_id, merge=result)
+
     def replay(self, execution_id: str) -> dict[str, Any]:
         run = self.ledger_store.read_run(execution_id)
         if run is None:
@@ -98,6 +116,8 @@ class ExecutionAPI:
         *,
         binding: dict[str, Any] | None = None,
         ci: dict[str, Any] | None = None,
+        reviews: dict[str, Any] | None = None,
+        merge: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         replay = self.ledger_store.replay(execution_id)
         run = replay["run"]
@@ -116,6 +136,10 @@ class ExecutionAPI:
             payload["binding"] = self._json_ready(stored_binding)
         if ci is not None:
             payload["ci"] = self._json_ready(ci)
+        if reviews is not None:
+            payload["reviews"] = self._json_ready(reviews)
+        if merge is not None:
+            payload["merge"] = self._json_ready(merge)
         return payload
 
     def _worker_job(self, worker_job_id: str) -> dict[str, Any] | None:

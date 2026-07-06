@@ -87,6 +87,59 @@ class PullRequestBindingService:
     def read_pr_binding(self, execution_id: str) -> GitHubBinding | None:
         return self.binding_store.read_binding(execution_id)
 
+    def sync_reviews_for_execution(self, execution_id: str) -> dict[str, int]:
+        run, binding = self._run_and_pr_binding(execution_id)
+        reviews = self.github_client.fetch_pr_reviews(binding.repo, binding.pr_number or 0)
+        comments = self.github_client.fetch_pr_comments(binding.repo, binding.pr_number or 0)
+        reviews_recorded = 0
+        comments_recorded = 0
+
+        for review in reviews:
+            if self._append_review_event(run, binding, review, source="review"):
+                reviews_recorded += 1
+        for comment in comments:
+            if self._append_review_event(run, binding, comment, source="comment"):
+                comments_recorded += 1
+        return {"reviews_recorded": reviews_recorded, "comments_recorded": comments_recorded}
+
+    def sync_merge_for_execution(self, execution_id: str) -> dict[str, bool]:
+        run, binding = self._run_and_pr_binding(execution_id)
+        pr = self.github_client.fetch_pr(binding.repo, binding.pr_number or 0)
+        if not bool(pr.get("merged")):
+            return {"merged": False, "recorded": False}
+
+        merge_key = _merge_key(pr)
+        if self._has_event(run.execution_id, transition="merge_completed", key=merge_key):
+            return {"merged": True, "recorded": False}
+
+        payload = {
+            "transition": "merge_completed",
+            "repo": binding.repo,
+            "issue_number": binding.issue_number,
+            "pr_number": binding.pr_number,
+            "branch_name": binding.branch_name,
+            "execution_id": run.execution_id,
+            "worker_job_id": run.worker_job_id,
+            "merged_at": _string_or_empty(pr.get("merged_at")),
+            "merge_commit_sha": _string_or_empty(pr.get("merge_commit_sha")),
+            "merged_by": _actor_login(pr.get("merged_by")),
+            "github_id": merge_key,
+        }
+        self.ledger.create_run(
+            replace(run, pr_number=binding.pr_number, branch_name=binding.branch_name)
+        )
+        self.ledger.append_event(
+            _ledger_event(
+                self.ledger,
+                run,
+                event_type=LedgerEventType.COMPLETED,
+                actor=ExecutionActor.GITHUB,
+                payload=payload,
+                created_at=self._clock(),
+            )
+        )
+        return {"merged": True, "recorded": True}
+
     def _completed_run(self, execution_id: str) -> ExecutionRun:
         run = self.ledger.read_run(execution_id)
         if run is None:
@@ -215,6 +268,51 @@ class PullRequestBindingService:
             )
         )
 
+    def _run_and_pr_binding(self, execution_id: str) -> tuple[ExecutionRun, GitHubBinding]:
+        run = self.ledger.read_run(execution_id)
+        binding = self.read_pr_binding(execution_id)
+        if run is None:
+            raise ValueError(f"Execution run not found: {execution_id}")
+        if binding is None or binding.pr_number is None:
+            raise ValueError(f"Execution PR binding not found: {execution_id}")
+        return run, binding
+
+    def _append_review_event(
+        self,
+        run: ExecutionRun,
+        binding: GitHubBinding,
+        item: dict[str, Any],
+        *,
+        source: str,
+    ) -> bool:
+        github_id = f"{source}:{_string_or_empty(item.get('id'))}"
+        if github_id == f"{source}:" or self._has_event(
+            run.execution_id,
+            transition=_review_transition(source),
+            key=github_id,
+        ):
+            return False
+
+        payload = _review_payload(run, binding, item, source=source, github_id=github_id)
+        self.ledger.append_event(
+            _ledger_event(
+                self.ledger,
+                run,
+                event_type=LedgerEventType.REVIEW_RECORDED,
+                actor=ExecutionActor.GITHUB,
+                payload=payload,
+                created_at=self._clock(),
+            )
+        )
+        return True
+
+    def _has_event(self, execution_id: str, *, transition: str, key: str) -> bool:
+        return any(
+            event.payload.get("transition") == transition
+            and event.payload.get("github_id") == key
+            for event in self.ledger.read_events(execution_id)
+        )
+
 
 def _ledger_event(
     ledger: ExecutionLedger,
@@ -257,3 +355,61 @@ def _commit_sha(payload: dict[str, Any]) -> str | None:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _review_payload(
+    run: ExecutionRun,
+    binding: GitHubBinding,
+    item: dict[str, Any],
+    *,
+    source: str,
+    github_id: str,
+) -> dict[str, Any]:
+    return {
+        "transition": _review_transition(source),
+        "repo": binding.repo,
+        "issue_number": binding.issue_number,
+        "pr_number": binding.pr_number,
+        "branch_name": binding.branch_name,
+        "execution_id": run.execution_id,
+        "worker_job_id": run.worker_job_id,
+        "github_id": github_id,
+        "review_state": _string_or_empty(item.get("state")),
+        "actor_login": _actor_login(item.get("user")),
+        "submitted_at": _string_or_empty(item.get("submitted_at") or item.get("created_at")),
+        "body_excerpt": _body_excerpt(item.get("body")),
+    }
+
+
+def _review_transition(source: str) -> str:
+    if source == "comment":
+        return "pr_comment_recorded"
+    return "review_recorded"
+
+
+def _merge_key(pr: dict[str, Any]) -> str:
+    sha = _string_or_empty(pr.get("merge_commit_sha"))
+    merged_at = _string_or_empty(pr.get("merged_at"))
+    number = _string_or_empty(pr.get("number"))
+    return f"merge:{number}:{sha}:{merged_at}"
+
+
+def _actor_login(value: object) -> str:
+    if isinstance(value, dict):
+        login = value.get("login")
+        if isinstance(login, str):
+            return login.strip()
+    return ""
+
+
+def _body_excerpt(value: object, limit: int = 240) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = " ".join(value.split())
+    return normalized[:limit]
+
+
+def _string_or_empty(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
