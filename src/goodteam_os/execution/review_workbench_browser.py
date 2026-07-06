@@ -105,18 +105,87 @@ def _diff_section(review: dict[str, Any]) -> str:
         body = _empty_state("No changed files available from persisted diff artifact.")
         body += _details([("Reason", diff.get("reason") or "diff_artifact_missing")])
         return _section("Changed files", body)
-    rows = [
-        "<li>"
-        f"<code>{escape(_text(item.get('path')))}</code>"
-        f"<span>{escape(_text(item.get('status')))}</span>"
-        f"<span>+{escape(_text(item.get('additions', 0)))}"
-        f" / -{escape(_text(item.get('deletions', 0)))}</span>"
-        "</li>"
-        for item in _dict_items(diff.get("changed_files"))
-    ]
+    files = _dict_items(diff.get("changed_files"))
     body = _details([("Diff summary", diff.get("summary") or "")])
-    body += f'<ul class="file-list">{"".join(rows) or _list_empty("No files.")}</ul>'
+    body += _diff_file_nav(files)
+    body += _diff_file_sections(files, _text(diff.get("patch_state") or "available"))
     return _section("Changed files", body)
+
+
+def _diff_file_nav(files: list[dict[str, Any]]) -> str:
+    rows = []
+    for item in files:
+        rows.append(
+            "<li>"
+            f"<a href=\"#{escape(_text(item.get('anchor')))}\"><code>{escape(_text(item.get('path')))}</code></a>"
+            f"<span>{escape(_text(item.get('status')))}</span>"
+            f"<span>+{escape(_text(item.get('additions', 0)))}"
+            f" / -{escape(_text(item.get('deletions', 0)))}</span>"
+            "</li>"
+        )
+    return (
+        '<nav class="diff-file-nav" aria-label="Changed files">'
+        f'<ul class="diff-file-nav-list">{"".join(rows) or _list_empty("No files.")}</ul>'
+        "</nav>"
+    )
+
+
+def _diff_file_sections(files: list[dict[str, Any]], patch_state: str) -> str:
+    if not files:
+        return _empty_state("No files.")
+    return "".join(_diff_file_section(file, patch_state) for file in files)
+
+
+def _diff_file_section(file: dict[str, Any], patch_state: str) -> str:
+    hunks = _dict_items(file.get("hunks"))
+    body = (
+        f'<article class="diff-file-section" id="{escape(_text(file.get("anchor")))}">'
+        "<header>"
+        f"<h3><code>{escape(_text(file.get('path')))}</code></h3>"
+        "<p>"
+        f"{escape(_text(file.get('status')))} "
+        f"+{escape(_text(file.get('additions', 0)))} "
+        f"-{escape(_text(file.get('deletions', 0)))}"
+        "</p>"
+        "</header>"
+    )
+    if not hunks:
+        body += _empty_state(f"No parsed patch hunks available ({patch_state}).")
+    else:
+        body += "".join(_diff_hunk(hunk) for hunk in hunks)
+    return body + "</article>"
+
+
+def _diff_hunk(hunk: dict[str, Any]) -> str:
+    rows = [_diff_line_row(line) for line in _dict_items(hunk.get("lines"))]
+    return (
+        '<div class="diff-hunk">'
+        f"<h4><code>{escape(_text(hunk.get('header')))}</code></h4>"
+        '<table class="diff-hunk-table"><tbody>'
+        f'{"".join(rows) or _diff_empty_row()}'
+        "</tbody></table>"
+        "</div>"
+    )
+
+
+def _diff_line_row(line: dict[str, Any]) -> str:
+    kind = _diff_line_kind(line.get("kind"))
+    return (
+        f'<tr class="diff-line diff-line-{kind}">'
+        f'<td class="diff-line-number">{escape(_text(line.get("old_line")))}</td>'
+        f'<td class="diff-line-number">{escape(_text(line.get("new_line")))}</td>'
+        f'<td class="diff-line-code"><code>{escape(_text(line.get("text")))}</code></td>'
+        "</tr>"
+    )
+
+
+def _diff_empty_row() -> str:
+    return '<tr class="diff-line diff-line-metadata"><td></td><td></td><td>No diff lines.</td></tr>'
+
+
+def _diff_line_kind(value: Any) -> str:
+    kind = _text(value)
+    return kind if kind in {"add", "delete", "context", "metadata"} else "metadata"
 
 
 def _evidence_section(review: dict[str, Any]) -> str:
@@ -380,8 +449,24 @@ h2 { margin: 0 0 14px; font-size: 16px; letter-spacing: 0; }
 dt { color: #5d6b82; font-size: 12px; font-weight: 800; text-transform: uppercase; }
 dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-weight: 650; }
 ul, ol { margin: 0; padding-left: 18px; }
-.file-list, .warning-list, .timeline, .memory-list { display: grid; gap: 8px; }
-.file-list li, .timeline li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
+.diff-file-nav { margin: 14px 0 16px; }
+.diff-file-nav-list, .warning-list, .timeline, .memory-list { display: grid; gap: 8px; }
+.diff-file-nav-list li, .timeline li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
+.diff-file-nav-list a { color: #151922; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.diff-file-section { border-top: 1px solid #dce2ec; padding-top: 16px; margin-top: 16px; }
+.diff-file-section header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; margin-bottom: 12px; }
+.diff-file-section h3 { margin: 0; font-size: 15px; letter-spacing: 0; overflow-wrap: anywhere; }
+.diff-file-section p { margin: 0; color: #5d6b82; font-weight: 800; }
+.diff-hunk { border: 1px solid #dce2ec; border-radius: 6px; overflow: hidden; margin-top: 10px; }
+.diff-hunk h4 { margin: 0; background: #f2f5f9; border-bottom: 1px solid #dce2ec; font-size: 12px; padding: 8px 10px; }
+.diff-hunk-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.diff-line-number { width: 56px; background: #f7f9fc; border-right: 1px solid #dce2ec; color: #5d6b82; font-variant-numeric: tabular-nums; text-align: right; user-select: none; }
+.diff-line td { padding: 3px 8px; vertical-align: top; }
+.diff-line-code code { display: block; overflow-wrap: anywhere; white-space: pre-wrap; }
+.diff-line-add .diff-line-code { background: #e8f6ee; }
+.diff-line-delete .diff-line-code { background: #fdecea; }
+.diff-line-context .diff-line-code { background: #ffffff; }
+.diff-line-metadata .diff-line-code { background: #f7f9fc; color: #5d6b82; }
 .warning-list li { display: grid; gap: 3px; }
 code, time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .empty-state { margin: 0 0 12px; color: #5d6b82; font-weight: 650; }
@@ -395,6 +480,7 @@ code, time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospa
 .action-status[data-state="error"] { color: #a13d2d; }
 .action-status[data-state="success"] { color: #246b45; }
 @media (max-width: 720px) {
-  .details, .file-list li, .timeline li { grid-template-columns: 1fr; }
+  .details, .diff-file-nav-list li, .timeline li, .diff-file-section header { grid-template-columns: 1fr; }
+  .diff-line-number { width: 42px; }
 }
 """
