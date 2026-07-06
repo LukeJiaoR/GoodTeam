@@ -26,11 +26,12 @@ from goodteam_os.execution.review_workbench_surfaces import (
     latest_review_decision,
     matching_decision_event,
     rationale_surface,
-    task_surface,
     warnings_surface,
     worker_job,
     worker_job_id,
+    task_surface,
 )
+from goodteam_os.execution.sandbox import sandbox_surface
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -73,7 +74,7 @@ class ReviewWorkbenchService:
             "reviewer_decision": latest_review_decision(events),
             "status": str(evidence.get("final_status", "")),
             "warnings": warnings_surface(evidence, diff, rationale),
-            "sandbox": _sandbox_surface(),
+            "sandbox": sandbox_surface(self.project_root, execution_id, events),
         }
         return json_ready(workbench)
 
@@ -186,14 +187,6 @@ def _decision_event_id(execution_id: str, event_number: int) -> str:
         f"{execution_id}:{event_number:04d}:"
         f"{LedgerEventType.REVIEW_RECORDED.value}:{REVIEW_DECISION_TRANSITION}"
     )
-
-
-def _sandbox_surface() -> dict[str, str | bool]:
-    return {
-        "available": False,
-        "reason": "sandbox_evidence_not_implemented",
-        "summary": "",
-    }
 
 
 def _normalize_decision(decision: str) -> str:

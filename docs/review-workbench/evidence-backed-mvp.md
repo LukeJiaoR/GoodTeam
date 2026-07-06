@@ -59,7 +59,7 @@ The workbench object exposes:
   incomplete reason
 - `memory_refs` and `memory_provenance_integrity`
 - `reviewer_decision`
-- `sandbox` future hook for #218
+- `sandbox` evidence from #218 ledger events, or `sandbox_evidence_missing`
 - `warnings`
 
 ## Memory Provenance Integrity
@@ -297,7 +297,7 @@ service after export.
 The page displays execution identity, source issue, PR ref, branch, commit, diff
 summary, file navigation, changed-line highlights, CI summary, review
 observation counts, file-level rationale evidence, memory provenance integrity,
-warnings, current decision, a decision form, sandbox empty state, and ledger
+warnings, current decision, a decision form, sandbox evidence, and ledger
 timeline. The GET page and JSON routes are read-only. The only browser write
 path is the explicit local-server decision POST described above.
 
@@ -328,15 +328,22 @@ This MVP does not fake missing artifacts.
   warning `rationale_mapping_partial`
 - Pending, incomplete, or failed executions: `status`, `incomplete_reason`, and
   `warnings` explain the current state
-- Sandbox/action evidence for #218:
+- No sandbox/action evidence:
   `sandbox.available = false` and
-  `sandbox.reason = sandbox_evidence_not_implemented`
+  `sandbox.reason = sandbox_evidence_missing`
+- Sandbox/action evidence exists:
+  `sandbox.available = true`, `sandbox.schema_version = sandbox.v1`, and the
+  surface lists command history, rejected commands, conflict risks, and raw
+  sandbox ledger events
 
 ## Remaining #216 Gaps
 
 This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 
-- Add #218 sandbox/action evidence when that surface exists.
+- Deeper #218 integration remains outside the Review Workbench MVP: mandatory
+  migration of all agent execution paths, typed GitHub/CI broker, stronger
+  filesystem isolation, cleanup/recovery hardening, and optional Docker/VM
+  isolation.
 - Add deeper React dashboard polish around warnings, review decisions, and
   artifact drill-downs.
 - Run the final #216 acceptance audit before closing the issue.

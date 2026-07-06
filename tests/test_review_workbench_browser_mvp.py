@@ -46,7 +46,7 @@ def test_completed_execution_exports_browser_visible_html_and_json(tmp_path):
     assert "tests/test_review_workbench_diff_artifact.py" in html
     assert "Memory provenance</dt><dd>complete</dd>" in html
     assert "Decision</dt><dd>approve by LukeJiaoR</dd>" in html
-    assert "Sandbox</dt><dd>Unavailable - sandbox_evidence_not_implemented</dd>" in html
+    assert "Sandbox</dt><dd>Unavailable - sandbox_evidence_missing</dd>" in html
     assert "diff_artifact_persisted" in html
     assert "review_decision_recorded" in html
 

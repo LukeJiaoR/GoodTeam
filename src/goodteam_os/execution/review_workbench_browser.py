@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from goodteam_os.execution.pr_diff_contract import relative_artifact_path
+from goodteam_os.execution.review_workbench_browser_sandbox import sandbox_section
 from goodteam_os.execution.review_workbench_contract import (
     REVIEW_WORKBENCH_SCHEMA_VERSION,
 )
@@ -63,6 +64,7 @@ def render_review_workbench_html(
     {_decision_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_diff_section(review)}
     {_evidence_section(review)}
+    {sandbox_section(review)}
     {_warnings_section(review)}
     {_timeline_section(review)}
   </main>
@@ -446,7 +448,7 @@ def _decision_label(decision: dict[str, Any]) -> str:
 def _sandbox_label(sandbox: dict[str, Any]) -> str:
     if sandbox.get("available"):
         return _text(sandbox.get("summary") or "available")
-    return f"Unavailable - {sandbox.get('reason', 'sandbox_evidence_not_implemented')}"
+    return f"Unavailable - {sandbox.get('reason', 'sandbox_evidence_missing')}"
 
 
 def _rationale_label(rationale: dict[str, Any]) -> str:
