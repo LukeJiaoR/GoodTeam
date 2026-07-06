@@ -17,9 +17,9 @@ from goodteam_os.execution.review_workbench_contract import (
     stable_hash,
     utc_now,
 )
+from goodteam_os.execution.review_workbench_diff import diff_surface
 from goodteam_os.execution.review_workbench_renderer import render_review_workbench
 from goodteam_os.execution.review_workbench_surfaces import (
-    diff_surface,
     latest_review_decision,
     matching_decision_event,
     rationale_surface,
@@ -45,7 +45,7 @@ class ReviewWorkbenchService:
         events = replay["events"]
         run = replay["run"]
         job = worker_job(self.worker_store, worker_job_id(run, events))
-        diff = diff_surface(events)
+        diff = diff_surface(self.project_root, execution_id, events)
         rationale = rationale_surface(
             task=replay["task"],
             run=run,

@@ -32,27 +32,6 @@ def task_surface(task: Any, evidence: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def diff_surface(events: list[LedgerEvent]) -> dict[str, Any]:
-    artifact = _diff_artifact(events)
-    if artifact is None:
-        return {
-            "available": False,
-            "reason": "diff_artifact_missing",
-            "changed_files": [],
-            "artifact_path": "",
-            "summary": "",
-        }
-    path, payload = artifact
-    changed_files = payload.get("changed_files")
-    return {
-        "available": True,
-        "reason": "",
-        "changed_files": changed_files if isinstance(changed_files, list) else [],
-        "artifact_path": str(path),
-        "summary": path.read_text(encoding="utf-8").strip()[:2000],
-    }
-
-
 def rationale_surface(
     *,
     task: Any,
@@ -221,18 +200,6 @@ def _prompt_snapshots(
             }
         )
     return snapshots
-
-
-def _diff_artifact(events: list[LedgerEvent]) -> tuple[Path, dict[str, Any]] | None:
-    for event in reversed(events):
-        payload = event.payload
-        for key in ("diff_artifact_path", "diff_path"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                path = Path(value).expanduser()
-                if path.is_file():
-                    return path, payload
-    return None
 
 
 def _worker_file(
