@@ -24,6 +24,7 @@ from goodteam_os.dispatch import (
     parse_dispatch_verify_spec,
 )
 from goodteam_os.execution import ExecutionAPI
+from goodteam_os.execution.review_workbench_browser import render_review_workbench_html
 from goodteam_os.graph import (
     accept_refinement,
     advance_approved_workflow,
@@ -4439,17 +4440,33 @@ def build_dashboard_handler(workspace: Path):
 
 
 def handle_execution_get(path: str, query: dict[str, list[str]]) -> tuple[int, dict[str, object]] | None:
-    match = re.fullmatch(r"/api/executions/([^/]+)(?:/ledger)?", path)
+    match = re.fullmatch(r"/api/executions/([^/]+)(?:/(ledger|review-workbench))?", path)
+    if match is None:
+        return None
+    execution_id = match.group(1)
+    surface = match.group(2) or ""
+    try:
+        api = ExecutionAPI(_execution_project_root_from_query(query))
+        if surface == "ledger":
+            return 200, api.ledger(execution_id)
+        if surface == "review-workbench":
+            return 200, api.get_review_workbench(execution_id)
+        return 200, api.replay(execution_id)
+    except ValueError as exc:
+        return _execution_error_response(exc)
+
+
+def handle_review_workbench_page_get(path: str, query: dict[str, list[str]]) -> tuple[int, str] | None:
+    match = re.fullmatch(r"/review-workbench/([^/]+)", path)
     if match is None:
         return None
     execution_id = match.group(1)
     try:
-        api = ExecutionAPI(_execution_project_root_from_query(query))
-        if path.endswith("/ledger"):
-            return 200, api.ledger(execution_id)
-        return 200, api.replay(execution_id)
+        review = ExecutionAPI(_execution_project_root_from_query(query)).get_review_workbench(execution_id)
+        return 200, render_review_workbench_html(review)
     except ValueError as exc:
-        return _execution_error_response(exc)
+        status, payload = _execution_error_response(exc)
+        return status, f"<h1>Review Workbench unavailable</h1><p>{escape(str(payload['error']))}</p>"
 
 
 def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, dict[str, object]] | None:
@@ -8681,6 +8698,11 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             project_key = query.get("project", [""])[0]
             if maybe_send_favicon_response(self, parsed.path):
                 return
+            review_workbench_page = handle_review_workbench_page_get(parsed.path, query)
+            if review_workbench_page is not None:
+                status, body = review_workbench_page
+                self._send_html(status, body)
+                return
             execution_response = handle_execution_get(parsed.path, query)
             if execution_response is not None:
                 status, payload = execution_response
@@ -9233,6 +9255,16 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             body = json.dumps(payload, indent=2).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            _send_cors_headers(self, host=host, port=port)
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+
+        def _send_html(self, status: int, payload: str) -> None:
+            body = payload.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             _send_cors_headers(self, host=host, port=port)
             self.end_headers()

@@ -15,6 +15,28 @@ The textual renderer is available through:
 python -m goodteam_os.execution.review_workbench <execution_id> --project-root <repo>
 ```
 
+The browser-visible MVP is available through static export:
+
+```bash
+goodteam-os execution export-review-workbench \
+  --execution-id <execution_id> \
+  --project-root <repo>
+```
+
+It writes:
+
+```text
+.goodteam/executions/<execution_id>/artifacts/review-workbench.html
+.goodteam/executions/<execution_id>/artifacts/review-workbench.json
+```
+
+When using the local server, the same canonical object is exposed at:
+
+```text
+/api/executions/<execution_id>/review-workbench?project_root=<repo>
+/review-workbench/<execution_id>?project_root=<repo>
+```
+
 ## Evidence Source Contract
 
 `review_workbench.v1` consumes `ExecutionAPI.get_evidence()` directly. It does
@@ -127,6 +149,19 @@ summary and a compact changed-file list with additions and deletions.
 Workbench reads remain read-only. They never fetch GitHub data, write artifacts,
 append ledger events, or repair missing artifact state.
 
+## Browser Rendering
+
+The browser MVP renders `review_workbench.v1` into HTML and writes the same
+object as `review-workbench.json`. HTML embeds the JSON in
+`script#review-workbench-data`, so the page can be opened without a backend
+service after export.
+
+The page displays execution identity, source issue, PR ref, branch, commit, diff
+summary, changed files, CI summary, review observation counts, memory provenance
+integrity, warnings, current decision, sandbox empty state, and ledger timeline.
+The browser page is read-only: it does not append ledger events, write memory,
+call GitHub, or submit review decisions.
+
 ## Empty States
 
 This MVP does not fake missing artifacts.
@@ -145,11 +180,12 @@ This MVP does not fake missing artifacts.
 
 This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 
-- Add a browser UI that consumes `review_workbench.v1`.
 - Add file-level navigation and changed logic highlighting for diff review.
 - Add richer rationale mapping from individual changed files to prompts and
   instructions.
+- Add guarded browser decision actions that call `record_review_decision()`.
 - Add #218 sandbox/action evidence when that surface exists.
-- Add UI polish around warnings, review decisions, and artifact drill-downs.
+- Add deeper React dashboard polish around warnings, review decisions, and
+  artifact drill-downs.
 
 Use `Refs #216`, not `Closes #216`.
