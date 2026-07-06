@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.api import ExecutionAPI
@@ -66,6 +67,56 @@ def test_persisting_diff_artifact_records_ledger_event_once(tmp_path):
     assert events[0].payload["changed_file_count"] == 2
     assert events[0].payload["artifact_path"].endswith("/pr-diff.json")
     assert events[0].payload["patch_path"].endswith("/pr-diff.patch")
+
+
+def test_changed_diff_source_does_not_overwrite_artifact_or_ledger(tmp_path):
+    api, execution_id = _full_lifecycle(tmp_path)
+    first = api.persist_pr_diff(execution_id)
+    artifact_path = Path(first["artifact_path"])
+    patch_path = Path(first["patch_path"])
+    original_artifact = artifact_path.read_text(encoding="utf-8")
+    original_patch = patch_path.read_text(encoding="utf-8")
+    client = api.github_client
+    assert isinstance(client, FakeGitHubClient)
+    client.diff_payload = {
+        "base_ref": "main",
+        "head_sha": "new-head-sha",
+        "patch": "diff --git a/src/new.py b/src/new.py\n+changed\n",
+        "changed_files": [
+            {
+                "path": "src/new.py",
+                "status": "added",
+                "additions": 1,
+                "deletions": 0,
+                "patch_excerpt": "+changed",
+            }
+        ],
+    }
+
+    result = api.persist_pr_diff(execution_id)
+
+    events = [
+        event
+        for event in ExecutionLedger(tmp_path).read_events(execution_id)
+        if event.payload.get("transition") == "diff_artifact_persisted"
+    ]
+    assert result == {
+        "status": "unavailable",
+        "reason": "diff_artifact_changed",
+        "changed_files": [
+            {
+                "path": "src/new.py",
+                "status": "added",
+                "additions": 1,
+                "deletions": 0,
+                "patch_excerpt": "+changed",
+            }
+        ],
+        "artifact_path": str(artifact_path),
+    }
+    assert artifact_path.read_text(encoding="utf-8") == original_artifact
+    assert patch_path.read_text(encoding="utf-8") == original_patch
+    assert len(events) == 1
 
 
 def test_workbench_reads_persisted_diff_artifact(tmp_path):

@@ -111,7 +111,10 @@ When the artifact is persisted, GoodTeam appends one idempotent ledger event:
   `payload.changed_file_count`
 
 Repeating `persist_pr_diff(execution_id)` for the same artifact returns the
-existing ledger event and does not append a duplicate row.
+existing ledger event and does not append a duplicate row. If a later diff
+source would change the already-persisted artifact, the producer returns
+`diff_artifact_changed` without overwriting `pr-diff.json`, overwriting
+`pr-diff.patch`, or appending another ledger event.
 
 ## Workbench Diff Rendering
 

@@ -71,7 +71,14 @@ class PullRequestDiffArtifactService:
             created_at=_created_at(existing, self._clock),
         )
 
-        if not _same_artifact(existing, payload):
+        if existing is not None and not _same_artifact(existing, payload):
+            return _unavailable(
+                "diff_artifact_changed",
+                changed_files=changed_files,
+                artifact_path=str(artifact_path),
+            )
+
+        if existing is None:
             _write_artifacts(artifact_path, patch_path, payload, patch_text)
             event = self._append_persisted_event(run, artifact_path, patch_path, changed_files)
             return _persisted_result("persisted", artifact_path, patch_path, event, changed_files)
@@ -174,15 +181,11 @@ def _changed_file(file: dict[str, Any]) -> dict[str, Any]:
 
 
 def _patch_text(source: dict[str, Any] | None) -> str:
-    if source is None:
-        return ""
-    return _string(source.get("patch") or source.get("patch_content"))
+    return "" if source is None else _string(source.get("patch") or source.get("patch_content"))
 
 
 def _source_string(source: dict[str, Any] | None, key: str) -> str:
-    if source is None:
-        return ""
-    return _string(source.get(key))
+    return "" if source is None else _string(source.get(key))
 
 
 def _head_sha(ledger: ExecutionLedger, execution_id: str) -> str:
@@ -195,11 +198,9 @@ def _head_sha(ledger: ExecutionLedger, execution_id: str) -> str:
 
 
 def _created_at(existing: dict[str, Any] | None, clock: Clock) -> str:
-    if existing is not None:
-        value = _string(existing.get("created_at"))
-        if value:
-            return value
-    return clock()
+    if existing is None:
+        return clock()
+    return _string(existing.get("created_at")) or clock()
 
 
 def _write_artifacts(
@@ -225,9 +226,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _same_artifact(existing: dict[str, Any] | None, payload: dict[str, Any]) -> bool:
-    if existing is None:
-        return False
-    return _without_created_at(existing) == _without_created_at(payload)
+    return existing is not None and _without_created_at(existing) == _without_created_at(payload)
 
 
 def _without_created_at(payload: dict[str, Any]) -> dict[str, Any]:
@@ -287,8 +286,8 @@ def _persisted_result(
     }
 
 
-def _unavailable(reason: str) -> dict[str, Any]:
-    return {"status": "unavailable", "reason": reason, "changed_files": []}
+def _unavailable(reason: str, **extra: Any) -> dict[str, Any]:
+    return {"status": "unavailable", "reason": reason, "changed_files": [], **extra}
 
 
 def _string(value: object) -> str:
