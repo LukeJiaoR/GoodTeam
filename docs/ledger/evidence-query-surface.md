@@ -35,6 +35,7 @@ The manifest contains:
 - `review_observations` and `review_summary`
 - `merge_summary`
 - `memory_provenance_refs`
+- `memory_provenance_integrity`
 - `final_status`
 - `incomplete_reason`
 
@@ -51,8 +52,8 @@ are projections from those events:
   events.
 - Merge summary comes from the latest `merge_completed` event.
 - PR identity is reconstructed from the stored run and PR lifecycle events.
-- Memory provenance refs are read from existing `provenance_written` ledger
-  closure events and existing memory WAL events with source
+- Memory provenance refs are rebuilt from existing `provenance_written` ledger
+  closure events plus existing memory WAL events with source
   `execution:<execution_id>:final_provenance`.
 
 Incomplete executions return a manifest instead of an unexplained exception.
@@ -74,18 +75,82 @@ Final provenance closure remains the responsibility of
 write memory and a closure event. The query path can later read those refs but
 must not create them.
 
+## Memory Provenance Refs
+
+The ledger is the source of truth for memory provenance closure. A completed
+execution may write one role memory event and one `provenance_written` ledger
+event. The ledger closure records the stable `memory_event_id`, the execution
+evidence hash, and the memory placement fields needed to audit the projection.
+
+`memory_provenance_refs` is the first-class contract that joins those surfaces:
+
+- `execution_id`
+- `memory_event_id`
+- `ledger_event_id`
+- `source`
+- `role`
+- `horizon`
+- `evidence_hash`
+- `created_at` from the ledger closure event
+- `timestamp` from the memory WAL event
+- `supersedes`
+- `is_superseded`
+- `status`
+- `issues`
+
+The expected complete state is one ref with `status="complete"`, a non-empty
+`memory_event_id`, and a non-empty `ledger_event_id`. The `source` remains
+`execution:<execution_id>:final_provenance`, but consumers should use the IDs as
+the durable link rather than treating the source string as the relationship.
+
+The `provenance_written` event points back to the evidence/provenance surface
+with `execution_id`, `source`, `role`, `horizon`, `evidence_ref`, and
+`evidence_hash`. The memory WAL event points back through its `source` and is
+joined to the closure by the deterministic `memory_event_id`.
+
+Repeated `finalize_provenance(execution_id)` calls are idempotent. If a
+`provenance_written` event already exists, finalize reuses it and does not write
+another memory event or ledger event. If a matching memory WAL event exists but
+the ledger closure is missing, finalize can safely append the missing ledger
+closure and link it to the existing memory event.
+
+Pending, incomplete, and failed executions do not write memory provenance. Their
+evidence manifests still report a pending integrity reason such as `pr_missing`,
+`merge_missing`, or `execution_failed`.
+
+## Memory Provenance Integrity
+
+`memory_provenance_integrity` is a read-only audit summary for callers that need
+to decide whether provenance is complete:
+
+- `complete`: true only when exactly one ledger closure and one matching memory
+  WAL event form a clean ref.
+- `pending` and `pending_reason`: true when no provenance exists yet because the
+  execution is not eligible or finalize has not run.
+- `missing_memory_event_ids`: ledger closures whose `memory_event_id` no longer
+  exists in memory WAL.
+- `orphan_memory_event_ids`: memory WAL events with the execution provenance
+  source but no ledger closure link.
+- `duplicate_ledger_event_ids`: extra `provenance_written` ledger events beyond
+  the first closure.
+
+Broken and orphan refs are returned in `memory_provenance_refs` instead of being
+silently dropped. This keeps drift auditable and gives future repair tooling a
+stable target.
+
 ## Consumers
 
 For #216 Review Workbench, this manifest is the stable backend contract for a
 future evidence panel: the UI can render source issue, PR, CI, review, merge,
-memory provenance, and incomplete status without knowing ledger internals.
+memory provenance, integrity warnings, and incomplete status without knowing
+ledger internals.
 
 For audits, the manifest gives a deterministic replay artifact that can be
 snapshot-tested and compared across regressions.
 
-For memory provenance, the manifest references existing memory events and ledger
-closure events, preserving the lifecycle/provenance closure established by #219
-without reopening or patching #219 itself.
+For memory provenance, the manifest links existing memory events and ledger
+closure events by ID, preserving the lifecycle/provenance closure established by
+#219 without reopening or patching #219 itself.
 
 ## Out Of Scope
 
@@ -94,6 +159,6 @@ system adoption: all execution components writing the complete required event
 chain, Review Workbench consuming the manifest, and memory references becoming a
 first-class ledger-linked contract.
 
-This slice also does not implement #216 UI work, #218 sandbox execution,
-Telegram/TG flows, live GitHub synchronization, analytics, or dashboard
-visualization.
+This slice also does not implement #216 Review Workbench UI work, #218 sandbox
+execution, Telegram/TG flows, live GitHub synchronization, analytics, or
+dashboard visualization.

@@ -108,6 +108,12 @@ class ExecutionAPI:
             clock=self.clock,
         ).get_evidence(execution_id)
 
+    def audit_memory_provenance(self, execution_id: str) -> dict[str, Any]:
+        return ExecutionEvidenceService(
+            self.project_root,
+            clock=self.clock,
+        ).audit_memory_provenance(execution_id)
+
     def replay(self, execution_id: str) -> dict[str, Any]:
         run = self.ledger_store.read_run(execution_id)
         if run is None:

@@ -6,12 +6,12 @@ from goodteam_os.execution.evidence_manifest_extractors import (
     ci_observations,
     ci_summary,
     json_ready,
-    memory_provenance_refs,
     merge_summary,
     review_observations,
     review_summary,
 )
 from goodteam_os.execution.ledger import ExecutionLedger
+from goodteam_os.execution.memory_provenance import build_memory_provenance_projection
 from goodteam_os.execution.models import ExecutionRunStatus, LedgerEvent
 from goodteam_os.memory import RoleMemoryStore
 
@@ -28,6 +28,15 @@ def build_evidence_manifest(
     source = _source_manifest(task, events)
     pr_number = _pr_number_from_replay(run, events)
     pr_repo = _repo_from_events(events) or source["repo"]
+    final_status = _manifest_final_status(run, pr_number, events)
+    incomplete_reason = _incomplete_reason(run, pr_number, events)
+    memory_provenance = build_memory_provenance_projection(
+        memory_store,
+        events,
+        execution_id,
+        final_status=final_status,
+        incomplete_reason=incomplete_reason,
+    )
     manifest = {
         "schema_version": "execution_evidence_manifest.v1",
         "execution_id": execution_id,
@@ -42,13 +51,10 @@ def build_evidence_manifest(
         "review_observations": review_observations(events),
         "review_summary": review_summary(events),
         "merge_summary": merge_summary(events),
-        "memory_provenance_refs": memory_provenance_refs(
-            memory_store,
-            events,
-            execution_id,
-        ),
-        "final_status": _manifest_final_status(run, pr_number, events),
-        "incomplete_reason": _incomplete_reason(run, pr_number, events),
+        "memory_provenance_refs": memory_provenance["refs"],
+        "memory_provenance_integrity": memory_provenance["integrity"],
+        "final_status": final_status,
+        "incomplete_reason": incomplete_reason,
     }
     return json_ready(manifest)
 
