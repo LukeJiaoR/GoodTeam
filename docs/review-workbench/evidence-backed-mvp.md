@@ -37,6 +37,12 @@ When using the local server, the same canonical object is exposed at:
 /review-workbench/<execution_id>?project_root=<repo>
 ```
 
+The guarded browser decision action is available only through the local server:
+
+```text
+POST /api/executions/<execution_id>/review-workbench/decision
+```
+
 ## Evidence Source Contract
 
 `review_workbench.v1` consumes `ExecutionAPI.get_evidence()` directly. It does
@@ -88,6 +94,62 @@ appends one ledger event with:
 Repeating the same `reviewer + decision + reason` returns the existing event and
 does not append another ledger row. The decision path does not write memory and
 does not mutate existing ledger events.
+
+## Browser Decision Route
+
+Browser decisions use the same ledger contract as the Python API. The local
+server accepts:
+
+```json
+{
+  "project_root": "<repo>",
+  "decision": "approve",
+  "reviewer": "LukeJiaoR",
+  "reason": "Evidence checks out."
+}
+```
+
+The route calls:
+
+```python
+ExecutionAPI(project_root).record_review_decision(
+    execution_id,
+    decision,
+    reviewer,
+    reason,
+)
+```
+
+It returns the record result plus the refreshed reviewer decision projection:
+
+```json
+{
+  "status": "recorded",
+  "execution_id": "<execution_id>",
+  "event": {"payload": {"transition": "review_decision_recorded"}},
+  "reviewer_decision": {"available": true, "decision": "approve"},
+  "workbench_status": "completed"
+}
+```
+
+Guardrails:
+
+- invalid decision returns 400 and writes no ledger event
+- missing reviewer returns 400 and writes no ledger event
+- missing execution returns 400/404 and does not create an execution ledger file
+- `approve` is allowed only when the Workbench status is `completed`
+- `request_changes` and `reject` are allowed for pending or failed executions
+- GET Workbench JSON and HTML routes remain read-only
+- no GitHub review/approve/request-changes API is called
+- no PR merge is attempted
+- no worker is run
+- no memory is written
+- existing ledger events are not modified
+
+Static export keeps the same form visible but disabled with
+`Decision actions require local server route.` Static HTML does not include the
+POST script, so opening the exported file cannot accidentally write a ledger
+decision.
 
 ## PR Diff Artifact Contract
 
@@ -158,9 +220,9 @@ service after export.
 
 The page displays execution identity, source issue, PR ref, branch, commit, diff
 summary, changed files, CI summary, review observation counts, memory provenance
-integrity, warnings, current decision, sandbox empty state, and ledger timeline.
-The browser page is read-only: it does not append ledger events, write memory,
-call GitHub, or submit review decisions.
+integrity, warnings, current decision, a decision form, sandbox empty state, and
+ledger timeline. The GET page and JSON routes are read-only. The only browser
+write path is the explicit local-server decision POST described above.
 
 ## Empty States
 
@@ -183,7 +245,6 @@ This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 - Add file-level navigation and changed logic highlighting for diff review.
 - Add richer rationale mapping from individual changed files to prompts and
   instructions.
-- Add guarded browser decision actions that call `record_review_decision()`.
 - Add #218 sandbox/action evidence when that surface exists.
 - Add deeper React dashboard polish around warnings, review decisions, and
   artifact drill-downs.

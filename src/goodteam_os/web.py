@@ -4463,7 +4463,7 @@ def handle_review_workbench_page_get(path: str, query: dict[str, list[str]]) -> 
     execution_id = match.group(1)
     try:
         review = ExecutionAPI(_execution_project_root_from_query(query)).get_review_workbench(execution_id)
-        return 200, render_review_workbench_html(review)
+        return 200, render_review_workbench_html(review, decision_actions_enabled=True)
     except ValueError as exc:
         status, payload = _execution_error_response(exc)
         return status, f"<h1>Review Workbench unavailable</h1><p>{escape(str(payload['error']))}</p>"
@@ -4482,6 +4482,10 @@ def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, d
                 role=str(request.get("role", "implementation")),
             )
 
+        decision_match = re.fullmatch(r"/executions/([^/]+)/review-workbench/decision", path)
+        if decision_match is not None:
+            return _record_review_workbench_decision(decision_match.group(1), request)
+
         match = re.fullmatch(r"/executions/([^/]+)/(run|pr|ci)", path)
         if match is None:
             return None
@@ -4495,6 +4499,30 @@ def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, d
         return 200, api.observe_ci(execution_id)
     except ValueError as exc:
         return _execution_error_response(exc)
+
+
+def _record_review_workbench_decision(
+    execution_id: str,
+    request: dict[str, object],
+) -> tuple[int, dict[str, object]]:
+    api = ExecutionAPI(_execution_project_root_from_body(request))
+    decision = _required_str(request, "decision").lower()
+    reviewer = _required_str(request, "reviewer")
+    reason = str(request.get("reason", "")).strip()
+    api.replay(execution_id)
+    if decision == "approve":
+        review = api.get_review_workbench(execution_id)
+        workbench_status = str(review.get("status", "")).strip()
+        if workbench_status != "completed":
+            raise ValueError("approve decision requires completed execution")
+    result = api.record_review_decision(execution_id, decision, reviewer, reason)
+    review = api.get_review_workbench(execution_id)
+    return 200, {
+        **result,
+        "execution_id": execution_id,
+        "reviewer_decision": dict(review.get("reviewer_decision", {})),
+        "workbench_status": str(review.get("status", "")),
+    }
 
 
 def _execution_project_root_from_query(query: dict[str, list[str]]) -> Path:
@@ -8995,7 +9023,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
             is_execution_path = normalized_path == "/executions/github/issues/intake" or bool(
-                re.fullmatch(r"/executions/[^/]+/(run|pr|ci)", normalized_path)
+                re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision)", normalized_path)
             )
 
             if not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/mkdir", "/server-actions/run", "/git-init"}:

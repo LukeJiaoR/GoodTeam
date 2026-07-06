@@ -36,7 +36,11 @@ def export_review_workbench_html_artifacts(
     }
 
 
-def render_review_workbench_html(review: dict[str, Any]) -> str:
+def render_review_workbench_html(
+    review: dict[str, Any],
+    *,
+    decision_actions_enabled: bool = False,
+) -> str:
     execution_id = _text(review.get("execution_id"))
     status = _text(review.get("status"))
     embedded_json = _json_dump(review).replace("</", "<\\/")
@@ -56,12 +60,14 @@ def render_review_workbench_html(review: dict[str, Any]) -> str:
       <span class="status-pill">{escape(status or "unknown")}</span>
     </header>
     {_summary_section(review)}
+    {_decision_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_diff_section(review)}
     {_evidence_section(review)}
     {_warnings_section(review)}
     {_timeline_section(review)}
   </main>
   <script id="review-workbench-data" type="application/json">{embedded_json}</script>
+  {_decision_script() if decision_actions_enabled else ""}
 </body>
 </html>
 """
@@ -154,6 +160,118 @@ def _timeline_section(review: dict[str, Any]) -> str:
             "</li>"
         )
     return _section("Ledger timeline", f'<ol class="timeline">{"".join(rows) or _list_empty("No ledger events.")}</ol>')
+
+
+def _decision_section(review: dict[str, Any], *, decision_actions_enabled: bool) -> str:
+    decision = _dict(review.get("reviewer_decision"))
+    disabled = "" if decision_actions_enabled else " disabled"
+    note = (
+        '<p class="action-note" id="decision-action-note">Ready to record through the local server route.</p>'
+        if decision_actions_enabled
+        else '<p class="action-note" id="decision-action-note">Decision actions require local server route.</p>'
+    )
+    body = _details(
+        [
+            ("Current decision", _decision_label(decision)),
+            ("Reason", decision.get("reason") or "n/a"),
+        ]
+    )
+    body += note
+    body += f"""
+<form id="review-decision-form" class="decision-form" data-actions-enabled="{str(decision_actions_enabled).lower()}">
+  <label>Reviewer <input name="reviewer" value="{escape(_text(decision.get("reviewer")))}" autocomplete="off"{disabled}></label>
+  <label>Decision {_decision_select(_text(decision.get("decision")), disabled=disabled)}</label>
+  <label>Reason <textarea name="reason" rows="4"{disabled}>{escape(_text(decision.get("reason")))}</textarea></label>
+  <button type="submit"{disabled}>Submit decision</button>
+  <p class="action-status" id="review-decision-status" role="status"></p>
+</form>
+"""
+    return _section("Review decision", body)
+
+
+def _decision_select(current_decision: str, *, disabled: str) -> str:
+    options = []
+    for value, label in [
+        ("approve", "approve"),
+        ("request_changes", "request_changes"),
+        ("reject", "reject"),
+    ]:
+        selected = " selected" if value == current_decision else ""
+        options.append(f'<option value="{value}"{selected}>{label}</option>')
+    return f'<select name="decision"{disabled}>{"".join(options)}</select>'
+
+
+def _decision_script() -> str:
+    return """
+<script>
+(() => {
+  const form = document.getElementById("review-decision-form");
+  const statusEl = document.getElementById("review-decision-status");
+  const dataEl = document.getElementById("review-workbench-data");
+  const currentDecision = document.querySelector(".details dd");
+  if (!form || !statusEl || !dataEl) return;
+
+  const initial = JSON.parse(dataEl.textContent || "{}");
+  const executionId = initial.execution_id || "";
+  const params = new URLSearchParams(window.location.search);
+  const projectRoot = params.get("project_root") || "";
+
+  function setStatus(message, state) {
+    statusEl.textContent = message;
+    statusEl.dataset.state = state;
+  }
+
+  function decisionLabel(decision) {
+    if (!decision || !decision.available) return "No review decision recorded.";
+    return `${decision.decision || ""} by ${decision.reviewer || ""}`;
+  }
+
+  function updateCurrentDecision(decision) {
+    const details = Array.from(document.querySelectorAll(".details"));
+    const decisionDetails = details.find((item) => item.textContent.includes("Current decision"));
+    const value = decisionDetails ? decisionDetails.querySelector("dd") : currentDecision;
+    if (value) value.textContent = decisionLabel(decision);
+  }
+
+  async function refreshWorkbench() {
+    const query = new URLSearchParams({ project_root: projectRoot });
+    const response = await fetch(`/api/executions/${encodeURIComponent(executionId)}/review-workbench?${query}`);
+    const payload = await response.json();
+    if (response.ok) updateCurrentDecision(payload.reviewer_decision);
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!projectRoot) {
+      setStatus("project_root is required in the page URL.", "error");
+      return;
+    }
+    const formData = new FormData(form);
+    const body = {
+      project_root: projectRoot,
+      reviewer: String(formData.get("reviewer") || ""),
+      decision: String(formData.get("decision") || ""),
+      reason: String(formData.get("reason") || ""),
+    };
+    setStatus("Recording decision...", "pending");
+    try {
+      const response = await fetch(`/api/executions/${encodeURIComponent(executionId)}/review-workbench/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Decision request failed.");
+      setStatus(`Decision ${payload.status}.`, "success");
+      updateCurrentDecision(payload.reviewer_decision);
+      await refreshWorkbench();
+    } catch (error) {
+      setStatus(error.message || "Decision request failed.", "error");
+    }
+  });
+})();
+</script>
+"""
 
 
 def _section(title: str, body: str) -> str:
@@ -267,6 +385,15 @@ ul, ol { margin: 0; padding-left: 18px; }
 .warning-list li { display: grid; gap: 3px; }
 code, time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .empty-state { margin: 0 0 12px; color: #5d6b82; font-weight: 650; }
+.decision-form { display: grid; gap: 12px; margin-top: 14px; }
+.decision-form label { display: grid; gap: 6px; color: #5d6b82; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+.decision-form input, .decision-form select, .decision-form textarea { border: 1px solid #b8c2d6; border-radius: 6px; color: #151922; font: inherit; font-size: 14px; padding: 9px 10px; text-transform: none; }
+.decision-form textarea { resize: vertical; }
+.decision-form button { width: max-content; border: 0; border-radius: 6px; background: #151922; color: #ffffff; cursor: pointer; font-weight: 800; padding: 10px 14px; }
+.decision-form button:disabled, .decision-form input:disabled, .decision-form select:disabled, .decision-form textarea:disabled { cursor: not-allowed; opacity: 0.62; }
+.action-note, .action-status { color: #5d6b82; font-weight: 650; margin: 12px 0 0; }
+.action-status[data-state="error"] { color: #a13d2d; }
+.action-status[data-state="success"] { color: #246b45; }
 @media (max-width: 720px) {
   .details, .file-list li, .timeline li { grid-template-columns: 1fr; }
 }
