@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+from goodteam_os.execution.evidence import ExecutionEvidenceService
+from goodteam_os.execution.ledger import ExecutionLedger
+from goodteam_os.execution.models import ExecutionActor, LedgerEvent, LedgerEventType
+from goodteam_os.execution.review_workbench_contract import (
+    ALLOWED_REVIEW_DECISIONS,
+    Clock,
+    REVIEW_DECISION_TRANSITION,
+    REVIEW_WORKBENCH_SCHEMA_VERSION,
+    json_ready,
+    stable_hash,
+    utc_now,
+)
+from goodteam_os.execution.review_workbench_renderer import render_review_workbench
+from goodteam_os.execution.review_workbench_surfaces import (
+    diff_surface,
+    latest_review_decision,
+    matching_decision_event,
+    rationale_surface,
+    task_surface,
+    warnings_surface,
+    worker_job,
+    worker_job_id,
+)
+from goodteam_os.workers import WorkerJobStore
+
+
+class ReviewWorkbenchService:
+    def __init__(self, project_root: Path, *, clock: Clock | None = None):
+        self.project_root = Path(project_root)
+        self._clock = clock or utc_now
+        self.ledger = ExecutionLedger(self.project_root)
+        self.worker_store = WorkerJobStore(self.project_root)
+        self.evidence_service = ExecutionEvidenceService(self.project_root, clock=clock)
+
+    def get_review(self, execution_id: str) -> dict[str, Any]:
+        evidence = self.evidence_service.get_evidence(execution_id)
+        replay = self.ledger.replay(execution_id)
+        events = replay["events"]
+        run = replay["run"]
+        job = worker_job(self.worker_store, worker_job_id(run, events))
+        diff = diff_surface(events)
+        rationale = rationale_surface(
+            task=replay["task"],
+            run=run,
+            events=events,
+            worker_job=job,
+            worker_root=self.worker_store.root,
+        )
+        workbench = {
+            "schema_version": REVIEW_WORKBENCH_SCHEMA_VERSION,
+            "execution_id": execution_id,
+            "task": task_surface(replay["task"], evidence),
+            "source_issue": str(evidence.get("source_issue", "")),
+            "pr": dict(evidence.get("pr", {})),
+            "diff": diff,
+            "rationale": rationale,
+            "evidence": evidence,
+            "memory_refs": list(evidence.get("memory_provenance_refs", [])),
+            "memory_provenance_integrity": dict(
+                evidence.get("memory_provenance_integrity", {})
+            ),
+            "reviewer_decision": latest_review_decision(events),
+            "status": str(evidence.get("final_status", "")),
+            "warnings": warnings_surface(evidence, diff, rationale),
+            "sandbox": _sandbox_surface(),
+        }
+        return json_ready(workbench)
+
+    def record_decision(
+        self,
+        execution_id: str,
+        decision: str,
+        reviewer: str,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        normalized_decision = _normalize_decision(decision)
+        normalized_reviewer = reviewer.strip()
+        if not normalized_reviewer:
+            raise ValueError("Review decision reviewer is required")
+        normalized_reason = reason.strip()
+        replay = self.ledger.replay(execution_id)
+        if replay["run"] is None and not replay["events"]:
+            raise ValueError(f"Execution not found: {execution_id}")
+
+        existing = matching_decision_event(
+            replay["events"],
+            decision=normalized_decision,
+            reviewer=normalized_reviewer,
+            reason=normalized_reason,
+        )
+        if existing is not None:
+            return {"status": "deduped", "event": json_ready(existing)}
+
+        evidence = self.evidence_service.get_evidence(execution_id)
+        event = self._decision_event(
+            execution_id,
+            task_id=str(evidence.get("task_id") or execution_id),
+            decision=normalized_decision,
+            reviewer=normalized_reviewer,
+            reason=normalized_reason,
+            evidence=evidence,
+        )
+        self.ledger.append_event(event)
+        return {"status": "recorded", "event": json_ready(event)}
+
+    def _decision_event(
+        self,
+        execution_id: str,
+        *,
+        task_id: str,
+        decision: str,
+        reviewer: str,
+        reason: str,
+        evidence: dict[str, Any],
+    ) -> LedgerEvent:
+        event_number = len(self.ledger.read_events(execution_id)) + 1
+        reviewed_at = self._clock()
+        payload = _decision_payload(
+            execution_id,
+            decision=decision,
+            reviewer=reviewer,
+            reason=reason,
+            reviewed_at=reviewed_at,
+            evidence=evidence,
+        )
+        return LedgerEvent(
+            event_id=_decision_event_id(execution_id, event_number),
+            execution_id=execution_id,
+            task_id=task_id,
+            event_type=LedgerEventType.REVIEW_RECORDED,
+            actor=ExecutionActor.SYSTEM,
+            payload=payload,
+            created_at=reviewed_at,
+        )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m goodteam_os.execution.review_workbench")
+    parser.add_argument("execution_id")
+    parser.add_argument("--project-root", type=Path, default=Path("."))
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    review = ReviewWorkbenchService(args.project_root).get_review(args.execution_id)
+    if args.json:
+        print(json.dumps(review, indent=2))
+    else:
+        print(render_review_workbench(review), end="")
+    return 0
+
+
+def _decision_payload(
+    execution_id: str,
+    *,
+    decision: str,
+    reviewer: str,
+    reason: str,
+    reviewed_at: str,
+    evidence: dict[str, Any],
+) -> dict[str, str]:
+    return {
+        "transition": REVIEW_DECISION_TRANSITION,
+        "execution_id": execution_id,
+        "decision": decision,
+        "reviewer": reviewer,
+        "reason": reason,
+        "source": "review_workbench",
+        "reviewed_at": reviewed_at,
+        "evidence_schema_version": str(evidence.get("schema_version", "")),
+        "evidence_hash": stable_hash(evidence),
+    }
+
+
+def _decision_event_id(execution_id: str, event_number: int) -> str:
+    return (
+        f"{execution_id}:{event_number:04d}:"
+        f"{LedgerEventType.REVIEW_RECORDED.value}:{REVIEW_DECISION_TRANSITION}"
+    )
+
+
+def _sandbox_surface() -> dict[str, str | bool]:
+    return {
+        "available": False,
+        "reason": "sandbox_evidence_not_implemented",
+        "summary": "",
+    }
+
+
+def _normalize_decision(decision: str) -> str:
+    normalized = decision.strip().lower()
+    if normalized not in ALLOWED_REVIEW_DECISIONS:
+        allowed = ", ".join(ALLOWED_REVIEW_DECISIONS)
+        raise ValueError(f"Review decision must be one of: {allowed}")
+    return normalized
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -12,6 +12,7 @@ from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.models import ExecutionRunStatus
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
+from goodteam_os.execution.review_workbench import ReviewWorkbenchService
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -113,6 +114,24 @@ class ExecutionAPI:
             self.project_root,
             clock=self.clock,
         ).audit_memory_provenance(execution_id)
+
+    def get_review_workbench(self, execution_id: str) -> dict[str, Any]:
+        return ReviewWorkbenchService(
+            self.project_root,
+            clock=self.clock,
+        ).get_review(execution_id)
+
+    def record_review_decision(
+        self,
+        execution_id: str,
+        decision: str,
+        reviewer: str,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        return ReviewWorkbenchService(
+            self.project_root,
+            clock=self.clock,
+        ).record_decision(execution_id, decision, reviewer, reason)
 
     def replay(self, execution_id: str) -> dict[str, Any]:
         run = self.ledger_store.read_run(execution_id)
