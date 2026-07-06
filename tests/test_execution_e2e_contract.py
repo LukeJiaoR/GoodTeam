@@ -109,7 +109,7 @@ def test_execution_fixture_e2e_contract_replays_full_p0_1_loop_without_duplicate
         "worker_job_created",
         "execution_started",
         "execution_completed",
-        "pr_created",
+        "pr_opened",
         "ci_observed",
     ]
     assert run["worker_job"]["status"] == "completed"
@@ -132,5 +132,5 @@ def test_execution_fixture_e2e_contract_replays_full_p0_1_loop_without_duplicate
     assert len(client.committed_files) == 1
     assert len(client.created_prs) == 1
     assert len(second_replay["worker_jobs"]) == 1
-    assert [event["payload"]["transition"] for event in second_replay["events"]].count("pr_created") == 1
+    assert [event["payload"]["transition"] for event in second_replay["events"]].count("pr_opened") == 1
     assert [event["payload"]["transition"] for event in second_replay["events"]].count("execution_completed") == 1

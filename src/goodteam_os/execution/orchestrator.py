@@ -121,6 +121,23 @@ class ExecutionOrchestrator:
             "worker_job": worker_job,
         }
 
+    def open_pull_request_for_execution(
+        self,
+        execution_id: str,
+        *,
+        files: dict[str, str] | None = None,
+    ) -> GitHubBinding:
+        if self.github_client is None:
+            raise ValueError("A GitHubClient is required to open a pull request")
+
+        from goodteam_os.execution.pr import PullRequestBindingService
+
+        return PullRequestBindingService(
+            self.project_root,
+            self.github_client,
+            clock=self._clock,
+        ).create_or_reuse_pr(execution_id, files=files)
+
     def _append_event(
         self,
         run: ExecutionRun,

@@ -136,7 +136,7 @@ def test_execution_api_runs_full_surface_with_json_friendly_payloads(tmp_path):
         "worker_job_created",
         "execution_started",
         "execution_completed",
-        "pr_created",
+        "pr_opened",
         "ci_observed",
     ]
 
