@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from goodteam_os.execution.evidence_manifest import build_evidence_manifest
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.models import (
     ExecutionActor,
@@ -27,6 +28,9 @@ class ExecutionEvidenceService:
         self._clock = clock or _utc_now
         self.ledger = ExecutionLedger(self.project_root)
         self.memory_store = RoleMemoryStore(self.project_root)
+
+    def get_evidence(self, execution_id: str) -> dict[str, Any]:
+        return build_evidence_manifest(self.ledger, self.memory_store, execution_id)
 
     def finalize_provenance(self, execution_id: str) -> dict[str, Any]:
         replay = self.ledger.replay(execution_id)
@@ -132,7 +136,6 @@ def _finalize_result(
 def _source_events(events: list[LedgerEvent]) -> list[LedgerEvent]:
     return [event for event in events if event.payload.get("transition") != PROVENANCE_TRANSITION]
 
-
 def _issue_ref(task: Any, events: list[LedgerEvent]) -> str:
     if task is not None:
         return f"{task.repo}#{task.issue_number}"
@@ -145,7 +148,6 @@ def _issue_ref(task: Any, events: list[LedgerEvent]) -> str:
 
 def _pr_ref(repo: str, pr_number: int | None) -> str:
     return f"{repo}#{pr_number}" if repo and pr_number is not None else ""
-
 
 def _repo_from_events(events: list[LedgerEvent]) -> str:
     for event in events:
@@ -164,13 +166,11 @@ def _pr_number(run: Any, events: list[LedgerEvent]) -> int | None:
             return value
     return None
 
-
 def _first_payload_value(events: list[LedgerEvent], key: str) -> object | None:
     for event in events:
         if key in event.payload:
             return event.payload[key]
     return None
-
 
 def _ci_summary(events: list[LedgerEvent]) -> dict[str, Any]:
     for event in reversed(events):
@@ -178,7 +178,6 @@ def _ci_summary(events: list[LedgerEvent]) -> dict[str, Any]:
             summary = event.payload.get("summary")
             return dict(summary) if isinstance(summary, dict) else {}
     return {}
-
 
 def _review_summary(events: list[LedgerEvent]) -> dict[str, Any]:
     states: list[str] = []
