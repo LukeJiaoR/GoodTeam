@@ -77,6 +77,20 @@ def warnings_surface(
                 "message": "No persisted PR diff artifact is available.",
             }
         )
+    elif diff.get("patch_state") == "missing":
+        warnings.append(
+            {
+                "code": "patch_missing",
+                "message": "Persisted PR diff metadata is available, but pr-diff.patch is missing.",
+            }
+        )
+    elif diff.get("patch_state") == "parse_failed":
+        warnings.append(
+            {
+                "code": "patch_parse_failed",
+                "message": "Persisted pr-diff.patch could not be parsed as unified diff.",
+            }
+        )
     if not rationale.get("available"):
         warnings.append(
             {

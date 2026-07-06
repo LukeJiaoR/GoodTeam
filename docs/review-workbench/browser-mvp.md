@@ -92,6 +92,38 @@ files, rationale, sandbox evidence, CI, reviews, or decisions.
 GET endpoints do not write ledger events. Only the explicit decision POST can
 append a `review_decision_recorded` event.
 
+The canonical `diff` field now projects persisted PR diff artifacts into a
+file-level review model. When `.goodteam/executions/<execution_id>/artifacts/pr-diff.json`
+is present, `diff.changed_files[]` includes stable anchors, parsed hunks from
+`pr-diff.patch`, and the future rationale hook:
+
+```json
+{
+  "path": "src/goodteam_os/execution/api.py",
+  "status": "modified",
+  "additions": 10,
+  "deletions": 2,
+  "anchor": "file-src-goodteam-os-execution-api-py",
+  "hunks": [
+    {
+      "header": "@@ -10,3 +10,4 @@",
+      "old_start": 10,
+      "new_start": 10,
+      "lines": [
+        {"kind": "context", "old_line": 10, "new_line": 10, "text": " def get_review_workbench():"},
+        {"kind": "delete", "old_line": 11, "new_line": null, "text": "-    return diff"},
+        {"kind": "add", "old_line": null, "new_line": 11, "text": "+    return rich_diff"}
+      ]
+    }
+  ],
+  "rationale_refs": [],
+  "rationale_status": "not_mapped"
+}
+```
+
+`rationale_refs` is intentionally empty in this slice. It is a stable placeholder
+for future changed-file-to-rationale mapping and must not be treated as evidence.
+
 ## Rendered Sections
 
 The MVP page shows:
@@ -99,7 +131,8 @@ The MVP page shows:
 - execution ID and final status
 - source issue
 - PR ref, branch, and commit
-- diff summary and changed files from the persisted PR diff artifact
+- diff summary, file navigation, and changed-line highlights from the persisted
+  PR diff artifacts
 - CI summary and review observation counts
 - memory provenance integrity and memory refs
 - warnings and incomplete reason
@@ -107,6 +140,16 @@ The MVP page shows:
 - local-server decision form with reviewer, decision, reason, and submit button
 - sandbox empty state for #218
 - ledger timeline
+
+The diff section renders a file navigation list above the diff body. Each file
+links to `#<file-anchor>` and displays status, additions, and deletions. File
+sections render hunk headers, old/new line numbers, and line text. Changed-line
+CSS classes are stable for tests and future styling:
+
+- `diff-line-add`
+- `diff-line-delete`
+- `diff-line-context`
+- `diff-line-metadata`
 
 ## Decision Guardrails
 
@@ -149,11 +192,29 @@ It does not duplicate the append-only ledger write logic.
 The browser surface renders these states without crashing:
 
 - missing diff artifact: `diff_artifact_missing`
+- missing patch file with available changed-file metadata: `patch_missing`
+- malformed patch file: `patch_parse_failed`
 - missing rationale artifact: `rationale_artifact_missing`
 - pending execution: `status = pending` plus `incomplete_reason`
 - failed execution: `status = failed` plus failure evidence
 - sandbox not implemented: `sandbox_evidence_not_implemented`
 - no decision: `No review decision recorded.`
+
+When `pr-diff.json` exists but `pr-diff.patch` is missing, the browser still
+shows file navigation from `changed_files[]` and renders each file with an
+explicit `patch_missing` empty hunk state. When the patch is malformed, the
+parser does not crash; the browser shows `patch_parse_failed` and does not show
+partial hunks as complete review evidence.
+
+## Patch Parser Limits
+
+The patch parser is a small deterministic unified-diff parser. It supports
+`diff --git a/... b/...`, `---`/`+++` file headers, hunk headers in
+`@@ -old,count +new,count @@` form, and context/add/delete/metadata lines. It
+does not interpret rename similarity metadata, binary patches, submodule
+summaries, or Git extended headers beyond preserving file identity and parsed
+hunks. Unsupported or malformed input is surfaced as an explicit empty state
+instead of being silently ignored.
 
 ## Static Export Limitation
 
@@ -181,7 +242,6 @@ goodteam-os execution record-review-decision \
 
 Remaining #216 gaps:
 
-- file-level navigation and changed-line highlighting
 - richer mapping from changed files to rationale and prompts
 - #218 sandbox/action evidence
 - deeper product polish inside the React dashboard

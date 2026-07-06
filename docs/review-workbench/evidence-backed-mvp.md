@@ -205,11 +205,40 @@ source would change the already-persisted artifact, the producer returns
 `get_review_workbench(execution_id)` checks the stable `pr-diff.json` path first.
 When present, `diff.available = true`, `diff.reason = ""`, and the Workbench
 returns changed files, `artifact_path`, optional `patch_path`, and a deterministic
-summary such as `2 files changed (+130/-2)`. The text renderer prints this
-summary and a compact changed-file list with additions and deletions.
+summary such as `2 files changed (+130/-2)`.
+
+The Workbench also projects the persisted patch into file-level navigation data.
+Each `diff.changed_files[]` entry keeps the artifact metadata (`path`, `status`,
+`additions`, `deletions`, and `patch_excerpt`) and adds:
+
+- `anchor`: a stable browser fragment such as
+  `file-src-goodteam-os-execution-api-py`
+- `hunks[]`: parsed unified-diff hunks with old/new start lines
+- `hunks[].lines[]`: `context`, `add`, `delete`, or `metadata` rows with old/new
+  line numbers
+- `rationale_refs: []` and `rationale_status: "not_mapped"` as a future hook
+
+The text renderer prints the summary and compact changed-file list. The browser
+renderer uses the richer projection for navigation and highlighted file diffs.
+Rationale mapping remains future work; this slice does not infer or fabricate
+which prompts or rationale items explain a changed file.
 
 Workbench reads remain read-only. They never fetch GitHub data, write artifacts,
 append ledger events, or repair missing artifact state.
+
+### Patch Parser Limits
+
+The parser is deliberately small and deterministic. It parses:
+
+- `diff --git a/... b/...`
+- `---` and `+++` file headers
+- hunk headers in `@@ -old,count +new,count @@` form
+- context, added, deleted, and metadata lines
+
+It does not fully interpret Git extended metadata, binary patches, rename
+similarity records, or submodule summaries. Unsupported or malformed patch text
+does not crash Workbench. Instead, the Workbench emits an explicit warning and
+keeps parsed hunks empty for reviewer safety.
 
 ## Browser Rendering
 
@@ -219,10 +248,18 @@ object as `review-workbench.json`. HTML embeds the JSON in
 service after export.
 
 The page displays execution identity, source issue, PR ref, branch, commit, diff
-summary, changed files, CI summary, review observation counts, memory provenance
-integrity, warnings, current decision, a decision form, sandbox empty state, and
-ledger timeline. The GET page and JSON routes are read-only. The only browser
-write path is the explicit local-server decision POST described above.
+summary, file navigation, changed-line highlights, CI summary, review
+observation counts, memory provenance integrity, warnings, current decision, a
+decision form, sandbox empty state, and ledger timeline. The GET page and JSON
+routes are read-only. The only browser write path is the explicit local-server
+decision POST described above.
+
+Changed-line CSS classes are stable:
+
+- `diff-line-add`
+- `diff-line-delete`
+- `diff-line-context`
+- `diff-line-metadata`
 
 ## Empty States
 
@@ -230,6 +267,12 @@ This MVP does not fake missing artifacts.
 
 - Missing persisted PR diff: `diff.available = false` and
   `diff.reason = diff_artifact_missing`
+- Missing persisted patch while `pr-diff.json` exists:
+  `diff.patch_state = missing`, warning `patch_missing`, file navigation still
+  renders from `changed_files[]`, and hunks stay empty
+- Malformed persisted patch:
+  `diff.patch_state = parse_failed`, warning `patch_parse_failed`, and hunks
+  stay empty
 - Missing rationale surface: `rationale.available = false` and
   `rationale.reason = rationale_artifact_missing`
 - Pending, incomplete, or failed executions: `status`, `incomplete_reason`, and
@@ -242,7 +285,6 @@ This MVP does not fake missing artifacts.
 
 This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 
-- Add file-level navigation and changed logic highlighting for diff review.
 - Add richer rationale mapping from individual changed files to prompts and
   instructions.
 - Add #218 sandbox/action evidence when that surface exists.
