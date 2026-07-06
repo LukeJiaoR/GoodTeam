@@ -29,6 +29,7 @@ from goodteam_os.execution.models import (
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
 from goodteam_os.execution.ci import CIStatusService
+from goodteam_os.execution.review_workbench import ReviewWorkbenchService
 from goodteam_os.execution.api import ExecutionAPI
 
 
@@ -52,6 +53,7 @@ __all__ = [
     "LedgerEvent",
     "LedgerEventType",
     "PullRequestBindingService",
+    "ReviewWorkbenchService",
     "CIStatusService",
     "branch_name_from_execution_id",
     "execution_id_from_task",

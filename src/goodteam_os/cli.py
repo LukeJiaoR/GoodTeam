@@ -107,10 +107,20 @@ def build_parser() -> argparse.ArgumentParser:
     intake_github_issue.add_argument("--adapter", default="fake")
     intake_github_issue.add_argument("--role", default="implementation")
 
-    for command in ("run", "pr", "ci", "replay"):
+    for command in ("run", "pr", "ci", "replay", "review"):
         execution_command = execution_subparsers.add_parser(command)
         execution_command.add_argument("--execution-id", required=True)
         execution_command.add_argument("--project-root", type=Path, required=True)
+    review_decision = execution_subparsers.add_parser("record-review-decision")
+    review_decision.add_argument("--execution-id", required=True)
+    review_decision.add_argument("--project-root", type=Path, required=True)
+    review_decision.add_argument(
+        "--decision",
+        required=True,
+        choices=["approve", "request_changes", "reject"],
+    )
+    review_decision.add_argument("--reviewer", required=True)
+    review_decision.add_argument("--reason", default="")
     return parser
 
 
@@ -266,6 +276,15 @@ def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:
         return api.observe_ci(args.execution_id)
     if args.execution_command == "replay":
         return api.replay(args.execution_id)
+    if args.execution_command == "review":
+        return api.get_review_workbench(args.execution_id)
+    if args.execution_command == "record-review-decision":
+        return api.record_review_decision(
+            args.execution_id,
+            args.decision,
+            args.reviewer,
+            args.reason,
+        )
     raise ValueError(f"Unknown execution command: {args.execution_command}")
 
 
