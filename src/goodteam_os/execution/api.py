@@ -12,6 +12,7 @@ from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.models import ExecutionRunStatus
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
+from goodteam_os.execution.pr_diff import PullRequestDiffArtifactService
 from goodteam_os.execution.review_workbench import ReviewWorkbenchService
 from goodteam_os.workers import WorkerJobStore
 
@@ -120,6 +121,13 @@ class ExecutionAPI:
             self.project_root,
             clock=self.clock,
         ).get_review(execution_id)
+
+    def persist_pr_diff(self, execution_id: str) -> dict[str, Any]:
+        return PullRequestDiffArtifactService(
+            self.project_root,
+            self.github_client,
+            clock=self.clock,
+        ).persist(execution_id)
 
     def record_review_decision(
         self,

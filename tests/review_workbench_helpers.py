@@ -23,6 +23,7 @@ class FakeClock:
 class FakeGitHubClient:
     def __init__(self):
         self.issues = {("lukejiaor/goodteam", 216): snapshot()}
+        self.diff_payload: dict[str, object] | None = _diff_payload()
 
     def fetch_issue(self, repo: str, issue_number: int) -> GitHubIssueSnapshot:
         try:
@@ -83,6 +84,9 @@ class FakeGitHubClient:
             "merged_by": {"login": "LukeJiaoR"},
         }
 
+    def fetch_pr_diff(self, repo: str, pr_number: int) -> dict[str, object] | None:
+        return self.diff_payload
+
 
 def snapshot() -> GitHubIssueSnapshot:
     return GitHubIssueSnapshot(
@@ -93,6 +97,39 @@ def snapshot() -> GitHubIssueSnapshot:
         url="https://github.com/LukeJiaoR/GoodTeam/issues/216",
         labels=["p0", "review"],
     )
+
+
+def _diff_payload() -> dict[str, object]:
+    return {
+        "base_ref": "main",
+        "head_sha": "commit-sha-216",
+        "patch": "\n".join(
+            [
+                "diff --git a/src/goodteam_os/execution/api.py b/src/goodteam_os/execution/api.py",
+                "--- a/src/goodteam_os/execution/api.py",
+                "+++ b/src/goodteam_os/execution/api.py",
+                "@@ -1,3 +1,4 @@",
+                "+def persist_pr_diff():",
+                "+    return True",
+            ]
+        ),
+        "changed_files": [
+            {
+                "path": "src/goodteam_os/execution/api.py",
+                "status": "modified",
+                "additions": 10,
+                "deletions": 2,
+                "patch_excerpt": "+def persist_pr_diff():",
+            },
+            {
+                "path": "tests/test_review_workbench_diff_artifact.py",
+                "status": "added",
+                "additions": 120,
+                "deletions": 0,
+                "patch_excerpt": "+def test_completed_pr_execution_can_persist_diff_artifact",
+            },
+        ],
+    }
 
 
 def api(tmp_path: Path) -> ExecutionAPI:
