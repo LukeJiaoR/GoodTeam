@@ -84,6 +84,24 @@ class SandboxService:
             return {"available": False, "reason": "sandbox_evidence_missing"}
         return json_ready(metadata)
 
+    def destroy_sandbox(self, execution_id: str) -> dict[str, Any]:
+        self._require_run(execution_id)
+        metadata = self._read_metadata(execution_id)
+        if metadata is None:
+            return {"available": False, "reason": "sandbox_evidence_missing"}
+        if metadata.get("status") == "destroyed":
+            return json_ready({**metadata, "status": "already_destroyed"})
+        if metadata.get("mode") == "worktree":
+            self.git_adapter.remove_worktree(
+                repo_root=self.project_root,
+                worktree_path=Path(str(metadata["worktree_path"])),
+            )
+        metadata["status"] = "destroyed"
+        metadata["destroyed_at"] = self._clock()
+        self._write_metadata(execution_id, metadata)
+        self._append_event(execution_id, "sandbox_destroyed", _created_payload(metadata))
+        return json_ready(metadata)
+
     def run_command(
         self,
         execution_id: str,
@@ -105,14 +123,47 @@ class SandboxService:
             )
         assert not isinstance(argv, str)
         run_cwd = command_cwd(metadata, cwd)
-        completed = subprocess.run(
-            list(argv),
-            cwd=run_cwd,
-            env=run_env,
-            capture_output=True,
-            text=True,
-            timeout=COMMAND_TIMEOUT_SECONDS,
-        )
+        try:
+            completed = subprocess.run(
+                list(argv),
+                cwd=run_cwd,
+                env=run_env,
+                capture_output=True,
+                text=True,
+                timeout=COMMAND_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return self._record_command_failure(
+                execution_id,
+                argv,
+                run_cwd,
+                "timeout",
+                redacted_keys=redacted_keys,
+                secret_values=secret_values,
+                stdout=_failure_output(exc.output),
+                stderr=_failure_output(exc.stderr),
+                error=f"Command timed out after {exc.timeout} seconds",
+            )
+        except OSError as exc:
+            return self._record_command_failure(
+                execution_id,
+                argv,
+                run_cwd,
+                "spawn_failed",
+                redacted_keys=redacted_keys,
+                secret_values=secret_values,
+                error=str(exc),
+            )
+        except Exception as exc:
+            return self._record_command_failure(
+                execution_id,
+                argv,
+                run_cwd,
+                "execution_failed",
+                redacted_keys=redacted_keys,
+                secret_values=secret_values,
+                error=str(exc),
+            )
         result = {
             "status": "completed",
             "argv": scrub_argv(list(argv), secret_values),
@@ -228,6 +279,33 @@ class SandboxService:
         self._append_event(execution_id, "sandbox_command_rejected", result)
         return json_ready(result)
 
+    def _record_command_failure(
+        self,
+        execution_id: str,
+        argv: Sequence[str],
+        cwd: Path,
+        reason: str,
+        *,
+        redacted_keys: list[str],
+        secret_values: list[str],
+        stdout: str = "",
+        stderr: str = "",
+        error: str = "",
+    ) -> dict[str, Any]:
+        result = {
+            "status": "failed",
+            "reason": reason,
+            "argv": scrub_argv(list(argv), secret_values),
+            "cwd": str(cwd),
+            "exit_code": None,
+            "stdout_excerpt": excerpt(stdout, secret_values),
+            "stderr_excerpt": excerpt(stderr, secret_values),
+            "error_excerpt": excerpt(error, secret_values),
+            "redacted_env_keys": redacted_keys,
+        }
+        self._append_event(execution_id, "sandbox_command_failed", result)
+        return json_ready(result)
+
     def _append_event(self, execution_id: str, transition: str, payload: dict[str, Any]) -> None:
         run = self._require_run(execution_id)
         event_number = len(self.ledger.read_events(execution_id)) + 1
@@ -282,3 +360,11 @@ def _created_payload(metadata: dict[str, Any]) -> dict[str, Any]:
         "claimed_paths": metadata["claimed_paths"],
         "conflict_risk": metadata["conflict_risk"],
     }
+
+
+def _failure_output(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value)

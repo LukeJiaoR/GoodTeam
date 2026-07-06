@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -125,6 +126,59 @@ def test_worktree_create_failure_records_event_without_active_metadata(tmp_path)
     assert event.payload["reason"] == "worktree_create_failed"
 
 
+def test_destroy_workspace_sandbox_marks_metadata_and_writes_ledger(tmp_path):
+    execution_id = "exec_sandbox_destroy_workspace"
+    _create_run(tmp_path, execution_id)
+    api = ExecutionAPI(tmp_path, clock=FakeClock())
+    api.create_sandbox(execution_id, mode="workspace")
+
+    result = api.destroy_sandbox(execution_id)
+
+    events = _events(tmp_path, execution_id)
+    metadata = api.get_sandbox(execution_id)
+    assert result["status"] == "destroyed"
+    assert result["mode"] == "workspace"
+    assert metadata["status"] == "destroyed"
+    assert events[-1].payload["transition"] == "sandbox_destroyed"
+    assert events[-1].payload["workspace_path"] == result["workspace_path"]
+
+
+def test_destroy_worktree_sandbox_uses_git_adapter_remove(tmp_path):
+    execution_id = "exec_sandbox_destroy_worktree"
+    _create_run(tmp_path, execution_id)
+    adapter = FakeSandboxGitAdapter()
+    api = ExecutionAPI(tmp_path, clock=FakeClock(), sandbox_git_adapter=adapter)
+    sandbox = api.create_sandbox(execution_id, mode="worktree")
+
+    result = api.destroy_sandbox(execution_id)
+
+    assert result["status"] == "destroyed"
+    assert result["mode"] == "worktree"
+    assert adapter.removed == [
+        {
+            "repo_root": tmp_path,
+            "worktree_path": Path(sandbox["worktree_path"]),
+        }
+    ]
+    assert _events(tmp_path, execution_id)[-1].payload["transition"] == "sandbox_destroyed"
+
+
+def test_destroy_sandbox_is_idempotent_for_already_destroyed_metadata(tmp_path):
+    execution_id = "exec_sandbox_destroy_idempotent"
+    _create_run(tmp_path, execution_id)
+    api = ExecutionAPI(tmp_path, clock=FakeClock())
+    api.create_sandbox(execution_id)
+    first = api.destroy_sandbox(execution_id)
+    before = _events(tmp_path, execution_id)
+
+    second = api.destroy_sandbox(execution_id)
+
+    assert first["status"] == "destroyed"
+    assert second["status"] == "already_destroyed"
+    assert second["sandbox_id"] == first["sandbox_id"]
+    assert _events(tmp_path, execution_id) == before
+
+
 def test_path_overlap_is_advisory_and_records_conflict_event(tmp_path):
     first_id = "exec_sandbox_first"
     second_id = "exec_sandbox_second"
@@ -244,6 +298,67 @@ def test_command_runner_scrubs_secrets_bounds_output_and_records_nonzero(tmp_pat
     assert event.payload["exit_code"] == 7
     assert {"AWS_SECRET_ACCESS_KEY", "GH_TOKEN"} <= set(event.payload["redacted_env_keys"])
     assert "ghp_real_secret" not in str(event.to_dict())
+    assert api.get_sandbox(execution_id)["status"] == "active"
+
+
+def test_command_timeout_writes_failed_ledger_event(tmp_path, monkeypatch):
+    execution_id = "exec_sandbox_timeout"
+    _create_run(tmp_path, execution_id)
+    api = ExecutionAPI(tmp_path, clock=FakeClock())
+    sandbox = api.create_sandbox(execution_id)
+
+    def fail_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=kwargs.get("args", args[0] if args else []),
+            timeout=1,
+            output="stdout ghp_timeout_secret",
+            stderr="stderr ghp_timeout_secret",
+        )
+
+    monkeypatch.setattr("goodteam_os.execution.sandbox.subprocess.run", fail_timeout)
+
+    result = api.run_sandbox_command(
+        execution_id,
+        [sys.executable, "-V"],
+        cwd=Path(sandbox["workspace_path"]),
+        env={"GH_TOKEN": "ghp_timeout_secret"},
+    )
+
+    event = _events(tmp_path, execution_id)[-1]
+    assert result["status"] == "failed"
+    assert result["reason"] == "timeout"
+    assert "[REDACTED]" in result["stdout_excerpt"]
+    assert "[REDACTED]" in result["stderr_excerpt"]
+    assert event.payload["transition"] == "sandbox_command_failed"
+    assert "ghp_timeout_secret" not in str(event.to_dict())
+    assert api.get_sandbox(execution_id)["status"] == "active"
+
+
+def test_command_spawn_failure_writes_failed_ledger_event(tmp_path, monkeypatch):
+    execution_id = "exec_sandbox_spawn_failed"
+    _create_run(tmp_path, execution_id)
+    api = ExecutionAPI(tmp_path, clock=FakeClock())
+    sandbox = api.create_sandbox(execution_id)
+
+    def fail_spawn(*args, **kwargs):
+        raise OSError("spawn failed with sk_spawn_secret")
+
+    monkeypatch.setattr("goodteam_os.execution.sandbox.subprocess.run", fail_spawn)
+
+    result = api.run_sandbox_command(
+        execution_id,
+        [sys.executable, "-V", "sk_spawn_secret"],
+        cwd=Path(sandbox["workspace_path"]),
+        env={"OPENAI_API_KEY": "sk_spawn_secret"},
+    )
+
+    event = _events(tmp_path, execution_id)[-1]
+    assert result["status"] == "failed"
+    assert result["reason"] == "spawn_failed"
+    assert result["argv"] == [sys.executable, "-V", "[REDACTED]"]
+    assert "[REDACTED]" in result["error_excerpt"]
+    assert event.payload["transition"] == "sandbox_command_failed"
+    assert "sk_spawn_secret" not in str(event.to_dict())
     assert api.get_sandbox(execution_id)["status"] == "active"
 
 

@@ -62,6 +62,7 @@ def _sandbox_commands(commands: list[dict[str, Any]]) -> str:
                     ("Exit", command.get("exit_code")),
                     ("Stdout", command.get("stdout_excerpt")),
                     ("Stderr", command.get("stderr_excerpt")),
+                    ("Error", command.get("error_excerpt")),
                     ("Redacted env", ", ".join(str(item) for item in command.get("redacted_env_keys", []))),
                 ]
             )

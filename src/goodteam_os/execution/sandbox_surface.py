@@ -47,7 +47,11 @@ def read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _is_command_event(event: LedgerEvent) -> bool:
-    return event.payload.get("transition") in {"sandbox_command_executed", "sandbox_command_rejected"}
+    return event.payload.get("transition") in {
+        "sandbox_command_executed",
+        "sandbox_command_failed",
+        "sandbox_command_rejected",
+    }
 
 
 def _command_surface(event: LedgerEvent) -> dict[str, Any]:
@@ -61,10 +65,12 @@ def _command_surface(event: LedgerEvent) -> dict[str, Any]:
         "exit_code": payload.get("exit_code"),
         "stdout_excerpt": payload.get("stdout_excerpt", ""),
         "stderr_excerpt": payload.get("stderr_excerpt", ""),
+        "error_excerpt": payload.get("error_excerpt", ""),
         "redacted_env_keys": payload.get("redacted_env_keys", []),
         "redaction_marker": REDACTION_MARKER
         if REDACTION_MARKER in str(payload.get("stdout_excerpt", ""))
         or REDACTION_MARKER in str(payload.get("stderr_excerpt", ""))
+        or REDACTION_MARKER in str(payload.get("error_excerpt", ""))
         else "",
     }
 

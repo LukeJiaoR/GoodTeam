@@ -105,6 +105,33 @@ def test_browser_html_renders_sandbox_evidence(tmp_path):
     assert "anthropic-secret" not in html
 
 
+def test_workbench_projects_failed_sandbox_commands(tmp_path, monkeypatch):
+    execution_id = "exec_sandbox_failed_command_surface"
+    _create_run(tmp_path, execution_id)
+    api = ExecutionAPI(tmp_path, clock=FakeClock())
+    sandbox = api.create_sandbox(execution_id)
+
+    def fail_spawn(*args, **kwargs):
+        raise OSError("spawn failed with sk-workbench-secret")
+
+    monkeypatch.setattr("goodteam_os.execution.sandbox.subprocess.run", fail_spawn)
+
+    api.run_sandbox_command(
+        execution_id,
+        [sys.executable, "-V"],
+        cwd=Path(sandbox["workspace_path"]),
+        env={"OPENAI_API_KEY": "sk-workbench-secret"},
+    )
+
+    command = api.get_review_workbench(execution_id)["sandbox"]["commands"][0]
+
+    assert command["transition"] == "sandbox_command_failed"
+    assert command["status"] == "failed"
+    assert command["reason"] == "spawn_failed"
+    assert "[REDACTED]" in command["error_excerpt"]
+    assert "sk-workbench-secret" not in str(command)
+
+
 def _create_run(tmp_path: Path, execution_id: str) -> None:
     ExecutionLedger(tmp_path).create_run(
         ExecutionRun(

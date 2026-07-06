@@ -32,6 +32,7 @@ api.create_sandbox(
 )
 api.run_sandbox_command(execution_id, ["python", "-V"])
 api.get_sandbox(execution_id)
+api.destroy_sandbox(execution_id)
 ```
 
 `mode="workspace"` creates a deterministic isolated directory under:
@@ -51,7 +52,12 @@ class SandboxGitAdapter:
 The default adapter shells out to `git worktree add/remove` with `shell=False`.
 Tests use fake adapters so they do not depend on GitHub, remotes, or complex
 local git state. If worktree creation fails, Sandbox v0 writes
-`sandbox_create_failed` and does not write active sandbox metadata.
+`sandbox_create_failed` and does not write active sandbox metadata. Destroying a
+worktree sandbox calls the adapter's `remove_worktree`.
+
+Destroy is idempotent. A first destroy marks metadata `status = destroyed` and
+writes `sandbox_destroyed`; later destroy calls return `already_destroyed`
+without appending another ledger event.
 
 ## Metadata
 
@@ -74,6 +80,7 @@ The metadata uses `schema_version = sandbox.v1` and records:
 - `conflict_risk`
 - `conflict_risks`
 - `created_at`
+- `destroyed_at` after sandbox destroy
 
 ## Ledger Events
 
@@ -87,7 +94,9 @@ Current transitions:
 - `sandbox_create_failed`
 - `sandbox_conflict_risk_detected`
 - `sandbox_command_executed`
+- `sandbox_command_failed`
 - `sandbox_command_rejected`
+- `sandbox_destroyed`
 
 All sandbox events include:
 
@@ -119,7 +128,9 @@ typed broker, not through ordinary sandbox command execution.
 
 Rejected commands still write `sandbox_command_rejected` ledger events. Non-zero
 exit codes are recorded as `sandbox_command_executed` with the exit code and do
-not destroy or corrupt sandbox metadata.
+not destroy or corrupt sandbox metadata. Timeout, spawn, and unexpected command
+execution failures write `sandbox_command_failed` with bounded, scrubbed command
+evidence.
 
 ## Secret Scrubbing
 
@@ -159,6 +170,9 @@ Expected behavior:
 - overlap with an active sandbox: sandbox is still created
 - overlap writes `sandbox_conflict_risk_detected`
 - metadata and Workbench show `conflict_risk = true`
+
+Overlap detection is intentionally small in v0 and supports exact or directory
+prefix relationships. It does not interpret glob patterns such as `src/**`.
 
 Sandbox v0 does not do automatic rebase, conflict resolution, scheduling, or
 branch fan-in.

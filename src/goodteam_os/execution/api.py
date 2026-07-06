@@ -167,6 +167,9 @@ class ExecutionAPI:
     def get_sandbox(self, execution_id: str) -> dict[str, Any]:
         return self._sandbox_service().get_sandbox(execution_id)
 
+    def destroy_sandbox(self, execution_id: str) -> dict[str, Any]:
+        return self._sandbox_service().destroy_sandbox(execution_id)
+
     def run_sandbox_command(
         self,
         execution_id: str,
