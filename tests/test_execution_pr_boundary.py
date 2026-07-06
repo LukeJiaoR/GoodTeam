@@ -167,7 +167,9 @@ def test_completed_execution_opens_pr_and_records_single_pr_event(tmp_path):
         "intake_created",
         "worker_job_created",
         "execution_started",
+        "sandbox_created",
         "execution_completed",
+        "sandbox_destroyed",
         "pr_opened",
     ]
     assert events[-1].event_type is LedgerEventType.PR_OPENED

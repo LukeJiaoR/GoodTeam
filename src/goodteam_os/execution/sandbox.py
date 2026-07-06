@@ -62,16 +62,21 @@ class SandboxService:
         base_ref: str = "HEAD",
     ) -> dict[str, Any]:
         self._require_run(execution_id)
-        normalized_mode = normalize_mode(mode)
-        paths = normalize_paths(claimed_paths or [])
-        metadata = self._metadata(execution_id, normalized_mode, paths)
-        conflicts = self._conflict_risks(execution_id, paths)
+        try:
+            normalized_mode = normalize_mode(mode)
+            paths = normalize_paths(claimed_paths or [])
+            metadata = self._metadata(execution_id, normalized_mode, paths)
+            conflicts = self._conflict_risks(execution_id, paths)
+        except Exception as exc:
+            metadata = self._metadata(execution_id, "workspace", [])
+            return self._create_failed(execution_id, metadata, exc, reason="sandbox_create_failed")
         metadata["conflict_risk"] = bool(conflicts)
         metadata["conflict_risks"] = conflicts
         try:
             self._prepare_workspace(metadata, normalized_mode, base_ref)
         except Exception as exc:
-            return self._create_failed(execution_id, metadata, exc)
+            reason = "worktree_create_failed" if normalized_mode == "worktree" else "workspace_create_failed"
+            return self._create_failed(execution_id, metadata, exc, reason=reason)
         if conflicts:
             self._append_event(execution_id, "sandbox_conflict_risk_detected", {"conflict_risks": conflicts})
         self._write_metadata(execution_id, metadata)
@@ -91,14 +96,17 @@ class SandboxService:
             return {"available": False, "reason": "sandbox_evidence_missing"}
         if metadata.get("status") == "destroyed":
             return json_ready({**metadata, "status": "already_destroyed"})
-        if metadata.get("mode") == "worktree":
-            self.git_adapter.remove_worktree(
-                repo_root=self.project_root,
-                worktree_path=Path(str(metadata["worktree_path"])),
-            )
-        metadata["status"] = "destroyed"
-        metadata["destroyed_at"] = self._clock()
-        self._write_metadata(execution_id, metadata)
+        try:
+            if metadata.get("mode") == "worktree":
+                self.git_adapter.remove_worktree(
+                    repo_root=self.project_root,
+                    worktree_path=Path(str(metadata["worktree_path"])),
+                )
+            metadata["status"] = "destroyed"
+            metadata["destroyed_at"] = self._clock()
+            self._write_metadata(execution_id, metadata)
+        except Exception as exc:
+            return self._destroy_failed(execution_id, metadata, exc)
         self._append_event(execution_id, "sandbox_destroyed", _created_payload(metadata))
         return json_ready(metadata)
 
@@ -193,14 +201,31 @@ class SandboxService:
         execution_id: str,
         metadata: dict[str, Any],
         exc: Exception,
+        *,
+        reason: str,
     ) -> dict[str, Any]:
         result = {
             "status": "failed",
-            "reason": "worktree_create_failed",
+            "reason": reason,
             "error": excerpt(str(exc), []),
             **_created_payload(metadata),
         }
         self._append_event(execution_id, "sandbox_create_failed", result)
+        return json_ready(result)
+
+    def _destroy_failed(
+        self,
+        execution_id: str,
+        metadata: dict[str, Any],
+        exc: Exception,
+    ) -> dict[str, Any]:
+        result = {
+            "status": "failed",
+            "reason": "sandbox_destroy_failed",
+            "error": excerpt(str(exc), []),
+            **_created_payload(metadata),
+        }
+        self._append_event(execution_id, "sandbox_destroy_failed", result)
         return json_ready(result)
 
     def _metadata(self, execution_id: str, mode: str, claimed_paths: list[str]) -> dict[str, Any]:

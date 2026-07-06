@@ -46,7 +46,9 @@ def test_completed_execution_exports_browser_visible_html_and_json(tmp_path):
     assert "tests/test_review_workbench_diff_artifact.py" in html
     assert "Memory provenance</dt><dd>complete</dd>" in html
     assert "Decision</dt><dd>approve by LukeJiaoR</dd>" in html
-    assert "Sandbox</dt><dd>Unavailable - sandbox_evidence_missing</dd>" in html
+    assert "Sandbox</dt><dd>available</dd>" in html
+    assert "sandbox_created" in html
+    assert "sandbox_destroyed" in html
     assert "diff_artifact_persisted" in html
     assert "review_decision_recorded" in html
 
@@ -64,7 +66,7 @@ def test_export_preserves_empty_states_without_mock_data(tmp_path):
     assert "No persisted PR diff artifact is available." in html
     assert "Changed files</h2>" in html
     assert "No changed files available from persisted diff artifact." in html
-    assert "Sandbox evidence is not implemented in this MVP." in html
+    assert "No sandbox commands recorded." in html
 
 
 def test_pending_and_failed_executions_render_without_crash(tmp_path):

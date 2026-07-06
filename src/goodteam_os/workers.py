@@ -124,6 +124,30 @@ def is_transient(failure_class: str) -> bool:
     return failure_class in {"auth", "rate_limit", "network", "timeout", "stream_disconnect"}
 
 
+def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
+    claimed_paths = context.get("claimed_paths", [])
+    if not isinstance(claimed_paths, list):
+        claimed_paths = []
+    return {
+        "available": bool(context.get("available")),
+        "schema_version": str(context.get("schema_version", "")),
+        "execution_id": str(context.get("execution_id", "")),
+        "sandbox_id": str(context.get("sandbox_id", "")),
+        "workspace_path": str(context.get("workspace_path", "")),
+        "worktree_path": str(context.get("worktree_path", "")),
+        "mode": str(context.get("mode", "")),
+        "branch_name": str(context.get("branch_name", "")),
+        "claimed_paths": [str(path) for path in claimed_paths],
+    }
+
+
+def _worker_sandbox_context_prompt(job: dict[str, Any]) -> str:
+    context = job.get("sandbox_context")
+    if not isinstance(context, dict):
+        return "No sandbox context provided."
+    return json.dumps(context, indent=2, sort_keys=True)
+
+
 def parse_result_sections(text: str) -> list[tuple[str, str]]:
     parsed: list[tuple[str, str]] = []
     lines = text.splitlines()
@@ -876,6 +900,7 @@ class WorkerJobStore:
                             "original_failed_job_id",
                             "retry_attempt",
                             "retry_of_idempotency_key",
+                            "sandbox_context",
                         }
                     },
                 }
@@ -888,9 +913,11 @@ class WorkerJobStore:
             jobs.append(job)
         return jobs
 
-    def run_job(self, job_id: str) -> dict[str, Any]:
+    def run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
         job_root = self.root / job_id
         job = self._read_json(job_root / "job.json")
+        if sandbox_context is not None:
+            job = self._attach_sandbox_context(job_root, job, sandbox_context)
         memory_citations = self._memory_citations_from_pickup_packet(job_root)
         adapter = str(job["adapter"])
         if adapter == "noop":
@@ -971,6 +998,18 @@ class WorkerJobStore:
             if isinstance(event_id, str) and event_id:
                 citations.append(event_id)
         return citations
+
+    def _attach_sandbox_context(
+        self,
+        job_root: Path,
+        job: dict[str, Any],
+        sandbox_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        safe_context = _worker_safe_sandbox_context(sandbox_context)
+        updated = {**job, "sandbox_context": safe_context}
+        self._write_json(job_root / "sandbox_context.json", safe_context)
+        self._write_json(job_root / "job.json", updated)
+        return updated
 
     def _write_back_memory(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         result_path = job_root / "result.md"
@@ -1300,6 +1339,7 @@ class WorkerJobStore:
             adapter = str(job.get("adapter", ""))
             configured_model = CLI_BACKENDS.get(adapter, CODEX_BACKEND).model_default
         pickup_context = self._render_worker_pickup_context(job_root)
+        sandbox_context = _worker_sandbox_context_prompt(job)
         return "\n\n".join(
             [
                 f"# GoodTeam Worker Job {job['id']}",
@@ -1309,6 +1349,7 @@ class WorkerJobStore:
                 "Operate non-interactively and do not ask for human approval.",
                 "Read the role prompt, task, context, constraints, and expected artifacts below.",
                 "When modifying files, keep changes inside the current project root.",
+                "If Sandbox Context is available, treat workspace_path as the intended execution workspace.",
                 "Use bounded smoke checks. If you start dev servers, browser sessions, watchers, or other long-running processes, run them in a way you can stop and stop any dev servers, browser sessions, or watchers before exiting.",
                 "At the end, summarize changed files, verification commands, and unresolved risks.",
                 "## Role Prompt",
@@ -1317,6 +1358,8 @@ class WorkerJobStore:
                 (job_root / "task.md").read_text(encoding="utf-8"),
                 "## Context",
                 (job_root / "context.md").read_text(encoding="utf-8"),
+                "## Sandbox Context",
+                sandbox_context,
                 "## Constraints",
                 (job_root / "constraints.md").read_text(encoding="utf-8"),
                 "## Expected Artifacts",
@@ -1418,6 +1461,8 @@ Keep each bullet short, factual, and free of secrets.""",
             "changed_files": [],
         }
         status_payload.update(_clean_identity_fields(job))
+        if isinstance(job.get("sandbox_context"), dict):
+            status_payload["sandbox_context"] = job["sandbox_context"]
         if extra_payload:
             status_payload.update(extra_payload)
         provided_evidence = status_payload.get("invocation_evidence")

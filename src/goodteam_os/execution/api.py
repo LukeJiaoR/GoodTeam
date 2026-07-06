@@ -195,7 +195,11 @@ class ExecutionAPI:
         return self.replay(execution_id)
 
     def _orchestrator(self) -> ExecutionOrchestrator:
-        orchestrator = ExecutionOrchestrator(self.project_root, self.github_client)
+        orchestrator = ExecutionOrchestrator(
+            self.project_root,
+            self.github_client,
+            sandbox_git_adapter=self.sandbox_git_adapter,
+        )
         if self.clock is not None:
             orchestrator._clock = self.clock
         return orchestrator

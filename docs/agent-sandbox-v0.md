@@ -4,9 +4,10 @@ Issue: #218
 
 ## Purpose
 
-Agent Sandbox v0 establishes an auditable boundary for agent work without
-forcing every existing execution path to migrate immediately. The v0 contract is
-small on purpose:
+Agent Sandbox v0 establishes an auditable boundary for agent work. #309 added
+the boundary primitives; the next slice wires those primitives into the real
+`ExecutionOrchestrator.run_execution()` lifecycle. The v0 contract is small on
+purpose:
 
 - sandbox workspace metadata
 - command policy
@@ -16,8 +17,8 @@ small on purpose:
 - Review Workbench sandbox evidence
 
 This is not a production isolation runtime. It is the first ledger-backed
-contract that lets maintainers test and inspect sandbox boundaries before the
-runner migration is mandatory.
+contract that lets maintainers test and inspect sandbox boundaries while deeper
+worker command mediation remains incremental.
 
 ## API Surface
 
@@ -59,6 +60,53 @@ Destroy is idempotent. A first destroy marks metadata `status = destroyed` and
 writes `sandbox_destroyed`; later destroy calls return `already_destroyed`
 without appending another ledger event.
 
+If destroy fails, Sandbox v0 writes `sandbox_destroy_failed` and returns a failed
+destroy result. The execution outcome is not rewritten: a worker success remains
+`execution_completed`, and a worker failure remains `execution_failed`.
+
+## Execution Lifecycle
+
+`ExecutionOrchestrator.run_execution()` creates a sandbox by default before it
+runs the worker job:
+
+```text
+execution_started
+  -> sandbox_created
+  -> worker job receives sandbox_context
+  -> execution_completed / execution_failed
+  -> sandbox_destroyed
+```
+
+The default mode is `workspace` so local and CI execution do not depend on real
+git worktrees. `worktree` mode remains available through the same
+`SandboxGitAdapter` boundary.
+
+The worker receives a sanitized `sandbox_context` with:
+
+```json
+{
+  "available": true,
+  "schema_version": "sandbox.v1",
+  "execution_id": "...",
+  "sandbox_id": "...",
+  "workspace_path": "...",
+  "worktree_path": "",
+  "mode": "workspace",
+  "branch_name": "...",
+  "claimed_paths": []
+}
+```
+
+The context is written to worker job metadata for auditability. It does not
+include host credentials, GitHub tokens, API keys, or secret values. Workers can
+use `workspace_path` as the intended future cwd boundary, but command-by-command
+worker action mediation remains future work.
+
+Sandbox creation failure is deterministic: the orchestrator records
+`sandbox_create_failed`, marks the execution failed, and does not run the worker.
+Missing executions still fail before any sandbox artifact or missing-execution
+ledger file is created.
+
 ## Metadata
 
 Active sandbox metadata is written to:
@@ -96,6 +144,7 @@ Current transitions:
 - `sandbox_command_executed`
 - `sandbox_command_failed`
 - `sandbox_command_rejected`
+- `sandbox_destroy_failed`
 - `sandbox_destroyed`
 
 All sandbox events include:
@@ -216,13 +265,14 @@ This PR does not implement:
 - a real GitHub write broker
 - `gh pr merge` or `gh pr review`
 - auto rebase or auto conflict resolution
-- mandatory migration of all current agent execution paths into sandbox
+- command-by-command worker action mediation
 - a large React dashboard rewrite
 
 ## Remaining #218 Gaps
 
-- Mandatory integration of all agent execution paths.
+- Command-by-command worker action mediation.
 - Real GitHub/CI typed broker.
 - Stronger filesystem isolation.
+- Real path claim inference.
 - Cleanup and recovery hardening.
 - Optional Docker/VM future isolation.

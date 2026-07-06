@@ -334,16 +334,18 @@ This MVP does not fake missing artifacts.
 - Sandbox/action evidence exists:
   `sandbox.available = true`, `sandbox.schema_version = sandbox.v1`, and the
   surface lists command history, rejected commands, conflict risks, and raw
-  sandbox ledger events
+  sandbox ledger events. Real `run_execution()` paths now create and destroy a
+  workspace-mode sandbox by default, so successful executions expose lifecycle
+  events even when command history is empty.
 
 ## Remaining #216 Gaps
 
 This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 
-- Deeper #218 integration remains outside the Review Workbench MVP: mandatory
-  migration of all agent execution paths, typed GitHub/CI broker, stronger
-  filesystem isolation, cleanup/recovery hardening, and optional Docker/VM
-  isolation.
+- Deeper #218 integration remains outside the Review Workbench MVP:
+  command-by-command worker action mediation, typed GitHub/CI broker, stronger
+  filesystem isolation, real path claim inference, cleanup/recovery hardening,
+  and optional Docker/VM isolation.
 - Add deeper React dashboard polish around warnings, review decisions, and
   artifact drill-downs.
 - Run the final #216 acceptance audit before closing the issue.

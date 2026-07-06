@@ -65,6 +65,7 @@ def _orchestrator(tmp_path, *, clock: FakeClock | None = None) -> ExecutionOrche
     orchestrator = ExecutionOrchestrator(
         tmp_path,
         FakeGitHubClient({("lukejiaor/goodteam", 228): _snapshot()}),
+        sandbox_enabled=False,
     )
     orchestrator._clock = clock or FakeClock()
     return orchestrator
