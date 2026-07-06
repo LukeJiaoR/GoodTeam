@@ -30,6 +30,7 @@ from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
 from goodteam_os.execution.ci import CIStatusService
 from goodteam_os.execution.review_workbench import ReviewWorkbenchService
+from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
 from goodteam_os.execution.api import ExecutionAPI
 
 
@@ -54,6 +55,8 @@ __all__ = [
     "LedgerEventType",
     "PullRequestBindingService",
     "ReviewWorkbenchService",
+    "SandboxGitAdapter",
+    "SandboxService",
     "CIStatusService",
     "branch_name_from_execution_id",
     "execution_id_from_task",

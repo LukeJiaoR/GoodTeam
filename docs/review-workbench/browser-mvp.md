@@ -156,7 +156,9 @@ The MVP page shows:
 - warnings and incomplete reason
 - current reviewer decision
 - local-server decision form with reviewer, decision, reason, and submit button
-- sandbox empty state for #218
+- sandbox evidence from #218 ledger events, including status, workspace/worktree
+  paths, command history, rejected commands, conflict risks, and redaction
+  markers
 - ledger timeline
 
 The diff section renders a file navigation list above the diff body. Each file
@@ -218,7 +220,7 @@ The browser surface renders these states without crashing:
 - partially mapped changed files: `rationale_mapping_partial`
 - pending execution: `status = pending` plus `incomplete_reason`
 - failed execution: `status = failed` plus failure evidence
-- sandbox not implemented: `sandbox_evidence_not_implemented`
+- sandbox evidence missing: `sandbox_evidence_missing`
 - no decision: `No review decision recorded.`
 
 When `pr-diff.json` exists but `pr-diff.patch` is missing, the browser still
@@ -268,7 +270,10 @@ goodteam-os execution record-review-decision \
 
 Remaining #216 gaps:
 
-- #218 sandbox/action evidence
+- deeper #218 integration beyond the current ledger-backed sandbox evidence:
+  mandatory migration of all agent execution paths, typed GitHub/CI broker,
+  stronger filesystem isolation, cleanup/recovery hardening, and optional
+  Docker/VM isolation
 - deeper product polish inside the React dashboard
 - final #216 acceptance audit after the remaining surfaces land
 

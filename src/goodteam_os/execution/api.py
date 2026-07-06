@@ -17,6 +17,7 @@ from goodteam_os.execution.review_workbench import ReviewWorkbenchService
 from goodteam_os.execution.review_workbench_browser import (
     export_review_workbench_html_artifacts,
 )
+from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -30,10 +31,12 @@ class ExecutionAPI:
         *,
         github_client: GitHubClient | None = None,
         clock: Clock | None = None,
+        sandbox_git_adapter: SandboxGitAdapter | None = None,
     ):
         self.project_root = Path(project_root)
         self.github_client = github_client
         self.clock = clock
+        self.sandbox_git_adapter = sandbox_git_adapter
         self.ledger_store = ExecutionLedger(self.project_root)
         self.binding_store = GitHubExecutionBindingStore(self.project_root)
         self.worker_store = WorkerJobStore(self.project_root)
@@ -148,6 +151,40 @@ class ExecutionAPI:
             clock=self.clock,
         ).record_decision(execution_id, decision, reviewer, reason)
 
+    def create_sandbox(
+        self,
+        execution_id: str,
+        *,
+        claimed_paths: list[str] | None = None,
+        mode: str = "workspace",
+    ) -> dict[str, Any]:
+        return self._sandbox_service().create_sandbox(
+            execution_id,
+            claimed_paths=claimed_paths or [],
+            mode=mode,
+        )
+
+    def get_sandbox(self, execution_id: str) -> dict[str, Any]:
+        return self._sandbox_service().get_sandbox(execution_id)
+
+    def destroy_sandbox(self, execution_id: str) -> dict[str, Any]:
+        return self._sandbox_service().destroy_sandbox(execution_id)
+
+    def run_sandbox_command(
+        self,
+        execution_id: str,
+        argv: list[str] | str,
+        *,
+        cwd: Path | str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self._sandbox_service().run_command(
+            execution_id,
+            argv,
+            cwd=cwd,
+            env=env,
+        )
+
     def replay(self, execution_id: str) -> dict[str, Any]:
         run = self.ledger_store.read_run(execution_id)
         if run is None:
@@ -162,6 +199,13 @@ class ExecutionAPI:
         if self.clock is not None:
             orchestrator._clock = self.clock
         return orchestrator
+
+    def _sandbox_service(self) -> SandboxService:
+        return SandboxService(
+            self.project_root,
+            clock=self.clock,
+            git_adapter=self.sandbox_git_adapter,
+        )
 
     def _status_payload(
         self,
