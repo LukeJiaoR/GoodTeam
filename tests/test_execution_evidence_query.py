@@ -281,15 +281,14 @@ def test_memory_provenance_refs_are_read_without_query_side_effects(tmp_path):
     assert second == manifest
     assert ledger.read_events(execution_id) == events_before
     assert memory._read_events("orchestrator") == memory_before
-    assert {
-        (ref["kind"], ref["memory_event_id"])
-        for ref in manifest["memory_provenance_refs"]
-    } == {
-        ("ledger_closure", finalized["memory_event_id"]),
-        ("memory_event", finalized["memory_event_id"]),
-    }
-    assert manifest["memory_provenance_refs"][0]["ledger_event_id"] == finalized["ledger_event_id"]
-    assert manifest["memory_provenance_refs"][0]["evidence_hash"]
+    assert manifest["memory_provenance_integrity"]["complete"] is True
+    assert len(manifest["memory_provenance_refs"]) == 1
+    ref = manifest["memory_provenance_refs"][0]
+    assert ref["status"] == "complete"
+    assert ref["execution_id"] == execution_id
+    assert ref["memory_event_id"] == finalized["memory_event_id"]
+    assert ref["ledger_event_id"] == finalized["ledger_event_id"]
+    assert ref["evidence_hash"]
 
 
 def test_missing_run_returns_incomplete_manifest_without_unexplained_error(tmp_path):

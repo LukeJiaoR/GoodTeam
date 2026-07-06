@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -9,17 +8,18 @@ from typing import Any
 
 from goodteam_os.execution.evidence_manifest import build_evidence_manifest
 from goodteam_os.execution.ledger import ExecutionLedger
-from goodteam_os.execution.models import (
-    ExecutionActor,
-    ExecutionRunStatus,
-    LedgerEvent,
-    LedgerEventType,
+from goodteam_os.execution.memory_provenance import (
+    PROVENANCE_HORIZON,
+    PROVENANCE_ROLE,
+    PROVENANCE_TRANSITION,
+    memory_source,
 )
+from goodteam_os.execution.models import ExecutionRunStatus, LedgerEvent
+from goodteam_os.execution.provenance_closure import ledger_event, memory_text
 from goodteam_os.memory import RoleMemoryStore
 
 
 Clock = Callable[[], str]
-PROVENANCE_TRANSITION, PROVENANCE_ROLE, PROVENANCE_HORIZON = "provenance_written", "orchestrator", "long-term"
 
 
 class ExecutionEvidenceService:
@@ -32,14 +32,27 @@ class ExecutionEvidenceService:
     def get_evidence(self, execution_id: str) -> dict[str, Any]:
         return build_evidence_manifest(self.ledger, self.memory_store, execution_id)
 
+    def audit_memory_provenance(self, execution_id: str) -> dict[str, Any]:
+        return self.get_evidence(execution_id)["memory_provenance_integrity"]
+
     def finalize_provenance(self, execution_id: str) -> dict[str, Any]:
         replay = self.ledger.replay(execution_id)
         if replay["run"] is None:
             raise ValueError(f"Execution run not found: {execution_id}")
 
         evidence = self.build_provenance(execution_id)
-        if evidence["final_status"] == "pending":
+        if evidence["final_status"] != "completed":
             return _finalize_result(execution_id, evidence=evidence)
+
+        existing_closure = self._closure_event(execution_id)
+        if existing_closure is not None:
+            memory_event_id = str(existing_closure.payload.get("memory_event_id", "")).strip()
+            return _finalize_result(
+                execution_id,
+                memory_event_id=memory_event_id or None,
+                ledger_event_id=existing_closure.event_id,
+                evidence=evidence,
+            )
 
         source = _memory_source(execution_id)
         memory_event, memory_written = self._write_memory(source, evidence)
@@ -84,7 +97,7 @@ class ExecutionEvidenceService:
         event = self.memory_store.append_memory_event(
             PROVENANCE_ROLE,
             horizon=PROVENANCE_HORIZON,
-            text=_memory_text(evidence),
+            text=memory_text(evidence),
             source=source,
         )
         return event, True
@@ -94,7 +107,7 @@ class ExecutionEvidenceService:
         if existing is not None:
             return existing
 
-        event = _ledger_event(
+        event = ledger_event(
             self.ledger,
             evidence=evidence,
             memory_event_id=memory_event_id,
@@ -226,67 +239,7 @@ def _evidence_timestamp(run: Any, events: list[LedgerEvent]) -> str:
 
 
 def _memory_source(execution_id: str) -> str:
-    return f"execution:{execution_id}:final_provenance"
-
-
-def _memory_text(evidence: dict[str, Any]) -> str:
-    transitions = [
-        str(event["payload"].get("transition", event["event_type"]))
-        for event in evidence["events"]
-        if isinstance(event.get("payload"), dict)
-    ]
-    lifecycle = " -> ".join(transitions)
-    return (
-        f"Execution {evidence['execution_id']} finalized with status "
-        f"{evidence['final_status']}. Issue: {evidence['issue'] or 'n/a'}. "
-        f"PR: {evidence['pr'] or 'n/a'}. Ledger replay: "
-        f".goodteam/executions/{evidence['execution_id']}/events.jsonl. "
-        f"Lifecycle: {lifecycle}."
-    )
-
-
-def _ledger_event(
-    ledger: ExecutionLedger,
-    *,
-    evidence: dict[str, Any],
-    memory_event_id: str,
-    created_at: str,
-) -> LedgerEvent:
-    execution_id = str(evidence["execution_id"])
-    event_number = len(ledger.read_events(execution_id)) + 1
-    merge_summary = dict(evidence["merge_summary"])
-    payload = {
-        "transition": PROVENANCE_TRANSITION,
-        "execution_id": execution_id,
-        "memory_event_id": memory_event_id,
-        "pr_number": _pr_number_from_ref(str(evidence.get("pr", ""))),
-        "merge_commit_sha": str(merge_summary.get("merge_commit_sha", "")),
-        "evidence_hash": _evidence_hash(evidence),
-    }
-    return LedgerEvent(
-        event_id=f"{execution_id}:{event_number:04d}:status_changed:{PROVENANCE_TRANSITION}",
-        execution_id=execution_id,
-        task_id=str(evidence["task_id"]),
-        event_type=LedgerEventType.STATUS_CHANGED,
-        actor=ExecutionActor.ORCHESTRATOR,
-        payload=payload,
-        created_at=created_at,
-    )
-
-
-def _pr_number_from_ref(pr_ref: str) -> int | None:
-    if "#" not in pr_ref:
-        return None
-    _, number = pr_ref.rsplit("#", 1)
-    try:
-        return int(number)
-    except ValueError:
-        return None
-
-
-def _evidence_hash(evidence: dict[str, Any]) -> str:
-    payload = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return memory_source(execution_id)
 
 
 def _json_ready(value: Any) -> Any:
