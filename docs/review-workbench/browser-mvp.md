@@ -95,7 +95,7 @@ append a `review_decision_recorded` event.
 The canonical `diff` field now projects persisted PR diff artifacts into a
 file-level review model. When `.goodteam/executions/<execution_id>/artifacts/pr-diff.json`
 is present, `diff.changed_files[]` includes stable anchors, parsed hunks from
-`pr-diff.patch`, and the future rationale hook:
+`pr-diff.patch`, and file-level rationale evidence refs:
 
 ```json
 {
@@ -116,13 +116,29 @@ is present, `diff.changed_files[]` includes stable anchors, parsed hunks from
       ]
     }
   ],
-  "rationale_refs": [],
-  "rationale_status": "not_mapped"
+  "rationale_refs": [
+    {
+      "kind": "worker_result",
+      "title": "Worker result",
+      "path": ".goodteam/workers/jobs/<worker-id>/result.md",
+      "excerpt": "Implemented src/goodteam_os/execution/api.py...",
+      "confidence": "direct"
+    }
+  ],
+  "rationale_status": "mapped"
 }
 ```
 
-`rationale_refs` is intentionally empty in this slice. It is a stable placeholder
-for future changed-file-to-rationale mapping and must not be treated as evidence.
+Rationale mapping is evidence-backed only. The mapper reads existing
+`review_workbench["rationale"]` sources, worker `result.md`, and worker prompt
+snapshot files (`role_prompt.md`, `task.md`, `context.md`, `constraints.md`).
+It never calls an LLM and never invents reasoning. A ref is emitted only when a
+source artifact contains the exact changed-file path. Current refs use
+`confidence = direct`; `contextual` is reserved for future rules that can show a
+general execution-level rationale without implying a fake file-specific reason.
+If no source can be mapped to a file, the file keeps `rationale_refs = []` and
+`rationale_status = not_mapped`; if no rationale artifacts exist,
+`rationale_status = rationale_artifact_missing`.
 
 ## Rendered Sections
 
@@ -133,6 +149,8 @@ The MVP page shows:
 - PR ref, branch, and commit
 - diff summary, file navigation, and changed-line highlights from the persisted
   PR diff artifacts
+- rationale evidence under each changed file, including status, source kind,
+  artifact path, bounded excerpt, and confidence
 - CI summary and review observation counts
 - memory provenance integrity and memory refs
 - warnings and incomplete reason
@@ -195,6 +213,9 @@ The browser surface renders these states without crashing:
 - missing patch file with available changed-file metadata: `patch_missing`
 - malformed patch file: `patch_parse_failed`
 - missing rationale artifact: `rationale_artifact_missing`
+- changed files with no mapped rationale refs:
+  `rationale_mapping_missing`
+- partially mapped changed files: `rationale_mapping_partial`
 - pending execution: `status = pending` plus `incomplete_reason`
 - failed execution: `status = failed` plus failure evidence
 - sandbox not implemented: `sandbox_evidence_not_implemented`
@@ -205,6 +226,11 @@ shows file navigation from `changed_files[]` and renders each file with an
 explicit `patch_missing` empty hunk state. When the patch is malformed, the
 parser does not crash; the browser shows `patch_parse_failed` and does not show
 partial hunks as complete review evidence.
+
+When rationale artifacts exist but a file has no exact-path match, the file
+renders `No file-level rationale mapping available.` When rationale artifacts
+are absent, it renders `Rationale artifacts missing.` These are explicit empty
+states, not hidden failures.
 
 ## Patch Parser Limits
 
@@ -242,8 +268,8 @@ goodteam-os execution record-review-decision \
 
 Remaining #216 gaps:
 
-- richer mapping from changed files to rationale and prompts
 - #218 sandbox/action evidence
 - deeper product polish inside the React dashboard
+- final #216 acceptance audit after the remaining surfaces land
 
 Use `Refs #216`, not `Closes #216`.

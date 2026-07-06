@@ -98,6 +98,7 @@ def warnings_surface(
                 "message": "No rationale artifact is available.",
             }
         )
+    warnings.extend(_rationale_mapping_warnings(diff, rationale))
     integrity = evidence.get("memory_provenance_integrity")
     if _has_broken_memory_integrity(integrity):
         warnings.append(
@@ -107,6 +108,37 @@ def warnings_surface(
             }
         )
     return _dedupe_warnings(warnings)
+
+
+def _rationale_mapping_warnings(
+    diff: dict[str, Any],
+    rationale: dict[str, Any],
+) -> list[dict[str, str]]:
+    if not diff.get("available") or not rationale.get("available"):
+        return []
+    files = [file for file in diff.get("changed_files", []) if isinstance(file, dict)]
+    if not files:
+        return []
+    mapped = [
+        file
+        for file in files
+        if file.get("rationale_status") == "mapped" and file.get("rationale_refs")
+    ]
+    if not mapped:
+        return [
+            {
+                "code": "rationale_mapping_missing",
+                "message": "Changed files have rationale artifacts, but no file-level rationale mapping.",
+            }
+        ]
+    if len(mapped) < len(files):
+        return [
+            {
+                "code": "rationale_mapping_partial",
+                "message": "Some changed files do not have file-level rationale mapping.",
+            }
+        ]
+    return []
 
 
 def latest_review_decision(events: list[LedgerEvent]) -> dict[str, Any]:

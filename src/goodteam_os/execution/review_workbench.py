@@ -18,6 +18,9 @@ from goodteam_os.execution.review_workbench_contract import (
     utc_now,
 )
 from goodteam_os.execution.review_workbench_diff import diff_surface
+from goodteam_os.execution.review_workbench_rationale_mapping import (
+    map_changed_files_to_rationale,
+)
 from goodteam_os.execution.review_workbench_renderer import render_review_workbench
 from goodteam_os.execution.review_workbench_surfaces import (
     latest_review_decision,
@@ -53,6 +56,7 @@ class ReviewWorkbenchService:
             worker_job=job,
             worker_root=self.worker_store.root,
         )
+        diff = map_changed_files_to_rationale(self.project_root, diff, rationale)
         workbench = {
             "schema_version": REVIEW_WORKBENCH_SCHEMA_VERSION,
             "execution_id": execution_id,
