@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from goodteam_os.execution import GitHubBinding, GitHubIssueNotFound, GitHubIssueSnapshot
-from goodteam_os.execution.models import LedgerEvent
+from goodteam_os.execution.models import ExecutionRun, LedgerEvent
 from goodteam_os.execution.api import ExecutionAPI
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.memory import RoleMemoryStore
@@ -243,6 +243,30 @@ def test_incomplete_execution_returns_pending_manifest(tmp_path):
     assert manifest["incomplete_reason"] == "pr_missing"
 
 
+def test_failed_execution_without_pr_returns_failed_manifest(tmp_path):
+    execution_id = "exec_failed_no_pr"
+    ledger = ExecutionLedger(tmp_path)
+    run = ExecutionRun(
+        execution_id=execution_id,
+        task_id="task_failed",
+        worker_job_id="worker_failed",
+        adapter="fake",
+        status="failed",
+        branch_name="goodteam/exec_failed_no_pr",
+        pr_number=None,
+        created_at="2026-07-06T02:30:00Z",
+        updated_at="2026-07-06T02:31:00Z",
+    )
+    ledger.create_run(run)
+    ledger.append_event(_failed_event(execution_id))
+
+    manifest = ExecutionAPI(tmp_path).get_evidence(execution_id)
+
+    assert manifest["pr"]["ref"] == ""
+    assert manifest["final_status"] == "failed"
+    assert manifest["incomplete_reason"] == "execution_failed:worker_failed"
+
+
 def test_memory_provenance_refs_are_read_without_query_side_effects(tmp_path):
     api, execution_id = _full_lifecycle(tmp_path)
     finalized = api.finalize(execution_id)
@@ -291,4 +315,16 @@ def _manual_event(execution_id: str) -> LedgerEvent:
         actor="orchestrator",
         payload={"transition": "intake_created", "repo": "LukeJiaoR/GoodTeam", "issue_number": 217},
         created_at="2026-07-06T02:30:00Z",
+    )
+
+
+def _failed_event(execution_id: str) -> LedgerEvent:
+    return LedgerEvent(
+        event_id=f"{execution_id}:0001:failed:execution_failed",
+        execution_id=execution_id,
+        task_id="task_failed",
+        event_type="failed",
+        actor="orchestrator",
+        payload={"transition": "execution_failed", "failure_class": "worker_failed"},
+        created_at="2026-07-06T02:31:00Z",
     )

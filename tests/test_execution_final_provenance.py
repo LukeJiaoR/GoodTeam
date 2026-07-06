@@ -4,8 +4,9 @@ from pathlib import Path
 
 from goodteam_os.execution import GitHubBinding, GitHubIssueNotFound, GitHubIssueSnapshot
 from goodteam_os.execution.api import ExecutionAPI
+from goodteam_os.execution.evidence import ExecutionEvidenceService
 from goodteam_os.execution.ledger import ExecutionLedger
-from goodteam_os.execution.models import LedgerEventType
+from goodteam_os.execution.models import ExecutionRun, LedgerEvent, LedgerEventType
 from goodteam_os.memory import RoleMemoryStore
 
 
@@ -232,3 +233,37 @@ def test_missing_pr_returns_pending_without_memory_or_ledger_closure(tmp_path):
         event.payload.get("transition")
         for event in ExecutionLedger(tmp_path).read_events(execution_id)
     ].count("provenance_written") == 0
+
+
+def test_failed_execution_without_pr_builds_failed_provenance(tmp_path):
+    execution_id = "exec_failed_no_pr"
+    ledger = ExecutionLedger(tmp_path)
+    ledger.create_run(
+        ExecutionRun(
+            execution_id=execution_id,
+            task_id="task_failed",
+            worker_job_id="worker_failed",
+            adapter="fake",
+            status="failed",
+            branch_name="goodteam/exec_failed_no_pr",
+            pr_number=None,
+            created_at="2026-07-06T02:30:00Z",
+            updated_at="2026-07-06T02:31:00Z",
+        )
+    )
+    ledger.append_event(
+        LedgerEvent(
+            event_id=f"{execution_id}:0001:failed:execution_failed",
+            execution_id=execution_id,
+            task_id="task_failed",
+            event_type="failed",
+            actor="orchestrator",
+            payload={"transition": "execution_failed", "failure_class": "worker_failed"},
+            created_at="2026-07-06T02:31:00Z",
+        )
+    )
+
+    evidence = ExecutionEvidenceService(tmp_path).build_provenance(execution_id)
+
+    assert evidence["pr"] == ""
+    assert evidence["final_status"] == "failed"

@@ -207,10 +207,10 @@ def _merge_summary(events: list[LedgerEvent]) -> dict[str, Any]:
 
 
 def _final_status(run: Any, pr_number: int | None, events: list[LedgerEvent]) -> str:
-    if pr_number is None:
-        return "pending"
     if run.status is ExecutionRunStatus.FAILED:
         return "failed"
+    if pr_number is None:
+        return "pending"
     ci = _ci_summary(events)
     if ci.get("state") == "failure":
         return "failed"
