@@ -149,11 +149,50 @@ def _diff_file_section(file: dict[str, Any], patch_state: str) -> str:
         "</p>"
         "</header>"
     )
+    body += _rationale_evidence(file)
     if not hunks:
         body += _empty_state(f"No parsed patch hunks available ({patch_state}).")
     else:
         body += "".join(_diff_hunk(hunk) for hunk in hunks)
     return body + "</article>"
+
+
+def _rationale_evidence(file: dict[str, Any]) -> str:
+    status = _text(file.get("rationale_status") or "not_mapped")
+    refs = _dict_items(file.get("rationale_refs"))
+    body = (
+        '<div class="rationale-evidence">'
+        "<h4>Rationale evidence</h4>"
+        f"{_details([('status', status)])}"
+    )
+    if refs:
+        body += f'<ul class="rationale-ref-list">{"".join(_rationale_ref_item(ref) for ref in refs)}</ul>'
+    else:
+        body += _empty_state(_rationale_empty_message(status))
+    return body + "</div>"
+
+
+def _rationale_ref_item(ref: dict[str, Any]) -> str:
+    return (
+        "<li>"
+        + _details(
+            [
+                ("kind", ref.get("kind")),
+                ("name", ref.get("name") or "n/a"),
+                ("title", ref.get("title")),
+                ("path", ref.get("path")),
+                ("confidence", ref.get("confidence")),
+                ("excerpt", ref.get("excerpt")),
+            ]
+        )
+        + "</li>"
+    )
+
+
+def _rationale_empty_message(status: str) -> str:
+    if status == "rationale_artifact_missing":
+        return "Rationale artifacts missing."
+    return "No file-level rationale mapping available."
 
 
 def _diff_hunk(hunk: dict[str, Any]) -> str:
@@ -467,6 +506,10 @@ ul, ol { margin: 0; padding-left: 18px; }
 .diff-line-delete .diff-line-code { background: #fdecea; }
 .diff-line-context .diff-line-code { background: #ffffff; }
 .diff-line-metadata .diff-line-code { background: #f7f9fc; color: #5d6b82; }
+.rationale-evidence { border: 1px solid #dce2ec; border-radius: 6px; margin: 10px 0 12px; padding: 12px; }
+.rationale-evidence h4 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0; text-transform: uppercase; }
+.rationale-ref-list { display: grid; gap: 10px; list-style: none; margin-top: 10px; padding-left: 0; }
+.rationale-ref-list li { border-top: 1px solid #eef2f7; padding-top: 10px; }
 .warning-list li { display: grid; gap: 3px; }
 code, time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .empty-state { margin: 0 0 12px; color: #5d6b82; font-weight: 650; }

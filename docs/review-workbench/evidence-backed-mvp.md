@@ -216,12 +216,59 @@ Each `diff.changed_files[]` entry keeps the artifact metadata (`path`, `status`,
 - `hunks[]`: parsed unified-diff hunks with old/new start lines
 - `hunks[].lines[]`: `context`, `add`, `delete`, or `metadata` rows with old/new
   line numbers
-- `rationale_refs: []` and `rationale_status: "not_mapped"` as a future hook
+- `rationale_refs[]`: existing artifact refs that mention the exact changed-file
+  path
+- `rationale_status`: `mapped`, `not_mapped`, or
+  `rationale_artifact_missing`
 
 The text renderer prints the summary and compact changed-file list. The browser
 renderer uses the richer projection for navigation and highlighted file diffs.
-Rationale mapping remains future work; this slice does not infer or fabricate
-which prompts or rationale items explain a changed file.
+
+### Changed-File Rationale Mapping
+
+File-level rationale mapping consumes only already persisted Workbench inputs:
+
+- `review_workbench["rationale"]["task"]`
+- `review_workbench["rationale"]["run"]`
+- `review_workbench["rationale"]["worker_result"]`
+- `review_workbench["rationale"]["prompt_snapshots"]`
+- worker `result.md`
+- worker prompt snapshots: `role_prompt.md`, `task.md`, `context.md`, and
+  `constraints.md`
+
+The mapper performs deterministic exact-path matching against each changed
+file's `path`. If worker `result.md` mentions the path, the file receives a
+`worker_result` ref. If a prompt snapshot mentions the path, it receives a
+`prompt_snapshot` ref with the snapshot `name`. Task and run payloads are also
+eligible when their serialized artifact content contains the exact path.
+
+Ref excerpts are normalized, bounded, and deterministic. They are source
+snippets, not generated rationale. The mapper does not call LLMs, does not run
+workers, does not fetch GitHub, and does not synthesize new reasoning.
+
+Confidence values:
+
+- `direct`: the source artifact contains the exact changed-file path.
+- `contextual`: reserved for future execution-level evidence that is clearly
+  general to the execution. The MVP prefers `not_mapped` over weak contextual
+  claims when no exact path match exists.
+
+Empty states:
+
+- `mapped`: at least one source artifact directly references the file.
+- `not_mapped`: rationale artifacts exist, but no source artifact references
+  the file path.
+- `rationale_artifact_missing`: no task/run/worker rationale source is
+  available.
+
+Warnings:
+
+- `rationale_mapping_missing`: changed files exist and rationale artifacts are
+  available, but no file maps to any rationale ref.
+- `rationale_mapping_partial`: some changed files map and others remain
+  `not_mapped`.
+- `rationale_artifact_missing`: no rationale artifacts exist, so file-level
+  mapping cannot be evaluated.
 
 Workbench reads remain read-only. They never fetch GitHub data, write artifacts,
 append ledger events, or repair missing artifact state.
@@ -249,10 +296,10 @@ service after export.
 
 The page displays execution identity, source issue, PR ref, branch, commit, diff
 summary, file navigation, changed-line highlights, CI summary, review
-observation counts, memory provenance integrity, warnings, current decision, a
-decision form, sandbox empty state, and ledger timeline. The GET page and JSON
-routes are read-only. The only browser write path is the explicit local-server
-decision POST described above.
+observation counts, file-level rationale evidence, memory provenance integrity,
+warnings, current decision, a decision form, sandbox empty state, and ledger
+timeline. The GET page and JSON routes are read-only. The only browser write
+path is the explicit local-server decision POST described above.
 
 Changed-line CSS classes are stable:
 
@@ -275,6 +322,10 @@ This MVP does not fake missing artifacts.
   stay empty
 - Missing rationale surface: `rationale.available = false` and
   `rationale.reason = rationale_artifact_missing`
+- Changed files with rationale artifacts but no exact-path refs:
+  warning `rationale_mapping_missing`
+- Mixed mapped/unmapped changed files:
+  warning `rationale_mapping_partial`
 - Pending, incomplete, or failed executions: `status`, `incomplete_reason`, and
   `warnings` explain the current state
 - Sandbox/action evidence for #218:
@@ -285,10 +336,9 @@ This MVP does not fake missing artifacts.
 
 This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 
-- Add richer rationale mapping from individual changed files to prompts and
-  instructions.
 - Add #218 sandbox/action evidence when that surface exists.
 - Add deeper React dashboard polish around warnings, review decisions, and
   artifact drill-downs.
+- Run the final #216 acceptance audit before closing the issue.
 
 Use `Refs #216`, not `Closes #216`.
