@@ -87,6 +87,15 @@ class GitHubClient(Protocol):
     def fetch_checks(self, repo: str, ref: str) -> dict[str, Any]:
         raise NotImplementedError
 
+    def fetch_pr_reviews(self, repo: str, pr_number: int) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def fetch_pr_comments(self, repo: str, pr_number: int) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def fetch_pr(self, repo: str, pr_number: int) -> dict[str, Any]:
+        raise NotImplementedError
+
 
 class GitHubIssueError(RuntimeError):
     pass
