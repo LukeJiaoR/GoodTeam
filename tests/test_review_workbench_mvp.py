@@ -148,6 +148,16 @@ def test_invalid_review_decision_is_rejected(tmp_path):
         api.record_review_decision(execution_id, "maybe", "LukeJiaoR")
 
 
+def test_missing_execution_review_decision_is_rejected_without_ledger_write(tmp_path):
+    api = ExecutionAPI(tmp_path)
+
+    with pytest.raises(ValueError, match="Execution not found: missing_exec"):
+        api.record_review_decision("missing_exec", "approve", "LukeJiaoR")
+
+    missing_events = tmp_path / ".goodteam" / "executions" / "missing_exec" / "events.jsonl"
+    assert not missing_events.exists()
+
+
 def test_repeated_same_decision_is_idempotent(tmp_path):
     api, execution_id = _full_lifecycle(tmp_path)
 

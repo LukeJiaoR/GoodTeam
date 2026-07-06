@@ -85,9 +85,12 @@ class ReviewWorkbenchService:
         if not normalized_reviewer:
             raise ValueError("Review decision reviewer is required")
         normalized_reason = reason.strip()
+        replay = self.ledger.replay(execution_id)
+        if replay["run"] is None and not replay["events"]:
+            raise ValueError(f"Execution not found: {execution_id}")
 
         existing = matching_decision_event(
-            self.ledger.read_events(execution_id),
+            replay["events"],
             decision=normalized_decision,
             reviewer=normalized_reviewer,
             reason=normalized_reason,
