@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from goodteam_os.execution.ci import CIStatusService
+from goodteam_os.execution.evidence import ExecutionEvidenceService
 from goodteam_os.execution.github import GitHubClient, GitHubExecutionBindingStore
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.models import ExecutionRunStatus
@@ -94,6 +95,12 @@ class ExecutionAPI:
             clock=self.clock,
         ).sync_merge_for_execution(execution_id)
         return self._status_payload(execution_id, merge=result)
+
+    def finalize(self, execution_id: str) -> dict[str, Any]:
+        return ExecutionEvidenceService(
+            self.project_root,
+            clock=self.clock,
+        ).finalize_provenance(execution_id)
 
     def replay(self, execution_id: str) -> dict[str, Any]:
         run = self.ledger_store.read_run(execution_id)

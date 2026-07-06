@@ -15,6 +15,7 @@ from goodteam_os.execution.github import (
     intake_github_issue,
 )
 from goodteam_os.execution.ledger import ExecutionLedger
+from goodteam_os.execution.evidence import ExecutionEvidenceService
 from goodteam_os.execution.models import (
     ExecutionActor,
     ExecutionRun,
@@ -34,6 +35,7 @@ from goodteam_os.execution.api import ExecutionAPI
 __all__ = [
     "ExecutionActor",
     "ExecutionAPI",
+    "ExecutionEvidenceService",
     "ExecutionLedger",
     "ExecutionOrchestrator",
     "ExecutionRun",
