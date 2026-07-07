@@ -1,0 +1,62 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from goodteam_os import full_smoke
+
+
+def test_full_smoke_configures_isolated_contentops_and_external_self_worktree(tmp_path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    output_root = repo_root / "output" / "full-smoke-test"
+    workspace = output_root / "workspace"
+    env = {}
+
+    updates, warnings = full_smoke._configure_isolated_env(output_root, workspace, repo_root, env)
+
+    assert updates["GOODTEAM_CONTENTOPS_ROOT"] == str(output_root / "targets" / "contentops")
+    assert env["GOODTEAM_CONTENTOPS_ROOT"] == updates["GOODTEAM_CONTENTOPS_ROOT"]
+    assert Path(updates["GOODTEAM_SELF_WORKTREE_ROOT"]).is_absolute()
+    assert repo_root not in Path(updates["GOODTEAM_SELF_WORKTREE_ROOT"]).parents
+    assert any("external temp root" in warning for warning in warnings)
+
+
+def test_full_smoke_blocks_real_worker_without_explicit_opt_in(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        full_smoke.main(["--output-root", str(tmp_path / "out"), "--worker-mode", "codex", "--dry-run"])
+
+    assert "explicit opt-in only" in str(exc.value)
+
+
+def test_full_smoke_dry_run_writes_standard_outputs(tmp_path, monkeypatch):
+    output_root = tmp_path / "full-smoke"
+    monkeypatch.delenv("GOODTEAM_CONTENTOPS_ROOT", raising=False)
+    monkeypatch.delenv("GOODTEAM_SELF_WORKTREE_ROOT", raising=False)
+
+    result = full_smoke.main(
+        [
+            "--output-root",
+            str(output_root),
+            "--suite",
+            "contentops",
+            "--cycles",
+            "1",
+            "--dry-run",
+            "--issue",
+            "#323",
+        ]
+    )
+
+    summary_path = output_root / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert result == 0
+    assert (output_root / "report.md").is_file()
+    assert summary_path.is_file()
+    assert (output_root / "coverage-matrix.md").is_file()
+    assert (output_root / "screenshots" / "index.json").is_file()
+    assert (output_root / "logs" / "environment.log").is_file()
+    assert (output_root / "state-snapshots").is_dir()
+    assert summary["issue"] == "#323"
+    assert summary["target_roots"]["contentops"] == str(output_root / "targets" / "contentops")
+    assert summary["smoke_report"]["runs"][0]["status"] == "planned"

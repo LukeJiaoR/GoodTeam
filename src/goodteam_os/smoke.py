@@ -3,8 +3,10 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Callable
 
@@ -41,7 +43,7 @@ def build_smoke_project_registry(workspace: Path, repo_root: Path) -> dict[str, 
         )
     )
     contentops_commands = _contentops_verification_commands(contentops_root, python_command)
-    self_root = workspace / "smoke-worktrees" / "goodteam-self"
+    self_root = _default_self_worktree_root(workspace, repo_root)
     return {
         "contentops": SmokeProject(
             suite="contentops",
@@ -200,17 +202,19 @@ def _approve_until_complete(workspace: Path, project_key: str) -> None:
 
 def classify_smoke_failure(message: str) -> str:
     normalized = message.lower()
+    if "outside the current repo" in normalized or "worktree" in normalized:
+        return "env"
     if "invalid_api_key" in normalized or "invalid api key" in normalized or "401 unauthorized" in normalized:
-        return "auth/provider"
+        return "env"
     if "timeout" in normalized or "timed out" in normalized:
-        return "worker timeout"
+        return "env"
     if "npm" in normalized or "build failed" in normalized or "scaffold" in normalized or "node_module_version" in normalized:
-        return "target scaffold"
+        return "test"
     if "qa" in normalized or "browser" in normalized or "ui" in normalized:
-        return "QA/browser/UI"
+        return "test"
     if "next_node" in normalized or "blocked" in normalized or "approval gate" in normalized or "workflow" in normalized:
-        return "GoodTeam workflow"
-    return "unknown"
+        return "product"
+    return "product"
 
 
 def write_smoke_report(workspace: Path, report: dict[str, object]) -> Path:
@@ -495,8 +499,26 @@ def _env_or_default(name: str, default: Path) -> str:
 
 
 def _default_contentops_root(workspace: Path) -> Path:
-    existing = Path("/Users/luke/workspace/contentops-goodteam-e2e/contentops")
-    return existing if existing.is_dir() else workspace / "smoke-targets" / "contentops"
+    return workspace / "smoke-targets" / "contentops"
+
+
+def _default_self_worktree_root(workspace: Path, repo_root: Path) -> Path:
+    explicit = os.getenv("GOODTEAM_SELF_WORKTREE_ROOT")
+    if explicit:
+        return Path(explicit)
+    candidate = workspace / "smoke-worktrees" / "goodteam-self"
+    if _is_inside(candidate, repo_root):
+        digest = sha256(str(workspace.resolve()).encode("utf-8")).hexdigest()[:12]
+        return Path(tempfile.gettempdir()) / "goodteam-smoke-worktrees" / digest / "goodteam-self"
+    return candidate
+
+
+def _is_inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def _contentops_verification_commands(contentops_root: Path, python_command: str) -> list[dict[str, str]]:

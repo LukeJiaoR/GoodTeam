@@ -189,8 +189,8 @@ Use `--dry-run` to preview planned cycles without creating project configs, stat
 
 Supported smoke suites:
 
-- `contentops`: runs the CONTENTOPS canary workflow against an isolated local target. Set `GOODTEAM_CONTENTOPS_ROOT` to point at an existing target root; otherwise GoodTeam creates one under the smoke workspace.
-- `self`: runs GoodTeam against GoodTeam from a temporary git worktree under the smoke workspace. Because this uses `git worktree`, it tests committed code at `HEAD`; commit the current GoodTeam changes before treating self-smoke results as acceptance evidence.
+- `contentops`: runs the CONTENTOPS canary workflow against an isolated local target under the smoke workspace. Set `GOODTEAM_CONTENTOPS_ROOT` only when you intentionally want to point at an existing target root.
+- `self`: runs GoodTeam against GoodTeam from a temporary git worktree. If the smoke workspace is inside this repo, GoodTeam automatically places the self worktree under an external temp root; set `GOODTEAM_SELF_WORKTREE_ROOT` to override it. Because this uses `git worktree`, it tests committed code at `HEAD`; commit the current GoodTeam changes before treating self-smoke results as acceptance evidence.
 
 Supported smoke worker modes:
 
@@ -199,9 +199,21 @@ Supported smoke worker modes:
 - `codex`: invokes the configured Codex CLI worker adapter.
 - `anthropic`: drives the `claude` CLI (Claude Code) headless worker; set `ANTHROPIC_API_KEY` and pair with `model_profile: anthropic`.
 
-On failure, GoodTeam classifies the failure (`auth/provider`, `worker timeout`, `GoodTeam workflow`, `target scaffold`, `QA/browser/UI`, or `unknown`) and writes a blocker task into the target's `.goodteam/tasks/tasks.json`.
+On failure, GoodTeam classifies the failure as `product`, `test`, or `env` and writes a blocker task into the target's `.goodteam/tasks/tasks.json`.
 
 Smoke projects are also first-class agile board tasks. Each smoke cycle creates or updates a high-priority task in the target task ledger, moves it through `backlog`/`doing`/`blocked`/`done`, and attaches the smoke report plus worker result paths as evidence when available.
+
+For full product acceptance evidence, use the isolated wrapper:
+
+```bash
+scripts/full-acceptance-smoke.sh \
+  --output-root /tmp/goodteam-full-smoke \
+  --suite contentops,self \
+  --cycles 1 \
+  --worker-mode fake
+```
+
+The wrapper standardizes `report.md`, `summary.json`, `coverage-matrix.md`, `logs/`, `screenshots/`, and `state-snapshots/` under the selected output root. It defaults to credential-free fake/noop workers; real CLI workers such as Codex or Claude require `--allow-real-worker`.
 
 View the same lightweight Kanban data from the CLI:
 
