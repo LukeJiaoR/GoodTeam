@@ -85,6 +85,11 @@ Destroy is idempotent. A first destroy marks metadata `status = destroyed` and
 writes `sandbox_destroyed`; later destroy calls return `already_destroyed`
 without appending another ledger event.
 
+Successful worktree executions are retained for PR/diff handoff instead of
+being removed immediately. The orchestrator records `sandbox_retained_for_pr`
+and metadata `status = retained_for_pr`; a later explicit cleanup can call
+`destroy_sandbox()` to remove the worktree.
+
 If destroy fails, Sandbox v0 writes `sandbox_destroy_failed` and returns a failed
 destroy result. The execution outcome is not rewritten: a worker success remains
 `execution_completed`, and a worker failure remains `execution_failed`.
@@ -99,12 +104,16 @@ execution_started
   -> sandbox_created
   -> worker CLI launched with cwd=<execution workspace/worktree>
   -> execution_completed / execution_failed
-  -> sandbox_destroyed
+  -> sandbox_retained_for_pr / sandbox_destroyed
 ```
 
 The default execution mode is `auto`: git repositories use `worktree`; non-git
 test or local fallback roots use `workspace`. Real coding runs should use git
-worktree mode or another repo-backed workspace.
+worktree mode or another repo-backed workspace. Workspace fallback runs can be
+destroyed immediately after completion because an empty metadata workspace is
+not the source of PR changes. Worktree success is retained until PR/diff
+handoff or explicit cleanup so uncommitted worker changes are not discarded
+before they can be persisted.
 
 The worker receives a sanitized `sandbox_context` with:
 
@@ -192,6 +201,7 @@ Current transitions:
 - `sandbox_command_rejected`
 - `sandbox_destroy_failed`
 - `sandbox_destroyed`
+- `sandbox_retained_for_pr`
 
 All sandbox events include:
 

@@ -89,6 +89,24 @@ class SandboxService:
             return {"available": False, "reason": "sandbox_evidence_missing"}
         return json_ready(metadata)
 
+    def retain_sandbox(self, execution_id: str, *, reason: str = "pr_pending") -> dict[str, Any]:
+        self._require_run(execution_id)
+        metadata = self._read_metadata(execution_id)
+        if metadata is None:
+            return {"available": False, "reason": "sandbox_evidence_missing"}
+        if metadata.get("status") == "destroyed":
+            return json_ready({**metadata, "status": "already_destroyed"})
+        metadata["status"] = "retained_for_pr"
+        metadata["retained_at"] = self._clock()
+        metadata["retention_reason"] = reason
+        self._write_metadata(execution_id, metadata)
+        self._append_event(
+            execution_id,
+            "sandbox_retained_for_pr",
+            {**_created_payload(metadata), "reason": reason},
+        )
+        return json_ready(metadata)
+
     def destroy_sandbox(self, execution_id: str) -> dict[str, Any]:
         self._require_run(execution_id)
         metadata = self._read_metadata(execution_id)

@@ -366,9 +366,11 @@ This MVP does not fake missing artifacts.
 - Sandbox/action evidence exists:
   `sandbox.available = true`, `sandbox.schema_version = sandbox.v1`, and the
   surface lists command history, rejected commands, conflict risks, and raw
-  sandbox ledger events. Real `run_execution()` paths now create and destroy an
-  execution workspace/worktree by default, so successful executions expose
-  lifecycle events even when command history is empty.
+  sandbox ledger events. Real `run_execution()` paths now create an execution
+  workspace/worktree by default; workspace fallback can be destroyed
+  immediately, while successful worktree executions are retained for PR/diff
+  handoff and expose `sandbox_retained_for_pr` until explicit cleanup writes
+  `sandbox_destroyed`.
 
 ## Remaining #216 Gaps
 

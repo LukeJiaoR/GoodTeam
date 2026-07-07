@@ -8,6 +8,7 @@ import pytest
 
 from goodteam_os.execution.api import ExecutionAPI
 from goodteam_os.execution.ledger import ExecutionLedger
+from goodteam_os.execution.github import GitHubBinding, GitHubIssueNotFound, GitHubIssueSnapshot
 from goodteam_os.execution.models import ExecutionRunStatus
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.workers import WorkerJobStore
@@ -174,13 +175,30 @@ def test_sandbox_destroy_failure_does_not_hide_worker_success(tmp_path):
     )
     queued = orchestrator.intake_github_issue(repo="LukeJiaoR/GoodTeam", issue_number=218, adapter="fake")
 
-    completed = orchestrator.run_execution(queued.execution_id)
+    def fail_job(
+        self: WorkerJobStore,
+        job_id: str,
+        *,
+        sandbox_context: dict[str, Any] | None = None,
+    ) -> dict[str, object]:
+        assert sandbox_context is not None
+        return {
+            "job_id": job_id,
+            "run_id": queued.execution_id,
+            "status": "failed",
+            "summary": "Worker failed before PR handoff.",
+            "failure_class": "test_failure",
+        }
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(WorkerJobStore, "run_job", fail_job)
+        failed = orchestrator.run_execution(queued.execution_id)
 
     transitions = _transitions(tmp_path, queued.execution_id)
-    assert completed.status is ExecutionRunStatus.SUCCEEDED
+    assert failed.status is ExecutionRunStatus.FAILED
     assert _ordered_subset(
         transitions,
-        ["sandbox_created", "execution_completed", "sandbox_destroy_failed"],
+        ["sandbox_created", "execution_failed", "sandbox_destroy_failed"],
     )
 
 
@@ -296,7 +314,43 @@ def test_worktree_execution_uses_worktree_cwd_preserves_shared_venv_and_pythonpa
     assert calls[0]["env"]["PYTHONPATH"].split(":")[0] == str(worktree_path / "src")
     assert not (worktree_path / ".venv").exists()
     assert shared_venv.exists()
+    assert adapter.removed == []
+    assert _transitions(tmp_path, queued.execution_id)[-1] == "sandbox_retained_for_pr"
+    assert ExecutionAPI(tmp_path).get_sandbox(queued.execution_id)["status"] == "retained_for_pr"
+
+
+def test_worktree_execution_retains_workspace_until_pr_or_explicit_cleanup(tmp_path):
+    adapter = FakeSandboxGitAdapter()
+    client = FakePullRequestGitHubClient()
+    orchestrator = ExecutionOrchestrator(
+        tmp_path,
+        client,
+        sandbox_mode="worktree",
+        sandbox_git_adapter=adapter,
+    )
+    orchestrator._clock = FakeClock()
+    queued = orchestrator.intake_github_issue(repo="LukeJiaoR/GoodTeam", issue_number=218, adapter="fake")
+
+    completed = orchestrator.run_execution(queued.execution_id)
+    binding = orchestrator.open_pull_request_for_execution(completed.execution_id)
+    after_pr_transitions = _transitions(tmp_path, completed.execution_id)
+
+    worktree_path = Path(adapter.created[0]["worktree_path"])
+    assert completed.status is ExecutionRunStatus.SUCCEEDED
+    assert binding.pr_number == 218
+    assert worktree_path.exists()
+    assert adapter.removed == []
+    assert _ordered_subset(
+        after_pr_transitions,
+        ["sandbox_created", "execution_completed", "sandbox_retained_for_pr", "pr_opened"],
+    )
+    assert "sandbox_destroyed" not in after_pr_transitions[: after_pr_transitions.index("pr_opened")]
+
+    destroyed = ExecutionAPI(tmp_path, sandbox_git_adapter=adapter).destroy_sandbox(completed.execution_id)
+
+    assert destroyed["status"] == "destroyed"
     assert adapter.removed == [{"repo_root": tmp_path, "worktree_path": worktree_path}]
+    assert _transitions(tmp_path, completed.execution_id)[-1] == "sandbox_destroyed"
 
 
 def test_cli_worker_context_status_and_prompt_do_not_expose_secret_values(tmp_path, monkeypatch):
@@ -461,6 +515,77 @@ def _install_fake_cli(monkeypatch, *, calls: list[dict[str, Any]]) -> None:
 
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
     monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
+
+
+class FakePullRequestGitHubClient:
+    def __init__(self):
+        self.issues = {("lukejiaor/goodteam", 218): _snapshot()}
+        self.branches: list[dict[str, object]] = []
+        self.commits: list[dict[str, object]] = []
+        self.prs: list[dict[str, object]] = []
+
+    def fetch_issue(self, repo: str, issue_number: int) -> GitHubIssueSnapshot:
+        try:
+            return self.issues[(repo.strip().lower(), issue_number)]
+        except KeyError as exc:
+            raise GitHubIssueNotFound(repo, issue_number) from exc
+
+    def create_or_update_branch(
+        self,
+        *,
+        repo: str,
+        branch_name: str,
+        base_ref: str = "main",
+    ) -> dict[str, object]:
+        payload = {"repo": repo, "branch_name": branch_name, "base_ref": base_ref}
+        self.branches.append(payload)
+        return payload
+
+    def commit_files(
+        self,
+        *,
+        repo: str,
+        branch_name: str,
+        message: str,
+        files: dict[str, str],
+    ) -> dict[str, object]:
+        payload = {
+            "repo": repo,
+            "branch_name": branch_name,
+            "message": message,
+            "files": files,
+            "commit_sha": f"sha-{len(self.commits) + 1}",
+        }
+        self.commits.append(payload)
+        return payload
+
+    def create_pr(
+        self,
+        *,
+        repo: str,
+        issue_number: int | None,
+        branch_name: str,
+        execution_id: str,
+        title: str,
+        body: str,
+    ) -> GitHubBinding:
+        self.prs.append(
+            {
+                "repo": repo,
+                "issue_number": issue_number,
+                "branch_name": branch_name,
+                "execution_id": execution_id,
+                "title": title,
+                "body": body,
+            }
+        )
+        return GitHubBinding(
+            repo=repo,
+            issue_number=issue_number or 0,
+            pr_number=218,
+            branch_name=branch_name,
+            execution_id=execution_id,
+        )
 
 
 def _transitions(tmp_path: Path, execution_id: str) -> list[str]:
