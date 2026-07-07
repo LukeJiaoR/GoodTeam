@@ -179,6 +179,47 @@ def _assert_manifest_observations(manifest: dict[str, object]) -> None:
         },
     ]
     assert manifest["review_summary"] == {"reviews": 1, "comments": 1, "states": ["APPROVED"]}
+    broker_status = manifest["github_broker_status"]
+    assert broker_status["available"] is True
+    assert broker_status["schema_version"] == "github_broker_status.v1"
+    assert broker_status["pr"] == {
+        "repo": "LukeJiaoR/GoodTeam",
+        "branch": manifest["pr"]["branch_name"],
+        "number": 301,
+        "commit_sha": "commit-sha-217",
+        "state": "merged",
+        "draft": None,
+        "open": False,
+        "closed": True,
+        "merged": True,
+        "mergeable": "unknown",
+        "merge_commit_sha": "merge-sha-301",
+        "merged_at": "2026-07-06T03:10:00Z",
+        "merged_by": "LukeJiaoR",
+    }
+    assert broker_status["ci"]["provider"] == "github"
+    assert broker_status["ci"]["required_state"] == "observed"
+    assert broker_status["ci"]["observed_state"] == "success"
+    assert broker_status["ci"]["observations"][0]["check_runs"][0] == {
+        "id": "",
+        "name": "unit",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "",
+        "completed_at": "",
+    }
+    assert broker_status["review"]["state"] == "approved"
+    assert broker_status["review"]["blocker_count"] == 0
+    assert broker_status["review"]["stale"] is None
+    assert broker_status["merge_readiness"] == {
+        "state": "ready",
+        "reason": "merged",
+        "ci_state": "success",
+        "review_state": "approved",
+        "pr_state": "merged",
+        "blocker_count": 0,
+    }
+    assert broker_status["fallback_warning"] == {}
 
 
 def test_full_execution_replay_builds_canonical_evidence_manifest(tmp_path):

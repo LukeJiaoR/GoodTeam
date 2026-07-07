@@ -63,6 +63,7 @@ def render_review_workbench_html(
     {_summary_section(review)}
     {_task_contract_section(review)}
     {_runtime_policy_section(review)}
+    {_broker_status_section(review)}
     {_decision_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_diff_section(review)}
     {_evidence_section(review)}
@@ -151,6 +152,107 @@ def _runtime_policy_section(review: dict[str, Any]) -> str:
     body += _contract_path_scope(_dict(policy.get("path_scope")))
     body += _simple_list("Verification expectations", verification.get("expectations"))
     return _section("Runtime policy", body)
+
+
+def _broker_status_section(review: dict[str, Any]) -> str:
+    status = _dict(review.get("github_broker_status"))
+    if not status.get("available"):
+        warning = _dict(status.get("fallback_warning"))
+        return _section(
+            "Broker status",
+            _empty_state(_text(warning.get("message") or "No broker status evidence is available."))
+            + _details([("Warning", warning.get("code") or "broker_status_missing")]),
+        )
+    pr = _dict(status.get("pr"))
+    ci = _dict(status.get("ci"))
+    review = _dict(status.get("review"))
+    readiness = _dict(status.get("merge_readiness"))
+    body = _details(
+        [
+            ("Schema", status.get("schema_version")),
+            ("PR", _broker_pr_label(pr)),
+            ("Commit", pr.get("commit_sha") or "n/a"),
+            ("CI state", _broker_ci_label(ci)),
+            ("Review state", _broker_review_label(review)),
+            ("Merge readiness", _broker_readiness_label(readiness)),
+        ]
+    )
+    body += _broker_ci_observations(_dict_items(ci.get("observations")))
+    body += _broker_review_observations(_dict_items(review.get("observations")))
+    return _section("Broker status", body)
+
+
+def _broker_pr_label(pr: dict[str, Any]) -> str:
+    repo = _text(pr.get("repo") or "n/a")
+    number = pr.get("number")
+    ref = f"{repo}#{number}" if number is not None else repo
+    state = _text(pr.get("state") or "unknown")
+    branch = _text(pr.get("branch") or "n/a")
+    mergeable = _text(pr.get("mergeable") or "unknown")
+    return f"{ref} {state}, {branch}, mergeable={mergeable}"
+
+
+def _broker_ci_label(ci: dict[str, Any]) -> str:
+    observed = _text(ci.get("observed_state") or "missing")
+    required = _text(ci.get("required_state") or "missing")
+    observations = _dict_items(ci.get("observations"))
+    return f"{observed} ({required}, {len(observations)} observations)"
+
+
+def _broker_review_label(review: dict[str, Any]) -> str:
+    state = _text(review.get("state") or "missing")
+    approvals = _text(review.get("approval_count") or 0)
+    blockers = _text(review.get("blocker_count") or 0)
+    return f"{state}, approvals={approvals}, blockers={blockers}"
+
+
+def _broker_readiness_label(readiness: dict[str, Any]) -> str:
+    state = _text(readiness.get("state") or "unknown")
+    reason = _text(readiness.get("reason"))
+    return f"{state} ({reason})" if reason else state
+
+
+def _broker_ci_observations(observations: list[dict[str, Any]]) -> str:
+    if not observations:
+        return "<h3>CI observations</h3>" + _empty_state("No typed CI observations recorded.")
+    items = []
+    for observation in observations:
+        checks = _dict_items(observation.get("check_runs"))
+        check_names = ", ".join(_text(check.get("name") or check.get("id")) for check in checks)
+        items.append(
+            "<li>"
+            + _details(
+                [
+                    ("provider", observation.get("provider")),
+                    ("ref", observation.get("ref")),
+                    ("status", observation.get("status")),
+                    ("checks", check_names or "n/a"),
+                    ("observed_at", observation.get("observed_at")),
+                ]
+            )
+            + "</li>"
+        )
+    return f'<h3>CI observations</h3><ul class="contract-list">{"".join(items)}</ul>'
+
+
+def _broker_review_observations(observations: list[dict[str, Any]]) -> str:
+    if not observations:
+        return "<h3>Review observations</h3>" + _empty_state("No typed review observations recorded.")
+    items = []
+    for observation in observations:
+        items.append(
+            "<li>"
+            + _details(
+                [
+                    ("kind", observation.get("kind")),
+                    ("state", observation.get("state_category") or observation.get("state")),
+                    ("actor", observation.get("actor_login")),
+                    ("submitted_at", observation.get("submitted_at")),
+                ]
+            )
+            + "</li>"
+        )
+    return f'<h3>Review observations</h3><ul class="contract-list">{"".join(items)}</ul>'
 
 
 def _contract_artifact_list(artifacts: list[dict[str, Any]]) -> str:

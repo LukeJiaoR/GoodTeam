@@ -34,6 +34,12 @@ def test_completed_execution_builds_evidence_backed_workbench_object(tmp_path):
     assert workbench["runtime_policy"]["worker_backend"]["class"] == "fake"
     assert workbench["runtime_policy"]["external_invocation"]["allowed"] is False
     assert workbench["runtime_policy"]["sandbox"]["mode"] == "workspace"
+    assert workbench["github_broker_status"] == workbench["evidence"]["github_broker_status"]
+    assert workbench["github_broker_status"]["available"] is True
+    assert workbench["github_broker_status"]["pr"]["state"] == "merged"
+    assert workbench["github_broker_status"]["ci"]["observed_state"] == "success"
+    assert workbench["github_broker_status"]["review"]["state"] == "approved"
+    assert workbench["github_broker_status"]["merge_readiness"]["state"] == "ready"
     assert workbench["pr"]["ref"] == "LukeJiaoR/GoodTeam#2160"
     assert workbench["pr"]["commit_sha"] == "commit-sha-216"
     assert workbench["status"] == "completed"
@@ -129,7 +135,13 @@ def test_legacy_execution_without_contract_returns_workbench_warning(tmp_path):
     assert workbench["task_contract"]["fallback_warning"]["code"] == "task_contract_missing"
     assert workbench["runtime_policy"]["available"] is False
     assert workbench["runtime_policy"]["fallback_warning"]["code"] == "runtime_policy_missing"
-    assert _warning_codes(workbench) >= {"task_contract_missing", "runtime_policy_missing"}
+    assert workbench["github_broker_status"]["available"] is False
+    assert workbench["github_broker_status"]["fallback_warning"]["code"] == "broker_status_missing"
+    assert _warning_codes(workbench) >= {
+        "task_contract_missing",
+        "runtime_policy_missing",
+        "broker_status_missing",
+    }
 
 
 def test_memory_provenance_integrity_is_exposed(tmp_path):

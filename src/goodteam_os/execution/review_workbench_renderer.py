@@ -13,6 +13,7 @@ def render_review_workbench(review: dict[str, Any]) -> str:
     decision = dict(review.get("reviewer_decision", {}))
     contract = dict(review.get("task_contract", {}))
     runtime_policy = dict(review.get("runtime_policy", {}))
+    broker_status = dict(review.get("github_broker_status", {}))
     lines = [
         f"Execution: {review.get('execution_id', '')}",
         f"Status: {review.get('status', '')}",
@@ -26,6 +27,11 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         f"Worker backend: {_runtime_worker_backend_label(runtime_policy)}",
         f"External invocation: {_runtime_external_label(runtime_policy)}",
         f"Runtime sandbox: {_runtime_sandbox_label(runtime_policy)}",
+        f"Broker status: {_broker_status_label(broker_status)}",
+        f"Broker PR: {_broker_pr_label(broker_status)}",
+        f"Broker CI: {_broker_ci_label(broker_status)}",
+        f"Broker review: {_broker_review_label(broker_status)}",
+        f"Merge readiness: {_broker_merge_readiness_label(broker_status)}",
         f"Diff: {_diff_label(diff)}",
         f"CI: {ci.get('state', 'unavailable')}",
         (
@@ -101,6 +107,58 @@ def _runtime_sandbox_label(policy: dict[str, Any]) -> str:
         return "n/a"
     enabled = "enabled" if sandbox.get("enabled") else "disabled"
     return f"{sandbox.get('mode', 'n/a')} ({enabled})"
+
+
+def _broker_status_label(status: dict[str, Any]) -> str:
+    if status.get("available"):
+        return str(status.get("schema_version", ""))
+    warning = status.get("fallback_warning")
+    if isinstance(warning, dict):
+        return f"missing ({warning.get('code', 'broker_status_missing')})"
+    return "missing"
+
+
+def _broker_pr_label(status: dict[str, Any]) -> str:
+    pr = status.get("pr")
+    if not isinstance(pr, dict) or not pr:
+        return "n/a"
+    repo = str(pr.get("repo", "") or "n/a")
+    number = pr.get("number")
+    state = str(pr.get("state", "") or "unknown")
+    branch = str(pr.get("branch", "") or "n/a")
+    mergeable = str(pr.get("mergeable", "") or "unknown")
+    ref = f"{repo}#{number}" if number is not None else repo
+    return f"{ref} {state}, {branch}, mergeable={mergeable}"
+
+
+def _broker_ci_label(status: dict[str, Any]) -> str:
+    ci = status.get("ci")
+    if not isinstance(ci, dict) or not ci:
+        return "n/a"
+    observed = str(ci.get("observed_state", "") or "missing")
+    required = str(ci.get("required_state", "") or "missing")
+    observations = ci.get("observations")
+    count = len(observations) if isinstance(observations, list) else 0
+    return f"{observed} ({required}, {count} observations)"
+
+
+def _broker_review_label(status: dict[str, Any]) -> str:
+    review = status.get("review")
+    if not isinstance(review, dict) or not review:
+        return "n/a"
+    state = str(review.get("state", "") or "missing")
+    blockers = int(review.get("blocker_count", 0) or 0)
+    approvals = int(review.get("approval_count", 0) or 0)
+    return f"{state}, approvals={approvals}, blockers={blockers}"
+
+
+def _broker_merge_readiness_label(status: dict[str, Any]) -> str:
+    readiness = status.get("merge_readiness")
+    if not isinstance(readiness, dict) or not readiness:
+        return "n/a"
+    state = str(readiness.get("state", "") or "unknown")
+    reason = str(readiness.get("reason", "") or "")
+    return f"{state} ({reason})" if reason else state
 
 
 def _render_contract_artifacts(contract: dict[str, Any]) -> list[str]:

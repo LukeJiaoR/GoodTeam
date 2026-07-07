@@ -10,6 +10,7 @@ from goodteam_os.execution.evidence_manifest_extractors import (
     review_observations,
     review_summary,
 )
+from goodteam_os.execution.github_broker_status import github_broker_status_manifest
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.memory_provenance import build_memory_provenance_projection
 from goodteam_os.execution.models import ExecutionRunStatus, LedgerEvent
@@ -47,6 +48,7 @@ def build_evidence_manifest(
         "github_ref": source["github_ref"],
         "task_contract": _task_contract_manifest(task),
         "runtime_policy": runtime_policy_manifest(events),
+        "github_broker_status": github_broker_status_manifest(run, events),
         "pr": _pr_manifest(pr_repo, pr_number, run, events),
         "ledger_events": [json_ready(event) for event in events],
         "ci_observations": ci_observations(events),
