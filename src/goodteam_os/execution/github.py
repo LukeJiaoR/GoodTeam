@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,10 +11,17 @@ from goodteam_os.execution.idempotency import (
     execution_id_from_task,
     task_id_from_github_issue,
 )
-from goodteam_os.execution.models import ExecutionTask, ExecutionTaskStatus, GitHubBinding
+from goodteam_os.execution.models import (
+    ExecutionTask,
+    ExecutionTaskStatus,
+    GitHubBinding,
+    TaskContract,
+)
+from goodteam_os.execution.path_claims import normalize_repo_path
 
 
 Clock = Callable[[], str]
+_PATH_TOKEN_RE = re.compile(r"`([^`]+)`|(?:^|\s)([A-Za-z0-9_.-]+/[^\s`<>\[\]{}\"']+)")
 
 
 @dataclass(frozen=True)
@@ -161,8 +169,9 @@ def execution_task_from_github_issue(
     clock: Clock,
 ) -> ExecutionTask:
     timestamp = clock()
+    task_id = task_id_from_github_issue(snapshot.repo, snapshot.issue_number)
     return ExecutionTask(
-        task_id=task_id_from_github_issue(snapshot.repo, snapshot.issue_number),
+        task_id=task_id,
         source_type="github_issue",
         repo=snapshot.repo,
         issue_number=snapshot.issue_number,
@@ -172,6 +181,7 @@ def execution_task_from_github_issue(
         status=ExecutionTaskStatus.QUEUED,
         created_at=timestamp,
         updated_at=timestamp,
+        task_contract=_task_contract_from_github_issue(snapshot, task_id=task_id),
     )
 
 
@@ -227,3 +237,118 @@ def _validate_issue_number(issue_number: int) -> int:
     if not isinstance(issue_number, int) or isinstance(issue_number, bool) or issue_number <= 0:
         raise ValueError("issue_number must be a positive int")
     return issue_number
+
+
+def _task_contract_from_github_issue(snapshot: GitHubIssueSnapshot, *, task_id: str) -> TaskContract:
+    body = snapshot.body or ""
+    sections = _body_sections(body)
+    paths = _contract_focus_paths(snapshot.title, body, sections)
+    return TaskContract(
+        source_intent={
+            "source_type": "github_issue",
+            "repo": snapshot.repo,
+            "issue_number": snapshot.issue_number,
+            "url": snapshot.url,
+            "title": snapshot.title,
+            "body": body,
+        },
+        task_identity={
+            "task_id": task_id,
+            "repo": snapshot.repo,
+            "issue_number": snapshot.issue_number,
+            "title": snapshot.title,
+        },
+        summary=snapshot.title,
+        instructions=body,
+        constraints=sections.get("out_of_scope", []),
+        expected_artifacts=[
+            {"name": "worker result", "kind": "worker_result", "path": "", "required": True}
+        ],
+        path_scope={"focus_paths": paths, "allowed_paths": [], "excluded_paths": []},
+        acceptance_criteria=sections.get("acceptance", []),
+        verification_expectations=sections.get("verification", []),
+        review_expectations=sections.get("review", []),
+        pr_metadata={"title": snapshot.title, "body": f"Refs #{snapshot.issue_number}"},
+        metadata={"labels": list(snapshot.labels)},
+    )
+
+
+def _body_sections(body: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    active = ""
+    for raw_line in body.splitlines():
+        heading = _section_heading(raw_line)
+        if heading:
+            active = heading
+            sections.setdefault(active, [])
+            continue
+        if active:
+            item = _section_item(raw_line)
+            if item:
+                sections[active].append(item)
+    return sections
+
+
+def _section_heading(line: str) -> str:
+    normalized = line.strip().rstrip(":").lower()
+    normalized = normalized.replace("-", " ").replace("_", " ")
+    aliases = {
+        "acceptance": "acceptance",
+        "acceptance criteria": "acceptance",
+        "verification": "verification",
+        "validation": "verification",
+        "review": "review",
+        "review expectations": "review",
+        "out of scope": "out_of_scope",
+        "constraints": "out_of_scope",
+        "do not do": "out_of_scope",
+    }
+    return aliases.get(normalized, "")
+
+
+def _section_item(line: str) -> str:
+    text = line.strip()
+    if not text:
+        return ""
+    return text[2:].strip() if text.startswith(("- ", "* ")) else ""
+
+
+def _contract_focus_paths(title: str, body: str, sections: dict[str, list[str]]) -> list[str]:
+    prioritized_items: list[str] = []
+    for name in ("acceptance", "verification", "review"):
+        prioritized_items.extend(sections.get(name, []))
+    prioritized = "\n".join(prioritized_items)
+    structured = sorted(_explicit_repo_paths(prioritized), key=_focus_path_sort_key)
+    fallback = sorted(
+        _explicit_repo_paths(f"{title}\n{body}"),
+        key=_focus_path_sort_key,
+    )
+    return _dedupe_paths([*structured, *fallback])
+
+
+def _explicit_repo_paths(text: str) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for match in _PATH_TOKEN_RE.finditer(text):
+        path = normalize_repo_path(match.group(1) or match.group(2) or "")
+        if path and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            result.append(path)
+    return result
+
+
+def _focus_path_sort_key(path: str) -> tuple[int, str]:
+    for index, prefix in enumerate(("src/", "tests/", "docs/", "scripts/", ".github/")):
+        if path.startswith(prefix):
+            return (index, path)
+    return (99, path)

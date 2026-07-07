@@ -61,6 +61,7 @@ def render_review_workbench_html(
       <span class="status-pill">{escape(status or "unknown")}</span>
     </header>
     {_summary_section(review)}
+    {_task_contract_section(review)}
     {_decision_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_diff_section(review)}
     {_evidence_section(review)}
@@ -99,6 +100,58 @@ def _summary_section(review: dict[str, Any]) -> str:
             ]
         ),
     )
+
+
+def _task_contract_section(review: dict[str, Any]) -> str:
+    contract = _dict(review.get("task_contract"))
+    if not contract.get("available"):
+        warning = _dict(contract.get("fallback_warning"))
+        return _section(
+            "Task contract",
+            _empty_state(_text(warning.get("message") or "No task_contract.v1 data is available."))
+            + _details([("Warning", warning.get("code") or "task_contract_missing")]),
+        )
+    body = _details(
+        [
+            ("Schema", contract.get("schema_version")),
+            ("Summary", contract.get("summary") or "n/a"),
+        ]
+    )
+    body += _contract_artifact_list(_dict_items(contract.get("expected_artifacts")))
+    body += _contract_path_scope(_dict(contract.get("path_scope")))
+    body += _simple_list("Acceptance criteria", contract.get("acceptance_criteria"))
+    body += _simple_list("Verification expectations", contract.get("verification_expectations"))
+    body += _simple_list("Review expectations", contract.get("review_expectations"))
+    return _section("Task contract", body)
+
+
+def _contract_artifact_list(artifacts: list[dict[str, Any]]) -> str:
+    if not artifacts:
+        return "<h3>Expected artifacts</h3>" + _empty_state("No expected artifacts declared.")
+    items = []
+    for artifact in artifacts:
+        label = artifact.get("name") or artifact.get("path") or "artifact"
+        detail = artifact.get("path") or artifact.get("kind") or ""
+        items.append(f"<li><strong>{escape(_text(label))}</strong> {escape(_text(detail))}</li>")
+    return f'<h3>Expected artifacts</h3><ul class="contract-list">{"".join(items)}</ul>'
+
+
+def _contract_path_scope(path_scope: dict[str, Any]) -> str:
+    items = []
+    for key in ("focus_paths", "allowed_paths", "excluded_paths"):
+        values = path_scope.get(key)
+        if isinstance(values, list) and values:
+            items.append(f"<li><strong>{escape(key)}</strong>: {escape(', '.join(_text(value) for value in values))}</li>")
+    if not items:
+        return "<h3>Path scope</h3>" + _empty_state("No path scope declared.")
+    return f'<h3>Path scope</h3><ul class="contract-list">{"".join(items)}</ul>'
+
+
+def _simple_list(title: str, value: Any) -> str:
+    if not isinstance(value, list) or not value:
+        return f"<h3>{escape(title)}</h3>" + _empty_state("None declared.")
+    items = [f"<li>{escape(_text(item))}</li>" for item in value]
+    return f'<h3>{escape(title)}</h3><ul class="contract-list">{"".join(items)}</ul>'
 
 
 def _diff_section(review: dict[str, Any]) -> str:

@@ -46,6 +46,9 @@ def test_completed_execution_exports_browser_visible_html_and_json(tmp_path):
     assert "tests/test_review_workbench_diff_artifact.py" in html
     assert "Memory provenance</dt><dd>complete</dd>" in html
     assert "Decision</dt><dd>approve by LukeJiaoR</dd>" in html
+    assert "Task contract</h2>" in html
+    assert "Schema</dt><dd>task_contract.v1</dd>" in html
+    assert "Expected artifacts" in html
     assert "Sandbox</dt><dd>available</dd>" in html
     assert "sandbox_created" in html
     assert "sandbox_destroyed" in html

@@ -442,12 +442,14 @@ def _sandbox_claim_inference(
 ) -> PathClaimInference:
     job_root = worker_store.root / run.worker_job_id
     worker_job = _find_worker_job(worker_store, run.worker_job_id) or {}
+    task = ExecutionLedger(project_root).read_task(run.execution_id)
     return infer_execution_path_claims(
         task_text=_read_text(job_root / "task.md"),
         context_text=_read_text(job_root / "context.md"),
         expected_artifacts=_read_json(job_root / "expected_artifacts.json")
         or worker_job.get("expected_artifacts"),
         existing_changed_files=_existing_changed_files(project_root, run.execution_id, worker_job),
+        task_contract=task.task_contract.to_dict() if task and task.task_contract else None,
     )
 
 

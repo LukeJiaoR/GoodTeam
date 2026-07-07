@@ -44,6 +44,7 @@ def build_evidence_manifest(
         "source": source,
         "source_issue": source["issue_ref"],
         "github_ref": source["github_ref"],
+        "task_contract": _task_contract_manifest(task),
         "pr": _pr_manifest(pr_repo, pr_number, run, events),
         "ledger_events": [json_ready(event) for event in events],
         "ci_observations": ci_observations(events),
@@ -57,6 +58,37 @@ def build_evidence_manifest(
         "incomplete_reason": incomplete_reason,
     }
     return json_ready(manifest)
+
+
+def _task_contract_manifest(task: Any) -> dict[str, Any]:
+    contract = getattr(task, "task_contract", None)
+    if contract is None:
+        return {
+            "available": False,
+            "schema_version": "",
+            "summary": "",
+            "expected_artifacts": [],
+            "path_scope": {},
+            "acceptance_criteria": [],
+            "verification_expectations": [],
+            "review_expectations": [],
+            "fallback_warning": {
+                "code": "task_contract_missing",
+                "message": "Legacy execution has no persisted task_contract.v1 data.",
+            },
+        }
+    payload = json_ready(contract)
+    return {
+        "available": True,
+        "schema_version": str(payload.get("schema_version", "")),
+        "summary": str(payload.get("summary", "")),
+        "expected_artifacts": list(payload.get("expected_artifacts", [])),
+        "path_scope": dict(payload.get("path_scope", {})),
+        "acceptance_criteria": list(payload.get("acceptance_criteria", [])),
+        "verification_expectations": list(payload.get("verification_expectations", [])),
+        "review_expectations": list(payload.get("review_expectations", [])),
+        "fallback_warning": {},
+    }
 
 
 def _source_manifest(task: Any, events: list[LedgerEvent]) -> dict[str, Any]:
