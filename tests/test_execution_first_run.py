@@ -64,6 +64,7 @@ def test_first_run_intake_writes_task_run_worker_job_and_replay(tmp_path):
         "execution_started",
         "sandbox_created",
         "execution_completed",
+        "sandbox_cleanup_requested",
         "sandbox_destroyed",
     ]
 

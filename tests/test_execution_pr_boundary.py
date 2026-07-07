@@ -169,6 +169,7 @@ def test_completed_execution_opens_pr_and_records_single_pr_event(tmp_path):
         "execution_started",
         "sandbox_created",
         "execution_completed",
+        "sandbox_cleanup_requested",
         "sandbox_destroyed",
         "pr_opened",
     ]

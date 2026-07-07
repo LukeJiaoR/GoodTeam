@@ -148,6 +148,7 @@ def test_execution_fixture_e2e_contract_replays_full_p0_1_loop_without_duplicate
         "execution_started",
         "sandbox_created",
         "execution_completed",
+        "sandbox_cleanup_requested",
         "sandbox_destroyed",
         "pr_opened",
         "ci_observed",

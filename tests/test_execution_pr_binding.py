@@ -172,8 +172,9 @@ def test_retry_reuses_existing_pr_binding_without_second_create(tmp_path):
     assert len(client.prs) == 1
     assert len(client.branches) == 1
     assert len(client.commits) == 1
-    assert [event.payload["transition"] for event in events[-3:]] == [
+    assert [event.payload["transition"] for event in events[-4:]] == [
         "execution_completed",
+        "sandbox_cleanup_requested",
         "sandbox_destroyed",
         "pr_opened",
     ]

@@ -145,6 +145,30 @@ def install_fake_popen_sequence(monkeypatch, responses, *, calls=None):
     monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
 
 
+def install_fake_worker_version(
+    monkeypatch,
+    *,
+    stdout_text: str = "codex 1.2.3\n",
+    stderr_text: str = "",
+    returncode: int = 0,
+    calls: list[dict[str, object]] | None = None,
+):
+    def fake_run(command, *, check, capture_output, text, timeout):
+        if calls is not None:
+            calls.append(
+                {
+                    "command": command,
+                    "check": check,
+                    "capture_output": capture_output,
+                    "text": text,
+                    "timeout": timeout,
+                }
+            )
+        return FakeCompleted(returncode=returncode, stdout=stdout_text, stderr=stderr_text)
+
+    monkeypatch.setattr("goodteam_os.workers.subprocess.run", fake_run)
+
+
 def install_fake_run(
     monkeypatch,
     *,
@@ -1142,7 +1166,25 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
         "command_available": True,
         "model": "gpt-5.4",
         "reason": "Codex CLI invocation attempted",
+        "runtime_adapter": "codex",
+        "runtime_binary": "/fake/bin/codex",
+        "runtime_version": "unknown",
+        "runtime_version_warning": True,
+        "runtime_version_warning_reason": "runtime_version_unavailable",
+        "runtime_version_failure_reason": "version command failed to start",
+        "runtime_model": "gpt-5.4",
         "runtime_cwd": str(tmp_path),
+        "runtime_workspace_mode": "project_root",
+        "runtime_workspace_status": "none",
+        "runtime_sandbox_mode": "disabled",
+        "runtime_approval_policy": "bypass",
+        "runtime_unsafe_mode": True,
+        "runtime_policy_warning": True,
+        "runtime_policy_warning_reason": "runtime_policy_unsafe",
+        "runtime_transcript_path": "",
+        "stdout_path": str(job_root / "stdout.txt"),
+        "stderr_path": str(job_root / "stderr.txt"),
+        "result_path": str(job_root / "result.md"),
         "workspace_context_available": False,
         "workspace_cwd_fallback": False,
         "workspace_cwd_fallback_reason": "",
@@ -1157,6 +1199,116 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
     assert status["stdout_path"].endswith("/stdout.txt")
     assert status["stderr_path"].endswith("/stderr.txt")
     assert (job_root / "result.md").read_text(encoding="utf-8").startswith("# Worker Result")
+
+
+def test_runtime_version_detection_success_records_structured_runtime_evidence(tmp_path, monkeypatch):
+    calls = []
+    version_calls = []
+    install_fake_popen(monkeypatch, calls=calls)
+    install_fake_worker_version(monkeypatch, stdout_text="codex 0.61.0\n", calls=version_calls)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-version-success",
+        role="implementation",
+        adapter="codex",
+        task="Implement runtime evidence.",
+        context="Approved artifacts are available.",
+    )
+
+    result = store.run_job(job["id"])
+
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    evidence = result["invocation_evidence"]
+    assert result["status"] == "completed"
+    assert version_calls == [
+        {
+            "command": ["/fake/bin/codex", "--version"],
+            "check": False,
+            "capture_output": True,
+            "text": True,
+            "timeout": 5,
+        }
+    ]
+    assert evidence["runtime_adapter"] == "codex"
+    assert evidence["runtime_binary"] == "/fake/bin/codex"
+    assert evidence["runtime_version"] == "codex 0.61.0"
+    assert evidence["runtime_version_warning"] is False
+    assert evidence["runtime_model"] == "gpt-5.4"
+    assert evidence["runtime_cwd"] == str(tmp_path)
+    assert evidence["runtime_workspace_mode"] == "project_root"
+    assert evidence["runtime_workspace_status"] == "none"
+    assert evidence["runtime_sandbox_mode"] == "disabled"
+    assert evidence["runtime_approval_policy"] == "bypass"
+    assert evidence["runtime_unsafe_mode"] is True
+    assert evidence["runtime_policy_warning"] is True
+    assert evidence["runtime_policy_warning_reason"] == "runtime_policy_unsafe"
+    assert evidence["runtime_transcript_path"] == ""
+    assert evidence["stdout_path"] == str(job_root / "stdout.txt")
+    assert evidence["stderr_path"] == str(job_root / "stderr.txt")
+    assert evidence["result_path"] == str(job_root / "result.md")
+
+
+def test_runtime_version_detection_failure_records_unknown_without_failing_worker(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen(monkeypatch, calls=calls)
+    install_fake_worker_version(
+        monkeypatch,
+        returncode=7,
+        stdout_text="",
+        stderr_text="version exploded",
+    )
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-version-failure",
+        role="implementation",
+        adapter="codex",
+        task="Implement runtime evidence.",
+        context="Approved artifacts are available.",
+    )
+
+    result = store.run_job(job["id"])
+
+    evidence = result["invocation_evidence"]
+    assert result["status"] == "completed"
+    assert evidence["runtime_version"] == "unknown"
+    assert evidence["runtime_version_warning"] is True
+    assert evidence["runtime_version_warning_reason"] == "runtime_version_unavailable"
+    assert evidence["runtime_version_failure_reason"] == "version command exited with code 7"
+    assert evidence["runtime_policy_warning"] is True
+    assert calls
+
+
+def test_unknown_runtime_policy_records_warning_without_blocking_worker(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen(monkeypatch, calls=calls)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-policy-unknown",
+        role="implementation",
+        adapter="codex",
+        task="Run a custom command.",
+        context="Approved artifacts are available.",
+    )
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+
+    result = store._run_cli_worker(
+        job_root,
+        job,
+        command=["/fake/bin/codex", "exec"],
+        model="gpt-5.4",
+        preflight={"codex_available": True},
+        label="Codex CLI",
+        capture="output_file",
+        summarize=_codex_summary,
+    )
+
+    evidence = result["invocation_evidence"]
+    assert result["status"] == "completed"
+    assert evidence["runtime_sandbox_mode"] == "unknown"
+    assert evidence["runtime_approval_policy"] == "unknown"
+    assert evidence["runtime_unsafe_mode"] is False
+    assert evidence["runtime_policy_warning"] is True
+    assert evidence["runtime_policy_warning_reason"] == "runtime_policy_unverified"
 
 
 def test_codex_adapter_uses_isolated_per_job_codex_home_with_allowlisted_files(tmp_path, monkeypatch):
@@ -2270,6 +2422,7 @@ def test_codex_worker_prompt_requests_memory_write_back_sections_without_copyabl
 
 def test_codex_adapter_fails_fast_when_codex_cli_is_missing(tmp_path, monkeypatch):
     calls = []
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-runtime-secret")
 
     def fake_popen(*args, **kwargs):
         calls.append((args, kwargs))
@@ -2301,12 +2454,31 @@ def test_codex_adapter_fails_fast_when_codex_cli_is_missing(tmp_path, monkeypatc
         "command_available": False,
         "model": "gpt-5.4",
         "reason": "Codex CLI is not available. Install codex or add it to PATH before running codex workers.",
+        "runtime_adapter": "codex",
+        "runtime_binary": "/missing/codex",
+        "runtime_version": "unknown",
+        "runtime_version_warning": True,
+        "runtime_version_warning_reason": "runtime_version_unavailable",
+        "runtime_version_failure_reason": "runtime binary unavailable",
+        "runtime_model": "gpt-5.4",
         "runtime_cwd": str(tmp_path),
+        "runtime_workspace_mode": "project_root",
+        "runtime_workspace_status": "none",
+        "runtime_sandbox_mode": "disabled",
+        "runtime_approval_policy": "bypass",
+        "runtime_unsafe_mode": True,
+        "runtime_policy_warning": True,
+        "runtime_policy_warning_reason": "runtime_policy_unsafe",
+        "runtime_transcript_path": "",
+        "stdout_path": "",
+        "stderr_path": "",
+        "result_path": str(tmp_path / ".goodteam" / "workers" / "jobs" / job["id"] / "result.md"),
         "workspace_context_available": False,
         "workspace_cwd_fallback": False,
         "workspace_cwd_fallback_reason": "",
         "pythonpath_workspace_src": False,
     }
+    assert "sk-runtime-secret" not in json.dumps(result)
     assert calls == []
 
 

@@ -195,6 +195,7 @@ def test_full_execution_replay_builds_canonical_evidence_manifest(tmp_path):
         "execution_started",
         "sandbox_created",
         "execution_completed",
+        "sandbox_cleanup_requested",
         "sandbox_destroyed",
         "pr_opened",
         "ci_observed",
