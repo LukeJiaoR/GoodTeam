@@ -63,6 +63,7 @@ class ReviewWorkbenchService:
             "execution_id": execution_id,
             "task": task_surface(replay["task"], evidence),
             "task_contract": dict(evidence.get("task_contract", {})),
+            "runtime_policy": dict(evidence.get("runtime_policy", {})),
             "source_issue": str(evidence.get("source_issue", "")),
             "pr": dict(evidence.get("pr", {})),
             "diff": diff,

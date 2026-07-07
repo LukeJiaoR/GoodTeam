@@ -195,6 +195,32 @@ def test_full_execution_replay_builds_canonical_evidence_manifest(tmp_path):
         {"name": "worker result", "kind": "worker_result", "path": "", "required": True}
     ]
     assert manifest["task_contract"]["fallback_warning"] == {}
+    assert manifest["runtime_policy"]["available"] is True
+    assert manifest["runtime_policy"]["schema_version"] == "runtime_policy.v1"
+    assert manifest["runtime_policy"]["worker_backend"] == {
+        "mode": "fake",
+        "class": "fake",
+        "source": "execution_run.adapter",
+    }
+    assert manifest["runtime_policy"]["external_invocation"] == {
+        "requested": False,
+        "allowed": False,
+        "blocked": False,
+        "reason": "fake worker backend does not invoke an external agent",
+    }
+    assert manifest["runtime_policy"]["sandbox"]["mode"] == "workspace"
+    assert manifest["runtime_policy"]["path_scope"] == {
+        "policy": "task_contract.path_scope",
+        "focus_paths": [],
+        "allowed_paths": [],
+        "excluded_paths": [],
+    }
+    assert manifest["runtime_policy"]["verification"] == {
+        "expectations": [],
+        "full_smoke_compatible": True,
+        "full_smoke_reason": "fake/noop/local/dry-run compatible or real worker explicitly allowed",
+    }
+    assert manifest["runtime_policy"]["fallback_warning"] == {}
     assert manifest["pr"]["ref"] == "LukeJiaoR/GoodTeam#301"
     assert manifest["pr"]["commit_sha"] == "commit-sha-217"
     assert transitions == [
@@ -302,6 +328,23 @@ def test_legacy_task_without_contract_returns_explicit_fallback_manifest(tmp_pat
         "fallback_warning": {
             "code": "task_contract_missing",
             "message": "Legacy execution has no persisted task_contract.v1 data.",
+        },
+    }
+    assert manifest["runtime_policy"] == {
+        "available": False,
+        "schema_version": "",
+        "task_contract": {},
+        "worker_backend": {},
+        "external_invocation": {},
+        "sandbox": {},
+        "path_scope": {},
+        "verification": {},
+        "operator_flags": {},
+        "sources": [],
+        "warnings": [],
+        "fallback_warning": {
+            "code": "runtime_policy_missing",
+            "message": "Legacy execution has no persisted runtime_policy.v1 preflight data.",
         },
     }
 

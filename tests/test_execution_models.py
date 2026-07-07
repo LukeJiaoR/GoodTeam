@@ -9,6 +9,7 @@ from goodteam_os.execution.models import (
     LedgerEvent,
     LedgerEventType,
     GitHubBinding,
+    RuntimePolicy,
     TaskContract,
 )
 
@@ -103,6 +104,70 @@ def test_task_contract_v1_serializes_to_stable_json_and_roundtrips():
         '"verification_expectations":["PYTHONPATH=src .venv/bin/python -m pytest tests -q"]}'
     )
     assert TaskContract.from_json(payload) == contract
+
+
+def test_runtime_policy_v1_serializes_to_stable_json_and_roundtrips():
+    policy = RuntimePolicy(
+        task_contract={
+            "available": True,
+            "schema_version": "task_contract.v1",
+            "allowed_summary": "Typed task contract",
+        },
+        worker_backend={
+            "mode": "codex",
+            "class": "real-external",
+            "source": "execution_run.adapter",
+        },
+        external_invocation={
+            "requested": True,
+            "allowed": True,
+            "blocked": False,
+            "reason": "real external worker backend selected by operator",
+        },
+        sandbox={
+            "enabled": True,
+            "mode": "worktree",
+            "workspace_mode": "worktree",
+            "source": "execution_orchestrator",
+        },
+        path_scope={
+            "policy": "task_contract.path_scope",
+            "focus_paths": ["src/goodteam_os/execution/models.py"],
+            "allowed_paths": ["src/goodteam_os/execution/"],
+            "excluded_paths": [],
+        },
+        verification={
+            "expectations": ["PYTHONPATH=src .venv/bin/python -m pytest tests -q"],
+            "full_smoke_compatible": True,
+            "full_smoke_reason": "fake/noop/local/dry-run compatible or real worker explicitly allowed",
+        },
+        operator_flags={"allow_real_external_worker": True},
+        sources=["task_contract", "execution_run.adapter", "sandbox_settings", "operator_flags"],
+        warnings=[],
+    )
+
+    payload = policy.to_json()
+
+    assert payload == (
+        '{"external_invocation":{"allowed":true,"blocked":false,'
+        '"reason":"real external worker backend selected by operator","requested":true},'
+        '"operator_flags":{"allow_real_external_worker":true},'
+        '"path_scope":{"allowed_paths":["src/goodteam_os/execution/"],'
+        '"excluded_paths":[],"focus_paths":["src/goodteam_os/execution/models.py"],'
+        '"policy":"task_contract.path_scope"},'
+        '"sandbox":{"enabled":true,"mode":"worktree","source":"execution_orchestrator",'
+        '"workspace_mode":"worktree"},'
+        '"schema_version":"runtime_policy.v1",'
+        '"sources":["task_contract","execution_run.adapter","sandbox_settings","operator_flags"],'
+        '"task_contract":{"allowed_summary":"Typed task contract","available":true,'
+        '"schema_version":"task_contract.v1"},'
+        '"verification":{"expectations":["PYTHONPATH=src .venv/bin/python -m pytest tests -q"],'
+        '"full_smoke_compatible":true,'
+        '"full_smoke_reason":"fake/noop/local/dry-run compatible or real worker explicitly allowed"},'
+        '"warnings":[],'
+        '"worker_backend":{"class":"real-external","mode":"codex","source":"execution_run.adapter"}}'
+    )
+    assert RuntimePolicy.from_json(payload) == policy
 
 
 def test_execution_task_roundtrips_embedded_task_contract():

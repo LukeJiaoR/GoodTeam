@@ -29,6 +29,7 @@ from goodteam_os.execution.models import (
 )
 from goodteam_os.execution.path_claims import PathClaimInference, infer_execution_path_claims
 from goodteam_os.execution.pr_diff_contract import artifact_json_path
+from goodteam_os.execution.runtime_policy import build_runtime_policy
 from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
 from goodteam_os.execution.sandbox_surface import SANDBOX_SCHEMA_VERSION
 from goodteam_os.workers import WorkerJobStore
@@ -96,7 +97,7 @@ class ExecutionOrchestrator:
             role=role,
         )
         self.ledger.create_run(run)
-        self._append_intake_events(run, repo=repo, issue_number=issue_number, role=role)
+        self._append_intake_events(run, task=task, repo=repo, issue_number=issue_number, role=role)
         return run
 
     def run_execution(self, execution_id: str) -> ExecutionRun:
@@ -229,6 +230,7 @@ class ExecutionOrchestrator:
         self,
         run: ExecutionRun,
         *,
+        task: ExecutionTask | None,
         repo: str,
         issue_number: int,
         role: str,
@@ -247,10 +249,21 @@ class ExecutionOrchestrator:
             payload={"transition": "intake_created", **payload},
             created_at=run.created_at,
         )
+        runtime_policy = build_runtime_policy(
+            project_root=self.project_root,
+            task=task,
+            run=run,
+            sandbox_enabled=self.sandbox_enabled,
+            sandbox_mode=self._sandbox_mode_for_execution(),
+        )
         self._append_event(
             run,
             event_type=LedgerEventType.STATUS_CHANGED,
-            payload={"transition": "worker_job_created", **payload},
+            payload={
+                "transition": "worker_job_created",
+                **payload,
+                "runtime_policy": runtime_policy.to_dict(),
+            },
             created_at=run.created_at,
         )
 

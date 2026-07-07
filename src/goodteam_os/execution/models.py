@@ -113,6 +113,37 @@ class TaskContract(_JsonModel):
 
 
 @dataclass(frozen=True)
+class RuntimePolicy(_JsonModel):
+    task_contract: dict[str, Any] = field(default_factory=dict)
+    worker_backend: dict[str, Any] = field(default_factory=dict)
+    external_invocation: dict[str, Any] = field(default_factory=dict)
+    sandbox: dict[str, Any] = field(default_factory=dict)
+    path_scope: dict[str, Any] = field(default_factory=dict)
+    verification: dict[str, Any] = field(default_factory=dict)
+    operator_flags: dict[str, Any] = field(default_factory=dict)
+    sources: list[str] = field(default_factory=list)
+    warnings: list[dict[str, Any]] = field(default_factory=list)
+    schema_version: str = "runtime_policy.v1"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "runtime_policy.v1":
+            raise ValueError("RuntimePolicy.schema_version must be runtime_policy.v1")
+        object.__setattr__(self, "task_contract", _dict_copy(self.task_contract, "task_contract"))
+        object.__setattr__(self, "worker_backend", _dict_copy(self.worker_backend, "worker_backend"))
+        object.__setattr__(
+            self,
+            "external_invocation",
+            _dict_copy(self.external_invocation, "external_invocation"),
+        )
+        object.__setattr__(self, "sandbox", _dict_copy(self.sandbox, "sandbox"))
+        object.__setattr__(self, "path_scope", _path_scope_policy(self.path_scope))
+        object.__setattr__(self, "verification", _dict_copy(self.verification, "verification"))
+        object.__setattr__(self, "operator_flags", _dict_copy(self.operator_flags, "operator_flags"))
+        object.__setattr__(self, "sources", _string_list(self.sources))
+        object.__setattr__(self, "warnings", _dict_list(self.warnings, "warnings"))
+
+
+@dataclass(frozen=True)
 class ExecutionTask(_JsonModel):
     task_id: str
     source_type: str
@@ -238,6 +269,17 @@ def _dict_list(value: Any, field_name: str) -> list[dict[str, Any]]:
 
 
 def _path_scope(value: Any) -> dict[str, Any]:
+    path_scope = _dict_copy(value, "path_scope")
+    normalized: dict[str, Any] = {}
+    for key, item in path_scope.items():
+        if key in {"focus_paths", "allowed_paths", "excluded_paths"}:
+            normalized[key] = _string_list(item)
+        else:
+            normalized[str(key)] = item
+    return normalized
+
+
+def _path_scope_policy(value: Any) -> dict[str, Any]:
     path_scope = _dict_copy(value, "path_scope")
     normalized: dict[str, Any] = {}
     for key, item in path_scope.items():

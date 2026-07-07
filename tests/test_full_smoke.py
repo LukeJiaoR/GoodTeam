@@ -59,4 +59,8 @@ def test_full_smoke_dry_run_writes_standard_outputs(tmp_path, monkeypatch):
     assert (output_root / "state-snapshots").is_dir()
     assert summary["issue"] == "#323"
     assert summary["target_roots"]["contentops"] == str(output_root / "targets" / "contentops")
+    assert summary["runtime_policy_preflight"]["schema_version"] == "runtime_policy.v1"
+    assert summary["runtime_policy_preflight"]["worker_backend"]["class"] == "dry-run"
+    assert summary["runtime_policy_preflight"]["external_invocation"]["blocked"] is True
+    assert summary["runtime_policy_preflight"]["verification"]["full_smoke_compatible"] is True
     assert summary["smoke_report"]["runs"][0]["status"] == "planned"

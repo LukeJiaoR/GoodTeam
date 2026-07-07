@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import MutableMapping
 
+from goodteam_os.execution.models import RuntimePolicy
+from goodteam_os.execution.runtime_policy import classify_worker_backend
 from goodteam_os.smoke import build_smoke_project_registry, run_smoke_suite
 
 
@@ -49,6 +51,13 @@ def main(argv: list[str] | None = None) -> int:
         "warnings": list(isolation_warnings),
         "failures": [],
     }
+    summary["runtime_policy_preflight"] = _full_smoke_runtime_policy(
+        worker_mode=worker_mode,
+        dry_run=args.dry_run,
+        allow_real_worker=args.allow_real_worker,
+        output_root=output_root,
+        workspace=workspace,
+    )
     summary.update(_collect_environment(repo_root))
     _write_log(dirs["logs"] / "environment.log", json.dumps(summary, indent=2))
 
@@ -181,6 +190,81 @@ def _collect_environment(repo_root: Path) -> dict[str, object]:
             "npm": _run_text(["npm", "--version"], repo_root),
         },
     }
+
+
+def _full_smoke_runtime_policy(
+    *,
+    worker_mode: str,
+    dry_run: bool,
+    allow_real_worker: bool,
+    output_root: Path,
+    workspace: Path,
+) -> dict[str, object]:
+    backend_class = classify_worker_backend(worker_mode, dry_run=dry_run)
+    real_external_requested = classify_worker_backend(worker_mode) == "real-external"
+    external_blocked = bool(dry_run or (real_external_requested and not allow_real_worker))
+    policy = RuntimePolicy(
+        task_contract={
+            "available": False,
+            "schema_version": "",
+            "allowed_summary": "Full smoke harness preflight; no single task_contract.v1 applies.",
+            "constraints": [],
+        },
+        worker_backend={
+            "mode": worker_mode,
+            "class": backend_class,
+            "source": "full_smoke.worker_mode",
+        },
+        external_invocation={
+            "requested": real_external_requested,
+            "allowed": real_external_requested and allow_real_worker and not dry_run,
+            "blocked": external_blocked,
+            "reason": _full_smoke_external_reason(
+                real_external_requested=real_external_requested,
+                allow_real_worker=allow_real_worker,
+                dry_run=dry_run,
+            ),
+        },
+        sandbox={
+            "enabled": True,
+            "mode": "isolated-output-root",
+            "workspace_mode": "workspace",
+            "source": "full_smoke",
+        },
+        path_scope={
+            "policy": "full_smoke.output_root",
+            "focus_paths": [str(output_root), str(workspace)],
+            "allowed_paths": [str(output_root)],
+            "excluded_paths": [],
+        },
+        verification={
+            "expectations": ["full acceptance smoke report", "summary.json", "coverage-matrix.md"],
+            "full_smoke_compatible": True,
+            "full_smoke_reason": "full smoke harness owns this preflight",
+        },
+        operator_flags={
+            "allow_real_external_worker": allow_real_worker,
+            "dry_run": dry_run,
+        },
+        sources=["full_smoke.worker_mode", "full_smoke.output_root", "operator_flags"],
+        warnings=[],
+    )
+    return policy.to_dict()
+
+
+def _full_smoke_external_reason(
+    *,
+    real_external_requested: bool,
+    allow_real_worker: bool,
+    dry_run: bool,
+) -> str:
+    if dry_run:
+        return "dry-run blocks external worker invocation"
+    if real_external_requested and allow_real_worker:
+        return "real external worker explicitly allowed for full smoke"
+    if real_external_requested:
+        return "real external worker requires --allow-real-worker"
+    return "selected worker mode does not invoke an external agent"
 
 
 def _run_text(command: list[str], cwd: Path) -> str:
