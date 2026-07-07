@@ -101,6 +101,9 @@ def warnings_surface(
     contract_warning = _task_contract_warning(evidence)
     if contract_warning:
         warnings.append(contract_warning)
+    runtime_policy_warning = _runtime_policy_warning(evidence)
+    if runtime_policy_warning:
+        warnings.append(runtime_policy_warning)
     warnings.extend(_rationale_mapping_warnings(diff, rationale))
     integrity = evidence.get("memory_provenance_integrity")
     if _has_broken_memory_integrity(integrity):
@@ -118,6 +121,22 @@ def _task_contract_warning(evidence: dict[str, Any]) -> dict[str, str] | None:
     if not isinstance(contract, dict) or contract.get("available"):
         return None
     warning = contract.get("fallback_warning")
+    if not isinstance(warning, dict):
+        return None
+    code = str(warning.get("code", "")).strip()
+    if not code:
+        return None
+    return {
+        "code": code,
+        "message": str(warning.get("message", "")),
+    }
+
+
+def _runtime_policy_warning(evidence: dict[str, Any]) -> dict[str, str] | None:
+    policy = evidence.get("runtime_policy")
+    if not isinstance(policy, dict) or policy.get("available"):
+        return None
+    warning = policy.get("fallback_warning")
     if not isinstance(warning, dict):
         return None
     code = str(warning.get("code", "")).strip()

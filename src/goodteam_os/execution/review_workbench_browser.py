@@ -62,6 +62,7 @@ def render_review_workbench_html(
     </header>
     {_summary_section(review)}
     {_task_contract_section(review)}
+    {_runtime_policy_section(review)}
     {_decision_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_diff_section(review)}
     {_evidence_section(review)}
@@ -123,6 +124,33 @@ def _task_contract_section(review: dict[str, Any]) -> str:
     body += _simple_list("Verification expectations", contract.get("verification_expectations"))
     body += _simple_list("Review expectations", contract.get("review_expectations"))
     return _section("Task contract", body)
+
+
+def _runtime_policy_section(review: dict[str, Any]) -> str:
+    policy = _dict(review.get("runtime_policy"))
+    if not policy.get("available"):
+        warning = _dict(policy.get("fallback_warning"))
+        return _section(
+            "Runtime policy",
+            _empty_state(_text(warning.get("message") or "No runtime_policy.v1 preflight data is available."))
+            + _details([("Warning", warning.get("code") or "runtime_policy_missing")]),
+        )
+    backend = _dict(policy.get("worker_backend"))
+    external = _dict(policy.get("external_invocation"))
+    sandbox = _dict(policy.get("sandbox"))
+    verification = _dict(policy.get("verification"))
+    body = _details(
+        [
+            ("Schema", policy.get("schema_version")),
+            ("Worker backend", f"{backend.get('mode', '')} ({backend.get('class', '')})"),
+            ("External invocation", _external_label(external)),
+            ("Sandbox", f"{sandbox.get('mode', '')} ({'enabled' if sandbox.get('enabled') else 'disabled'})"),
+            ("Full smoke", _yes_no(verification.get("full_smoke_compatible"))),
+        ]
+    )
+    body += _contract_path_scope(_dict(policy.get("path_scope")))
+    body += _simple_list("Verification expectations", verification.get("expectations"))
+    return _section("Runtime policy", body)
 
 
 def _contract_artifact_list(artifacts: list[dict[str, Any]]) -> str:
@@ -502,6 +530,22 @@ def _sandbox_label(sandbox: dict[str, Any]) -> str:
     if sandbox.get("available"):
         return _text(sandbox.get("summary") or "available")
     return f"Unavailable - {sandbox.get('reason', 'sandbox_evidence_missing')}"
+
+
+def _external_label(external: dict[str, Any]) -> str:
+    if external.get("blocked"):
+        return f"blocked ({external.get('reason', '')})"
+    if external.get("requested"):
+        return "allowed" if external.get("allowed") else "requested"
+    return "not requested"
+
+
+def _yes_no(value: Any) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "unknown"
 
 
 def _rationale_label(rationale: dict[str, Any]) -> str:

@@ -12,6 +12,7 @@ def render_review_workbench(review: dict[str, Any]) -> str:
     integrity = dict(review.get("memory_provenance_integrity", {}))
     decision = dict(review.get("reviewer_decision", {}))
     contract = dict(review.get("task_contract", {}))
+    runtime_policy = dict(review.get("runtime_policy", {}))
     lines = [
         f"Execution: {review.get('execution_id', '')}",
         f"Status: {review.get('status', '')}",
@@ -21,6 +22,10 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         f"Commit: {pr.get('commit_sha', '') or 'n/a'}",
         f"Task contract: {_contract_label(contract)}",
         f"Contract summary: {contract.get('summary', '') or 'n/a'}",
+        f"Runtime policy: {_runtime_policy_label(runtime_policy)}",
+        f"Worker backend: {_runtime_worker_backend_label(runtime_policy)}",
+        f"External invocation: {_runtime_external_label(runtime_policy)}",
+        f"Runtime sandbox: {_runtime_sandbox_label(runtime_policy)}",
         f"Diff: {_diff_label(diff)}",
         f"CI: {ci.get('state', 'unavailable')}",
         (
@@ -59,6 +64,43 @@ def _contract_label(contract: dict[str, Any]) -> str:
     if isinstance(warning, dict):
         return f"missing ({warning.get('code', 'task_contract_missing')})"
     return "missing"
+
+
+def _runtime_policy_label(policy: dict[str, Any]) -> str:
+    if policy.get("available"):
+        return str(policy.get("schema_version", ""))
+    warning = policy.get("fallback_warning")
+    if isinstance(warning, dict):
+        return f"missing ({warning.get('code', 'runtime_policy_missing')})"
+    return "missing"
+
+
+def _runtime_worker_backend_label(policy: dict[str, Any]) -> str:
+    backend = policy.get("worker_backend")
+    if not isinstance(backend, dict) or not backend:
+        return "n/a"
+    mode = str(backend.get("mode", "") or "n/a")
+    backend_class = str(backend.get("class", "") or "n/a")
+    return f"{mode} ({backend_class})"
+
+
+def _runtime_external_label(policy: dict[str, Any]) -> str:
+    external = policy.get("external_invocation")
+    if not isinstance(external, dict) or not external:
+        return "n/a"
+    if external.get("blocked"):
+        return f"blocked ({external.get('reason', '')})"
+    if external.get("requested"):
+        return "allowed" if external.get("allowed") else "requested"
+    return "not requested"
+
+
+def _runtime_sandbox_label(policy: dict[str, Any]) -> str:
+    sandbox = policy.get("sandbox")
+    if not isinstance(sandbox, dict) or not sandbox:
+        return "n/a"
+    enabled = "enabled" if sandbox.get("enabled") else "disabled"
+    return f"{sandbox.get('mode', 'n/a')} ({enabled})"
 
 
 def _render_contract_artifacts(contract: dict[str, Any]) -> list[str]:
