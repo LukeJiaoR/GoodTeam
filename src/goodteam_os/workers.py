@@ -261,6 +261,14 @@ class CliBackendSpec:
     needs_pty: bool = False
 
 
+@dataclass(frozen=True)
+class WorkerRuntimeContext:
+    runtime_cwd: Path
+    workspace_context_available: bool
+    workspace_cwd_fallback: bool
+    workspace_cwd_fallback_reason: str
+
+
 def _codex_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
     return [
         binary,
@@ -901,6 +909,11 @@ class WorkerJobStore:
                             "retry_attempt",
                             "retry_of_idempotency_key",
                             "sandbox_context",
+                            "runtime_cwd",
+                            "workspace_context_available",
+                            "workspace_cwd_fallback",
+                            "workspace_cwd_fallback_reason",
+                            "pythonpath_workspace_src",
                         }
                     },
                 }
@@ -1127,8 +1140,15 @@ class WorkerJobStore:
         bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
         model = bare or spec.model_default
         result_path = job_root / "result.md"
+        runtime_context = self._worker_runtime_cwd(job)
+        worker_env = self._worker_env(job_root, spec, runtime_context.runtime_cwd)
+        pythonpath_workspace_src = (runtime_context.runtime_cwd / "src").is_dir()
+        runtime_evidence = _worker_runtime_evidence(
+            runtime_context,
+            pythonpath_workspace_src=pythonpath_workspace_src,
+        )
         preflight = _cli_preflight(spec, binary, model)
-        command = spec.build_command(binary, model, self.project_root, result_path)
+        command = spec.build_command(binary, model, runtime_context.runtime_cwd, result_path)
         if not preflight[f"{spec.which_name}_available"]:
             return self._write_status(
                 job_root,
@@ -1140,6 +1160,8 @@ class WorkerJobStore:
                     "model": model,
                     "exit_code": None,
                     "preflight": preflight,
+                    **runtime_evidence,
+                    "invocation_evidence": runtime_evidence,
                 },
             )
         return self._run_cli_worker(
@@ -1152,15 +1174,49 @@ class WorkerJobStore:
             capture=spec.capture,
             summarize=spec.summarize,
             prompt_via=spec.prompt_via,
-            worker_env=self._worker_env(job_root, spec),
+            worker_env=worker_env,
+            runtime_context=runtime_context,
+            runtime_evidence=runtime_evidence,
             use_pty=spec.needs_pty,
         )
 
-    def _worker_env(self, job_root: Path, spec: "CliBackendSpec") -> dict[str, str] | None:
-        if not spec.isolated_home:
+    def _worker_runtime_cwd(self, job: dict[str, Any]) -> WorkerRuntimeContext:
+        context = job.get("sandbox_context")
+        if not isinstance(context, dict) or not context.get("available"):
+            return WorkerRuntimeContext(
+                runtime_cwd=self.project_root,
+                workspace_context_available=False,
+                workspace_cwd_fallback=False,
+                workspace_cwd_fallback_reason="",
+            )
+        workspace_path = Path(str(context.get("workspace_path", "")))
+        if _is_repo_workspace(workspace_path):
+            return WorkerRuntimeContext(
+                runtime_cwd=workspace_path,
+                workspace_context_available=True,
+                workspace_cwd_fallback=False,
+                workspace_cwd_fallback_reason="",
+            )
+        return WorkerRuntimeContext(
+            runtime_cwd=self.project_root,
+            workspace_context_available=True,
+            workspace_cwd_fallback=True,
+            workspace_cwd_fallback_reason="workspace_missing_or_not_repo",
+        )
+
+    def _worker_env(self, job_root: Path, spec: "CliBackendSpec", runtime_cwd: Path) -> dict[str, str] | None:
+        workspace_src = runtime_cwd / "src"
+        needs_pythonpath = workspace_src.is_dir()
+        if not spec.isolated_home and not needs_pythonpath:
             return None
-        isolated_home = self._prepare_isolated_codex_home(job_root)
-        return {**os.environ, "CODEX_HOME": str(isolated_home)}
+        worker_env = dict(os.environ)
+        if spec.isolated_home:
+            isolated_home = self._prepare_isolated_codex_home(job_root)
+            worker_env["CODEX_HOME"] = str(isolated_home)
+        if needs_pythonpath:
+            existing = worker_env.get("PYTHONPATH", "")
+            worker_env["PYTHONPATH"] = str(workspace_src) if not existing else f"{workspace_src}{os.pathsep}{existing}"
+        return worker_env
 
     def _prepare_isolated_codex_home(self, job_root: Path) -> Path:
         source_home = Path(os.environ.get("CODEX_HOME") or "~/.codex").expanduser()
@@ -1192,6 +1248,8 @@ class WorkerJobStore:
         summarize: Any,
         prompt_via: str = "stdin",
         worker_env: dict[str, str] | None = None,
+        runtime_context: WorkerRuntimeContext | None = None,
+        runtime_evidence: dict[str, Any] | None = None,
         timeout_seconds: int = 1800,
         use_pty: bool = False,
     ) -> dict[str, Any]:
@@ -1203,6 +1261,11 @@ class WorkerJobStore:
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"
+        runtime_context = runtime_context or self._worker_runtime_cwd(job)
+        runtime_evidence = runtime_evidence or _worker_runtime_evidence(
+            runtime_context,
+            pythonpath_workspace_src=(runtime_context.runtime_cwd / "src").is_dir(),
+        )
         prompt = self._worker_prompt(job_root, job, model=model)
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
         process_input = None if prompt_via == "arg" else prompt
@@ -1216,6 +1279,8 @@ class WorkerJobStore:
             "stderr_path": str(stderr_path),
             "result_path": str(result_path),
             "preflight": preflight,
+            **runtime_evidence,
+            "invocation_evidence": runtime_evidence,
         }
         stdout_path.write_text("", encoding="utf-8")
         stderr_path.write_text("", encoding="utf-8")
@@ -1243,7 +1308,7 @@ class WorkerJobStore:
                 heartbeat_thread.start()
                 returncode, stdout, stderr = _run_command_in_pty(
                     process_command,
-                    cwd=self.project_root,
+                    cwd=runtime_context.runtime_cwd,
                     env=worker_env,
                     process_input=process_input,
                     timeout_seconds=timeout_seconds,
@@ -1251,7 +1316,7 @@ class WorkerJobStore:
             else:
                 process = subprocess.Popen(
                     process_command,
-                    cwd=self.project_root,
+                    cwd=runtime_context.runtime_cwd,
                     env=worker_env,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
@@ -1492,6 +1557,24 @@ def _timeout_text(value: object) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value)
+
+
+def _is_repo_workspace(path: Path) -> bool:
+    return path.is_dir() and (path / ".git").exists()
+
+
+def _worker_runtime_evidence(
+    context: WorkerRuntimeContext,
+    *,
+    pythonpath_workspace_src: bool,
+) -> dict[str, Any]:
+    return {
+        "runtime_cwd": str(context.runtime_cwd),
+        "workspace_context_available": context.workspace_context_available,
+        "workspace_cwd_fallback": context.workspace_cwd_fallback,
+        "workspace_cwd_fallback_reason": context.workspace_cwd_fallback_reason,
+        "pythonpath_workspace_src": pythonpath_workspace_src,
+    }
 
 
 def _codex_model_name(value: str) -> str:

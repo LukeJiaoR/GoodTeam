@@ -27,6 +27,7 @@ from goodteam_os.execution.models import (
     LedgerEventType,
 )
 from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
+from goodteam_os.execution.sandbox_surface import SANDBOX_SCHEMA_VERSION
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -40,7 +41,7 @@ class ExecutionOrchestrator:
         github_client: GitHubClient | None = None,
         *,
         sandbox_enabled: bool = True,
-        sandbox_mode: str = "workspace",
+        sandbox_mode: str = "auto",
         sandbox_git_adapter: SandboxGitAdapter | None = None,
     ):
         self.project_root = Path(project_root)
@@ -327,14 +328,36 @@ class ExecutionOrchestrator:
         return self._sandbox_service().create_sandbox(
             run.execution_id,
             claimed_paths=_sandbox_claimed_paths(run),
-            mode=self.sandbox_mode,
+            mode=self._sandbox_mode_for_execution(),
         )
 
     def _destroy_sandbox(self, execution_id: str) -> None:
         try:
             self._sandbox_service().destroy_sandbox(execution_id)
-        except Exception:
-            return
+        except Exception as exc:
+            run = self.ledger.read_run(execution_id)
+            if run is None:
+                return
+            self._append_event(
+                run,
+                event_type=LedgerEventType.STATUS_CHANGED,
+                payload={
+                    "transition": "sandbox_destroy_failed",
+                    "source": "sandbox",
+                    "schema_version": SANDBOX_SCHEMA_VERSION,
+                    "execution_id": execution_id,
+                    "status": "failed",
+                    "reason": "sandbox_destroy_failed",
+                    "error": str(exc),
+                },
+                created_at=self._clock(),
+            )
+
+    def _sandbox_mode_for_execution(self) -> str:
+        mode = self.sandbox_mode.strip().lower()
+        if mode != "auto":
+            return mode
+        return "worktree" if (self.project_root / ".git").exists() else "workspace"
 
     def _sandbox_service(self) -> SandboxService:
         return SandboxService(

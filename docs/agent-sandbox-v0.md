@@ -4,10 +4,10 @@ Issue: #218
 
 ## Purpose
 
-Agent Sandbox v0 establishes an auditable boundary for agent work. #309 added
-the boundary primitives; the next slice wires those primitives into the real
-`ExecutionOrchestrator.run_execution()` lifecycle. The v0 contract is small on
-purpose:
+Agent Sandbox v0 establishes an auditable execution workspace boundary for agent
+work. #309 added the boundary primitives; #310 wires those primitives into the
+real `ExecutionOrchestrator.run_execution()` lifecycle. The v0 contract is small
+on purpose:
 
 - sandbox workspace metadata
 - command policy
@@ -16,9 +16,29 @@ purpose:
 - sandbox ledger events
 - Review Workbench sandbox evidence
 
-This is not a production isolation runtime. It is the first ledger-backed
-contract that lets maintainers test and inspect sandbox boundaries while deeper
-worker command mediation remains incremental.
+This is not a replacement for Codex CLI or Claude Code CLI runtime sandboxing.
+It is the first ledger-backed contract that lets maintainers test and inspect
+execution workspace lifecycle, runtime cwd selection, and Review Workbench
+evidence while each CLI keeps owning its runtime permission model.
+
+## Runtime-Native Sandbox Strategy
+
+GoodTeam does not replace Codex CLI / Claude Code CLI runtime sandboxing.
+
+GoodTeam owns:
+
+- execution workspace/worktree lifecycle
+- runtime cwd selection
+- worker context
+- ledger evidence
+- Review Workbench rendering
+
+Codex/Claude own:
+
+- command permissions
+- filesystem/network sandbox
+- approval policy
+- model/tool execution safety
 
 ## API Surface
 
@@ -41,6 +61,11 @@ api.destroy_sandbox(execution_id)
 ```text
 .goodteam/sandboxes/<execution_id>/workspace
 ```
+
+Workspace mode is a fallback/evidence-only coding boundary unless the directory
+has been materialized as a repo workspace. Empty workspace directories are not
+used as CLI cwd for coding workers; the worker records an explicit
+`workspace_cwd_fallback = true` status and falls back to the project root.
 
 `mode="worktree"` uses a pluggable git adapter:
 
@@ -72,14 +97,14 @@ runs the worker job:
 ```text
 execution_started
   -> sandbox_created
-  -> worker job receives sandbox_context
+  -> worker CLI launched with cwd=<execution workspace/worktree>
   -> execution_completed / execution_failed
   -> sandbox_destroyed
 ```
 
-The default mode is `workspace` so local and CI execution do not depend on real
-git worktrees. `worktree` mode remains available through the same
-`SandboxGitAdapter` boundary.
+The default execution mode is `auto`: git repositories use `worktree`; non-git
+test or local fallback roots use `workspace`. Real coding runs should use git
+worktree mode or another repo-backed workspace.
 
 The worker receives a sanitized `sandbox_context` with:
 
@@ -99,13 +124,34 @@ The worker receives a sanitized `sandbox_context` with:
 
 The context is written to worker job metadata for auditability. It does not
 include host credentials, GitHub tokens, API keys, or secret values. Workers can
-use `workspace_path` as the intended future cwd boundary, but command-by-command
-worker action mediation remains future work.
+use `workspace_path` as GoodTeam's workspace/evidence boundary context. It does
+not replace Codex/Claude runtime sandboxing.
+
+Worker status and invocation evidence record:
+
+```json
+{
+  "runtime_cwd": "...",
+  "workspace_context_available": true,
+  "workspace_cwd_fallback": false,
+  "workspace_cwd_fallback_reason": "",
+  "pythonpath_workspace_src": true
+}
+```
+
+If `<runtime_cwd>/src` exists, the worker env prepends it to `PYTHONPATH` so
+Python imports prefer the execution workspace while still allowing shared
+repo-level `.venv`, pip cache, npm cache, pnpm store, and tool binaries. The
+worker result, stdout, stderr, prompt, and status protocol files remain absolute
+paths under the job root, not under the worktree.
 
 Sandbox creation failure is deterministic: the orchestrator records
 `sandbox_create_failed`, marks the execution failed, and does not run the worker.
 Missing executions still fail before any sandbox artifact or missing-execution
 ledger file is created.
+
+`run_sandbox_command()` remains a narrow testable command-policy surface. It is
+not the main Codex/Claude runtime path.
 
 ## Metadata
 
@@ -265,14 +311,13 @@ This PR does not implement:
 - a real GitHub write broker
 - `gh pr merge` or `gh pr review`
 - auto rebase or auto conflict resolution
-- command-by-command worker action mediation
 - a large React dashboard rewrite
 
 ## Remaining #218 Gaps
 
-- Command-by-command worker action mediation.
-- Real GitHub/CI typed broker.
-- Stronger filesystem isolation.
+- Runtime adapter evidence capture for Codex/Claude exact sandbox mode and
+  approval policy.
 - Real path claim inference.
 - Cleanup and recovery hardening.
-- Optional Docker/VM future isolation.
+- Optional Docker/VM future isolation for non-Codex/Claude runtimes.
+- GitHub/CI typed broker only if needed for host-side operations.

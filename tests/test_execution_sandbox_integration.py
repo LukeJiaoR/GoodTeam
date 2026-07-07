@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,9 @@ class FakeSandboxGitAdapter:
         if self.fail_create:
             raise RuntimeError("worktree create exploded")
         worktree_path.mkdir(parents=True, exist_ok=True)
+        (worktree_path / ".git").write_text("gitdir: fake\n", encoding="utf-8")
+        (worktree_path / "src").mkdir(exist_ok=True)
+        (worktree_path / "tests").mkdir(exist_ok=True)
         return {"status": "created"}
 
     def remove_worktree(self, *, repo_root: Path, worktree_path: Path) -> dict[str, object]:
@@ -197,6 +201,150 @@ def test_worker_sandbox_context_has_no_host_secret_values(tmp_path, monkeypatch)
     assert not ({"GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"} & set(context))
 
 
+def test_cli_worker_process_launches_with_valid_workspace_cwd_and_evidence(tmp_path, monkeypatch):
+    calls: list[dict[str, Any]] = []
+    workspace = _repo_like_workspace(tmp_path / "execution-worktree")
+    monkeypatch.setenv("PYTHONPATH", "/existing/pythonpath")
+    _install_fake_cli(monkeypatch, calls=calls)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-cli-workspace",
+        role="implementation",
+        adapter="codex",
+        task="Implement in the execution worktree.",
+        context="Use the provided workspace.",
+    )
+
+    result = store.run_job(job["id"], sandbox_context=_sandbox_context(workspace))
+
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
+    evidence = status["invocation_evidence"]
+    assert result["status"] == "completed"
+    assert calls[0]["cwd"] == workspace
+    assert calls[0]["command"][calls[0]["command"].index("--cd") + 1] == str(workspace)
+    assert calls[0]["env"]["PYTHONPATH"].split(":")[:2] == [
+        str(workspace / "src"),
+        "/existing/pythonpath",
+    ]
+    assert status["runtime_cwd"] == str(workspace)
+    assert status["workspace_context_available"] is True
+    assert status["workspace_cwd_fallback"] is False
+    assert status["workspace_cwd_fallback_reason"] == ""
+    assert status["pythonpath_workspace_src"] is True
+    assert evidence["runtime_cwd"] == str(workspace)
+    assert evidence["workspace_cwd_fallback"] is False
+    assert evidence["pythonpath_workspace_src"] is True
+    assert Path(status["result_path"]).is_absolute()
+    assert Path(status["stdout_path"]).is_absolute()
+    assert Path(status["stderr_path"]).is_absolute()
+    assert job_root in Path(status["result_path"]).parents
+    assert job_root in Path(status["stdout_path"]).parents
+    assert job_root in Path(status["stderr_path"]).parents
+
+
+def test_cli_worker_fallback_to_project_root_is_explicit_when_workspace_is_not_repo(tmp_path, monkeypatch):
+    calls: list[dict[str, Any]] = []
+    workspace = tmp_path / "empty-workspace"
+    workspace.mkdir()
+    _install_fake_cli(monkeypatch, calls=calls)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-cli-fallback",
+        role="implementation",
+        adapter="codex",
+        task="Implement with fallback evidence.",
+        context="Workspace is intentionally not repo-like.",
+    )
+
+    result = store.run_job(job["id"], sandbox_context=_sandbox_context(workspace))
+
+    status = json.loads(
+        (tmp_path / ".goodteam" / "workers" / "jobs" / job["id"] / "status.json").read_text(encoding="utf-8")
+    )
+    assert result["status"] == "completed"
+    assert calls[0]["cwd"] == tmp_path
+    assert status["runtime_cwd"] == str(tmp_path)
+    assert status["workspace_context_available"] is True
+    assert status["workspace_cwd_fallback"] is True
+    assert status["workspace_cwd_fallback_reason"] == "workspace_missing_or_not_repo"
+    assert status["invocation_evidence"]["workspace_cwd_fallback"] is True
+
+
+def test_worktree_execution_uses_worktree_cwd_preserves_shared_venv_and_pythonpath(tmp_path, monkeypatch):
+    calls: list[dict[str, Any]] = []
+    shared_venv = tmp_path / ".venv"
+    shared_venv.mkdir()
+    (shared_venv / "marker").write_text("shared", encoding="utf-8")
+    adapter = FakeSandboxGitAdapter()
+    _install_fake_cli(monkeypatch, calls=calls)
+    orchestrator = _orchestrator(
+        tmp_path,
+        sandbox_mode="worktree",
+        sandbox_git_adapter=adapter,
+    )
+    queued = orchestrator.intake_github_issue(repo="LukeJiaoR/GoodTeam", issue_number=218, adapter="codex")
+
+    completed = orchestrator.run_execution(queued.execution_id)
+
+    worktree_path = Path(adapter.created[0]["worktree_path"])
+    status = WorkerJobStore(tmp_path).list_jobs()[0]
+    assert completed.status is ExecutionRunStatus.SUCCEEDED
+    assert calls[0]["cwd"] == worktree_path
+    assert status["runtime_cwd"] == str(worktree_path)
+    assert status["pythonpath_workspace_src"] is True
+    assert calls[0]["env"]["PYTHONPATH"].split(":")[0] == str(worktree_path / "src")
+    assert not (worktree_path / ".venv").exists()
+    assert shared_venv.exists()
+    assert adapter.removed == [{"repo_root": tmp_path, "worktree_path": worktree_path}]
+
+
+def test_cli_worker_context_status_and_prompt_do_not_expose_secret_values(tmp_path, monkeypatch):
+    calls: list[dict[str, Any]] = []
+    workspace = _repo_like_workspace(tmp_path / "secret-worktree")
+    monkeypatch.setenv("GH_TOKEN", "ghp_runtime_secret")
+    _install_fake_cli(monkeypatch, calls=calls)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-secret",
+        role="implementation",
+        adapter="codex",
+        task="Check secret handling.",
+        context="No credentials should be persisted.",
+    )
+
+    store.run_job(job["id"], sandbox_context=_sandbox_context(workspace))
+
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+    status_text = (job_root / "status.json").read_text(encoding="utf-8")
+    context_text = (job_root / "sandbox_context.json").read_text(encoding="utf-8")
+    assert "ghp_runtime_secret" not in status_text
+    assert "ghp_runtime_secret" not in context_text
+    assert "ghp_runtime_secret" not in calls[0]["input"]
+    assert "GH_TOKEN" not in context_text
+
+
+def test_destroy_sandbox_exception_records_destroy_failed_without_rewriting_worker_outcome(tmp_path, monkeypatch):
+    orchestrator = _orchestrator(tmp_path)
+    queued = orchestrator.intake_github_issue(repo="LukeJiaoR/GoodTeam", issue_number=218, adapter="fake")
+
+    def explode_destroy(self, execution_id: str) -> dict[str, Any]:
+        raise RuntimeError(f"destroy exploded for {execution_id}")
+
+    monkeypatch.setattr("goodteam_os.execution.sandbox.SandboxService.destroy_sandbox", explode_destroy)
+
+    completed = orchestrator.run_execution(queued.execution_id)
+
+    events = ExecutionLedger(tmp_path).read_events(queued.execution_id)
+    transitions = [str(event.payload.get("transition", "")) for event in events]
+    destroy_event = events[-1]
+    assert completed.status is ExecutionRunStatus.SUCCEEDED
+    assert transitions[-2:] == ["execution_completed", "sandbox_destroy_failed"]
+    assert destroy_event.payload["source"] == "sandbox"
+    assert destroy_event.payload["reason"] == "sandbox_destroy_failed"
+    assert "destroy exploded" in destroy_event.payload["error"]
+
+
 def test_run_execution_can_disable_sandbox_for_legacy_compatibility(tmp_path):
     orchestrator = _orchestrator(tmp_path, sandbox_enabled=False)
     queued = orchestrator.intake_github_issue(repo="LukeJiaoR/GoodTeam", issue_number=218, adapter="fake")
@@ -242,7 +390,7 @@ def _orchestrator(
     tmp_path: Path,
     *,
     sandbox_enabled: bool = True,
-    sandbox_mode: str = "workspace",
+    sandbox_mode: str = "auto",
     sandbox_git_adapter: FakeSandboxGitAdapter | None = None,
 ) -> ExecutionOrchestrator:
     orchestrator = ExecutionOrchestrator(
@@ -254,6 +402,65 @@ def _orchestrator(
     )
     orchestrator._clock = FakeClock()
     return orchestrator
+
+
+def _repo_like_workspace(path: Path) -> Path:
+    path.mkdir(parents=True)
+    (path / ".git").write_text("gitdir: fake\n", encoding="utf-8")
+    (path / "src").mkdir()
+    (path / "tests").mkdir()
+    return path
+
+
+def _sandbox_context(workspace: Path) -> dict[str, Any]:
+    return {
+        "available": True,
+        "schema_version": "sandbox.v1",
+        "execution_id": "exec-runtime-cwd",
+        "sandbox_id": "sandbox_exec-runtime-cwd",
+        "workspace_path": str(workspace),
+        "worktree_path": str(workspace),
+        "mode": "worktree",
+        "branch_name": "sandbox/exec-runtime-cwd",
+        "claimed_paths": [],
+    }
+
+
+class _FakePopen:
+    pid = 4343
+
+    def __init__(self, command: list[str], *, cwd: Path, env: dict[str, str] | None, calls: list[dict[str, Any]]):
+        self.command = command
+        self.cwd = cwd
+        self.env = env or {}
+        self.calls = calls
+        self.returncode = 0
+
+    def communicate(self, input=None, timeout=None):
+        self.calls.append(
+            {
+                "command": self.command,
+                "cwd": self.cwd,
+                "env": self.env,
+                "input": input,
+                "timeout": timeout,
+            }
+        )
+        if "--output-last-message" in self.command:
+            result_path = Path(self.command[self.command.index("--output-last-message") + 1])
+            result_path.write_text("# Worker Result\n\nCompleted.\n", encoding="utf-8")
+        return ("worker stdout", "worker stderr")
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
+def _install_fake_cli(monkeypatch, *, calls: list[dict[str, Any]]) -> None:
+    def fake_popen(command, *, cwd, env, stdin, stdout, stderr, text):
+        return _FakePopen(list(command), cwd=Path(cwd), env=env, calls=calls)
+
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
 
 
 def _transitions(tmp_path: Path, execution_id: str) -> list[str]:
