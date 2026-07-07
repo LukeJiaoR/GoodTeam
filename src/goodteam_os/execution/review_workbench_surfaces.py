@@ -104,6 +104,9 @@ def warnings_surface(
     runtime_policy_warning = _runtime_policy_warning(evidence)
     if runtime_policy_warning:
         warnings.append(runtime_policy_warning)
+    broker_status_warning = _broker_status_warning(evidence)
+    if broker_status_warning:
+        warnings.append(broker_status_warning)
     warnings.extend(_rationale_mapping_warnings(diff, rationale))
     integrity = evidence.get("memory_provenance_integrity")
     if _has_broken_memory_integrity(integrity):
@@ -137,6 +140,22 @@ def _runtime_policy_warning(evidence: dict[str, Any]) -> dict[str, str] | None:
     if not isinstance(policy, dict) or policy.get("available"):
         return None
     warning = policy.get("fallback_warning")
+    if not isinstance(warning, dict):
+        return None
+    code = str(warning.get("code", "")).strip()
+    if not code:
+        return None
+    return {
+        "code": code,
+        "message": str(warning.get("message", "")),
+    }
+
+
+def _broker_status_warning(evidence: dict[str, Any]) -> dict[str, str] | None:
+    status = evidence.get("github_broker_status")
+    if not isinstance(status, dict) or status.get("available"):
+        return None
+    warning = status.get("fallback_warning")
     if not isinstance(warning, dict):
         return None
     code = str(warning.get("code", "")).strip()

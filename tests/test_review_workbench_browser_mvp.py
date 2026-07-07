@@ -38,6 +38,8 @@ def test_completed_execution_exports_browser_visible_html_and_json(tmp_path):
     assert payload["execution_id"] == execution_id
     assert payload["runtime_policy"]["schema_version"] == "runtime_policy.v1"
     assert payload["runtime_policy"]["worker_backend"]["class"] == "fake"
+    assert payload["github_broker_status"]["schema_version"] == "github_broker_status.v1"
+    assert payload["github_broker_status"]["merge_readiness"]["state"] == "ready"
     assert f"Review Workbench - {execution_id}" in html
     assert "data-schema-version=\"review_workbench.v1\"" in html
     assert "Status</dt><dd>completed</dd>" in html
@@ -54,6 +56,10 @@ def test_completed_execution_exports_browser_visible_html_and_json(tmp_path):
     assert "Schema</dt><dd>runtime_policy.v1</dd>" in html
     assert "Worker backend</dt><dd>fake (fake)</dd>" in html
     assert "External invocation</dt><dd>not requested</dd>" in html
+    assert "Broker status</h2>" in html
+    assert "Schema</dt><dd>github_broker_status.v1</dd>" in html
+    assert "Merge readiness</dt><dd>ready (merged)</dd>" in html
+    assert "Review state</dt><dd>approved, approvals=1, blockers=0</dd>" in html
     assert "Expected artifacts" in html
     assert "Sandbox</dt><dd>available</dd>" in html
     assert "sandbox_created" in html
