@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +27,8 @@ from goodteam_os.execution.models import (
     LedgerEvent,
     LedgerEventType,
 )
+from goodteam_os.execution.path_claims import PathClaimInference, infer_execution_path_claims
+from goodteam_os.execution.pr_diff_contract import artifact_json_path
 from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
 from goodteam_os.execution.sandbox_surface import SANDBOX_SCHEMA_VERSION
 from goodteam_os.workers import WorkerJobStore
@@ -330,9 +333,12 @@ class ExecutionOrchestrator:
         return failed_run
 
     def _create_sandbox_context(self, run: ExecutionRun) -> dict[str, Any]:
+        inference = _sandbox_claim_inference(run, self.project_root, self.worker_store)
         return self._sandbox_service().create_sandbox(
             run.execution_id,
-            claimed_paths=_sandbox_claimed_paths(run),
+            claimed_paths=inference.claimed_paths,
+            path_claims=[claim.to_dict() for claim in inference.claims],
+            path_claim_warnings=inference.warnings,
             mode=self._sandbox_mode_for_execution(),
         )
 
@@ -429,8 +435,46 @@ def _find_worker_job(worker_store: WorkerJobStore, worker_job_id: str) -> dict[s
     return None
 
 
-def _sandbox_claimed_paths(run: ExecutionRun) -> list[str]:
-    return []
+def _sandbox_claim_inference(
+    run: ExecutionRun,
+    project_root: Path,
+    worker_store: WorkerJobStore,
+) -> PathClaimInference:
+    job_root = worker_store.root / run.worker_job_id
+    worker_job = _find_worker_job(worker_store, run.worker_job_id) or {}
+    return infer_execution_path_claims(
+        task_text=_read_text(job_root / "task.md"),
+        context_text=_read_text(job_root / "context.md"),
+        expected_artifacts=_read_json(job_root / "expected_artifacts.json")
+        or worker_job.get("expected_artifacts"),
+        existing_changed_files=_existing_changed_files(project_root, run.execution_id, worker_job),
+    )
+
+
+def _existing_changed_files(project_root: Path, execution_id: str, worker_job: dict[str, Any]) -> list[Any]:
+    changed_files: list[Any] = []
+    worker_files = worker_job.get("changed_files")
+    if isinstance(worker_files, list):
+        changed_files.extend(worker_files)
+    diff_payload = _read_json(artifact_json_path(project_root, execution_id))
+    diff_files = diff_payload.get("changed_files") if isinstance(diff_payload, dict) else None
+    if isinstance(diff_files, list):
+        changed_files.extend(diff_files)
+    return changed_files
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError:
+        return ""
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _should_retain_sandbox_for_pr(sandbox_context: dict[str, Any] | None) -> bool:

@@ -27,6 +27,11 @@ from goodteam_os.execution.models import (
     LedgerEventType,
 )
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
+from goodteam_os.execution.path_claims import (
+    PathClaim,
+    PathClaimInference,
+    infer_execution_path_claims,
+)
 from goodteam_os.execution.pr import PullRequestBindingService
 from goodteam_os.execution.ci import CIStatusService
 from goodteam_os.execution.review_workbench import ReviewWorkbenchService
@@ -53,6 +58,8 @@ __all__ = [
     "GitHubIssueSnapshot",
     "LedgerEvent",
     "LedgerEventType",
+    "PathClaim",
+    "PathClaimInference",
     "PullRequestBindingService",
     "ReviewWorkbenchService",
     "SandboxGitAdapter",
@@ -62,6 +69,7 @@ __all__ = [
     "execution_id_from_task",
     "execution_task_from_github_issue",
     "idempotency_key_for_operation",
+    "infer_execution_path_claims",
     "intake_github_issue",
     "task_id_from_github_issue",
 ]

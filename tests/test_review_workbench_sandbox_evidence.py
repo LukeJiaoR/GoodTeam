@@ -42,7 +42,19 @@ def test_workbench_projects_sandbox_events_without_side_effects(tmp_path):
     _create_run(tmp_path, execution_id)
     api = ExecutionAPI(tmp_path, clock=FakeClock())
     api.create_sandbox(first_id, claimed_paths=["src/goodteam_os/execution/api.py"])
-    sandbox = api.create_sandbox(execution_id, claimed_paths=["src/goodteam_os/execution"])
+    sandbox = api.create_sandbox(
+        execution_id,
+        claimed_paths=["src/goodteam_os/execution"],
+        path_claims=[
+            {
+                "path": "src/goodteam_os/execution",
+                "source": "area_mapping",
+                "confidence": "medium",
+                "reason": "matched sandbox area",
+            }
+        ],
+        path_claim_warnings=["path_claims_broad_or_low_confidence"],
+    )
     api.run_sandbox_command(execution_id, ["gh", "pr", "view"])
     api.run_sandbox_command(
         execution_id,
@@ -73,6 +85,9 @@ def test_workbench_projects_sandbox_events_without_side_effects(tmp_path):
     assert sandbox_surface["commands"][1]["status"] == "completed"
     assert "[REDACTED]" in sandbox_surface["commands"][1]["stdout_excerpt"]
     assert "sk-real-secret" not in str(sandbox_surface)
+    assert sandbox_surface["claimed_paths"] == ["src/goodteam_os/execution"]
+    assert sandbox_surface["path_claim_warnings"] == ["path_claims_broad_or_low_confidence"]
+    assert sandbox_surface["path_claims"][0]["confidence"] == "medium"
     assert sandbox_surface["conflict_risks"][0]["execution_id"] == first_id
     assert "sandbox_conflict_risk_detected" in [
         event["payload"]["transition"] for event in sandbox_surface["events"]
@@ -86,7 +101,19 @@ def test_browser_html_renders_sandbox_evidence(tmp_path):
     _create_run(tmp_path, execution_id)
     api = ExecutionAPI(tmp_path, clock=FakeClock())
     api.create_sandbox(first_id, claimed_paths=["src/goodteam_os/execution/api.py"])
-    sandbox = api.create_sandbox(execution_id, claimed_paths=["src/goodteam_os/execution"])
+    sandbox = api.create_sandbox(
+        execution_id,
+        claimed_paths=["src/goodteam_os/execution"],
+        path_claims=[
+            {
+                "path": "src/goodteam_os/execution",
+                "source": "area_mapping",
+                "confidence": "medium",
+                "reason": "matched sandbox area",
+            }
+        ],
+        path_claim_warnings=["path_claims_broad_or_low_confidence"],
+    )
     api.run_sandbox_command(execution_id, ["gh", "pr", "view"])
     api.run_sandbox_command(
         execution_id,
@@ -103,6 +130,9 @@ def test_browser_html_renders_sandbox_evidence(tmp_path):
     assert "Command history" in html
     assert "sandbox_command_rejected" in html
     assert "unknown_command" in html
+    assert "Claimed paths" in html
+    assert "path_claims_broad_or_low_confidence" in html
+    assert "matched sandbox area" in html
     assert "Conflict risk" in html
     assert "[REDACTED]" in html
     assert "anthropic-secret" not in html

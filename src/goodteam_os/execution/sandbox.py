@@ -12,6 +12,7 @@ from goodteam_os.execution.models import (
     LedgerEvent,
 )
 from goodteam_os.execution.ledger import ExecutionLedger
+from goodteam_os.execution.path_claims import path_claims_to_dicts
 from goodteam_os.execution.review_workbench_contract import json_ready, utc_now
 from goodteam_os.execution.sandbox_policy import (
     ALLOWED_COMMANDS,
@@ -58,6 +59,8 @@ class SandboxService:
         execution_id: str,
         *,
         claimed_paths: Sequence[str] | None = None,
+        path_claims: Sequence[Any] | None = None,
+        path_claim_warnings: Sequence[str] | None = None,
         mode: str = "workspace",
         base_ref: str = "HEAD",
     ) -> dict[str, Any]:
@@ -65,10 +68,12 @@ class SandboxService:
         try:
             normalized_mode = normalize_mode(mode)
             paths = normalize_paths(claimed_paths or [])
-            metadata = self._metadata(execution_id, normalized_mode, paths)
+            claims = path_claims_to_dicts(list(path_claims or []))
+            warnings = [str(warning) for warning in path_claim_warnings or [] if str(warning).strip()]
+            metadata = self._metadata(execution_id, normalized_mode, paths, claims, warnings)
             conflicts = self._conflict_risks(execution_id, paths)
         except Exception as exc:
-            metadata = self._metadata(execution_id, "workspace", [])
+            metadata = self._metadata(execution_id, "workspace", [], [], [])
             return self._create_failed(execution_id, metadata, exc, reason="sandbox_create_failed")
         metadata["conflict_risk"] = bool(conflicts)
         metadata["conflict_risks"] = conflicts
@@ -78,7 +83,16 @@ class SandboxService:
             reason = "worktree_create_failed" if normalized_mode == "worktree" else "workspace_create_failed"
             return self._create_failed(execution_id, metadata, exc, reason=reason)
         if conflicts:
-            self._append_event(execution_id, "sandbox_conflict_risk_detected", {"conflict_risks": conflicts})
+            self._append_event(
+                execution_id,
+                "sandbox_conflict_risk_detected",
+                {
+                    "conflict_risks": conflicts,
+                    "claimed_paths": metadata["claimed_paths"],
+                    "path_claims": metadata["path_claims"],
+                    "path_claim_warnings": metadata["path_claim_warnings"],
+                },
+            )
         self._write_metadata(execution_id, metadata)
         self._append_event(execution_id, "sandbox_created", _created_payload(metadata))
         return json_ready(metadata)
@@ -267,7 +281,14 @@ class SandboxService:
         self._append_event(execution_id, "sandbox_destroy_failed", result)
         return json_ready(result)
 
-    def _metadata(self, execution_id: str, mode: str, claimed_paths: list[str]) -> dict[str, Any]:
+    def _metadata(
+        self,
+        execution_id: str,
+        mode: str,
+        claimed_paths: list[str],
+        path_claims: list[dict[str, str]],
+        path_claim_warnings: list[str],
+    ) -> dict[str, Any]:
         root = self.project_root / ".goodteam" / "sandboxes" / execution_id
         worktree_path = root / "worktree" if mode == "worktree" else None
         workspace_path = worktree_path or root / "workspace"
@@ -282,6 +303,8 @@ class SandboxService:
             "worktree_path": str(worktree_path) if worktree_path else "",
             "branch_name": f"sandbox/{execution_id}",
             "claimed_paths": claimed_paths,
+            "path_claims": path_claims,
+            "path_claim_warnings": path_claim_warnings,
             "conflict_risk": False,
             "conflict_risks": [],
             "created_at": self._clock(),
@@ -296,7 +319,16 @@ class SandboxService:
             for path in claimed_paths:
                 for other in metadata.get("claimed_paths", []):
                     if paths_overlap(path, str(other)):
-                        risks.append({"execution_id": other_id, "path": path, "conflicting_path": str(other)})
+                        exact = path == str(other)
+                        risks.append(
+                            {
+                                "execution_id": other_id,
+                                "path": path,
+                                "conflicting_path": str(other),
+                                "confidence": "high" if exact else "medium",
+                                "reason": "exact_path_overlap" if exact else "path_prefix_overlap",
+                            }
+                        )
         return risks
 
     def _active_sandboxes(self) -> list[dict[str, Any]]:
@@ -422,6 +454,8 @@ def _created_payload(metadata: dict[str, Any]) -> dict[str, Any]:
         "worktree_path": metadata["worktree_path"],
         "branch_name": metadata["branch_name"],
         "claimed_paths": metadata["claimed_paths"],
+        "path_claims": metadata.get("path_claims", []),
+        "path_claim_warnings": metadata.get("path_claim_warnings", []),
         "conflict_risk": metadata["conflict_risk"],
     }
 

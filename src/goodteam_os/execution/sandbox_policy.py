@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
+from goodteam_os.execution.path_claims import normalize_repo_path
+
 
 OUTPUT_EXCERPT_LIMIT = 1200
 COMMAND_TIMEOUT_SECONDS = 30
@@ -120,7 +122,14 @@ def mode(value: str) -> str:
 
 
 def normalize_paths(paths: Sequence[str]) -> list[str]:
-    return sorted({str(path).strip().strip("/") for path in paths if str(path).strip()})
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        path = normalize_repo_path(raw_path)
+        if path and path not in seen:
+            seen.add(path)
+            normalized.append(path)
+    return normalized
 
 
 def paths_overlap(left: str, right: str) -> bool:
