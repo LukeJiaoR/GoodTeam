@@ -20,6 +20,7 @@ def test_smoke_registry_defines_contentops_and_self_projects(tmp_path):
     assert set(registry) == {"contentops", "self"}
     assert registry["contentops"].project_key == "CONTENTOPS"
     assert registry["contentops"].delivery_mode == "init_project"
+    assert registry["contentops"].target_root == tmp_path / "smoke-targets" / "contentops"
     assert registry["self"].project_key == "GOODTEAM-SELF"
     assert any("pytest tests -q" in command["command"] for command in registry["self"].verification_commands)
     assert registry["self"].cleanup_policy == "temporary_worktree"
@@ -39,13 +40,13 @@ def test_contentops_registry_uses_existing_target_verification_commands(tmp_path
 
 
 def test_smoke_failure_classifier_uses_stable_categories():
-    assert classify_smoke_failure("401 Unauthorized INVALID_API_KEY") == "auth/provider"
-    assert classify_smoke_failure("worker timeout after 1800 seconds") == "worker timeout"
-    assert classify_smoke_failure("next_node was blocked") == "GoodTeam workflow"
-    assert classify_smoke_failure("npm run build failed in generated scaffold") == "target scaffold"
-    assert classify_smoke_failure("better-sqlite3 NODE_MODULE_VERSION mismatch during npm run test") == "target scaffold"
-    assert classify_smoke_failure("QA release-blocking browser capture failed") == "QA/browser/UI"
-    assert classify_smoke_failure("something else broke") == "unknown"
+    assert classify_smoke_failure("401 Unauthorized INVALID_API_KEY") == "env"
+    assert classify_smoke_failure("worker timeout after 1800 seconds") == "env"
+    assert classify_smoke_failure("next_node was blocked") == "product"
+    assert classify_smoke_failure("npm run build failed in generated scaffold") == "test"
+    assert classify_smoke_failure("better-sqlite3 NODE_MODULE_VERSION mismatch during npm run test") == "test"
+    assert classify_smoke_failure("QA release-blocking browser capture failed") == "test"
+    assert classify_smoke_failure("something else broke") == "product"
 
 
 def test_write_smoke_report_persists_machine_readable_json(tmp_path):
@@ -178,7 +179,7 @@ def test_smoke_suite_failure_creates_blocker_task(tmp_path):
     )
 
     assert result["status"] == "failed"
-    assert result["runs"][0]["classification"] == "target scaffold"
+    assert result["runs"][0]["classification"] == "test"
     task_ledger = tmp_path / "target" / ".goodteam" / "tasks" / "tasks.json"
     tasks = json.loads(task_ledger.read_text(encoding="utf-8"))["tasks"]
     assert any(task["title"] == "Smoke failure: CONTENTOPS cycle 1" for task in tasks)
