@@ -220,6 +220,44 @@ def _assert_manifest_observations(manifest: dict[str, object]) -> None:
         "blocker_count": 0,
     }
     assert broker_status["fallback_warning"] == {}
+    graph = manifest["execution_replay_graph"]
+    node_types = [node["type"] for node in graph["nodes"]]
+    edge_pairs = [(edge["source"], edge["target"]) for edge in graph["edges"]]
+    assert graph["available"] is True
+    assert graph["schema_version"] == "execution_replay_graph.v1"
+    assert graph["summary"] == {
+        "final_status": "completed",
+        "incomplete_reason": "",
+        "node_count": len(graph["nodes"]),
+        "edge_count": len(graph["edges"]),
+        "warning_count": 0,
+        "complete": True,
+    }
+    assert node_types[:5] == [
+        "intake",
+        "task_contract",
+        "runtime_policy",
+        "worker_job",
+        "sandbox_created",
+    ]
+    assert "artifact" in node_types
+    assert node_types[-4:] == ["ci", "review", "broker_status", "merge"]
+    assert ("intake", "task_contract") in edge_pairs
+    assert ("task_contract", "runtime_policy") in edge_pairs
+    assert ("runtime_policy", "worker_job") in edge_pairs
+    assert ("pr", "ci") in edge_pairs
+    assert ("review", "broker_status") in edge_pairs
+    assert graph["timeline"][0]["node_id"] == "intake"
+    assert graph["timeline"][0]["transition"] == "intake_created"
+    assert graph["raw_event_refs"] == [
+        {
+            "event_id": event["event_id"],
+            "transition": event["payload"]["transition"],
+            "created_at": event["created_at"],
+        }
+        for event in ledger_events
+    ]
+    assert graph["nodes_by_type"]["broker_status"] == ["broker_status"]
 
 
 def test_full_execution_replay_builds_canonical_evidence_manifest(tmp_path):
@@ -262,6 +300,7 @@ def test_full_execution_replay_builds_canonical_evidence_manifest(tmp_path):
         "full_smoke_reason": "fake/noop/local/dry-run compatible or real worker explicitly allowed",
     }
     assert manifest["runtime_policy"]["fallback_warning"] == {}
+    assert manifest["execution_replay_graph"]["schema_version"] == "execution_replay_graph.v1"
     assert manifest["pr"]["ref"] == "LukeJiaoR/GoodTeam#301"
     assert manifest["pr"]["commit_sha"] == "commit-sha-217"
     assert transitions == [

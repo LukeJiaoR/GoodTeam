@@ -10,6 +10,7 @@ from goodteam_os.execution.evidence_manifest_extractors import (
     review_observations,
     review_summary,
 )
+from goodteam_os.execution.execution_replay_graph import execution_replay_graph_manifest
 from goodteam_os.execution.github_broker_status import github_broker_status_manifest
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.memory_provenance import build_memory_provenance_projection
@@ -61,6 +62,7 @@ def build_evidence_manifest(
         "final_status": final_status,
         "incomplete_reason": incomplete_reason,
     }
+    manifest["execution_replay_graph"] = execution_replay_graph_manifest(manifest)
     return json_ready(manifest)
 
 

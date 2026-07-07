@@ -40,6 +40,12 @@ def test_completed_execution_builds_evidence_backed_workbench_object(tmp_path):
     assert workbench["github_broker_status"]["ci"]["observed_state"] == "success"
     assert workbench["github_broker_status"]["review"]["state"] == "approved"
     assert workbench["github_broker_status"]["merge_readiness"]["state"] == "ready"
+    assert workbench["execution_replay_graph"] == workbench["evidence"]["execution_replay_graph"]
+    assert workbench["execution_replay_graph"]["available"] is True
+    assert workbench["execution_replay_graph"]["summary"]["complete"] is True
+    assert workbench["execution_replay_graph"]["nodes_by_type"]["broker_status"] == [
+        "broker_status"
+    ]
     assert workbench["pr"]["ref"] == "LukeJiaoR/GoodTeam#2160"
     assert workbench["pr"]["commit_sha"] == "commit-sha-216"
     assert workbench["status"] == "completed"
@@ -70,6 +76,10 @@ def test_pending_execution_returns_warnings_and_incomplete_reason(tmp_path):
     assert workbench["status"] == "pending"
     assert workbench["evidence"]["incomplete_reason"] == "pr_missing"
     assert workbench["pr"]["ref"] == ""
+    graph = workbench["execution_replay_graph"]
+    assert graph["summary"]["complete"] is False
+    assert "warning:pr_missing" in graph["nodes_by_type"]["warning"]
+    assert graph["nodes_by_type"]["pr"] == []
     assert _warning_codes(workbench) >= {"pr_missing", "diff_artifact_missing"}
 
 
@@ -95,6 +105,10 @@ def test_failed_execution_returns_failed_status_and_failure_evidence(tmp_path):
 
     assert workbench["status"] == "failed"
     assert workbench["evidence"]["incomplete_reason"] == "execution_failed:worker_failed"
+    graph = workbench["execution_replay_graph"]
+    assert graph["summary"]["complete"] is False
+    assert "warning:execution_failed" in graph["nodes_by_type"]["warning"]
+    assert graph["raw_event_refs"][0]["transition"] == "execution_failed"
     assert _warning_codes(workbench) >= {"execution_failed", "diff_artifact_missing"}
     assert workbench["evidence"]["ledger_events"][0]["payload"]["failure_class"] == "worker_failed"
 
@@ -137,6 +151,14 @@ def test_legacy_execution_without_contract_returns_workbench_warning(tmp_path):
     assert workbench["runtime_policy"]["fallback_warning"]["code"] == "runtime_policy_missing"
     assert workbench["github_broker_status"]["available"] is False
     assert workbench["github_broker_status"]["fallback_warning"]["code"] == "broker_status_missing"
+    graph = workbench["execution_replay_graph"]
+    assert graph["available"] is True
+    assert graph["summary"]["complete"] is False
+    assert {
+        "warning:task_contract_missing",
+        "warning:runtime_policy_missing",
+        "warning:broker_status_missing",
+    } <= set(graph["nodes_by_type"]["warning"])
     assert _warning_codes(workbench) >= {
         "task_contract_missing",
         "runtime_policy_missing",
@@ -153,6 +175,10 @@ def test_memory_provenance_integrity_is_exposed(tmp_path):
     assert workbench["memory_provenance_integrity"]["complete"] is True
     assert workbench["memory_refs"][0]["memory_event_id"] == finalized["memory_event_id"]
     assert workbench["memory_refs"][0]["ledger_event_id"] == finalized["ledger_event_id"]
+    assert "finalize" in workbench["execution_replay_graph"]["nodes_by_type"]
+    assert "memory" in workbench["execution_replay_graph"]["nodes_by_type"]
+    assert workbench["execution_replay_graph"]["nodes_by_type"]["finalize"] == ["finalize"]
+    assert workbench["execution_replay_graph"]["nodes_by_type"]["memory"] == ["memory"]
 
 
 def test_missing_diff_artifact_returns_explicit_empty_state(tmp_path):
@@ -189,6 +215,10 @@ def test_record_approve_decision_writes_ledger_event(tmp_path):
     assert event["payload"]["reviewer"] == "LukeJiaoR"
     assert event["payload"]["reason"] == "Evidence checks out."
     assert event["payload"]["evidence_hash"]
+    workbench = api.get_review_workbench(execution_id)
+    assert workbench["execution_replay_graph"]["nodes_by_type"]["reviewer_decision"] == [
+        "reviewer_decision"
+    ]
 
 
 def test_record_request_changes_decision_writes_ledger_event(tmp_path):

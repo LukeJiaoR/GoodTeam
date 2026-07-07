@@ -64,6 +64,7 @@ def render_review_workbench_html(
     {_task_contract_section(review)}
     {_runtime_policy_section(review)}
     {_broker_status_section(review)}
+    {_replay_graph_section(review)}
     {_decision_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_diff_section(review)}
     {_evidence_section(review)}
@@ -253,6 +254,65 @@ def _broker_review_observations(observations: list[dict[str, Any]]) -> str:
             + "</li>"
         )
     return f'<h3>Review observations</h3><ul class="contract-list">{"".join(items)}</ul>'
+
+
+def _replay_graph_section(review: dict[str, Any]) -> str:
+    graph = _dict(review.get("execution_replay_graph"))
+    if not graph.get("available"):
+        return _section("Replay graph", _empty_state("No execution replay graph is available."))
+    summary = _dict(graph.get("summary"))
+    body = _details(
+        [
+            ("Schema", graph.get("schema_version")),
+            ("Complete", _yes_no(summary.get("complete"))),
+            ("Nodes", summary.get("node_count") or 0),
+            ("Edges", summary.get("edge_count") or 0),
+            ("Warnings", summary.get("warning_count") or 0),
+            ("Final status", summary.get("final_status") or "n/a"),
+            ("Incomplete reason", summary.get("incomplete_reason") or "n/a"),
+        ]
+    )
+    body += _replay_node_type_list(_dict(graph.get("nodes_by_type")))
+    body += _replay_timeline(_dict_items(graph.get("timeline")))
+    body += _replay_warning_list(_dict_items(graph.get("warnings")))
+    return _section("Replay graph", body)
+
+
+def _replay_node_type_list(nodes_by_type: dict[str, Any]) -> str:
+    items = []
+    for node_type, node_ids in nodes_by_type.items():
+        if not isinstance(node_ids, list) or not node_ids:
+            continue
+        items.append(
+            f"<li><strong>{escape(_text(node_type))}</strong>: "
+            f"{escape(', '.join(_text(node_id) for node_id in node_ids))}</li>"
+        )
+    if not items:
+        return "<h3>Graph nodes</h3>" + _empty_state("No graph nodes recorded.")
+    return f'<h3>Graph nodes</h3><ul class="contract-list">{"".join(items)}</ul>'
+
+
+def _replay_timeline(timeline: list[dict[str, Any]]) -> str:
+    if not timeline:
+        return "<h3>Graph timeline</h3>" + _empty_state("No replay timeline recorded.")
+    items = []
+    for item in timeline:
+        label = (
+            f"{_text(item.get('type'))} "
+            f"{_text(item.get('node_id'))} "
+            f"({_text(item.get('status'))})"
+        )
+        occurred_at = _text(item.get("occurred_at"))
+        prefix = f"<time>{escape(occurred_at)}</time>" if occurred_at else "<span></span>"
+        items.append(f"<li>{prefix}<span>{escape(label)}</span></li>")
+    return f'<h3>Graph timeline</h3><ol class="timeline">{"".join(items)}</ol>'
+
+
+def _replay_warning_list(warnings: list[dict[str, Any]]) -> str:
+    if not warnings:
+        return "<h3>Graph warnings</h3>" + _empty_state("No graph warnings.")
+    items = [_warning_item(warning) for warning in warnings]
+    return f'<h3>Graph warnings</h3><ul class="warning-list">{"".join(items)}</ul>'
 
 
 def _contract_artifact_list(artifacts: list[dict[str, Any]]) -> str:
