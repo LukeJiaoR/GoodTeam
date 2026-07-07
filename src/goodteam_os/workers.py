@@ -267,6 +267,8 @@ class WorkerRuntimeContext:
     workspace_context_available: bool
     workspace_cwd_fallback: bool
     workspace_cwd_fallback_reason: str
+    runtime_workspace_mode: str
+    runtime_workspace_status: str
 
 
 def _codex_build_command(binary: str, model: str, project_root: Path, result_path: Path) -> list[str]:
@@ -910,6 +912,21 @@ class WorkerJobStore:
                             "retry_of_idempotency_key",
                             "sandbox_context",
                             "runtime_cwd",
+                            "runtime_adapter",
+                            "runtime_binary",
+                            "runtime_version",
+                            "runtime_version_warning",
+                            "runtime_version_warning_reason",
+                            "runtime_version_failure_reason",
+                            "runtime_model",
+                            "runtime_workspace_mode",
+                            "runtime_workspace_status",
+                            "runtime_sandbox_mode",
+                            "runtime_approval_policy",
+                            "runtime_unsafe_mode",
+                            "runtime_policy_warning",
+                            "runtime_policy_warning_reason",
+                            "runtime_transcript_path",
                             "workspace_context_available",
                             "workspace_cwd_fallback",
                             "workspace_cwd_fallback_reason",
@@ -1143,12 +1160,25 @@ class WorkerJobStore:
         runtime_context = self._worker_runtime_cwd(job)
         worker_env = self._worker_env(job_root, spec, runtime_context.runtime_cwd)
         pythonpath_workspace_src = (runtime_context.runtime_cwd / "src").is_dir()
-        runtime_evidence = _worker_runtime_evidence(
-            runtime_context,
-            pythonpath_workspace_src=pythonpath_workspace_src,
-        )
         preflight = _cli_preflight(spec, binary, model)
         command = spec.build_command(binary, model, runtime_context.runtime_cwd, result_path)
+        adapter = str(job.get("adapter", ""))
+        runtime_evidence = {
+            **_worker_runtime_evidence(
+                runtime_context,
+                pythonpath_workspace_src=pythonpath_workspace_src,
+            ),
+            **_cli_runtime_evidence(
+                adapter=adapter,
+                spec=spec,
+                binary=binary,
+                model=model,
+                command=command,
+                preflight=preflight,
+                result_path=result_path,
+                detect_version=True,
+            ),
+        }
         if not preflight[f"{spec.which_name}_available"]:
             return self._write_status(
                 job_root,
@@ -1188,20 +1218,28 @@ class WorkerJobStore:
                 workspace_context_available=False,
                 workspace_cwd_fallback=False,
                 workspace_cwd_fallback_reason="",
+                runtime_workspace_mode="project_root",
+                runtime_workspace_status="none",
             )
         workspace_path = Path(str(context.get("workspace_path", "")))
+        workspace_mode = str(context.get("mode") or "workspace")
+        workspace_status = str(context.get("status") or "unknown")
         if _is_repo_workspace(workspace_path):
             return WorkerRuntimeContext(
                 runtime_cwd=workspace_path,
                 workspace_context_available=True,
                 workspace_cwd_fallback=False,
                 workspace_cwd_fallback_reason="",
+                runtime_workspace_mode=workspace_mode,
+                runtime_workspace_status=workspace_status,
             )
         return WorkerRuntimeContext(
             runtime_cwd=self.project_root,
             workspace_context_available=True,
             workspace_cwd_fallback=True,
             workspace_cwd_fallback_reason="workspace_missing_or_not_repo",
+            runtime_workspace_mode=workspace_mode,
+            runtime_workspace_status=workspace_status,
         )
 
     def _worker_env(self, job_root: Path, spec: "CliBackendSpec", runtime_cwd: Path) -> dict[str, str] | None:
@@ -1266,6 +1304,18 @@ class WorkerJobStore:
             runtime_context,
             pythonpath_workspace_src=(runtime_context.runtime_cwd / "src").is_dir(),
         )
+        runtime_evidence = _ensure_cli_runtime_evidence(
+            job=job,
+            runtime_evidence=runtime_evidence,
+            command=command,
+            model=model,
+            preflight=preflight,
+            result_path=result_path,
+        )
+        runtime_evidence = {
+            **runtime_evidence,
+            **_runtime_artifact_paths(stdout_path=stdout_path, stderr_path=stderr_path, result_path=result_path),
+        }
         prompt = self._worker_prompt(job_root, job, model=model)
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
         process_input = None if prompt_via == "arg" else prompt
@@ -1570,10 +1620,169 @@ def _worker_runtime_evidence(
 ) -> dict[str, Any]:
     return {
         "runtime_cwd": str(context.runtime_cwd),
+        "runtime_workspace_mode": context.runtime_workspace_mode,
+        "runtime_workspace_status": context.runtime_workspace_status,
         "workspace_context_available": context.workspace_context_available,
         "workspace_cwd_fallback": context.workspace_cwd_fallback,
         "workspace_cwd_fallback_reason": context.workspace_cwd_fallback_reason,
         "pythonpath_workspace_src": pythonpath_workspace_src,
+    }
+
+
+def _ensure_cli_runtime_evidence(
+    *,
+    job: dict[str, Any],
+    runtime_evidence: dict[str, Any],
+    command: list[str],
+    model: str,
+    preflight: dict[str, Any],
+    result_path: Path,
+) -> dict[str, Any]:
+    if runtime_evidence.get("runtime_adapter"):
+        return runtime_evidence
+    adapter = str(job.get("adapter", ""))
+    spec = CLI_BACKENDS.get(adapter)
+    if spec is None:
+        return runtime_evidence
+    binary = _invocation_command(command)
+    return {
+        **runtime_evidence,
+        **_cli_runtime_evidence(
+            adapter=adapter,
+            spec=spec,
+            binary=binary,
+            model=model,
+            command=command,
+            preflight=preflight,
+            result_path=result_path,
+            detect_version=False,
+        ),
+    }
+
+
+def _cli_runtime_evidence(
+    *,
+    adapter: str,
+    spec: CliBackendSpec,
+    binary: str,
+    model: str,
+    command: list[str],
+    preflight: dict[str, Any],
+    result_path: Path,
+    detect_version: bool,
+) -> dict[str, Any]:
+    available = preflight.get(f"{spec.which_name}_available") is True
+    return {
+        "runtime_adapter": adapter,
+        "runtime_binary": binary,
+        **_runtime_version_evidence(binary, available=available, detect=detect_version),
+        "runtime_model": model,
+        **_runtime_policy_evidence(command),
+        "runtime_transcript_path": "",
+        "stdout_path": "",
+        "stderr_path": "",
+        "result_path": str(result_path),
+    }
+
+
+def _runtime_version_evidence(binary: str, *, available: bool, detect: bool) -> dict[str, Any]:
+    if not available:
+        return _unknown_runtime_version("runtime binary unavailable")
+    if not detect:
+        return _unknown_runtime_version("version detection not attempted")
+    try:
+        completed = subprocess.run(
+            [binary, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return _unknown_runtime_version("version command timed out")
+    except (OSError, TypeError):
+        return _unknown_runtime_version("version command failed to start")
+    if completed.returncode != 0:
+        return _unknown_runtime_version(f"version command exited with code {completed.returncode}")
+    version = (completed.stdout or completed.stderr or "").strip().splitlines()
+    if not version:
+        return _unknown_runtime_version("version command returned empty output")
+    return {
+        "runtime_version": version[0].strip(),
+        "runtime_version_warning": False,
+        "runtime_version_warning_reason": "",
+        "runtime_version_failure_reason": "",
+    }
+
+
+def _unknown_runtime_version(reason: str) -> dict[str, Any]:
+    return {
+        "runtime_version": "unknown",
+        "runtime_version_warning": True,
+        "runtime_version_warning_reason": "runtime_version_unavailable",
+        "runtime_version_failure_reason": reason,
+    }
+
+
+def _runtime_policy_evidence(command: list[str]) -> dict[str, Any]:
+    values = [str(item) for item in command]
+    if "--dangerously-bypass-approvals-and-sandbox" in values:
+        return _runtime_policy(
+            sandbox_mode="disabled",
+            approval_policy="bypass",
+            unsafe=True,
+            warning_reason="runtime_policy_unsafe",
+        )
+    if "--dangerously-skip-permissions" in values:
+        return _runtime_policy(
+            sandbox_mode="unknown",
+            approval_policy="bypass",
+            unsafe=True,
+            warning_reason="runtime_policy_unsafe",
+        )
+    if _has_flag_value(values, "--approval-mode", "yolo"):
+        return _runtime_policy(
+            sandbox_mode="unknown",
+            approval_policy="yolo",
+            unsafe=True,
+            warning_reason="runtime_policy_unsafe",
+        )
+    return _runtime_policy(
+        sandbox_mode="unknown",
+        approval_policy="unknown",
+        unsafe=False,
+        warning_reason="runtime_policy_unverified",
+    )
+
+
+def _runtime_policy(
+    *,
+    sandbox_mode: str,
+    approval_policy: str,
+    unsafe: bool,
+    warning_reason: str,
+) -> dict[str, Any]:
+    return {
+        "runtime_sandbox_mode": sandbox_mode,
+        "runtime_approval_policy": approval_policy,
+        "runtime_unsafe_mode": unsafe,
+        "runtime_policy_warning": True,
+        "runtime_policy_warning_reason": warning_reason,
+    }
+
+
+def _has_flag_value(values: list[str], flag: str, expected: str) -> bool:
+    try:
+        return values[values.index(flag) + 1].lower() == expected
+    except (ValueError, IndexError):
+        return False
+
+
+def _runtime_artifact_paths(*, stdout_path: Path, stderr_path: Path, result_path: Path) -> dict[str, str]:
+    return {
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "result_path": str(result_path),
     }
 
 

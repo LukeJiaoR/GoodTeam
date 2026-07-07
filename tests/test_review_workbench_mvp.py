@@ -35,6 +35,7 @@ def test_completed_execution_builds_evidence_backed_workbench_object(tmp_path):
     assert workbench["sandbox"]["status"] == "destroyed"
     assert [event["payload"]["transition"] for event in workbench["sandbox"]["events"]] == [
         "sandbox_created",
+        "sandbox_cleanup_requested",
         "sandbox_destroyed",
     ]
 

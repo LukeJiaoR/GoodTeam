@@ -64,7 +64,10 @@ The workbench object exposes:
 
 ## Runtime-Native Sandbox Strategy
 
-GoodTeam does not replace Codex CLI / Claude Code CLI runtime sandboxing.
+GoodTeam does not replace Codex CLI / Claude Code CLI runtime sandboxing, and
+the Workbench does not infer that native controls were enabled. If launch
+arguments bypass sandboxing or approvals, GoodTeam records the unsafe mode and
+surfaces it as review evidence.
 
 GoodTeam owns:
 
@@ -74,7 +77,8 @@ GoodTeam owns:
 - ledger evidence
 - Review Workbench rendering
 
-Codex/Claude own:
+Codex/Claude own their native runtime controls when those controls are enabled
+by the configured launch:
 
 - command permissions
 - filesystem/network sandbox
@@ -93,6 +97,23 @@ tool binaries. When `<runtime_cwd>/src` exists, GoodTeam prepends it to
 `PYTHONPATH` so Python imports prefer the execution workspace. `run_sandbox_command()`
 is the narrow command-policy test surface, not the main Codex/Claude runtime
 path.
+
+Worker status and Workbench sandbox evidence now include runtime adapter
+evidence captured from the real worker invocation:
+
+- `runtime_adapter`, `runtime_binary`, `runtime_version`, and `runtime_model`
+- `runtime_cwd`, `runtime_workspace_mode`, and `runtime_workspace_status`
+- `runtime_sandbox_mode`, `runtime_approval_policy`, and `runtime_unsafe_mode`
+- `runtime_policy_warning` with either `runtime_policy_unsafe` or
+  `runtime_policy_unverified`
+- `stdout_path`, `stderr_path`, `result_path`, and a blank
+  `runtime_transcript_path` when the adapter does not expose one
+
+Version detection is local and best-effort through `<binary> --version`. Missing
+binaries or failed version commands record `runtime_version = unknown` and a
+version warning. GoodTeam does not persist tokens, secret values, or full
+environment dumps in runtime evidence. Unknown sandbox or approval policy is a
+review warning in this MVP, not a hard execution failure.
 
 ## Memory Provenance Integrity
 
@@ -365,22 +386,30 @@ This MVP does not fake missing artifacts.
   `sandbox.reason = sandbox_evidence_missing`
 - Sandbox/action evidence exists:
   `sandbox.available = true`, `sandbox.schema_version = sandbox.v1`, and the
-  surface lists command history, rejected commands, conflict risks, and raw
-  sandbox ledger events. Real `run_execution()` paths now create an execution
-  workspace/worktree by default; workspace fallback can be destroyed
-  immediately, while successful worktree executions are retained for PR/diff
-  handoff and expose `sandbox_retained_for_pr` until explicit cleanup writes
-  `sandbox_destroyed`.
+  surface lists runtime adapter evidence, cleanup warnings, command history,
+  rejected commands, conflict risks, and raw sandbox ledger events. Real
+  `run_execution()` paths now create an execution workspace/worktree by default;
+  workspace fallback can be destroyed immediately, while successful worktree
+  executions are retained for PR/diff handoff and expose
+  `sandbox_retained_for_pr` until explicit cleanup writes
+  `sandbox_cleanup_requested` and `sandbox_destroyed`.
+- Cleanup observability:
+  `sandbox.status = retained_for_pr` or `cleanup_failed` sets
+  `sandbox.cleanup_required = true`. Destroy failures keep the execution outcome
+  intact, persist `cleanup_failed`, surface
+  `sandbox_cleanup_recovery_required`, and remain retryable by calling explicit
+  cleanup again.
 
 ## Remaining #216 Gaps
 
 This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 
 - Deeper #218 integration remains outside the Review Workbench MVP:
-  runtime adapter evidence capture for Codex/Claude exact sandbox mode /
-  approval policy, real path claim inference, cleanup/recovery hardening,
-  optional Docker/VM isolation for future non-Codex/Claude runtimes, and a
-  GitHub/CI typed broker only if needed for host-side operations.
+  machine-readable Codex/Claude sandbox mode / approval policy introspection
+  beyond launch-argument evidence, real path claim inference, optional Docker/VM
+  isolation for future non-Codex/Claude runtimes, cleanup actions outside the
+  read-only Workbench, and a GitHub/CI typed broker only if needed for host-side
+  operations.
 - Add deeper React dashboard polish around warnings, review decisions, and
   artifact drill-downs.
 - Run the final #216 acceptance audit before closing the issue.

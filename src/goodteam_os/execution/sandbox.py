@@ -114,6 +114,20 @@ class SandboxService:
             return {"available": False, "reason": "sandbox_evidence_missing"}
         if metadata.get("status") == "destroyed":
             return json_ready({**metadata, "status": "already_destroyed"})
+        requested_at = self._clock()
+        previous_status = str(metadata.get("status", "unknown"))
+        metadata["cleanup_requested_at"] = requested_at
+        metadata["cleanup_requested_from_status"] = previous_status
+        self._write_metadata(execution_id, metadata)
+        self._append_event(
+            execution_id,
+            "sandbox_cleanup_requested",
+            {
+                **_created_payload(metadata),
+                "status": previous_status,
+                "requested_at": requested_at,
+            },
+        )
         try:
             if metadata.get("mode") == "worktree":
                 self.git_adapter.remove_worktree(
@@ -237,10 +251,17 @@ class SandboxService:
         metadata: dict[str, Any],
         exc: Exception,
     ) -> dict[str, Any]:
+        metadata["status"] = "cleanup_failed"
+        metadata["cleanup_failed_at"] = self._clock()
+        metadata["cleanup_failure_reason"] = "sandbox_destroy_failed"
+        metadata["cleanup_failure_error"] = excerpt(str(exc), [])
+        self._write_metadata(execution_id, metadata)
         result = {
-            "status": "failed",
+            "status": "cleanup_failed",
             "reason": "sandbox_destroy_failed",
-            "error": excerpt(str(exc), []),
+            "error": metadata["cleanup_failure_error"],
+            "cleanup_recovery_required": True,
+            "recovery_state": "sandbox_cleanup_recovery_required",
             **_created_payload(metadata),
         }
         self._append_event(execution_id, "sandbox_destroy_failed", result)

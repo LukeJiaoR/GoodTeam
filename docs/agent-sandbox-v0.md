@@ -23,7 +23,10 @@ evidence while each CLI keeps owning its runtime permission model.
 
 ## Runtime-Native Sandbox Strategy
 
-GoodTeam does not replace Codex CLI / Claude Code CLI runtime sandboxing.
+GoodTeam does not replace Codex CLI / Claude Code CLI runtime sandboxing, and it
+does not claim that a particular worker launch preserved those native controls.
+If the configured CLI launch bypasses sandboxing or approvals, GoodTeam records
+that fact as runtime evidence and surfaces a warning.
 
 GoodTeam owns:
 
@@ -33,7 +36,8 @@ GoodTeam owns:
 - ledger evidence
 - Review Workbench rendering
 
-Codex/Claude own:
+Codex/Claude own their native runtime controls when those controls are enabled
+by the configured launch:
 
 - command permissions
 - filesystem/network sandbox
@@ -81,18 +85,21 @@ local git state. If worktree creation fails, Sandbox v0 writes
 `sandbox_create_failed` and does not write active sandbox metadata. Destroying a
 worktree sandbox calls the adapter's `remove_worktree`.
 
-Destroy is idempotent. A first destroy marks metadata `status = destroyed` and
-writes `sandbox_destroyed`; later destroy calls return `already_destroyed`
-without appending another ledger event.
+Destroy is idempotent. A first destroy writes `sandbox_cleanup_requested`, then
+marks metadata `status = destroyed` and writes `sandbox_destroyed`; later destroy
+calls return `already_destroyed` without appending another ledger event.
 
 Successful worktree executions are retained for PR/diff handoff instead of
 being removed immediately. The orchestrator records `sandbox_retained_for_pr`
 and metadata `status = retained_for_pr`; a later explicit cleanup can call
 `destroy_sandbox()` to remove the worktree.
 
-If destroy fails, Sandbox v0 writes `sandbox_destroy_failed` and returns a failed
-destroy result. The execution outcome is not rewritten: a worker success remains
-`execution_completed`, and a worker failure remains `execution_failed`.
+If destroy fails, Sandbox v0 writes `sandbox_destroy_failed`, persists metadata
+`status = cleanup_failed`, and returns a cleanup-failed result with
+`recovery_state = sandbox_cleanup_recovery_required`. The execution outcome is
+not rewritten: a worker success remains `execution_completed`, and a worker
+failure remains `execution_failed`. A later `destroy_sandbox()` call can retry
+from `cleanup_failed`.
 
 ## Execution Lifecycle
 
@@ -140,13 +147,47 @@ Worker status and invocation evidence record:
 
 ```json
 {
+  "runtime_adapter": "codex",
+  "runtime_binary": "/path/to/codex",
+  "runtime_version": "codex 0.61.0",
+  "runtime_version_warning": false,
+  "runtime_version_warning_reason": "",
+  "runtime_version_failure_reason": "",
+  "runtime_model": "gpt-5.4",
   "runtime_cwd": "...",
+  "runtime_workspace_mode": "worktree",
+  "runtime_workspace_status": "active",
+  "runtime_sandbox_mode": "disabled",
+  "runtime_approval_policy": "bypass",
+  "runtime_unsafe_mode": true,
+  "runtime_policy_warning": true,
+  "runtime_policy_warning_reason": "runtime_policy_unsafe",
+  "runtime_transcript_path": "",
+  "stdout_path": "...",
+  "stderr_path": "...",
+  "result_path": "...",
   "workspace_context_available": true,
   "workspace_cwd_fallback": false,
   "workspace_cwd_fallback_reason": "",
   "pythonpath_workspace_src": true
 }
 ```
+
+GoodTeam records only fields it can observe locally. Runtime version detection
+uses `<binary> --version` and is best-effort; missing binaries, timeouts, or
+non-zero version commands record `runtime_version = unknown` plus
+`runtime_version_warning_reason = runtime_version_unavailable`. GoodTeam does
+not write tokens, secret values, or full environment dumps into runtime evidence.
+
+Runtime policy fields are evidence, not enforcement. If GoodTeam can see an
+obvious unsafe launch flag such as Codex
+`--dangerously-bypass-approvals-and-sandbox`, it records
+`runtime_sandbox_mode = disabled`, `runtime_approval_policy = bypass`,
+`runtime_unsafe_mode = true`, and
+`runtime_policy_warning_reason = runtime_policy_unsafe`. If sandbox or approval
+policy cannot be verified, it records `unknown` values and
+`runtime_policy_warning_reason = runtime_policy_unverified`. The warning does
+not fail the worker in v0.
 
 If `<runtime_cwd>/src` exists, the worker env prepends it to `PYTHONPATH` so
 Python imports prefer the execution workspace while still allowing shared
@@ -199,6 +240,7 @@ Current transitions:
 - `sandbox_command_executed`
 - `sandbox_command_failed`
 - `sandbox_command_rejected`
+- `sandbox_cleanup_requested`
 - `sandbox_destroy_failed`
 - `sandbox_destroyed`
 - `sandbox_retained_for_pr`
@@ -290,6 +332,15 @@ branch fan-in.
 {
   "available": true,
   "schema_version": "sandbox.v1",
+  "status": "retained_for_pr",
+  "cleanup_required": true,
+  "cleanup_warning_reason": "sandbox_retained_for_pr",
+  "runtime": {
+    "runtime_adapter": "codex",
+    "runtime_version": "codex 0.61.0",
+    "runtime_cwd": "...",
+    "runtime_policy_warning": true
+  },
   "commands": [],
   "conflict_risks": [],
   "events": []
@@ -308,9 +359,11 @@ When no sandbox events exist, it returns:
 Workbench GET routes remain read-only. They do not create sandboxes, repair
 metadata, remove worktrees, or write ledger events.
 
-The browser Workbench displays sandbox status, workspace/worktree paths, command
-history, rejected commands, conflict risks, and redaction markers from ledger
-evidence.
+The browser Workbench displays sandbox status, workspace/worktree paths, cleanup
+required warnings, runtime adapter evidence, stdout/stderr/result paths, command
+history, rejected commands, conflict risks, lifecycle events, and redaction
+markers from ledger evidence. Workbench remains read-only; cleanup still happens
+through explicit API/CLI calls.
 
 ## Explicit Non-Goals
 
@@ -325,9 +378,9 @@ This PR does not implement:
 
 ## Remaining #218 Gaps
 
-- Runtime adapter evidence capture for Codex/Claude exact sandbox mode and
-  approval policy.
+- Deeper runtime-policy introspection when Codex/Claude expose machine-readable
+  sandbox mode or approval policy beyond launch-argument evidence.
 - Real path claim inference.
-- Cleanup and recovery hardening.
+- Cleanup UX/actions outside the read-only Review Workbench surface.
 - Optional Docker/VM future isolation for non-Codex/Claude runtimes.
 - GitHub/CI typed broker only if needed for host-side operations.

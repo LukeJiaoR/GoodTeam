@@ -74,7 +74,7 @@ class ReviewWorkbenchService:
             "reviewer_decision": latest_review_decision(events),
             "status": str(evidence.get("final_status", "")),
             "warnings": warnings_surface(evidence, diff, rationale),
-            "sandbox": sandbox_surface(self.project_root, execution_id, events),
+            "sandbox": sandbox_surface(self.project_root, execution_id, events, worker_job=job),
         }
         return json_ready(workbench)
 

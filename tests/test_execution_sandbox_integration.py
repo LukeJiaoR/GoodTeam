@@ -350,7 +350,60 @@ def test_worktree_execution_retains_workspace_until_pr_or_explicit_cleanup(tmp_p
 
     assert destroyed["status"] == "destroyed"
     assert adapter.removed == [{"repo_root": tmp_path, "worktree_path": worktree_path}]
-    assert _transitions(tmp_path, completed.execution_id)[-1] == "sandbox_destroyed"
+    assert _transitions(tmp_path, completed.execution_id)[-2:] == [
+        "sandbox_cleanup_requested",
+        "sandbox_destroyed",
+    ]
+
+
+def test_destroy_retained_worktree_failure_marks_cleanup_failed_and_allows_retry(tmp_path):
+    adapter = FakeSandboxGitAdapter(fail_remove=True)
+    orchestrator = _orchestrator(
+        tmp_path,
+        sandbox_mode="worktree",
+        sandbox_git_adapter=adapter,
+    )
+    queued = orchestrator.intake_github_issue(repo="LukeJiaoR/GoodTeam", issue_number=218, adapter="fake")
+    completed = orchestrator.run_execution(queued.execution_id)
+
+    first = ExecutionAPI(tmp_path, sandbox_git_adapter=adapter).destroy_sandbox(completed.execution_id)
+
+    assert first["status"] == "cleanup_failed"
+    assert first["reason"] == "sandbox_destroy_failed"
+    assert ExecutionAPI(tmp_path).get_sandbox(completed.execution_id)["status"] == "cleanup_failed"
+    assert _transitions(tmp_path, completed.execution_id)[-2:] == [
+        "sandbox_cleanup_requested",
+        "sandbox_destroy_failed",
+    ]
+
+    adapter.fail_remove = False
+    second = ExecutionAPI(tmp_path, sandbox_git_adapter=adapter).destroy_sandbox(completed.execution_id)
+
+    assert second["status"] == "destroyed"
+    assert ExecutionAPI(tmp_path).get_sandbox(completed.execution_id)["status"] == "destroyed"
+    assert _transitions(tmp_path, completed.execution_id)[-2:] == [
+        "sandbox_cleanup_requested",
+        "sandbox_destroyed",
+    ]
+
+
+def test_destroy_sandbox_is_idempotent_after_destroyed(tmp_path):
+    adapter = FakeSandboxGitAdapter()
+    orchestrator = _orchestrator(
+        tmp_path,
+        sandbox_mode="worktree",
+        sandbox_git_adapter=adapter,
+    )
+    queued = orchestrator.intake_github_issue(repo="LukeJiaoR/GoodTeam", issue_number=218, adapter="fake")
+    completed = orchestrator.run_execution(queued.execution_id)
+    api = ExecutionAPI(tmp_path, sandbox_git_adapter=adapter)
+    api.destroy_sandbox(completed.execution_id)
+    transitions_before = _transitions(tmp_path, completed.execution_id)
+
+    again = api.destroy_sandbox(completed.execution_id)
+
+    assert again["status"] == "already_destroyed"
+    assert _transitions(tmp_path, completed.execution_id) == transitions_before
 
 
 def test_cli_worker_context_status_and_prompt_do_not_expose_secret_values(tmp_path, monkeypatch):
