@@ -156,11 +156,15 @@ class ExecutionAPI:
         execution_id: str,
         *,
         claimed_paths: list[str] | None = None,
+        path_claims: list[dict[str, Any]] | None = None,
+        path_claim_warnings: list[str] | None = None,
         mode: str = "workspace",
     ) -> dict[str, Any]:
         return self._sandbox_service().create_sandbox(
             execution_id,
             claimed_paths=claimed_paths or [],
+            path_claims=path_claims or [],
+            path_claim_warnings=path_claim_warnings or [],
             mode=mode,
         )
 

@@ -85,6 +85,39 @@ def test_create_workspace_sandbox_records_metadata_and_ledger(tmp_path):
     assert event.payload["schema_version"] == "sandbox.v1"
 
 
+def test_create_sandbox_records_path_claim_evidence_in_metadata_and_ledger(tmp_path):
+    execution_id = "exec_sandbox_path_claims"
+    _create_run(tmp_path, execution_id)
+    api = ExecutionAPI(tmp_path, clock=FakeClock())
+
+    result = api.create_sandbox(
+        execution_id,
+        claimed_paths=["src/goodteam_os/execution/path_claims.py"],
+        path_claims=[
+            {
+                "path": "src/goodteam_os/execution/path_claims.py",
+                "source": "task_text",
+                "confidence": "high",
+                "reason": "explicit repo-relative path",
+            }
+        ],
+        path_claim_warnings=["path_claims_broad_or_low_confidence"],
+    )
+
+    event = _events(tmp_path, execution_id)[-1]
+    assert result["path_claims"] == [
+        {
+            "path": "src/goodteam_os/execution/path_claims.py",
+            "source": "task_text",
+            "confidence": "high",
+            "reason": "explicit repo-relative path",
+        }
+    ]
+    assert result["path_claim_warnings"] == ["path_claims_broad_or_low_confidence"]
+    assert event.payload["path_claims"] == result["path_claims"]
+    assert event.payload["path_claim_warnings"] == result["path_claim_warnings"]
+
+
 def test_worktree_adapter_receives_deterministic_path_and_branch(tmp_path):
     execution_id = "exec_sandbox_worktree"
     _create_run(tmp_path, execution_id)
@@ -194,7 +227,49 @@ def test_path_overlap_is_advisory_and_records_conflict_event(tmp_path):
     assert result["conflict_risk"] is True
     assert result["conflict_risks"][0]["execution_id"] == first_id
     assert result["conflict_risks"][0]["path"] == "src/goodteam_os/execution"
+    assert result["conflict_risks"][0]["confidence"] == "medium"
+    assert result["conflict_risks"][0]["reason"] == "path_prefix_overlap"
     assert transitions == ["sandbox_conflict_risk_detected", "sandbox_created"]
+
+
+def test_exact_path_overlap_records_high_confidence_conflict(tmp_path):
+    first_id = "exec_sandbox_exact_first"
+    second_id = "exec_sandbox_exact_second"
+    _create_run(tmp_path, first_id)
+    _create_run(tmp_path, second_id)
+    api = ExecutionAPI(tmp_path, clock=FakeClock())
+    api.create_sandbox(first_id, claimed_paths=["src/goodteam_os/workers.py"])
+
+    result = api.create_sandbox(second_id, claimed_paths=["src/goodteam_os/workers.py"])
+
+    assert result["status"] == "active"
+    assert result["conflict_risks"] == [
+        {
+            "execution_id": first_id,
+            "path": "src/goodteam_os/workers.py",
+            "conflicting_path": "src/goodteam_os/workers.py",
+            "confidence": "high",
+            "reason": "exact_path_overlap",
+        }
+    ]
+
+
+def test_non_overlapping_path_claims_do_not_record_conflict_risk(tmp_path):
+    first_id = "exec_sandbox_non_overlap_first"
+    second_id = "exec_sandbox_non_overlap_second"
+    _create_run(tmp_path, first_id)
+    _create_run(tmp_path, second_id)
+    api = ExecutionAPI(tmp_path, clock=FakeClock())
+    api.create_sandbox(first_id, claimed_paths=["src/goodteam_os/workers.py"])
+
+    result = api.create_sandbox(second_id, claimed_paths=["docs/agent-sandbox-v0.md"])
+
+    assert result["status"] == "active"
+    assert result["conflict_risk"] is False
+    assert result["conflict_risks"] == []
+    assert "sandbox_conflict_risk_detected" not in [
+        event.payload.get("transition") for event in _events(tmp_path, second_id)
+    ]
 
 
 @pytest.mark.parametrize(

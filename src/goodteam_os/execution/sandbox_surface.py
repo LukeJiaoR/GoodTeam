@@ -62,6 +62,9 @@ def sandbox_surface(
                     "cleanup_failure_reason": "",
                     "cleanup_failure_error": "",
                     "runtime": runtime,
+                    "claimed_paths": [],
+                    "path_claims": [],
+                    "path_claim_warnings": [],
                     "commands": [],
                     "conflict_risks": [],
                     "events": [],
@@ -89,6 +92,11 @@ def sandbox_surface(
             "cleanup_failure_reason": metadata.get("cleanup_failure_reason", ""),
             "cleanup_failure_error": metadata.get("cleanup_failure_error", ""),
             "runtime": runtime,
+            "claimed_paths": list(metadata.get("claimed_paths", [])),
+            "path_claims": [
+                dict(claim) for claim in metadata.get("path_claims", []) if isinstance(claim, dict)
+            ],
+            "path_claim_warnings": list(metadata.get("path_claim_warnings", [])),
             "commands": [
                 _command_surface(event)
                 for event in sandbox_events

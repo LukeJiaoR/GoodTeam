@@ -22,6 +22,7 @@ def sandbox_section(review: dict[str, Any]) -> str:
         ]
     )
     body += _sandbox_warnings(sandbox)
+    body += _path_claim_details(sandbox)
     body += _runtime_details(_dict(sandbox.get("runtime")))
     body += _sandbox_conflicts(_dict_items(sandbox.get("conflict_risks")))
     body += _sandbox_commands(_dict_items(sandbox.get("commands")))
@@ -40,6 +41,8 @@ def _sandbox_warnings(sandbox: dict[str, Any]) -> str:
         recovery = sandbox.get("recovery_state") or "sandbox_cleanup_recovery_required"
         error = sandbox.get("cleanup_failure_error") or sandbox.get("cleanup_failure_reason") or "n/a"
         warnings.append(f"Cleanup recovery required: {recovery}. Last cleanup failure: {error}.")
+    for warning in _list_items(sandbox.get("path_claim_warnings")):
+        warnings.append(f"Path claim warning: {warning}.")
     runtime = _dict(sandbox.get("runtime"))
     if runtime.get("runtime_policy_warning"):
         reason = runtime.get("runtime_policy_warning_reason") or "runtime_policy_warning"
@@ -51,6 +54,37 @@ def _sandbox_warnings(sandbox: dict[str, Any]) -> str:
         return ""
     items = "".join(f"<li>{escape(item)}</li>" for item in warnings)
     return f'<ul class="sandbox-warning-list">{items}</ul>'
+
+
+def _path_claim_details(sandbox: dict[str, Any]) -> str:
+    claimed_paths = _list_items(sandbox.get("claimed_paths"))
+    claims = _dict_items(sandbox.get("path_claims"))
+    if not claimed_paths and not claims:
+        return "<h3>Claimed paths</h3>" + _empty_state("No claimed paths inferred.")
+    body = "<h3>Claimed paths</h3>"
+    if claimed_paths:
+        body += "<ul>" + "".join(f"<li>{escape(path)}</li>" for path in claimed_paths) + "</ul>"
+    if claims:
+        body += _path_claim_list(claims)
+    return body
+
+
+def _path_claim_list(claims: list[dict[str, Any]]) -> str:
+    items = []
+    for claim in claims:
+        items.append(
+            "<li>"
+            + _details(
+                [
+                    ("Path", claim.get("path")),
+                    ("Source", claim.get("source")),
+                    ("Confidence", claim.get("confidence")),
+                    ("Reason", claim.get("reason")),
+                ]
+            )
+            + "</li>"
+        )
+    return f'<ul class="sandbox-path-claim-list">{"".join(items)}</ul>'
 
 
 def _runtime_details(runtime: dict[str, Any]) -> str:
@@ -90,6 +124,8 @@ def _sandbox_conflicts(conflicts: list[dict[str, Any]]) -> str:
                     ("Execution", conflict.get("execution_id")),
                     ("Path", conflict.get("path")),
                     ("Conflicting path", conflict.get("conflicting_path")),
+                    ("Confidence", conflict.get("confidence") or "n/a"),
+                    ("Reason", conflict.get("reason") or "n/a"),
                 ]
             )
             + "</li>"
@@ -163,6 +199,10 @@ def _dict(value: Any) -> dict[str, Any]:
 
 def _dict_items(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _list_items(value: Any) -> list[str]:
+    return [str(item) for item in value if str(item).strip()] if isinstance(value, list) else []
 
 
 def _text(value: Any) -> str:

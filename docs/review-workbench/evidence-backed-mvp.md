@@ -115,6 +115,20 @@ version warning. GoodTeam does not persist tokens, secret values, or full
 environment dumps in runtime evidence. Unknown sandbox or approval policy is a
 review warning in this MVP, not a hard execution failure.
 
+Sandbox evidence also includes advisory path claim inference. Before creating a
+sandbox, the orchestrator reads local worker protocol files (`task.md`,
+`context.md`, and `expected_artifacts.json`), worker status `changed_files` when
+available, and persisted PR diff changed files when present. Explicit
+repo-relative paths are high confidence. Area mappings such as worker/runtime,
+sandbox/worktree/cleanup, Review Workbench, ledger/evidence, and documentation
+are medium confidence. Broad repository-area claims are low confidence and
+surface `path_claims_broad_or_low_confidence`; unresolved claims surface
+`path_claims_unresolved`.
+
+These claims are review evidence only. They help detect multi-worker conflict
+risk through exact or directory-prefix overlap, but v0 does not block execution,
+queue workers, or replace Codex/Claude runtime sandboxing.
+
 ## Memory Provenance Integrity
 
 The workbench displays the exact `memory_provenance_refs` and
@@ -386,11 +400,12 @@ This MVP does not fake missing artifacts.
   `sandbox.reason = sandbox_evidence_missing`
 - Sandbox/action evidence exists:
   `sandbox.available = true`, `sandbox.schema_version = sandbox.v1`, and the
-  surface lists runtime adapter evidence, cleanup warnings, command history,
-  rejected commands, conflict risks, and raw sandbox ledger events. Real
-  `run_execution()` paths now create an execution workspace/worktree by default;
-  workspace fallback can be destroyed immediately, while successful worktree
-  executions are retained for PR/diff handoff and expose
+  surface lists runtime adapter evidence, cleanup warnings, inferred claimed
+  paths, path claim source/confidence/reason, path claim warnings, command
+  history, rejected commands, conflict risks, and raw sandbox ledger events.
+  Real `run_execution()` paths now create an execution workspace/worktree by
+  default; workspace fallback can be destroyed immediately, while successful
+  worktree executions are retained for PR/diff handoff and expose
   `sandbox_retained_for_pr` until explicit cleanup writes
   `sandbox_cleanup_requested` and `sandbox_destroyed`.
 - Cleanup observability:
@@ -406,10 +421,10 @@ This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 
 - Deeper #218 integration remains outside the Review Workbench MVP:
   machine-readable Codex/Claude sandbox mode / approval policy introspection
-  beyond launch-argument evidence, real path claim inference, optional Docker/VM
-  isolation for future non-Codex/Claude runtimes, cleanup actions outside the
-  read-only Workbench, and a GitHub/CI typed broker only if needed for host-side
-  operations.
+  beyond launch-argument evidence, richer future typed-contract path claim
+  inference, optional Docker/VM isolation for future non-Codex/Claude runtimes,
+  cleanup actions outside the read-only Workbench, and a GitHub/CI typed broker
+  only if needed for host-side operations.
 - Add deeper React dashboard polish around warnings, review decisions, and
   artifact drill-downs.
 - Run the final #216 acceptance audit before closing the issue.

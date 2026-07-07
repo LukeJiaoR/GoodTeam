@@ -134,7 +134,10 @@ The worker receives a sanitized `sandbox_context` with:
   "worktree_path": "",
   "mode": "workspace",
   "branch_name": "...",
-  "claimed_paths": []
+  "claimed_paths": [
+    "src/goodteam_os/workers.py",
+    "tests/test_workers.py"
+  ]
 }
 ```
 
@@ -221,6 +224,8 @@ The metadata uses `schema_version = sandbox.v1` and records:
 - `worktree_path`
 - `branch_name`
 - `claimed_paths`
+- `path_claims`
+- `path_claim_warnings`
 - `conflict_risk`
 - `conflict_risks`
 - `created_at`
@@ -311,6 +316,38 @@ tokens.
 `claimed_paths` is advisory in v0. It is not a hard lock and does not queue or
 block agents.
 
+The orchestrator now infers `claimed_paths` before sandbox creation from local,
+already persisted execution inputs:
+
+- worker protocol files: `task.md`, `context.md`, and
+  `expected_artifacts.json`
+- worker status `changed_files` when an execution already has them
+- persisted `pr-diff.json` changed files when a diff artifact already exists
+- medium-confidence area mappings such as worker/runtime, sandbox/worktree,
+  Review Workbench, ledger/evidence, and documentation
+
+Path inference is intentionally conservative. It keeps repo-relative POSIX
+paths, preserves directory claims such as `docs/`, converts globs such as
+`src/goodteam_os/execution/*.py` to `src/goodteam_os/execution/`, rejects host
+absolute paths, `..` parent traversal, URLs, and unsafe path-like values, and
+de-duplicates while preserving inference order.
+
+Each inferred path may also include a structured `path_claims[]` entry:
+
+```json
+{
+  "path": "src/goodteam_os/workers.py",
+  "source": "task_text",
+  "confidence": "high",
+  "reason": "explicit repo-relative path"
+}
+```
+
+Broad or low-confidence inference records
+`path_claims_broad_or_low_confidence`; unresolved inference records
+`path_claims_unresolved`. These warnings are evidence for reviewers, not
+execution blockers.
+
 Expected behavior:
 
 - no overlap: sandbox is created normally
@@ -319,7 +356,10 @@ Expected behavior:
 - metadata and Workbench show `conflict_risk = true`
 
 Overlap detection is intentionally small in v0 and supports exact or directory
-prefix relationships. It does not interpret glob patterns such as `src/**`.
+prefix relationships. Exact file overlap records high-confidence conflict
+evidence; directory/file prefix overlap records medium-confidence conflict
+evidence. It does not interpret glob patterns such as `src/**` after inference
+normalizes supported globs to directory claims.
 
 Sandbox v0 does not do automatic rebase, conflict resolution, scheduling, or
 branch fan-in.
@@ -341,6 +381,16 @@ branch fan-in.
     "runtime_cwd": "...",
     "runtime_policy_warning": true
   },
+  "claimed_paths": ["src/goodteam_os/workers.py"],
+  "path_claims": [
+    {
+      "path": "src/goodteam_os/workers.py",
+      "source": "task_text",
+      "confidence": "high",
+      "reason": "explicit repo-relative path"
+    }
+  ],
+  "path_claim_warnings": [],
   "commands": [],
   "conflict_risks": [],
   "events": []
@@ -360,10 +410,11 @@ Workbench GET routes remain read-only. They do not create sandboxes, repair
 metadata, remove worktrees, or write ledger events.
 
 The browser Workbench displays sandbox status, workspace/worktree paths, cleanup
-required warnings, runtime adapter evidence, stdout/stderr/result paths, command
-history, rejected commands, conflict risks, lifecycle events, and redaction
-markers from ledger evidence. Workbench remains read-only; cleanup still happens
-through explicit API/CLI calls.
+required warnings, inferred claimed paths, claim source/confidence/reason,
+runtime adapter evidence, stdout/stderr/result paths, command history, rejected
+commands, conflict risks, lifecycle events, and redaction markers from ledger
+evidence. Workbench remains read-only; cleanup still happens through explicit
+API/CLI calls.
 
 ## Explicit Non-Goals
 
@@ -380,7 +431,7 @@ This PR does not implement:
 
 - Deeper runtime-policy introspection when Codex/Claude expose machine-readable
   sandbox mode or approval policy beyond launch-argument evidence.
-- Real path claim inference.
+- Richer path-claim inference from future typed task contracts.
 - Cleanup UX/actions outside the read-only Review Workbench surface.
 - Optional Docker/VM future isolation for non-Codex/Claude runtimes.
 - GitHub/CI typed broker only if needed for host-side operations.
