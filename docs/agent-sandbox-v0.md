@@ -4,9 +4,10 @@ Issue: #218
 
 ## Purpose
 
-Agent Sandbox v0 establishes an auditable boundary for agent work without
-forcing every existing execution path to migrate immediately. The v0 contract is
-small on purpose:
+Agent Sandbox v0 establishes an auditable execution workspace boundary for agent
+work. #309 added the boundary primitives; #310 wires those primitives into the
+real `ExecutionOrchestrator.run_execution()` lifecycle. The v0 contract is small
+on purpose:
 
 - sandbox workspace metadata
 - command policy
@@ -15,9 +16,29 @@ small on purpose:
 - sandbox ledger events
 - Review Workbench sandbox evidence
 
-This is not a production isolation runtime. It is the first ledger-backed
-contract that lets maintainers test and inspect sandbox boundaries before the
-runner migration is mandatory.
+This is not a replacement for Codex CLI or Claude Code CLI runtime sandboxing.
+It is the first ledger-backed contract that lets maintainers test and inspect
+execution workspace lifecycle, runtime cwd selection, and Review Workbench
+evidence while each CLI keeps owning its runtime permission model.
+
+## Runtime-Native Sandbox Strategy
+
+GoodTeam does not replace Codex CLI / Claude Code CLI runtime sandboxing.
+
+GoodTeam owns:
+
+- execution workspace/worktree lifecycle
+- runtime cwd selection
+- worker context
+- ledger evidence
+- Review Workbench rendering
+
+Codex/Claude own:
+
+- command permissions
+- filesystem/network sandbox
+- approval policy
+- model/tool execution safety
 
 ## API Surface
 
@@ -41,6 +62,11 @@ api.destroy_sandbox(execution_id)
 .goodteam/sandboxes/<execution_id>/workspace
 ```
 
+Workspace mode is a fallback/evidence-only coding boundary unless the directory
+has been materialized as a repo workspace. Empty workspace directories are not
+used as CLI cwd for coding workers; the worker records an explicit
+`workspace_cwd_fallback = true` status and falls back to the project root.
+
 `mode="worktree"` uses a pluggable git adapter:
 
 ```python
@@ -58,6 +84,83 @@ worktree sandbox calls the adapter's `remove_worktree`.
 Destroy is idempotent. A first destroy marks metadata `status = destroyed` and
 writes `sandbox_destroyed`; later destroy calls return `already_destroyed`
 without appending another ledger event.
+
+Successful worktree executions are retained for PR/diff handoff instead of
+being removed immediately. The orchestrator records `sandbox_retained_for_pr`
+and metadata `status = retained_for_pr`; a later explicit cleanup can call
+`destroy_sandbox()` to remove the worktree.
+
+If destroy fails, Sandbox v0 writes `sandbox_destroy_failed` and returns a failed
+destroy result. The execution outcome is not rewritten: a worker success remains
+`execution_completed`, and a worker failure remains `execution_failed`.
+
+## Execution Lifecycle
+
+`ExecutionOrchestrator.run_execution()` creates a sandbox by default before it
+runs the worker job:
+
+```text
+execution_started
+  -> sandbox_created
+  -> worker CLI launched with cwd=<execution workspace/worktree>
+  -> execution_completed / execution_failed
+  -> sandbox_retained_for_pr / sandbox_destroyed
+```
+
+The default execution mode is `auto`: git repositories use `worktree`; non-git
+test or local fallback roots use `workspace`. Real coding runs should use git
+worktree mode or another repo-backed workspace. Workspace fallback runs can be
+destroyed immediately after completion because an empty metadata workspace is
+not the source of PR changes. Worktree success is retained until PR/diff
+handoff or explicit cleanup so uncommitted worker changes are not discarded
+before they can be persisted.
+
+The worker receives a sanitized `sandbox_context` with:
+
+```json
+{
+  "available": true,
+  "schema_version": "sandbox.v1",
+  "execution_id": "...",
+  "sandbox_id": "...",
+  "workspace_path": "...",
+  "worktree_path": "",
+  "mode": "workspace",
+  "branch_name": "...",
+  "claimed_paths": []
+}
+```
+
+The context is written to worker job metadata for auditability. It does not
+include host credentials, GitHub tokens, API keys, or secret values. Workers can
+use `workspace_path` as GoodTeam's workspace/evidence boundary context. It does
+not replace Codex/Claude runtime sandboxing.
+
+Worker status and invocation evidence record:
+
+```json
+{
+  "runtime_cwd": "...",
+  "workspace_context_available": true,
+  "workspace_cwd_fallback": false,
+  "workspace_cwd_fallback_reason": "",
+  "pythonpath_workspace_src": true
+}
+```
+
+If `<runtime_cwd>/src` exists, the worker env prepends it to `PYTHONPATH` so
+Python imports prefer the execution workspace while still allowing shared
+repo-level `.venv`, pip cache, npm cache, pnpm store, and tool binaries. The
+worker result, stdout, stderr, prompt, and status protocol files remain absolute
+paths under the job root, not under the worktree.
+
+Sandbox creation failure is deterministic: the orchestrator records
+`sandbox_create_failed`, marks the execution failed, and does not run the worker.
+Missing executions still fail before any sandbox artifact or missing-execution
+ledger file is created.
+
+`run_sandbox_command()` remains a narrow testable command-policy surface. It is
+not the main Codex/Claude runtime path.
 
 ## Metadata
 
@@ -96,7 +199,9 @@ Current transitions:
 - `sandbox_command_executed`
 - `sandbox_command_failed`
 - `sandbox_command_rejected`
+- `sandbox_destroy_failed`
 - `sandbox_destroyed`
+- `sandbox_retained_for_pr`
 
 All sandbox events include:
 
@@ -216,13 +321,13 @@ This PR does not implement:
 - a real GitHub write broker
 - `gh pr merge` or `gh pr review`
 - auto rebase or auto conflict resolution
-- mandatory migration of all current agent execution paths into sandbox
 - a large React dashboard rewrite
 
 ## Remaining #218 Gaps
 
-- Mandatory integration of all agent execution paths.
-- Real GitHub/CI typed broker.
-- Stronger filesystem isolation.
+- Runtime adapter evidence capture for Codex/Claude exact sandbox mode and
+  approval policy.
+- Real path claim inference.
 - Cleanup and recovery hardening.
-- Optional Docker/VM future isolation.
+- Optional Docker/VM future isolation for non-Codex/Claude runtimes.
+- GitHub/CI typed broker only if needed for host-side operations.

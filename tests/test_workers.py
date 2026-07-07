@@ -1142,6 +1142,11 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
         "command_available": True,
         "model": "gpt-5.4",
         "reason": "Codex CLI invocation attempted",
+        "runtime_cwd": str(tmp_path),
+        "workspace_context_available": False,
+        "workspace_cwd_fallback": False,
+        "workspace_cwd_fallback_reason": "",
+        "pythonpath_workspace_src": False,
     }
     assert status["preflight"]["codex_available"] is True
     assert status["preflight"]["model"] == "gpt-5.4"
@@ -2296,6 +2301,11 @@ def test_codex_adapter_fails_fast_when_codex_cli_is_missing(tmp_path, monkeypatc
         "command_available": False,
         "model": "gpt-5.4",
         "reason": "Codex CLI is not available. Install codex or add it to PATH before running codex workers.",
+        "runtime_cwd": str(tmp_path),
+        "workspace_context_available": False,
+        "workspace_cwd_fallback": False,
+        "workspace_cwd_fallback_reason": "",
+        "pythonpath_workspace_src": False,
     }
     assert calls == []
 

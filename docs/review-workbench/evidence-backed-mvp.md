@@ -62,6 +62,38 @@ The workbench object exposes:
 - `sandbox` evidence from #218 ledger events, or `sandbox_evidence_missing`
 - `warnings`
 
+## Runtime-Native Sandbox Strategy
+
+GoodTeam does not replace Codex CLI / Claude Code CLI runtime sandboxing.
+
+GoodTeam owns:
+
+- execution workspace/worktree lifecycle
+- runtime cwd selection
+- worker context
+- ledger evidence
+- Review Workbench rendering
+
+Codex/Claude own:
+
+- command permissions
+- filesystem/network sandbox
+- approval policy
+- model/tool execution safety
+
+`sandbox_context` is GoodTeam's workspace/evidence boundary context. It does not
+replace Codex/Claude runtime sandboxing. Real coding executions should run from
+git worktree mode or another repo-backed workspace. Empty workspace fallback
+directories are metadata/evidence boundaries unless materialized as repos, so
+worker status records an explicit `workspace_cwd_fallback` when the CLI must use
+the project root instead.
+
+Workers may share the repo-level `.venv`, pip cache, npm cache, pnpm store, and
+tool binaries. When `<runtime_cwd>/src` exists, GoodTeam prepends it to
+`PYTHONPATH` so Python imports prefer the execution workspace. `run_sandbox_command()`
+is the narrow command-policy test surface, not the main Codex/Claude runtime
+path.
+
 ## Memory Provenance Integrity
 
 The workbench displays the exact `memory_provenance_refs` and
@@ -334,16 +366,21 @@ This MVP does not fake missing artifacts.
 - Sandbox/action evidence exists:
   `sandbox.available = true`, `sandbox.schema_version = sandbox.v1`, and the
   surface lists command history, rejected commands, conflict risks, and raw
-  sandbox ledger events
+  sandbox ledger events. Real `run_execution()` paths now create an execution
+  workspace/worktree by default; workspace fallback can be destroyed
+  immediately, while successful worktree executions are retained for PR/diff
+  handoff and expose `sandbox_retained_for_pr` until explicit cleanup writes
+  `sandbox_destroyed`.
 
 ## Remaining #216 Gaps
 
 This PR is a usable MVP slice, not full #216 completion. Remaining gaps:
 
-- Deeper #218 integration remains outside the Review Workbench MVP: mandatory
-  migration of all agent execution paths, typed GitHub/CI broker, stronger
-  filesystem isolation, cleanup/recovery hardening, and optional Docker/VM
-  isolation.
+- Deeper #218 integration remains outside the Review Workbench MVP:
+  runtime adapter evidence capture for Codex/Claude exact sandbox mode /
+  approval policy, real path claim inference, cleanup/recovery hardening,
+  optional Docker/VM isolation for future non-Codex/Claude runtimes, and a
+  GitHub/CI typed broker only if needed for host-side operations.
 - Add deeper React dashboard polish around warnings, review decisions, and
   artifact drill-downs.
 - Run the final #216 acceptance audit before closing the issue.

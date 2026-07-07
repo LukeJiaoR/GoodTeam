@@ -151,11 +151,15 @@ def _assert_manifest_identity(manifest: dict[str, object], execution_id: str) ->
 def _assert_manifest_observations(manifest: dict[str, object]) -> None:
     ledger_events = manifest["ledger_events"]
     assert isinstance(ledger_events, list)
+    events_by_transition = {
+        event["payload"]["transition"]: event
+        for event in ledger_events
+    }
     assert manifest["ci_observations"][0]["state"] == "success"
     assert manifest["ci_observations"][0]["summary"]["passed"] == 2
     assert manifest["review_observations"] == [
         {
-            "event_id": ledger_events[6]["event_id"],
+            "event_id": events_by_transition["review_recorded"]["event_id"],
             "kind": "review",
             "github_id": "review:7001",
             "state": "APPROVED",
@@ -164,7 +168,7 @@ def _assert_manifest_observations(manifest: dict[str, object]) -> None:
             "body_excerpt": "Approved with canonical evidence.",
         },
         {
-            "event_id": ledger_events[7]["event_id"],
+            "event_id": events_by_transition["pr_comment_recorded"]["event_id"],
             "kind": "comment",
             "github_id": "comment:8001",
             "state": "",
@@ -189,7 +193,9 @@ def test_full_execution_replay_builds_canonical_evidence_manifest(tmp_path):
         "intake_created",
         "worker_job_created",
         "execution_started",
+        "sandbox_created",
         "execution_completed",
+        "sandbox_destroyed",
         "pr_opened",
         "ci_observed",
         "review_recorded",

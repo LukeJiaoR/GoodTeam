@@ -26,6 +26,8 @@ from goodteam_os.execution.models import (
     LedgerEvent,
     LedgerEventType,
 )
+from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
+from goodteam_os.execution.sandbox_surface import SANDBOX_SCHEMA_VERSION
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -33,9 +35,20 @@ Clock = Callable[[], str]
 
 
 class ExecutionOrchestrator:
-    def __init__(self, project_root: Path, github_client: GitHubClient | None = None):
+    def __init__(
+        self,
+        project_root: Path,
+        github_client: GitHubClient | None = None,
+        *,
+        sandbox_enabled: bool = True,
+        sandbox_mode: str = "auto",
+        sandbox_git_adapter: SandboxGitAdapter | None = None,
+    ):
         self.project_root = Path(project_root)
         self.github_client = github_client
+        self.sandbox_enabled = sandbox_enabled
+        self.sandbox_mode = sandbox_mode
+        self.sandbox_git_adapter = sandbox_git_adapter
         self.ledger = ExecutionLedger(self.project_root)
         self.binding_store = GitHubExecutionBindingStore(self.project_root)
         self.worker_store = WorkerJobStore(self.project_root)
@@ -99,15 +112,32 @@ class ExecutionOrchestrator:
             },
             created_at=started_at,
         )
+        sandbox_context = self._create_sandbox_context(run) if self.sandbox_enabled else None
+        if sandbox_context is not None and sandbox_context.get("status") == "failed":
+            return self._record_sandbox_create_failure(run, sandbox_context)
+
+        retain_sandbox = False
         try:
-            worker_result = self.worker_store.run_job(run.worker_job_id)
+            if sandbox_context is None:
+                worker_result = self.worker_store.run_job(run.worker_job_id)
+            else:
+                worker_result = self.worker_store.run_job(
+                    run.worker_job_id,
+                    sandbox_context=sandbox_context,
+                )
+            if worker_result.get("status") == "completed":
+                retain_sandbox = _should_retain_sandbox_for_pr(sandbox_context)
+                return self._record_worker_success(run, worker_result)
+            return self._record_worker_failure(run, worker_result)
         except Exception as exc:
             self._record_worker_exception(run, exc)
             raise
-
-        if worker_result.get("status") == "completed":
-            return self._record_worker_success(run, worker_result)
-        return self._record_worker_failure(run, worker_result)
+        finally:
+            if sandbox_context is not None:
+                if retain_sandbox:
+                    self._retain_sandbox(run.execution_id)
+                else:
+                    self._destroy_sandbox(run.execution_id)
 
     def status(self, execution_id: str) -> dict[str, Any]:
         replay = self.ledger.replay(execution_id)
@@ -238,6 +268,31 @@ class ExecutionOrchestrator:
         )
         return failed_run
 
+    def _record_sandbox_create_failure(self, run: ExecutionRun, sandbox_result: dict[str, Any]) -> ExecutionRun:
+        failed_run = replace(run, status=ExecutionRunStatus.FAILED, updated_at=self._clock())
+        self.ledger.create_run(failed_run)
+        reason = str(sandbox_result.get("reason", "sandbox_create_failed"))
+        error = str(sandbox_result.get("error", ""))
+        summary = f"Sandbox creation failed: {reason}"
+        if error:
+            summary = f"{summary}: {error}"
+        self._append_event(
+            failed_run,
+            event_type=LedgerEventType.FAILED,
+            payload={
+                "transition": "execution_failed",
+                "worker_job_id": run.worker_job_id,
+                "adapter": run.adapter,
+                "worker_status": "not_started",
+                "summary": summary,
+                "failure_class": "sandbox_create_failed",
+                "sandbox_reason": reason,
+                "sandbox_error": error,
+            },
+            created_at=failed_run.updated_at,
+        )
+        return failed_run
+
     def _record_worker_success(self, run: ExecutionRun, worker_result: dict[str, Any]) -> ExecutionRun:
         completed_run = replace(run, status=ExecutionRunStatus.SUCCEEDED, updated_at=self._clock())
         self.ledger.create_run(completed_run)
@@ -274,6 +329,70 @@ class ExecutionOrchestrator:
         )
         return failed_run
 
+    def _create_sandbox_context(self, run: ExecutionRun) -> dict[str, Any]:
+        return self._sandbox_service().create_sandbox(
+            run.execution_id,
+            claimed_paths=_sandbox_claimed_paths(run),
+            mode=self._sandbox_mode_for_execution(),
+        )
+
+    def _destroy_sandbox(self, execution_id: str) -> None:
+        try:
+            self._sandbox_service().destroy_sandbox(execution_id)
+        except Exception as exc:
+            run = self.ledger.read_run(execution_id)
+            if run is None:
+                return
+            self._append_event(
+                run,
+                event_type=LedgerEventType.STATUS_CHANGED,
+                payload={
+                    "transition": "sandbox_destroy_failed",
+                    "source": "sandbox",
+                    "schema_version": SANDBOX_SCHEMA_VERSION,
+                    "execution_id": execution_id,
+                    "status": "failed",
+                    "reason": "sandbox_destroy_failed",
+                    "error": str(exc),
+                },
+                created_at=self._clock(),
+            )
+
+    def _retain_sandbox(self, execution_id: str) -> None:
+        try:
+            self._sandbox_service().retain_sandbox(execution_id, reason="pr_pending")
+        except Exception as exc:
+            run = self.ledger.read_run(execution_id)
+            if run is None:
+                return
+            self._append_event(
+                run,
+                event_type=LedgerEventType.STATUS_CHANGED,
+                payload={
+                    "transition": "sandbox_retain_failed",
+                    "source": "sandbox",
+                    "schema_version": SANDBOX_SCHEMA_VERSION,
+                    "execution_id": execution_id,
+                    "status": "failed",
+                    "reason": "sandbox_retain_failed",
+                    "error": str(exc),
+                },
+                created_at=self._clock(),
+            )
+
+    def _sandbox_mode_for_execution(self) -> str:
+        mode = self.sandbox_mode.strip().lower()
+        if mode != "auto":
+            return mode
+        return "worktree" if (self.project_root / ".git").exists() else "workspace"
+
+    def _sandbox_service(self) -> SandboxService:
+        return SandboxService(
+            self.project_root,
+            clock=self._clock,
+            git_adapter=self.sandbox_git_adapter,
+        )
+
 
 def _execution_id_from_intake_result(result: ExecutionTask | GitHubBinding) -> str:
     if isinstance(result, ExecutionTask):
@@ -308,6 +427,16 @@ def _find_worker_job(worker_store: WorkerJobStore, worker_job_id: str) -> dict[s
         if job.get("id") == worker_job_id:
             return job
     return None
+
+
+def _sandbox_claimed_paths(run: ExecutionRun) -> list[str]:
+    return []
+
+
+def _should_retain_sandbox_for_pr(sandbox_context: dict[str, Any] | None) -> bool:
+    if not isinstance(sandbox_context, dict):
+        return False
+    return sandbox_context.get("mode") == "worktree"
 
 
 def _model_to_dict(value: Any) -> dict[str, Any] | None:
