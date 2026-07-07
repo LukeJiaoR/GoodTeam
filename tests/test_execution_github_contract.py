@@ -70,6 +70,11 @@ def test_fixture_github_issue_becomes_execution_task():
     assert task.status is ExecutionTaskStatus.QUEUED
     assert task.created_at == CREATED_AT
     assert task.updated_at == CREATED_AT
+    assert task.task_contract is not None
+    assert task.task_contract.schema_version == "task_contract.v1"
+    assert task.task_contract.summary == "P0-1C: GitHub Issue Intake and Binding Adapter"
+    assert task.task_contract.task_identity["task_id"] == task.task_id
+    assert task.task_contract.source_intent["source_type"] == "github_issue"
 
 
 def test_empty_body_issue_becomes_empty_task_body():
@@ -82,6 +87,46 @@ def test_empty_body_issue_becomes_empty_task_body():
 
     assert snapshot.body == ""
     assert task.body == ""
+    assert task.task_contract is not None
+    assert task.task_contract.instructions == ""
+
+
+def test_github_issue_body_populates_contract_sections():
+    snapshot = _snapshot(
+        body=(
+            "Goal: typed execution contract.\n\n"
+            "Acceptance:\n"
+            "- Persist `task_contract.v1` in task.json.\n"
+            "- Surface acceptance criteria in Review Workbench.\n\n"
+            "Verification:\n"
+            "- PYTHONPATH=src .venv/bin/python -m pytest tests/test_execution_models.py -q\n\n"
+            "Review:\n"
+            "- Reviewer checks contract summary.\n\n"
+            "Out of scope:\n"
+            "- cleanup UX\n"
+            "Touch `src/goodteam_os/execution/models.py` and `tests/test_execution_models.py`."
+        )
+    )
+
+    task = execution_task_from_github_issue(snapshot, clock=fixed_clock)
+
+    assert task.task_contract is not None
+    assert task.task_contract.acceptance_criteria == [
+        "Persist `task_contract.v1` in task.json.",
+        "Surface acceptance criteria in Review Workbench.",
+    ]
+    assert task.task_contract.verification_expectations == [
+        "PYTHONPATH=src .venv/bin/python -m pytest tests/test_execution_models.py -q"
+    ]
+    assert task.task_contract.review_expectations == ["Reviewer checks contract summary."]
+    assert task.task_contract.constraints == ["cleanup UX"]
+    assert task.task_contract.path_scope["focus_paths"] == [
+        "tests/test_execution_models.py",
+        "src/goodteam_os/execution/models.py",
+    ]
+    assert task.task_contract.expected_artifacts == [
+        {"name": "worker result", "kind": "worker_result", "path": "", "required": True}
+    ]
 
 
 def test_snapshot_preserves_labels():

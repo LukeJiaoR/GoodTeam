@@ -3,6 +3,35 @@ from __future__ import annotations
 from goodteam_os.execution.path_claims import infer_execution_path_claims
 
 
+def test_contract_path_scope_and_expected_artifacts_are_preferred():
+    result = infer_execution_path_claims(
+        task_text="Worker runtime mentions src/goodteam_os/workers.py.",
+        context_text="",
+        expected_artifacts=None,
+        task_contract={
+            "path_scope": {
+                "focus_paths": ["src/goodteam_os/execution/models.py"],
+                "allowed_paths": ["src/goodteam_os/execution/"],
+            },
+            "expected_artifacts": [
+                {"path": "tests/test_execution_models.py"},
+            ],
+        },
+    )
+
+    assert result.claimed_paths[:3] == [
+        "src/goodteam_os/execution/models.py",
+        "src/goodteam_os/execution/",
+        "tests/test_execution_models.py",
+    ]
+    assert [claim.source for claim in result.claims[:3]] == [
+        "task_contract.path_scope",
+        "task_contract.path_scope",
+        "task_contract.expected_artifacts",
+    ]
+    assert "src/goodteam_os/workers.py" in result.claimed_paths
+
+
 def test_extracts_explicit_repo_paths_from_task_and_context_text():
     result = infer_execution_path_claims(
         task_text="Update `src/goodteam_os/workers.py` and tests/test_workers.py.",

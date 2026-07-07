@@ -117,6 +117,11 @@ def test_intake_writes_task_run_and_expected_transition_events(tmp_path):
 
     assert task is not None
     assert task.task_id == run.task_id
+    assert task.task_contract is not None
+    assert task.task_contract.task_identity["task_id"] == run.task_id
+    assert task.task_contract.expected_artifacts == [
+        {"name": "worker result", "kind": "worker_result", "path": "", "required": True}
+    ]
     assert ledger.read_run(run.execution_id) == run
     assert [event.event_type for event in events] == [
         LedgerEventType.CREATED,

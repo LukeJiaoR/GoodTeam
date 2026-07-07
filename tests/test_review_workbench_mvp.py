@@ -3,8 +3,9 @@ from __future__ import annotations
 import pytest
 
 from goodteam_os.execution.ledger import ExecutionLedger
+from goodteam_os.execution.idempotency import execution_id_from_task
 from goodteam_os.execution.api import ExecutionAPI
-from goodteam_os.execution.models import ExecutionRun
+from goodteam_os.execution.models import ExecutionRun, ExecutionTask
 from goodteam_os.execution.review_workbench import render_review_workbench
 from tests.review_workbench_helpers import (
     api as _api,
@@ -25,6 +26,9 @@ def test_completed_execution_builds_evidence_backed_workbench_object(tmp_path):
     assert workbench["evidence"] == api.get_evidence(execution_id)
     assert workbench["source_issue"] == "LukeJiaoR/GoodTeam#216"
     assert workbench["task"]["title"] == "P0-2: Review Workbench MVP"
+    assert workbench["task_contract"] == workbench["evidence"]["task_contract"]
+    assert workbench["task_contract"]["available"] is True
+    assert workbench["task_contract"]["summary"] == "P0-2: Review Workbench MVP"
     assert workbench["pr"]["ref"] == "LukeJiaoR/GoodTeam#2160"
     assert workbench["pr"]["commit_sha"] == "commit-sha-216"
     assert workbench["status"] == "completed"
@@ -82,6 +86,43 @@ def test_failed_execution_returns_failed_status_and_failure_evidence(tmp_path):
     assert workbench["evidence"]["incomplete_reason"] == "execution_failed:worker_failed"
     assert _warning_codes(workbench) >= {"execution_failed", "diff_artifact_missing"}
     assert workbench["evidence"]["ledger_events"][0]["payload"]["failure_class"] == "worker_failed"
+
+
+def test_legacy_execution_without_contract_returns_workbench_warning(tmp_path):
+    task = ExecutionTask(
+        task_id="task_legacy_workbench",
+        source_type="github_issue",
+        repo="LukeJiaoR/GoodTeam",
+        issue_number=317,
+        title="Legacy task",
+        body="Legacy task body.",
+        goal="Legacy task",
+        status="queued",
+        created_at="2026-07-06T02:30:00Z",
+        updated_at="2026-07-06T02:30:00Z",
+    )
+    execution_id = execution_id_from_task(task.task_id)
+    ledger = ExecutionLedger(tmp_path)
+    ledger.create_task(task)
+    ledger.create_run(
+        ExecutionRun(
+            execution_id=execution_id,
+            task_id=task.task_id,
+            worker_job_id="worker_legacy",
+            adapter="fake",
+            status="running",
+            branch_name=f"goodteam/{execution_id}",
+            pr_number=None,
+            created_at="2026-07-06T02:30:00Z",
+            updated_at="2026-07-06T02:31:00Z",
+        )
+    )
+
+    workbench = ExecutionAPI(tmp_path).get_review_workbench(execution_id)
+
+    assert workbench["task_contract"]["available"] is False
+    assert workbench["task_contract"]["fallback_warning"]["code"] == "task_contract_missing"
+    assert _warning_codes(workbench) >= {"task_contract_missing"}
 
 
 def test_memory_provenance_integrity_is_exposed(tmp_path):
@@ -227,4 +268,5 @@ def test_text_renderer_consumes_canonical_review_object(tmp_path):
     assert "CI: success" in output
     assert "Memory provenance: complete" in output
     assert "Decision: approve by LukeJiaoR" in output
+    assert "Task contract: task_contract.v1" in output
     assert "diff_artifact_missing" in output

@@ -50,8 +50,17 @@ def infer_execution_path_claims(
     context_text: str,
     expected_artifacts: dict[str, Any] | list[Any] | None,
     existing_changed_files: list[Any] | None = None,
+    task_contract: dict[str, Any] | None = None,
 ) -> PathClaimInference:
     builder = _ClaimBuilder()
+    builder.add_values(
+        _contract_path_scope_values(task_contract),
+        source="task_contract.path_scope",
+    )
+    builder.add_values(
+        _contract_expected_artifact_values(task_contract),
+        source="task_contract.expected_artifacts",
+    )
     builder.add_text(task_text, source="task_text")
     builder.add_text(context_text, source="context_text")
     builder.add_values(_artifact_values(expected_artifacts), source="expected_artifacts")
@@ -124,7 +133,11 @@ class _ClaimBuilder:
         path = normalize_repo_path(raw_path)
         if not path or path in self._seen:
             return
-        if path.endswith("/") and any(existing.startswith(path) for existing in self._seen):
+        if (
+            path.endswith("/")
+            and not source.startswith("task_contract.")
+            and any(existing.startswith(path) for existing in self._seen)
+        ):
             return
         self._seen.add(path)
         self.claims.append(PathClaim(path=path, source=source, confidence=confidence, reason=reason))
@@ -152,6 +165,24 @@ def _artifact_values(value: Any) -> list[Any]:
             values.extend(_artifact_values(item))
         return values
     return [value]
+
+
+def _contract_path_scope_values(task_contract: dict[str, Any] | None) -> list[Any]:
+    if not isinstance(task_contract, dict):
+        return []
+    path_scope = task_contract.get("path_scope")
+    if not isinstance(path_scope, dict):
+        return []
+    values: list[Any] = []
+    for key in ("focus_paths", "allowed_paths"):
+        values.extend(_artifact_values(path_scope.get(key)))
+    return values
+
+
+def _contract_expected_artifact_values(task_contract: dict[str, Any] | None) -> list[Any]:
+    if not isinstance(task_contract, dict):
+        return []
+    return _artifact_values(task_contract.get("expected_artifacts"))
 
 
 def _candidate_paths(value: Any) -> list[str]:

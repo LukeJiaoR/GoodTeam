@@ -25,6 +25,7 @@ from goodteam_os.execution.models import (
     GitHubBinding,
     LedgerEvent,
     LedgerEventType,
+    TaskContract,
 )
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.path_claims import (
@@ -64,6 +65,7 @@ __all__ = [
     "ReviewWorkbenchService",
     "SandboxGitAdapter",
     "SandboxService",
+    "TaskContract",
     "CIStatusService",
     "branch_name_from_execution_id",
     "execution_id_from_task",

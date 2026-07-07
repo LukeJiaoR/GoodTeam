@@ -143,13 +143,60 @@ def test_run_execution_passes_inferred_path_claims_into_sandbox_creation(tmp_pat
     ]
     assert metadata["path_claims"][0] == {
         "path": "src/goodteam_os/workers.py",
-        "source": "task_text",
+        "source": "task_contract.path_scope",
         "confidence": "high",
         "reason": "explicit repo-relative path",
     }
     assert metadata["path_claim_warnings"] == []
     assert created_event.payload["path_claim_warnings"] == []
     assert created_event.payload["path_claims"][0]["path"] == "src/goodteam_os/workers.py"
+
+
+def test_run_execution_prefers_contract_path_scope_for_sandbox_claims(tmp_path, monkeypatch):
+    snapshot = GitHubIssueSnapshot(
+        repo="LukeJiaoR/GoodTeam",
+        issue_number=218,
+        title="Typed contract path scope",
+        body=(
+            "Worker runtime mentions src/goodteam_os/workers.py.\n\n"
+            "Acceptance:\n"
+            "- Update `src/goodteam_os/execution/models.py`.\n"
+            "- Cover `tests/test_execution_models.py`."
+        ),
+        url="https://github.com/LukeJiaoR/GoodTeam/issues/218",
+        labels=["p0", "sandbox"],
+    )
+    orchestrator = ExecutionOrchestrator(
+        tmp_path,
+        FakeGitHubClient({("lukejiaor/goodteam", 218): snapshot}),
+        sandbox_mode="workspace",
+    )
+    orchestrator._clock = FakeClock()
+    queued = orchestrator.intake_github_issue(repo="LukeJiaoR/GoodTeam", issue_number=218, adapter="fake")
+    observed: dict[str, Any] = {}
+    original_run_job = WorkerJobStore.run_job
+
+    def record_run_job(
+        self: WorkerJobStore,
+        job_id: str,
+        *,
+        sandbox_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        observed["sandbox_context"] = sandbox_context
+        return original_run_job(self, job_id, sandbox_context=sandbox_context)
+
+    monkeypatch.setattr(WorkerJobStore, "run_job", record_run_job)
+
+    orchestrator.run_execution(queued.execution_id)
+
+    assert observed["sandbox_context"]["claimed_paths"][:2] == [
+        "src/goodteam_os/execution/models.py",
+        "tests/test_execution_models.py",
+    ]
+    assert [claim["source"] for claim in observed["sandbox_context"]["path_claims"][:2]] == [
+        "task_contract.path_scope",
+        "task_contract.path_scope",
+    ]
 
 
 def test_run_execution_records_failed_worker_result_and_destroys_sandbox(tmp_path, monkeypatch):

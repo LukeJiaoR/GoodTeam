@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from goodteam_os.execution import GitHubBinding, GitHubIssueNotFound, GitHubIssueSnapshot
-from goodteam_os.execution.models import ExecutionRun, LedgerEvent
+from goodteam_os.execution.idempotency import execution_id_from_task
+from goodteam_os.execution.models import ExecutionRun, ExecutionTask, LedgerEvent
 from goodteam_os.execution.api import ExecutionAPI
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.memory import RoleMemoryStore
@@ -187,6 +188,13 @@ def test_full_execution_replay_builds_canonical_evidence_manifest(tmp_path):
 
     transitions = [event["payload"]["transition"] for event in manifest["ledger_events"]]
     _assert_manifest_identity(manifest, execution_id)
+    assert manifest["task_contract"]["available"] is True
+    assert manifest["task_contract"]["schema_version"] == "task_contract.v1"
+    assert manifest["task_contract"]["summary"] == "P0-3: Ledger & Evidence System"
+    assert manifest["task_contract"]["expected_artifacts"] == [
+        {"name": "worker result", "kind": "worker_result", "path": "", "required": True}
+    ]
+    assert manifest["task_contract"]["fallback_warning"] == {}
     assert manifest["pr"]["ref"] == "LukeJiaoR/GoodTeam#301"
     assert manifest["pr"]["commit_sha"] == "commit-sha-217"
     assert transitions == [
@@ -248,6 +256,54 @@ def test_incomplete_execution_returns_pending_manifest(tmp_path):
     assert manifest["merge_summary"]["merged"] is False
     assert manifest["final_status"] == "pending"
     assert manifest["incomplete_reason"] == "pr_missing"
+
+
+def test_legacy_task_without_contract_returns_explicit_fallback_manifest(tmp_path):
+    task = ExecutionTask(
+        task_id="task_legacy_contract",
+        source_type="github_issue",
+        repo="LukeJiaoR/GoodTeam",
+        issue_number=317,
+        title="Legacy task",
+        body="Legacy task body.",
+        goal="Legacy task",
+        status="queued",
+        created_at="2026-07-06T02:30:00Z",
+        updated_at="2026-07-06T02:30:00Z",
+    )
+    execution_id = execution_id_from_task(task.task_id)
+    ledger = ExecutionLedger(tmp_path)
+    ledger.create_task(task)
+    ledger.create_run(
+        ExecutionRun(
+            execution_id=execution_id,
+            task_id=task.task_id,
+            worker_job_id="worker_legacy",
+            adapter="fake",
+            status="running",
+            branch_name=f"goodteam/{execution_id}",
+            pr_number=None,
+            created_at="2026-07-06T02:30:00Z",
+            updated_at="2026-07-06T02:31:00Z",
+        )
+    )
+
+    manifest = ExecutionAPI(tmp_path).get_evidence(execution_id)
+
+    assert manifest["task_contract"] == {
+        "available": False,
+        "schema_version": "",
+        "summary": "",
+        "expected_artifacts": [],
+        "path_scope": {},
+        "acceptance_criteria": [],
+        "verification_expectations": [],
+        "review_expectations": [],
+        "fallback_warning": {
+            "code": "task_contract_missing",
+            "message": "Legacy execution has no persisted task_contract.v1 data.",
+        },
+    }
 
 
 def test_failed_execution_without_pr_returns_failed_manifest(tmp_path):

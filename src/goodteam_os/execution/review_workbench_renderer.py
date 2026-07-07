@@ -11,6 +11,7 @@ def render_review_workbench(review: dict[str, Any]) -> str:
     review_summary = dict(evidence.get("review_summary", {}))
     integrity = dict(review.get("memory_provenance_integrity", {}))
     decision = dict(review.get("reviewer_decision", {}))
+    contract = dict(review.get("task_contract", {}))
     lines = [
         f"Execution: {review.get('execution_id', '')}",
         f"Status: {review.get('status', '')}",
@@ -18,6 +19,8 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         f"PR: {pr.get('ref', '') or 'n/a'}",
         f"Branch: {pr.get('branch_name', '') or 'n/a'}",
         f"Commit: {pr.get('commit_sha', '') or 'n/a'}",
+        f"Task contract: {_contract_label(contract)}",
+        f"Contract summary: {contract.get('summary', '') or 'n/a'}",
         f"Diff: {_diff_label(diff)}",
         f"CI: {ci.get('state', 'unavailable')}",
         (
@@ -27,6 +30,15 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         ),
         f"Memory provenance: {_memory_integrity_label(integrity)}",
         f"Decision: {_decision_label(decision)}",
+        "",
+        "Expected artifacts:",
+        *_render_contract_artifacts(contract),
+        "",
+        "Path scope:",
+        *_render_path_scope(contract),
+        "",
+        "Acceptance criteria:",
+        *_render_contract_list(contract.get("acceptance_criteria")),
         "",
         "Changed files:",
         *_render_changed_files(diff),
@@ -38,6 +50,48 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         *_render_timeline(list(evidence.get("ledger_events", []))),
     ]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _contract_label(contract: dict[str, Any]) -> str:
+    if contract.get("available"):
+        return str(contract.get("schema_version", ""))
+    warning = contract.get("fallback_warning")
+    if isinstance(warning, dict):
+        return f"missing ({warning.get('code', 'task_contract_missing')})"
+    return "missing"
+
+
+def _render_contract_artifacts(contract: dict[str, Any]) -> list[str]:
+    artifacts = contract.get("expected_artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        return ["- none"]
+    lines = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        name = artifact.get("name", "") or artifact.get("path", "")
+        kind = artifact.get("kind", "")
+        path = artifact.get("path", "")
+        lines.append(f"- {name} ({kind}) {path}".rstrip())
+    return lines or ["- none"]
+
+
+def _render_path_scope(contract: dict[str, Any]) -> list[str]:
+    path_scope = contract.get("path_scope")
+    if not isinstance(path_scope, dict) or not path_scope:
+        return ["- none"]
+    lines = []
+    for key in ("focus_paths", "allowed_paths", "excluded_paths"):
+        values = path_scope.get(key)
+        if isinstance(values, list) and values:
+            lines.append(f"- {key}: {', '.join(str(value) for value in values)}")
+    return lines or ["- none"]
+
+
+def _render_contract_list(value: Any) -> list[str]:
+    if not isinstance(value, list) or not value:
+        return ["- none"]
+    return [f"- {item}" for item in value]
 
 
 def _render_warnings(warnings: list[Any]) -> list[str]:
