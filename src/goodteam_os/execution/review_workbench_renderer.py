@@ -14,6 +14,7 @@ def render_review_workbench(review: dict[str, Any]) -> str:
     contract = dict(review.get("task_contract", {}))
     runtime_policy = dict(review.get("runtime_policy", {}))
     broker_status = dict(review.get("github_broker_status", {}))
+    replay_graph = dict(review.get("execution_replay_graph", {}))
     lines = [
         f"Execution: {review.get('execution_id', '')}",
         f"Status: {review.get('status', '')}",
@@ -32,6 +33,7 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         f"Broker CI: {_broker_ci_label(broker_status)}",
         f"Broker review: {_broker_review_label(broker_status)}",
         f"Merge readiness: {_broker_merge_readiness_label(broker_status)}",
+        f"Replay graph: {_replay_graph_label(replay_graph)}",
         f"Diff: {_diff_label(diff)}",
         f"CI: {ci.get('state', 'unavailable')}",
         (
@@ -57,7 +59,10 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         "Warnings:",
         *_render_warnings(list(review.get("warnings", []))),
         "",
-        "Timeline:",
+        "Replay graph timeline:",
+        *_render_replay_graph_timeline(replay_graph),
+        "",
+        "Ledger timeline:",
         *_render_timeline(list(evidence.get("ledger_events", []))),
     ]
     return "\n".join(lines).rstrip() + "\n"
@@ -161,6 +166,21 @@ def _broker_merge_readiness_label(status: dict[str, Any]) -> str:
     return f"{state} ({reason})" if reason else state
 
 
+def _replay_graph_label(graph: dict[str, Any]) -> str:
+    if not graph.get("available"):
+        return "missing"
+    summary = graph.get("summary")
+    summary = summary if isinstance(summary, dict) else {}
+    complete = "complete" if summary.get("complete") else "partial"
+    node_count = int(summary.get("node_count", 0) or 0)
+    edge_count = int(summary.get("edge_count", 0) or 0)
+    warning_count = int(summary.get("warning_count", 0) or 0)
+    return (
+        f"{graph.get('schema_version', '')} "
+        f"{complete}, nodes={node_count}, edges={edge_count}, warnings={warning_count}"
+    )
+
+
 def _render_contract_artifacts(contract: dict[str, Any]) -> list[str]:
     artifacts = contract.get("expected_artifacts")
     if not isinstance(artifacts, list) or not artifacts:
@@ -198,6 +218,23 @@ def _render_warnings(warnings: list[Any]) -> list[str]:
     if not warnings:
         return ["- none"]
     return [f"- {item.get('code', '')}: {item.get('message', '')}" for item in warnings]
+
+
+def _render_replay_graph_timeline(graph: dict[str, Any]) -> list[str]:
+    timeline = graph.get("timeline")
+    if not isinstance(timeline, list) or not timeline:
+        return ["- none"]
+    lines = []
+    for item in timeline:
+        if not isinstance(item, dict):
+            continue
+        occurred_at = str(item.get("occurred_at", ""))
+        node_type = str(item.get("type", ""))
+        node_id = str(item.get("node_id", ""))
+        status = str(item.get("status", ""))
+        prefix = f"{occurred_at}: " if occurred_at else ""
+        lines.append(f"- {prefix}{node_type} {node_id} ({status})")
+    return lines or ["- none"]
 
 
 def _render_timeline(events: list[Any]) -> list[str]:
