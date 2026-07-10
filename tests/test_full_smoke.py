@@ -24,9 +24,83 @@ def test_full_smoke_configures_isolated_contentops_and_external_self_worktree(tm
 
 def test_full_smoke_blocks_real_worker_without_explicit_opt_in(tmp_path):
     with pytest.raises(SystemExit) as exc:
-        full_smoke.main(["--output-root", str(tmp_path / "out"), "--worker-mode", "codex", "--dry-run"])
+        full_smoke.main(["--output-root", str(tmp_path / "out"), "--worker-mode", "codex"])
 
     assert "explicit opt-in only" in str(exc.value)
+
+
+def test_full_smoke_real_dry_run_records_local_only_preflight(tmp_path, monkeypatch):
+    output_root = tmp_path / "full-smoke"
+    monkeypatch.setattr(
+        full_smoke,
+        "worker_backend_local_preflight",
+        lambda *args, **kwargs: {
+            "mode": "codex",
+            "status": "ready",
+            "local_only": True,
+            "external_invocation": False,
+            "version": "codex 1.2.3",
+            "planned_command": ["codex", "exec", "<prompt-via-stdin>"],
+            "cwd": "isolated-workspace",
+            "sandbox_mode": "isolated-output-root",
+            "message": "Codex CLI passed local readiness checks.",
+        },
+    )
+
+    result = full_smoke.main(
+        [
+            "--output-root",
+            str(output_root),
+            "--suite",
+            "contentops",
+            "--worker-mode",
+            "codex",
+            "--dry-run",
+            "--issue",
+            "#322",
+        ]
+    )
+
+    summary = json.loads((output_root / "summary.json").read_text(encoding="utf-8"))
+    report = (output_root / "report.md").read_text(encoding="utf-8")
+    assert result == 0
+    assert summary["worker_backend_preflight"]["status"] == "ready"
+    assert summary["worker_backend_preflight"]["external_invocation"] is False
+    assert summary["runtime_policy_preflight"]["worker_backend"]["preflight"]["local_only"] is True
+    assert "<prompt-via-stdin>" in report
+
+
+def test_full_smoke_failed_real_preflight_is_reported_as_environment_failure(tmp_path, monkeypatch):
+    output_root = tmp_path / "full-smoke"
+    monkeypatch.setattr(
+        full_smoke,
+        "worker_backend_local_preflight",
+        lambda *args, **kwargs: {
+            "status": "fail",
+            "local_only": True,
+            "external_invocation": False,
+            "message": "Codex CLI binary is not available.",
+        },
+    )
+
+    result = full_smoke.main(
+        [
+            "--output-root",
+            str(output_root),
+            "--suite",
+            "contentops",
+            "--worker-mode",
+            "codex",
+            "--dry-run",
+        ]
+    )
+
+    summary = json.loads((output_root / "summary.json").read_text(encoding="utf-8"))
+    assert result == 1
+    assert summary["status"] == "failed"
+    assert summary["failures"] == [
+        {"classification": "env", "message": "Codex CLI binary is not available."}
+    ]
 
 
 def test_full_smoke_dry_run_writes_standard_outputs(tmp_path, monkeypatch):
