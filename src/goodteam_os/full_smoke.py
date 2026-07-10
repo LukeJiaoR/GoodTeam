@@ -12,10 +12,11 @@ from typing import MutableMapping
 from goodteam_os.execution.models import RuntimePolicy
 from goodteam_os.execution.runtime_policy import classify_worker_backend
 from goodteam_os.smoke import build_smoke_project_registry, run_smoke_suite
+from goodteam_os.workers import worker_backend_local_preflight
 
 
 SAFE_WORKER_MODES = {"fake", "noop"}
-REAL_WORKER_MODES = {"codex", "anthropic", "claude", "gemini", "opencode"}
+REAL_WORKER_MODES = {"codex", "anthropic", "claude", "gemini", "agy", "opencode"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     dirs = _ensure_output_dirs(output_root)
     suites = [suite.strip() for suite in args.suite.split(",") if suite.strip()]
     worker_mode = "anthropic" if args.worker_mode == "claude" else args.worker_mode
-    if worker_mode in REAL_WORKER_MODES and not args.allow_real_worker:
+    if worker_mode in REAL_WORKER_MODES and not args.dry_run and not args.allow_real_worker:
         raise SystemExit(f"{args.worker_mode} worker is explicit opt-in only; rerun with --allow-real-worker.")
 
     started_at = datetime.now(UTC).isoformat()
@@ -58,6 +59,19 @@ def main(argv: list[str] | None = None) -> int:
         output_root=output_root,
         workspace=workspace,
     )
+    if worker_mode in REAL_WORKER_MODES:
+        summary["worker_backend_preflight"] = worker_backend_local_preflight(
+            worker_mode,
+            dry_run=args.dry_run,
+            allow_real_worker=args.allow_real_worker,
+        )
+        summary["runtime_policy_preflight"]["worker_backend"]["preflight"] = {
+            "status": summary["worker_backend_preflight"]["status"],
+            "local_only": True,
+            "external_invocation": False,
+        }
+        if summary["worker_backend_preflight"]["status"] == "warn":
+            summary["warnings"].append(summary["worker_backend_preflight"]["message"])
     summary.update(_collect_environment(repo_root))
     _write_log(dirs["logs"] / "environment.log", json.dumps(summary, indent=2))
 
@@ -92,6 +106,13 @@ def main(argv: list[str] | None = None) -> int:
             for run in report.get("runs", [])
             if isinstance(run, dict) and str(run.get("status", "")) == "failed"
         ]
+        if summary.get("worker_backend_preflight", {}).get("status") == "fail":
+            failed_runs.append(
+                {
+                    "classification": "env",
+                    "message": str(summary["worker_backend_preflight"].get("message", "worker preflight failed")),
+                }
+            )
         summary["failures"] = failed_runs
         summary["status"] = "failed" if failed_runs or report.get("status") == "failed" else "passed"
 
@@ -339,10 +360,29 @@ def _write_markdown_report(path: Path, summary: dict[str, object]) -> None:
         f"- Summary: `{path.parent / 'summary.json'}`",
         f"- Coverage matrix: `{path.parent / 'coverage-matrix.md'}`",
         f"- Screenshots index: `{summary.get('dashboard_screenshot_index', '')}`",
+    ]
+    preflight = summary.get("worker_backend_preflight")
+    if isinstance(preflight, dict):
+        lines.extend(
+            [
+                "",
+                "## Worker Backend Local Preflight",
+                "",
+                f"- Status: **{preflight.get('status', '')}**",
+                f"- Local only: `{str(preflight.get('local_only', False)).lower()}`",
+                f"- External invocation: `{str(preflight.get('external_invocation', True)).lower()}`",
+                f"- Version: `{preflight.get('version', '')}`",
+                f"- Planned command: `{' '.join(preflight.get('planned_command', []))}`",
+                f"- CWD: `{preflight.get('cwd', '')}`",
+                f"- Sandbox: `{preflight.get('sandbox_mode', '')}`",
+                f"- Message: {preflight.get('message', '')}",
+            ]
+        )
+    lines.extend([
         "",
         "## Warnings",
         "",
-    ]
+    ])
     warnings = list(summary.get("warnings", []))
     lines.extend(f"- {warning}" for warning in warnings) if warnings else lines.append("- None")
     lines.extend(["", "## Failures", ""])

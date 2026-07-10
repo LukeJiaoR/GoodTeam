@@ -4,6 +4,7 @@ import pty
 import re
 import select
 import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -1874,6 +1875,164 @@ def worker_backend_doctor(mode: str) -> dict[str, Any]:
             }
         )
     return report
+
+
+def worker_backend_local_preflight(
+    mode: str,
+    *,
+    dry_run: bool,
+    allow_real_worker: bool,
+) -> dict[str, Any]:
+    """Inspect CLI readiness without exposing target content or invoking an agent."""
+    requested_mode = (mode or "").strip() or "codex"
+    canonical_mode = "anthropic" if requested_mode == "claude" else requested_mode
+    spec = CLI_BACKENDS.get(canonical_mode)
+    if spec is None:
+        return _non_cli_local_preflight(canonical_mode, dry_run, allow_real_worker)
+    doctor = worker_backend_doctor(canonical_mode)
+    available = bool(doctor.get("available"))
+    version = _local_cli_version(spec, str(doctor.get("command_path", ""))) if available else None
+    auth_present = bool(doctor.get("auth_present"))
+    auth_safe_to_determine = spec.which_name != "claude" or auth_present
+    status, message = _local_preflight_outcome(spec, available, version, auth_present, auth_safe_to_determine)
+    return _cli_local_preflight_report(
+        spec=spec,
+        canonical_mode=canonical_mode,
+        doctor=doctor,
+        status=status,
+        message=message,
+        version=version,
+        auth_present=auth_present,
+        auth_safe_to_determine=auth_safe_to_determine,
+        dry_run=dry_run,
+        allow_real_worker=allow_real_worker,
+    )
+
+
+def _local_preflight_outcome(
+    spec: CliBackendSpec,
+    available: bool,
+    version: str | None,
+    auth_present: bool,
+    auth_safe_to_determine: bool,
+) -> tuple[str, str]:
+    if not available:
+        return "fail", f"{spec.label} binary is not available."
+    if version is None:
+        return "fail", f"{spec.label} version command failed locally."
+    if not auth_present or not auth_safe_to_determine:
+        return "warn", f"{spec.label} authentication readiness is incomplete or cannot be safely determined."
+    return "ready", f"{spec.label} passed local readiness checks."
+
+
+def _cli_local_preflight_report(
+    *,
+    spec: CliBackendSpec,
+    canonical_mode: str,
+    doctor: dict[str, Any],
+    status: str,
+    message: str,
+    version: str | None,
+    auth_present: bool,
+    auth_safe_to_determine: bool,
+    dry_run: bool,
+    allow_real_worker: bool,
+) -> dict[str, Any]:
+    return {
+        "mode": canonical_mode,
+        "kind": "cli",
+        "status": status,
+        "local_only": True,
+        "external_invocation": False,
+        "real_run_opt_in": allow_real_worker,
+        "dry_run": dry_run,
+        "checks": {
+            "backend_selected": True,
+            "binary_available": bool(doctor.get("available")),
+            "version_readable": version is not None,
+            "auth_present": auth_present,
+            "auth_safe_to_determine": auth_safe_to_determine,
+            "config_ready": bool(doctor.get("ready")),
+        },
+        "version": version or "",
+        "planned_command": _redacted_command_shape(spec),
+        "cwd": "isolated-workspace",
+        "sandbox_mode": "isolated-output-root",
+        "message": message,
+    }
+
+
+def _non_cli_local_preflight(mode: str, dry_run: bool, allow_real_worker: bool) -> dict[str, Any]:
+    doctor = worker_backend_doctor(mode)
+    return {
+        "mode": mode,
+        "kind": str(doctor.get("kind", "unknown")),
+        "status": "ready" if doctor.get("ready") else "fail",
+        "local_only": True,
+        "external_invocation": False,
+        "real_run_opt_in": allow_real_worker,
+        "dry_run": dry_run,
+        "checks": {"backend_selected": True},
+        "planned_command": [],
+        "cwd": "isolated-workspace",
+        "sandbox_mode": "isolated-output-root",
+        "message": str(doctor.get("hint", "")),
+    }
+
+
+def _local_cli_version(spec: CliBackendSpec, binary: str) -> str | None:
+    safe_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"LANG", "LC_ALL", "PATH", "SHELL", "TERM", "TMPDIR"}
+    }
+    try:
+        with tempfile.TemporaryDirectory(prefix="goodteam-worker-preflight-") as isolated_home:
+            safe_env.update(
+                {
+                    "HOME": isolated_home,
+                    "CODEX_HOME": isolated_home,
+                    "XDG_CONFIG_HOME": isolated_home,
+                }
+            )
+            completed = subprocess.run(
+                [binary, "--version"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+                env=safe_env,
+            )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    output = (completed.stdout or completed.stderr).strip().splitlines()
+    return _redact_version(output[0]) if output else None
+
+
+def _redact_version(value: str) -> str:
+    cleaned = re.sub(r"(?:/[^\s]+)+", "<redacted-path>", value.strip())
+    return cleaned[:160]
+
+
+def _redacted_command_shape(spec: CliBackendSpec) -> list[str]:
+    shapes = {
+        "codex": [
+            "codex",
+            "exec",
+            "--model",
+            "<model>",
+            "--output-last-message",
+            "<result-file>",
+            "<prompt-via-stdin>",
+        ],
+        "claude": ["claude", "-p", "--model", "<model>", "<prompt-via-stdin>"],
+        "gemini": ["gemini", "--model", "<model>", "-p", "<redacted-prompt>"],
+        "agy": ["agy", "-p", "<redacted-prompt>", "--model", "<model>"],
+        "opencode": ["opencode", "run", "--dir", "<workspace>", "--model", "<model>", "<redacted-prompt>"],
+    }
+    return shapes.get(spec.which_name, [spec.which_name, "<redacted-arguments>"])
 
 
 def discover_installed_agents() -> list[dict[str, Any]]:

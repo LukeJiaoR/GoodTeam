@@ -21,6 +21,7 @@ from goodteam_os.workers import (
     is_transient,
     parse_result_sections,
     worker_backend_doctor,
+    worker_backend_local_preflight,
 )
 from goodteam_os.dispatch import (
     _job_report,
@@ -1418,6 +1419,60 @@ def test_worker_backend_doctor_accepts_agy_backend(monkeypatch):
 
     assert report["kind"] == "cli"
     assert report["command"] == "agy"
+
+
+def test_worker_backend_local_preflight_is_redacted_and_uses_sanitized_version_env(monkeypatch):
+    calls = []
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/private/user/bin/{name}")
+    monkeypatch.setenv("OPENAI_API_KEY", "super-secret-token")
+
+    def fake_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        return subprocess.CompletedProcess(command, 0, "codex 1.2.3 /private/user/build\n", "")
+
+    monkeypatch.setattr("goodteam_os.workers.subprocess.run", fake_run)
+
+    report = worker_backend_local_preflight("codex", dry_run=True, allow_real_worker=False)
+
+    assert report["status"] == "ready"
+    assert report["local_only"] is True
+    assert report["external_invocation"] is False
+    assert report["version"] == "codex 1.2.3 <redacted-path>"
+    assert report["planned_command"][-1] == "<prompt-via-stdin>"
+    assert calls[0]["command"] == ["/private/user/bin/codex", "--version"]
+    assert "OPENAI_API_KEY" not in calls[0]["env"]
+    assert calls[0]["env"]["HOME"] != str(Path.home())
+    assert "super-secret-token" not in json.dumps(report)
+    assert "/private/user" not in json.dumps(report)
+
+
+def test_worker_backend_local_preflight_warns_when_auth_cannot_be_safely_determined(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "goodteam_os.workers.subprocess.run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "claude 2.0\n", ""),
+    )
+
+    report = worker_backend_local_preflight("claude", dry_run=True, allow_real_worker=False)
+
+    assert report["mode"] == "anthropic"
+    assert report["status"] == "warn"
+    assert report["checks"]["auth_safe_to_determine"] is False
+
+
+def test_worker_backend_local_preflight_fails_when_version_command_fails(monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
+    monkeypatch.setattr(
+        "goodteam_os.workers.subprocess.run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 1, "", "failure"),
+    )
+
+    report = worker_backend_local_preflight("gemini", dry_run=True, allow_real_worker=False)
+
+    assert report["status"] == "fail"
+    assert report["checks"]["version_readable"] is False
 
 
 def test_query_codex_models_parses_list_visible_slugs(monkeypatch):
