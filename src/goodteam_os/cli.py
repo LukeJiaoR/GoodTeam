@@ -42,6 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8788)
     serve_command.add_argument("--workspace", type=Path, default=Path("."))
+    serve_command.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
+    serve_command.add_argument("--ready-token", default="", help=argparse.SUPPRESS)
 
     restart = subparsers.add_parser("restart", help="Restart the background GoodTeam server")
     restart.add_argument("--host", default="127.0.0.1")
@@ -154,7 +156,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "serve":
-        serve(workspace=args.workspace, host=args.host, port=args.port)
+        serve(
+            workspace=args.workspace,
+            host=args.host,
+            port=args.port,
+            ready_file=args.ready_file,
+            ready_token=args.ready_token,
+        )
         return 0
     if args.command == "restart":
         try:

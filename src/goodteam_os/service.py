@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -39,6 +39,9 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
     state_dir = service_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
     log_path = state_dir / "server.log"
+    ready_path = state_dir / "server.ready"
+    ready_token = secrets.token_urlsafe(24)
+    ready_path.unlink(missing_ok=True)
     command = [
         sys.executable,
         "-m",
@@ -50,6 +53,10 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
         host,
         "--port",
         str(port),
+        "--ready-file",
+        str(ready_path),
+        "--ready-token",
+        ready_token,
     ]
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(
@@ -67,11 +74,17 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
         "log": str(log_path),
         "started_at": time.time(),
     }
-    _write_state(state)
-    if _wait_until_ready(process, host, port):
+    try:
+        _write_state(state)
+        if not _wait_until_ready(process, ready_path, ready_token):
+            raise RuntimeError(f"server failed to start; see {log_path}")
         return {"running": True, **state}
-    _state_path().unlink(missing_ok=True)
-    raise RuntimeError(f"server failed to start; see {log_path}")
+    except BaseException:
+        _terminate_process(process)
+        _state_path().unlink(missing_ok=True)
+        raise
+    finally:
+        ready_path.unlink(missing_ok=True)
 
 
 def stop_service() -> dict[str, Any]:
@@ -92,18 +105,30 @@ def stop_service() -> dict[str, Any]:
     return {"stopped": True, "pid": pid}
 
 
-def _wait_until_ready(process: subprocess.Popen[bytes], host: str, port: int) -> bool:
+def _wait_until_ready(process: subprocess.Popen[bytes], ready_path: Path, ready_token: str) -> bool:
     deadline = time.monotonic() + START_TIMEOUT_SECONDS
-    connect_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     while time.monotonic() < deadline:
         if process.poll() is not None:
             return False
         try:
-            with socket.create_connection((connect_host, port), timeout=0.2):
+            if ready_path.read_text(encoding="utf-8") == ready_token:
                 return True
-        except OSError:
-            time.sleep(0.05)
+        except (FileNotFoundError, OSError):
+            pass
+        time.sleep(0.05)
     return False
+
+
+def _terminate_process(process: subprocess.Popen[bytes]) -> None:
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=STOP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
 
 
 def _process_is_running(pid: int) -> bool:
