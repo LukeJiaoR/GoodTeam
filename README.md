@@ -34,6 +34,18 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
+Start and manage GoodTeam as a background service (default port `21001`):
+
+```bash
+goodteam restart                 # stop an existing managed server, then start it
+goodteam status
+goodteam stop
+```
+
+`restart` uses the current directory as its workspace. Override it or the port with
+`--workspace /path/to/workspace` and `--port 21002`. The existing `goodteam-os`
+command remains available for compatibility.
+
 ### Configure one worker backend (codex)
 
 For a first real demo run, use `codex` as the single recommended backend path:

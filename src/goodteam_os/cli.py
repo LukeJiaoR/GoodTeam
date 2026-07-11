@@ -15,6 +15,7 @@ from goodteam_os.projects import (
     load_project_target,
 )
 from goodteam_os.smoke import run_smoke_suite
+from goodteam_os.service import DEFAULT_PORT, restart_service, service_status, stop_service
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import poll_telegram_approvals
 from goodteam_os.web import serve, start_workflow
@@ -22,7 +23,7 @@ from goodteam_os.workers import WorkerJobStore
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="goodteam-os")
+    parser = argparse.ArgumentParser(prog="goodteam")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     start = subparsers.add_parser("start")
@@ -41,6 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8788)
     serve_command.add_argument("--workspace", type=Path, default=Path("."))
+
+    restart = subparsers.add_parser("restart", help="Restart the background GoodTeam server")
+    restart.add_argument("--host", default="127.0.0.1")
+    restart.add_argument("--port", type=int, default=DEFAULT_PORT)
+    restart.add_argument("--workspace", type=Path, default=Path("."))
+
+    subparsers.add_parser("stop", help="Stop the background GoodTeam server")
+    subparsers.add_parser("status", help="Show the background GoodTeam server status")
 
     init = subparsers.add_parser("init", help="Scaffold a project config and run doctor")
     init.add_argument("--key", required=True, help="Short project key, e.g. MYAPP")
@@ -146,6 +155,29 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "serve":
         serve(workspace=args.workspace, host=args.host, port=args.port)
+        return 0
+    if args.command == "restart":
+        try:
+            payload = restart_service(workspace=args.workspace, host=args.host, port=args.port)
+        except RuntimeError as exc:
+            print(f"goodteam restart: {exc}", file=sys.stderr)
+            return 1
+        print(f"GoodTeam is running at http://{payload['host']}:{payload['port']} (pid {payload['pid']})")
+        print(f"Workspace: {payload['workspace']}")
+        print(f"Log: {payload['log']}")
+        return 0
+    if args.command == "stop":
+        payload = stop_service()
+        print(f"GoodTeam stopped (pid {payload['pid']})" if payload.get("stopped") else "GoodTeam is not running")
+        return 0
+    if args.command == "status":
+        payload = service_status()
+        if not payload.get("running"):
+            print("GoodTeam is not running")
+            return 1
+        print(f"GoodTeam is running at http://{payload['host']}:{payload['port']} (pid {payload['pid']})")
+        print(f"Workspace: {payload['workspace']}")
+        print(f"Log: {payload['log']}")
         return 0
     if args.command == "init":
         result = init_project(
