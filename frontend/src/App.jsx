@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import LanguageSwitcher from './components/LanguageSwitcher';
 import NewProjectModalContainer from './components/NewProjectModalContainer';
 import ProjectDashboard from './components/ProjectDashboard';
@@ -944,7 +945,7 @@ export default function App() {
       if (debateRef) {
         body.debate_ref = debateRef;
       }
-      if (decision === 'changes_requested') {
+      if (decision === 'changes_requested' || decision === 'rejected') {
         body.note = note;
       }
       const response = await fetch('/api/approve', {
@@ -1178,6 +1179,50 @@ export default function App() {
       />
     );
   }
+
+  // Styled dashboard-level error page for unknown project key
+  if (projectKey && error && (error.includes('Project config file not found') || error.includes('Project not found') || error.includes('not find a local project config'))) {
+    return (
+      <div className={`min-h-screen flex flex-col items-center justify-center p-6 ${darkMode ? 'bg-surface-sunken text-text-secondary dark' : 'bg-surface-sunken text-text-secondary'}`}>
+        <div className="w-full max-w-lg bg-surface-raised border-2 border-border-subtle shadow-card rounded-3xl p-8 space-y-6 animate-fade-in physics-card">
+          <div className="flex items-center space-x-4">
+            <div className="p-3 bg-status-danger-bg text-status-danger rounded-2xl border border-status-danger/20">
+              <AlertTriangle className="h-8 w-8 text-status-danger-text" />
+            </div>
+            <div>
+              <span className="text-2xs font-extrabold text-status-danger uppercase tracking-widest text-status-danger-text">Project Error</span>
+              <h1 className="text-xl font-black text-text-primary mt-0.5">Project Not Found</h1>
+            </div>
+          </div>
+          
+          <div className="text-xs leading-relaxed text-text-secondary space-y-3 font-semibold">
+            <p>
+              GoodTeam could not find a local project config for key: <code className="px-2 py-0.5 bg-surface-sunken border border-border-subtle rounded-md text-text-primary font-mono select-all font-bold">{projectKey}</code>.
+            </p>
+            <p className="text-text-muted">
+              The project key might be misspelled, or the configuration file does not exist on this machine.
+            </p>
+          </div>
+
+          <div className="border-t-2 border-border-subtle pt-6 flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={() => updateUrl('')}
+              className="flex-1 bg-accent text-accent-text border-2 border-accent shadow-button font-black px-6 py-3 rounded-2xl text-xs uppercase tracking-wider text-center transition-all duo-button-physics cursor-pointer"
+            >
+              Back to Projects
+            </button>
+            <button
+              onClick={() => updateUrl('?project=')}
+              className="flex-1 bg-surface-raised border-2 border-border-subtle shadow-button text-text-secondary font-black px-6 py-3 rounded-2xl text-xs uppercase tracking-wider text-center transition-all duo-button-physics cursor-pointer hover:bg-surface-sunken"
+            >
+              Open Overview
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Dashboard Detailed View for a single project
   return (
     <ProjectDashboard
@@ -1293,6 +1338,7 @@ export default function App() {
       panelRoleModels={panelRoleModels}
       panelRoleOverrides={panelRoleOverrides}
       projectKey={projectKey}
+      projectRoot={projectRoot}
       proposedRevision={proposedRevision}
       refineLoading={refineLoading}
       reportBugModal={reportBugModal}

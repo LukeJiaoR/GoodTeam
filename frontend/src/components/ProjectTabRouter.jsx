@@ -8,6 +8,8 @@ import AgileBoardTab from './tabs/AgileBoardTab';
 import SmokeRunsTab from './tabs/SmokeRunsTab';
 import WorkersTab from './tabs/WorkersTab';
 import ApprovalsTab from './tabs/ApprovalsTab';
+import WorkbenchTab from './tabs/WorkbenchTab';
+import DocsTab from './tabs/DocsTab';
 import DevLoopTab from './tabs/DevLoopTab';
 import SystemTab from './tabs/SystemTab';
 import MemoryTab from './tabs/MemoryTab';
@@ -20,6 +22,7 @@ import { getBadgeStyle, getStatusLabel } from '../utils/status';
 import { formatHumanTime } from '../utils/time';
 
 export default function ProjectTabRouter({
+  projectRoot,
   activeRun,
   activeTab,
   actionItems,
@@ -432,6 +435,22 @@ export default function ProjectTabRouter({
         />
       )}
 
+      {/* Tab: Workbench */}
+      {activeTab === 'workbench' && (
+        <WorkbenchTab
+          approvalReviews={approvalReviews}
+          actionLoading={actionLoading}
+          approvingAction={approvingAction}
+          handleApproveDecision={handleApproveDecision}
+          changesRequestedNote={changesRequestedNote}
+          setChangesRequestedNote={setChangesRequestedNote}
+          FilePath={FilePath}
+          getBadgeStyle={getBadgeStyle}
+          getStatusLabel={getStatusLabel}
+          t={t}
+        />
+      )}
+
       {/* Tab: Messages */}
       {activeTab === 'messages' && (
         <MessagesTab
@@ -519,6 +538,13 @@ export default function ProjectTabRouter({
           state={state}
           startContext={startContext}
           FilePath={FilePath}
+        />
+      )}
+
+      {/* Tab: Docs */}
+      {activeTab === 'docs' && (
+        <DocsTab
+          projectRoot={projectRoot}
         />
       )}
     </>

@@ -178,6 +178,7 @@ export default function ProjectDashboard({
   visibleGateDebate,
   workerRoles,
   workerRoutingMode,
+  projectRoot,
 }) {
   const state = data?.state;
   const startContext = data?.start_context || {};
@@ -275,6 +276,7 @@ export default function ProjectDashboard({
         loadingLabel={t('chrome.loading')}
         mainPanelChildren={
           <ProjectTabRouter
+            projectRoot={projectRoot}
             activeRun={activeRun}
             activeTab={activeTab}
             actionItems={actionItems}

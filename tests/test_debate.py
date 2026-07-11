@@ -136,6 +136,7 @@ def test_decide_approval_records_optional_debate_ref_only_when_provided(tmp_path
         project_key="CONTENTOPS",
         approval="prd",
         decision="changes_requested",
+        note="Revise the PRD scope.",
     )
     actions = [
         json.loads(line)
@@ -158,6 +159,7 @@ def test_decide_approval_records_optional_debate_ref_only_when_provided(tmp_path
         approval="prd",
         decision="changes_requested",
         debate_ref="messages/run-2.jsonl#msg:abc123",
+        note="Address the debate findings.",
     )
     actions = [
         json.loads(line)

@@ -606,6 +606,10 @@ def _decision_script() -> str:
       decision: String(formData.get("decision") || ""),
       reason: String(formData.get("reason") || ""),
     };
+    if ((body.decision === "request_changes" || body.decision === "reject") && !body.reason.trim()) {
+      setStatus("Reason is required for Request Changes or Reject decisions.", "error");
+      return;
+    }
     setStatus("Recording decision...", "pending");
     try {
       const response = await fetch(`/api/executions/${encodeURIComponent(executionId)}/review-workbench/decision`, {

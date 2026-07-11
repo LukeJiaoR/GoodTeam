@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -103,6 +104,7 @@ export default function ApprovalsTab({
   t = (key) => key,
 }) {
   const showChangesRequestedNoteKey = selectedReviewNoteKey;
+  const [localDecisionType, setLocalDecisionType] = useState('changes_requested');
 
   const getVerdictBadgeStyle = (verdict) => {
     switch (verdict?.toLowerCase()) {
@@ -1205,87 +1207,111 @@ export default function ApprovalsTab({
                                        </div>
                                      )}
                                      {showChangesRequestedNoteKey === selectedReview.approval && (
-                                       <div className="flex flex-col space-y-2">
-                                         <label className="text-xs font-bold text-text-secondary">
-                                           What needs to change? The PRD will be revised to address this.
-                                         </label>
-                                         <textarea
-                                           value={changesRequestedNote}
-                                           onChange={(e) => setChangesRequestedNote(e.target.value)}
-                                           placeholder="Type feedback here..."
-                                           rows={3}
-                                           className="w-full p-3 border border-border-subtle bg-surface-raised text-text-secondary rounded-xl text-xs focus:ring-2 focus:ring-status-warning outline-none resize-none font-sans"
-                                         />
-                                         {changesRequestedNote.trim() === '' && (
-                                           <div className="text-status-warning-text text-2xs font-bold flex items-center space-x-2">
-                                             <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-                                             <span>Feedback note is empty. Please provide detail so the model knows what to revise.</span>
-                                           </div>
-                                         )}
-                                       </div>
-                                     )}
-                                     <div className="flex flex-col items-end space-y-2">
-                                       <div className="flex justify-end space-x-2">
-                                         {showChangesRequestedNoteKey === selectedReview.approval && (
-                                           <button
-                                             type="button"
-                                             onClick={() => {
-                                               setShowChangesRequestedNoteKey(null);
-                                               setChangesRequestedNote('');
-                                             }}
-                                             disabled={actionLoading}
-                                             className="bg-surface-raised border-2 border-border-subtle shadow-button text-text-secondary font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
-                                           >
-                                             Cancel
-                                           </button>
-                                         )}
-                                         {showChangesRequestedNoteKey !== selectedReview.approval && (
-                                           <button
-                                             type="button"
-                                             onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef)}
-                                             disabled={actionLoading}
-                                             className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle shadow-button text-status-danger font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                           >
-                                             {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
-                                             <span>{isRejectLoading ? 'Rejecting...' : 'Reject'}</span>
-                                           </button>
-                                         )}
-                                         <button
-                                           type="button"
-                                           onClick={() => {
-                                             if (showChangesRequestedNoteKey === selectedReview.approval) {
-                                               handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef, changesRequestedNote);
-                                             } else {
-                                               setShowChangesRequestedNoteKey(selectedReview.approval);
-                                             }
-                                           }}
-                                           disabled={actionLoading || (showChangesRequestedNoteKey === selectedReview.approval && changesRequestedNote.trim() === '')}
-                                           className="bg-surface-raised hover:bg-status-warning-bg border-2 border-border-subtle shadow-button text-status-warning font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                         >
-                                           {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
-                                           <span>
-                                             {showChangesRequestedNoteKey === selectedReview.approval
-                                               ? (isRequestChangesLoading ? 'Submitting...' : 'Submit Request')
-                                               : (isRequestChangesLoading ? 'Requesting...' : 'Request Changes')
-                                             }
-                                           </span>
-                                         </button>
-                                         {showChangesRequestedNoteKey !== selectedReview.approval && (
-                                           <button
-                                             type="button"
-                                             onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
-                                             disabled={actionLoading}
-                                             className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
-                                           >
-                                             {isApproveLoading ? (
-                                               <RefreshCw className="h-4 w-4 animate-spin" />
-                                             ) : (
-                                               <Check className="h-4 w-4" />
-                                             )}
-                                             <span>{isApproveLoading ? 'Submitting...' : 'Approve Gate'}</span>
-                                           </button>
-                                         )}
-                                       </div>
+                                        <div className="flex flex-col space-y-2">
+                                          <label className="text-xs font-bold text-text-secondary">
+                                            {localDecisionType === 'rejected'
+                                              ? 'Why is this rejected? Reject reason note is required.'
+                                              : 'What needs to change? The PRD will be revised to address this.'}
+                                          </label>
+                                          <textarea
+                                            value={changesRequestedNote}
+                                            onChange={(e) => setChangesRequestedNote(e.target.value)}
+                                            placeholder={localDecisionType === 'rejected' ? "Type reject reason here..." : "Type feedback here..."}
+                                            rows={3}
+                                            className="w-full p-3 border border-border-subtle bg-surface-raised text-text-secondary rounded-xl text-xs focus:ring-2 focus:ring-status-warning outline-none resize-none font-sans"
+                                          />
+                                          {changesRequestedNote.trim() === '' && (
+                                            <div className="text-status-warning-text text-2xs font-bold flex items-center space-x-2">
+                                              <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                              <span>
+                                                {localDecisionType === 'rejected'
+                                                  ? 'Reject reason is empty. Please provide detail.'
+                                                  : 'Feedback note is empty. Please provide detail so the model knows what to revise.'}
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                      <div className="flex flex-col items-end space-y-2">
+                                        <div className="flex justify-end space-x-2">
+                                          {showChangesRequestedNoteKey === selectedReview.approval && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setShowChangesRequestedNoteKey(null);
+                                                setChangesRequestedNote('');
+                                                setLocalDecisionType('changes_requested');
+                                              }}
+                                              disabled={actionLoading}
+                                              className="bg-surface-raised border-2 border-border-subtle shadow-button text-text-secondary font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics"
+                                            >
+                                              Cancel
+                                            </button>
+                                          )}
+                                          {localDecisionType === 'rejected' && showChangesRequestedNoteKey === selectedReview.approval ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleApproveDecision(selectedReview.approval, 'rejected', debateRef, changesRequestedNote)}
+                                              disabled={actionLoading || changesRequestedNote.trim() === ''}
+                                              className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle shadow-button text-status-danger font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                            >
+                                              {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                              <span>{isRejectLoading ? 'Rejecting...' : 'Submit Reject'}</span>
+                                            </button>
+                                          ) : showChangesRequestedNoteKey !== selectedReview.approval ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setLocalDecisionType('rejected');
+                                                setShowChangesRequestedNoteKey(selectedReview.approval);
+                                              }}
+                                              disabled={actionLoading}
+                                              className="bg-surface-raised hover:bg-status-danger-bg border-2 border-border-subtle shadow-button text-status-danger font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                            >
+                                              {isRejectLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                              <span>{isRejectLoading ? 'Rejecting...' : 'Reject'}</span>
+                                            </button>
+                                          ) : null}
+                                          {localDecisionType === 'changes_requested' && showChangesRequestedNoteKey === selectedReview.approval ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleApproveDecision(selectedReview.approval, 'changes_requested', debateRef, changesRequestedNote)}
+                                              disabled={actionLoading || changesRequestedNote.trim() === ''}
+                                              className="bg-surface-raised hover:bg-status-warning-bg border-2 border-border-subtle shadow-button text-status-warning font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                            >
+                                              {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                              <span>{isRequestChangesLoading ? 'Submitting...' : 'Submit Request'}</span>
+                                            </button>
+                                          ) : showChangesRequestedNoteKey !== selectedReview.approval ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setLocalDecisionType('changes_requested');
+                                                setShowChangesRequestedNoteKey(selectedReview.approval);
+                                              }}
+                                              disabled={actionLoading}
+                                              className="bg-surface-raised hover:bg-status-warning-bg border-2 border-border-subtle shadow-button text-status-warning font-bold px-4 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                            >
+                                              {isRequestChangesLoading && <RefreshCw className="h-4 w-4 animate-spin" />}
+                                              <span>{isRequestChangesLoading ? 'Requesting...' : 'Request Changes'}</span>
+                                            </button>
+                                          ) : null}
+                                          {showChangesRequestedNoteKey !== selectedReview.approval && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleApproveDecision(selectedReview.approval, 'approved', debateRef)}
+                                              disabled={actionLoading}
+                                              className="bg-accent border-2 border-accent-text shadow-button text-text-inverse font-bold px-5 py-2 rounded-2xl text-xs uppercase tracking-wider transition-all duo-button-physics flex items-center space-x-1.5"
+                                            >
+                                              {isApproveLoading ? (
+                                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                              ) : (
+                                                <Check className="h-4 w-4" />
+                                              )}
+                                              <span>{isApproveLoading ? 'Submitting...' : 'Approve Gate'}</span>
+                                            </button>
+                                          )}
+                                        </div>
                                        {isSelectedApprovalLoading && (
                                          <span className="text-2xs text-text-secondary animate-pulse text-right">
                                            Generating… (PRD/RFC may be LLM-generated; this can take up to ~a minute)

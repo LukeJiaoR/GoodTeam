@@ -3244,7 +3244,7 @@ def test_frontend_contract_approvals_tab_multi_reviewer_projection():
     assert "getPolicyBadgeStyle(reviewerPolicy.severity)" in approvals_tab
     assert "multiReviewerProjection && (" in approvals_tab
     assert "disabled={actionLoading}" in approvals_tab
-    assert "disabled={actionLoading || (showChangesRequestedNoteKey === selectedReview.approval && changesRequestedNote.trim() === '')}" in approvals_tab
+    assert approvals_tab.count("disabled={actionLoading || changesRequestedNote.trim() === ''}") == 2
 
 
 def test_status_helpers_are_extracted_from_app_shell():
@@ -6413,6 +6413,7 @@ def test_decide_approval_writes_default_web_audit_metadata(tmp_path, monkeypatch
         approval="prd",
         decision="changes_requested",
         debate_ref="debate-1",
+        note="Address the acceptance evidence.",
     )
 
     actions = [
@@ -6455,6 +6456,7 @@ def test_decide_approval_uses_operator_ref_env_for_web_actor(tmp_path, monkeypat
         project_key="CONTENTOPS",
         approval="prd",
         decision="changes_requested",
+        note="Revise the PRD scope.",
     )
 
     actions = [
@@ -6471,7 +6473,13 @@ def test_decide_approval_accepts_existing_metadata_less_callers(tmp_path):
     state.next_node = "await_prd_approval"
     StateStore(tmp_path).write_project_current(state)
 
-    payload = decide_approval(workspace=tmp_path, project_key="CONTENTOPS", approval="prd", decision="changes_requested")
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="prd",
+        decision="changes_requested",
+        note="Revise the PRD scope.",
+    )
 
     assert payload["approvals"]["prd"] == "pending"
     actions = [
@@ -6536,6 +6544,7 @@ def test_decide_approval_attaches_reviewer_evidence_snapshot(tmp_path, monkeypat
         project_key="DEMO",
         approval="staging",
         decision="rejected",
+        note="Reviewer evidence blocks staging.",
     )
 
     actions = [
@@ -6578,6 +6587,7 @@ def test_decide_approval_snapshot_error_does_not_block_human_decision(tmp_path, 
         project_key="DEMO",
         approval="staging",
         decision="rejected",
+        note="Malformed reviewer evidence requires rejection.",
     )
 
     actions = [
@@ -6836,6 +6846,7 @@ def test_decide_approval_rejects_prd_by_regenerating_for_review(tmp_path):
         project_key="GTO",
         approval="prd",
         decision="rejected",
+        note="The PRD is too vague.",
     )
 
     assert payload["approvals"]["prd"] == "pending"
@@ -6880,6 +6891,7 @@ def test_decide_approval_rejects_rfc_by_regenerating_for_review(tmp_path):
         project_key="CONTENTOPS",
         approval="rfc",
         decision="rejected",
+        note="The RFC is too vague.",
     )
 
     assert payload["approvals"]["rfc"] == "pending"

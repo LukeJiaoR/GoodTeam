@@ -1112,9 +1112,15 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert handler.response_headers.get("Content-Type") == "text/html; charset=utf-8"
     assert b"<!doctype html>" in handler.wfile.getvalue()
 
-    # 5. Test unknown project pages return an HTTP error instead of closing the connection.
+    # 5. Test unknown project pages keep HTTP 400 semantics and render a product error surface.
     handler = simulate_get("/?project=UNKNOWN")
     assert 400 in handler.responses
+    body = handler.wfile.getvalue().decode("utf-8")
+    assert handler.response_headers.get("Content-Type") == "text/html; charset=utf-8"
+    assert "<!doctype html>" in body
+    assert "Project not found" in body
+    assert "UNKNOWN" in body
+    assert "GoodTeam Projects" in body
 
     # 6. Test static file serving when file exists in frontend/dist
     dist_dir = tmp_path / "frontend" / "dist"
@@ -1127,6 +1133,11 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert 200 in handler.responses
     assert handler.wfile.getvalue() == b"Hello React"
     assert handler.response_headers.get("Content-Type") == "text/html"
+
+    handler = simulate_get("/?project=UNKNOWN")
+    assert 400 in handler.responses
+    assert b"Project not found" in handler.wfile.getvalue()
+    assert b"Hello React" not in handler.wfile.getvalue()
 
     # Static CSS serving
     style_css = dist_dir / "assets" / "style.css"
@@ -1400,6 +1411,38 @@ def test_api_approve_accepts_optional_note_without_response_shape_change(tmp_pat
         "decision": "changes_requested",
         "next_node": "await_prd_approval",
     }
+
+
+def test_api_approve_forwards_rejected_note(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_decide_approval(**kwargs):
+        captured.update(kwargs)
+        return {"run_id": "run-1", "decision": kwargs["decision"], "next_node": "await_prd_approval"}
+
+    monkeypatch.setattr("goodteam_os.web.decide_approval", fake_decide_approval)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler_ok = simulate_post(
+        "/api/approve",
+        {
+            "project_key": "CONTENTOPS",
+            "approval": "prd",
+            "decision": "rejected",
+            "note": "Safety validation failed.",
+        },
+        headers={"Host": "127.0.0.1:8788"},
+    )
+    assert 200 in handler_ok.responses
+    assert captured["note"] == "Safety validation failed."
+
+
+def test_dashboard_rejected_decision_submits_note() -> None:
+    app_source = (Path(__file__).parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    handler_source = app_source.split("const handleApproveDecision", 1)[1].split("const handleGeneratePrd", 1)[0]
+
+    assert "decision === 'changes_requested' || decision === 'rejected'" in handler_source
+    assert "body.note = note" in handler_source
 
 
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):

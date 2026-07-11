@@ -3216,6 +3216,10 @@ def decide_approval(
     except ValueError as exc:
         raise ValueError(f"Unknown approval decision: {decision}") from exc
 
+    if approval_decision in (ApprovalDecision.CHANGES_REQUESTED, ApprovalDecision.REJECTED):
+        if not note.strip():
+            raise ValueError(f"Approval decision reason is required for {approval_decision.value}")
+
     state_store = StateStore(workspace)
     state = state_store.read_project_current(project_key) if project_key else state_store.read_current()
     if state is None:
@@ -8718,6 +8722,55 @@ def render_project_overview(workspace: Path, model_config: Path = Path("models.y
 </html>"""
 
 
+def render_unknown_project_error(project_key: str, message: str) -> str:
+    safe_project_key = escape(project_key.strip() or "unknown")
+    safe_message = escape(message)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoodTeam Projects · Project not found</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
+  <style>
+{PROJECT_OVERVIEW_CSS}
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <div class="logo">
+      <div class="logo-box">G</div>
+      <span class="logo-text">GoodTeam</span>
+      <span style="color: var(--line); margin: 0 8px;">|</span>
+      <span style="font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Projects Control Room</span>
+    </div>
+  </div>
+  <main>
+    <div class="alert" style="background: var(--error-bg); border-color: var(--error); box-shadow: 0 2px 0 var(--error-dark); margin-bottom: 20px; display: flex; gap: 16px; border: 2px solid var(--error); border-radius: 16px; padding: 18px 22px;">
+      <div class="alert-body" style="flex: 1;">
+        <div class="alert-title" style="color: var(--error-dark); font-weight: 900; font-size: 16px; margin-bottom: 4px;">Project not found</div>
+        <div class="alert-desc" style="font-size: 13px; color: var(--ink); font-weight: 600; margin-bottom: 12px;">
+          GoodTeam could not find a local project config for <strong>{safe_project_key}</strong>.
+          {safe_message}
+        </div>
+        <div class="alert-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <a class="button primary" href="/">Back to GoodTeam Projects</a>
+          <a class="button" href="/?project=">Open project overview</a>
+        </div>
+      </div>
+    </div>
+    <section class="projects">
+      <div class="empty-state">
+        Check the project key in the URL, or create a project config from the overview screen.
+      </div>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
 def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -8969,6 +9022,12 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
 
             # Try serving from frontend/dist first
             dist_dir = (workspace / "frontend" / "dist").resolve()
+            if parsed.path in {"/", "/index.html"} and project_key:
+                try:
+                    _project_config_for_key(workspace, project_key)
+                except Exception as exc:
+                    self._send_html(400, render_unknown_project_error(project_key, str(exc)))
+                    return
             if not parsed.path.startswith("/api/"):
                 rel_path = parsed.path.lstrip("/")
                 if not rel_path or rel_path == "index.html":
@@ -9009,7 +9068,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
                     start_context = build_start_console_context(workspace, project_config=project_config)
                     body = render_dashboard(resolve_dashboard_state(workspace, project_key=project_key), start_context).encode("utf-8")
                 except Exception as exc:
-                    self.send_error(400, str(exc))
+                    self._send_html(400, render_unknown_project_error(project_key, str(exc)))
                     return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")

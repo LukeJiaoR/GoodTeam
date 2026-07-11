@@ -83,6 +83,7 @@ def test_api_approve_route_records_debate_ref_only_when_provided(tmp_path, monke
             "project_key": "CONTENTOPS",
             "approval": "prd",
             "decision": "changes_requested",
+            "note": "Revise the PRD scope.",
         }
     )
 
@@ -102,6 +103,7 @@ def test_api_approve_route_records_debate_ref_only_when_provided(tmp_path, monke
             "approval": "prd",
             "decision": "changes_requested",
             "debate_ref": "messages/run-2.jsonl#msg:abc123",
+            "note": "Address the debate findings.",
         }
     )
 
