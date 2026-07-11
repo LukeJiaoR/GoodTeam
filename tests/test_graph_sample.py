@@ -575,7 +575,7 @@ def test_rfc_changes_requested_revises_with_feedback_and_returns_to_gate(tmp_pat
     assert any(action["action"] == "rfc_revised" for action in actions)
 
 
-def test_rfc_changes_requested_blank_note_still_dispatches_worker(tmp_path, monkeypatch):
+def test_rfc_changes_requested_note_dispatches_worker(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
     state.source_type = "existing_project"
@@ -615,11 +615,11 @@ def test_rfc_changes_requested_blank_note_still_dispatches_worker(tmp_path, monk
         project_key="CONTENTOPS",
         approval="rfc",
         decision="changes_requested",
-        note="   ",
+        note="Clarify the service boundaries.",
     )
 
     assert seen["role"] == "architect"
-    assert "A reviewer requested changes" not in seen["task"]
+    assert "Clarify the service boundaries." in seen["task"]
     assert payload["next_node"] == "await_rfc_approval"
     assert payload["approvals"]["rfc"] == "pending"
     assert "rfc" not in payload["change_requests"]
