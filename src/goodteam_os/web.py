@@ -8771,7 +8771,13 @@ def render_unknown_project_error(project_key: str, message: str) -> str:
 </html>"""
 
 
-def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
+def serve(
+    workspace: Path,
+    host: str = "127.0.0.1",
+    port: int = 8788,
+    ready_file: Path | None = None,
+    ready_token: str = "",
+) -> None:
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
@@ -9361,4 +9367,14 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8788) -> None:
         def log_message(self, format: str, *args: object) -> None:
             return
 
-    ThreadingHTTPServer((host, port), DashboardHandler).serve_forever()
+    server = ThreadingHTTPServer((host, port), DashboardHandler)
+    try:
+        if ready_file is not None:
+            ready_file.write_text(ready_token, encoding="utf-8")
+        server.serve_forever()
+    finally:
+        if ready_file is not None:
+            ready_file.unlink(missing_ok=True)
+        close_server = getattr(server, "server_close", None)
+        if close_server is not None:
+            close_server()
