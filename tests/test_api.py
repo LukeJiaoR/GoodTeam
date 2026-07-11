@@ -1112,9 +1112,15 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert handler.response_headers.get("Content-Type") == "text/html; charset=utf-8"
     assert b"<!doctype html>" in handler.wfile.getvalue()
 
-    # 5. Test unknown project pages return an HTTP error instead of closing the connection.
+    # 5. Test unknown project pages keep HTTP 400 semantics and render a product error surface.
     handler = simulate_get("/?project=UNKNOWN")
     assert 400 in handler.responses
+    body = handler.wfile.getvalue().decode("utf-8")
+    assert handler.response_headers.get("Content-Type") == "text/html; charset=utf-8"
+    assert "<!doctype html>" in body
+    assert "Project not found" in body
+    assert "UNKNOWN" in body
+    assert "GoodTeam Projects" in body
 
     # 6. Test static file serving when file exists in frontend/dist
     dist_dir = tmp_path / "frontend" / "dist"
@@ -1127,6 +1133,11 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert 200 in handler.responses
     assert handler.wfile.getvalue() == b"Hello React"
     assert handler.response_headers.get("Content-Type") == "text/html"
+
+    handler = simulate_get("/?project=UNKNOWN")
+    assert 400 in handler.responses
+    assert b"Project not found" in handler.wfile.getvalue()
+    assert b"Hello React" not in handler.wfile.getvalue()
 
     # Static CSS serving
     style_css = dist_dir / "assets" / "style.css"

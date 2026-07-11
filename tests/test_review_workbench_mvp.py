@@ -292,3 +292,16 @@ def test_text_renderer_consumes_canonical_review_object(tmp_path):
     assert "Worker backend: fake (fake)" in output
     assert "External invocation: not requested" in output
     assert "diff_artifact_missing" in output
+
+
+def test_record_request_changes_and_reject_must_have_reason(tmp_path):
+    api, execution_id = _full_lifecycle(tmp_path)
+
+    with pytest.raises(ValueError, match="Review decision reason is required for request_changes"):
+        api.record_review_decision(execution_id, "request_changes", "reviewer-b", reason="")
+
+    with pytest.raises(ValueError, match="Review decision reason is required for reject"):
+        api.record_review_decision(execution_id, "reject", "reviewer-c", reason=" ")
+
+    result = api.record_review_decision(execution_id, "approve", "reviewer-d", reason="")
+    assert result["status"] == "recorded"

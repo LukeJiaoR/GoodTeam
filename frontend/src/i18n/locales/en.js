@@ -5,6 +5,8 @@ export const en = {
   'nav.groups.system': 'System',
   'nav.tabs.overview': 'Overview',
   'nav.tabs.approvals': 'Approvals',
+  'nav.tabs.workbench': 'Workbench',
+  'nav.tabs.docs': 'Docs',
   'nav.tabs.artifacts': 'Artifacts',
   'nav.tabs.actions': 'Actions',
   'nav.tabs.board': 'Agile Board',

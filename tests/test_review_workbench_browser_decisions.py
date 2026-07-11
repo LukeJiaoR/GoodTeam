@@ -435,3 +435,41 @@ def _failed_execution(tmp_path: Path) -> str:
     )
     ledger.append_event(_failed_event(execution_id))
     return execution_id
+
+
+@pytest.mark.parametrize("decision", ["request_changes", "reject"])
+def test_browser_decision_post_rejects_missing_reason_for_changes_or_reject(
+    tmp_path,
+    monkeypatch,
+    decision,
+):
+    _, execution_id = _full_lifecycle(tmp_path)
+    request = _capture_dashboard_requests(tmp_path, monkeypatch)
+
+    status, _, body = request(
+        "POST",
+        f"/api/executions/{execution_id}/review-workbench/decision",
+        {
+            "project_root": str(tmp_path),
+            "decision": decision,
+            "reviewer": "reviewer-a",
+            "reason": "",
+        },
+    )
+
+    assert status == 400
+    assert "reason is required" in json.loads(body)["error"].lower()
+
+    status, _, body = request(
+        "POST",
+        f"/api/executions/{execution_id}/review-workbench/decision",
+        {
+            "project_root": str(tmp_path),
+            "decision": decision,
+            "reviewer": "reviewer-a",
+            "reason": "   ",
+        },
+    )
+
+    assert status == 400
+    assert "reason is required" in json.loads(body)["error"].lower()

@@ -93,6 +93,8 @@ class ReviewWorkbenchService:
         if not normalized_reviewer:
             raise ValueError("Review decision reviewer is required")
         normalized_reason = reason.strip()
+        if normalized_decision in ("request_changes", "reject") and not normalized_reason:
+            raise ValueError(f"Review decision reason is required for {normalized_decision}")
         replay = self.ledger.replay(execution_id)
         if replay["run"] is None and not replay["events"]:
             raise ValueError(f"Execution not found: {execution_id}")
@@ -171,17 +173,22 @@ def _decision_payload(
     reason: str,
     reviewed_at: str,
     evidence: dict[str, Any],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     return {
         "transition": REVIEW_DECISION_TRANSITION,
         "execution_id": execution_id,
         "decision": decision,
         "reviewer": reviewer,
+        "actor": reviewer,
         "reason": reason,
+        "reviewer_note": reason,
         "source": "review_workbench",
-        "reviewed_at": reviewed_at,
+        "decision_origin": "review_workbench",
+        "review_mode": "dashboard",
+        "evidence_ref": f"evidence/{execution_id}.json",
         "evidence_schema_version": str(evidence.get("schema_version", "")),
         "evidence_hash": stable_hash(evidence),
+        "reviewed_at": reviewed_at,
     }
 
 

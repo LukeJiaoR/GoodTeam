@@ -10,6 +10,8 @@ import {
   MessageSquare,
   GitBranch,
   GitPullRequest,
+  ClipboardCheck,
+  BookOpen,
 } from 'lucide-react';
 
 export function buildProjectNavGroups(t) {
@@ -19,6 +21,7 @@ export function buildProjectNavGroups(t) {
       items: [
         { id: 'overview', label: t('nav.tabs.overview'), icon: LayoutDashboard },
         { id: 'approvals', label: t('nav.tabs.approvals'), icon: CheckCircle2 },
+        { id: 'workbench', label: t('nav.tabs.workbench'), icon: ClipboardCheck },
         { id: 'artifacts', label: t('nav.tabs.artifacts'), icon: FileCode },
         { id: 'actions', label: t('nav.tabs.actions'), icon: Activity },
         { id: 'board', label: t('nav.tabs.board'), icon: Kanban },
@@ -43,6 +46,7 @@ export function buildProjectNavGroups(t) {
       title: t('nav.groups.system'),
       items: [
         { id: 'system', label: t('nav.tabs.system'), icon: Settings },
+        { id: 'docs', label: t('nav.tabs.docs'), icon: BookOpen },
       ],
     },
   ];

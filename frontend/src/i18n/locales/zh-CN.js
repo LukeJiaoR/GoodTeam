@@ -5,6 +5,8 @@ export const zhCN = {
   'nav.groups.system': '系统',
   'nav.tabs.overview': '概览',
   'nav.tabs.approvals': '审批',
+  'nav.tabs.workbench': '工作台',
+  'nav.tabs.docs': '文档',
   'nav.tabs.artifacts': '产物',
   'nav.tabs.actions': '动作',
   'nav.tabs.board': '敏捷看板',
