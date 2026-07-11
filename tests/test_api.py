@@ -1413,6 +1413,38 @@ def test_api_approve_accepts_optional_note_without_response_shape_change(tmp_pat
     }
 
 
+def test_api_approve_forwards_rejected_note(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_decide_approval(**kwargs):
+        captured.update(kwargs)
+        return {"run_id": "run-1", "decision": kwargs["decision"], "next_node": "await_prd_approval"}
+
+    monkeypatch.setattr("goodteam_os.web.decide_approval", fake_decide_approval)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler_ok = simulate_post(
+        "/api/approve",
+        {
+            "project_key": "CONTENTOPS",
+            "approval": "prd",
+            "decision": "rejected",
+            "note": "Safety validation failed.",
+        },
+        headers={"Host": "127.0.0.1:8788"},
+    )
+    assert 200 in handler_ok.responses
+    assert captured["note"] == "Safety validation failed."
+
+
+def test_dashboard_rejected_decision_submits_note() -> None:
+    app_source = (Path(__file__).parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    handler_source = app_source.split("const handleApproveDecision", 1)[1].split("const handleGeneratePrd", 1)[0]
+
+    assert "decision === 'changes_requested' || decision === 'rejected'" in handler_source
+    assert "body.note = note" in handler_source
+
+
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

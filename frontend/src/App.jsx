@@ -945,7 +945,7 @@ export default function App() {
       if (debateRef) {
         body.debate_ref = debateRef;
       }
-      if (decision === 'changes_requested') {
+      if (decision === 'changes_requested' || decision === 'rejected') {
         body.note = note;
       }
       const response = await fetch('/api/approve', {
