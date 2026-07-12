@@ -123,7 +123,7 @@ def choose_native_path(
     except OSError:
         return {"status": "error", "error": "native_picker_unavailable"}
 
-    stdout = str(completed.stdout or "").strip()
+    stdout = str(completed.stdout or "").rstrip("\r\n")
     stderr = str(completed.stderr or "").strip()
     if stdout == CANCELLED_SENTINEL or (completed.returncode != 0 and "-128" in stderr):
         return {"status": "cancelled", "path": ""}

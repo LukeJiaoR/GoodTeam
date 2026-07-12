@@ -117,6 +117,24 @@ def test_stop_without_state_is_idempotent(monkeypatch, tmp_path) -> None:
     assert service.stop_service() == {"stopped": False, "reason": "not running"}
 
 
+def test_service_status_and_stop_use_service_lifecycle_lock(monkeypatch, tmp_path) -> None:
+    events = []
+
+    class Lock:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
+    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(service, "_service_lock", lambda: Lock())
+
+    assert service.service_status() == {"running": False}
+    assert service.stop_service() == {"stopped": False, "reason": "not running"}
+    assert events == ["enter", "exit", "enter", "exit"]
+
+
 def test_process_is_running_treats_zombie_as_stopped(monkeypatch) -> None:
     monkeypatch.setattr(service.os, "kill", lambda pid, sig: None)
 

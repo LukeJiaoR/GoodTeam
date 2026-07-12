@@ -181,3 +181,19 @@ def test_native_picker_rejects_selected_path_of_wrong_type(tmp_path) -> None:
     )
 
     assert result == {"status": "error", "error": "selected_path_is_not_a_file"}
+
+
+def test_native_picker_preserves_legal_trailing_space_in_selected_filename(tmp_path) -> None:
+    selected = tmp_path / "context "
+    selected.write_text("context", encoding="utf-8")
+
+    result = choose_native_path(
+        "file",
+        str(tmp_path),
+        host="127.0.0.1",
+        platform="darwin",
+        environ={},
+        runner=lambda *args, **kwargs: _completed(stdout=f"{selected}\n"),
+    )
+
+    assert result == {"status": "selected", "path": str(selected.resolve())}

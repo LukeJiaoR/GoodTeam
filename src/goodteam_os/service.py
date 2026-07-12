@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import secrets
@@ -7,6 +8,8 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +29,11 @@ def service_state_dir() -> Path:
 
 
 def service_status() -> dict[str, Any]:
+    with _service_lock():
+        return _service_status_unlocked()
+
+
+def _service_status_unlocked() -> dict[str, Any]:
     state = _read_state()
     if not state:
         return {"running": False}
@@ -38,7 +46,12 @@ def service_status() -> dict[str, Any]:
 
 def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> dict[str, Any]:
     frontend_dist = resolve_frontend_dist()
-    stop_service()
+    with _service_lock():
+        return _restart_service_unlocked(workspace, host=host, port=port, frontend_dist=frontend_dist)
+
+
+def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend_dist: Path) -> dict[str, Any]:
+    _stop_service_unlocked()
     state_dir = service_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
     log_path = state_dir / "server.log"
@@ -94,6 +107,11 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
 
 
 def stop_service() -> dict[str, Any]:
+    with _service_lock():
+        return _stop_service_unlocked()
+
+
+def _stop_service_unlocked() -> dict[str, Any]:
     state = _read_state()
     if not state:
         return {"stopped": False, "reason": "not running"}
@@ -109,6 +127,18 @@ def stop_service() -> dict[str, Any]:
         os.kill(pid, signal.SIGKILL)
     _state_path().unlink(missing_ok=True)
     return {"stopped": True, "pid": pid}
+
+
+@contextmanager
+def _service_lock() -> Iterator[None]:
+    state_dir = service_state_dir()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "server.lock").open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _wait_until_ready(process: subprocess.Popen[bytes], ready_path: Path, ready_token: str) -> bool:

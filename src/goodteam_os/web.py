@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import hmac
 import os
@@ -1143,6 +1144,25 @@ def _request_origin_is_same_origin(*, origin: str, host: str) -> bool:
     origin_name = (parsed.hostname or "").lower()
     request_name = request_host.rsplit(":", 1)[0]
     return origin_name in local_hosts and request_name in local_hosts
+
+
+def _native_picker_request_targets_local_server(*, request_host: str, port: int) -> bool:
+    if not request_host:
+        return False
+    try:
+        parsed = urlparse(f"//{request_host}")
+        request_port = parsed.port if parsed.port is not None else 80
+    except ValueError:
+        return False
+    hostname = (parsed.hostname or "").lower()
+    if hostname == "localhost":
+        is_loopback = True
+    else:
+        try:
+            is_loopback = ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            is_loopback = False
+    return is_loopback and request_port == port
 
 
 def _dispatch_worktree_path(workspace: Path, name: str) -> Path:
@@ -8826,6 +8846,9 @@ def serve(
             project_key = query.get("project", [""])[0]
             if maybe_send_favicon_response(self, parsed.path):
                 return
+            if parsed.path in {"/", "/index.html"} and frontend_error is not None:
+                self._send_html(503, render_frontend_assets_diagnostic(workspace, frontend_error))
+                return
             review_workbench_page = handle_review_workbench_page_get(parsed.path, query)
             if review_workbench_page is not None:
                 status, body = review_workbench_page
@@ -9126,6 +9149,12 @@ def serve(
                 host=str(self.headers.get("Host", "")),
             ):
                 self._send_json(403, {"error": "cross-origin POST requests are not allowed"})
+                return
+            if normalized_path == "/fs/choose" and not _native_picker_request_targets_local_server(
+                request_host=str(self.headers.get("Host", "")),
+                port=port,
+            ):
+                self._send_json(403, {"error": "native picker requires the local GoodTeam origin"})
                 return
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))

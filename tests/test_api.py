@@ -1059,6 +1059,21 @@ def test_api_fs_choose_rejects_unknown_mode_and_cross_origin_before_adapter(tmp_
     assert calls == []
 
 
+def test_api_fs_choose_rejects_dns_rebinding_authority_before_adapter(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(web, "choose_native_path", lambda *args, **kwargs: calls.append((args, kwargs)))
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/fs/choose",
+        {"mode": "directory", "initial_path": str(tmp_path)},
+        headers={"Host": "evil.example:8788", "Origin": "http://evil.example:8788"},
+    )
+
+    assert 403 in response.responses
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("picker_payload", "expected_status"),
     [
@@ -1230,16 +1245,17 @@ def test_missing_frontend_returns_actionable_diagnostic_instead_of_legacy(tmp_pa
     )
     simulate_get = capture_get_handler(tmp_path, monkeypatch)
 
-    handler = simulate_get("/")
+    for path in ("/", "/?project=UNKNOWN"):
+        handler = simulate_get(path)
 
-    assert 503 in handler.responses
-    body = handler.wfile.getvalue().decode("utf-8")
-    assert "GoodTeam React frontend is unavailable" in body
-    assert str(tmp_path.resolve()) in body
-    assert "Attempted paths" in body
-    assert "npm --prefix frontend run build" in body
-    assert "GOODTEAM_FRONTEND_DIST" in body
-    assert "GoodTeam Projects" not in body
+        assert 503 in handler.responses
+        body = handler.wfile.getvalue().decode("utf-8")
+        assert "GoodTeam React frontend is unavailable" in body
+        assert str(tmp_path.resolve()) in body
+        assert "Attempted paths" in body
+        assert "npm --prefix frontend run build" in body
+        assert "GOODTEAM_FRONTEND_DIST" in body
+        assert "GoodTeam Projects" not in body
 
 
 def test_api_handler_do_post_routing(tmp_path, monkeypatch):
