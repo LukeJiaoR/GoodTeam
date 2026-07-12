@@ -246,7 +246,10 @@ export default function App() {
   } = gitInitAction;
   const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();
 
-  const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker();
+  const { chooseLocalPath, directoryPickerModal } = useDirectoryPicker(
+    undefined,
+    (pickerError) => showToast(pickerError, true),
+  );
 
   const gateDebateReviews = data?.approval_reviews || [];
   const actionableGateReview = gateDebateReviews.find(r => r.is_actionable) || gateDebateReviews[0];
@@ -1080,7 +1083,7 @@ export default function App() {
       loadingDiscoveredAgents={loadingDiscoveredAgents}
       modelProfile={modelProfile}
       newProjectModalOpen={newProjectModalOpen}
-      openDirectoryPicker={openDirectoryPicker}
+      chooseLocalPath={chooseLocalPath}
       planeApiHost={planeApiHost}
       planeApiKeyEnv={planeApiKeyEnv}
       planeMcpServer={planeMcpServer}

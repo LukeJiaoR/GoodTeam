@@ -97,4 +97,3 @@ def test_frontend_dist_error_lists_every_attempted_application_path(tmp_path) ->
     assert str((module_path.parent / "frontend_dist").resolve()) in attempted
     assert str((tmp_path / "prefix" / "share" / "goodteam" / "frontend" / "dist").resolve()) in attempted
     assert str((tmp_path / "checkout" / "frontend" / "dist").resolve()) in attempted
-
