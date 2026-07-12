@@ -93,9 +93,7 @@ except Exception as exc:
     print(f"[dev-up] note: could not fully advance DEMO run: {exc}")
 PYEOF
 
-# 3. serve resolves dist at <workspace>/frontend/dist, so link the built dist in.
-mkdir -p "$WS/frontend"
-ln -sfn "$ROOT/frontend/dist" "$WS/frontend/dist"
+# 3. serve resolves application assets from this checkout, independently of $WS.
 
 # Free the port so a leftover previous dev-up instance can't shadow this one
 # (otherwise the new serve fails to bind and you keep viewing the old server).

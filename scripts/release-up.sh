@@ -165,8 +165,7 @@ except Exception as exc:
 PYEOF
 fi
 
-mkdir -p "$WS/frontend"
-ln -sfn "$RELEASE_DIR/frontend/dist" "$WS/frontend/dist"
+# The release server resolves React assets from $RELEASE_DIR, not from $WS.
 
 echo ""
 echo "[release-up] release instance ready:"

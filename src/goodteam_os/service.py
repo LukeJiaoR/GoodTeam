@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from goodteam_os.frontend_assets import resolve_frontend_dist
+
 DEFAULT_PORT = 21001
 START_TIMEOUT_SECONDS = 5.0
 STOP_TIMEOUT_SECONDS = 5.0
@@ -35,6 +37,7 @@ def service_status() -> dict[str, Any]:
 
 
 def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> dict[str, Any]:
+    frontend_dist = resolve_frontend_dist()
     stop_service()
     state_dir = service_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -53,6 +56,8 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
         host,
         "--port",
         str(port),
+        "--frontend-dist",
+        str(frontend_dist),
         "--ready-file",
         str(ready_path),
         "--ready-token",
@@ -71,6 +76,7 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
         "host": host,
         "port": port,
         "workspace": str(workspace.resolve()),
+        "frontend_dist": str(frontend_dist),
         "log": str(log_path),
         "started_at": time.time(),
     }

@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from goodteam_os import cli, service, web
 
 
@@ -25,12 +27,79 @@ def test_status_reports_running_service(monkeypatch, capsys) -> None:
             "host": "127.0.0.1",
             "port": 21001,
             "workspace": "/tmp/workspace",
+            "frontend_dist": "/opt/goodteam/frontend/dist",
             "log": "/tmp/server.log",
+            "started_at": 1783872000.0,
         },
     )
 
     assert cli.main(["status"]) == 0
-    assert "http://127.0.0.1:21001" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Running: yes" in output
+    assert "URL: http://127.0.0.1:21001" in output
+    assert "PID: 123" in output
+    assert "Workspace: /tmp/workspace" in output
+    assert "Frontend dist: /opt/goodteam/frontend/dist" in output
+    assert "Log path: /tmp/server.log" in output
+    assert "Started at:" in output
+
+
+def test_restart_records_and_passes_resolved_frontend_dist(monkeypatch, tmp_path) -> None:
+    state_dir = tmp_path / "state"
+    workspace = tmp_path / "data workspace"
+    frontend_dist = tmp_path / "application" / "frontend" / "dist"
+    workspace.mkdir()
+    frontend_dist.mkdir(parents=True)
+    (frontend_dist / "index.html").write_text("react-build", encoding="utf-8")
+    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(state_dir))
+    monkeypatch.setattr(service, "stop_service", lambda: {"stopped": False})
+    monkeypatch.setattr(service, "resolve_frontend_dist", lambda: frontend_dist.resolve())
+    monkeypatch.setattr(service, "_wait_until_ready", lambda process, path, token: True)
+    captured = {}
+
+    class Process:
+        pid = 4321
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr(service.subprocess, "Popen", fake_popen)
+
+    payload = service.restart_service(workspace=workspace)
+
+    state = json.loads((state_dir / "server.json").read_text(encoding="utf-8"))
+    assert payload["frontend_dist"] == str(frontend_dist.resolve())
+    assert state["frontend_dist"] == str(frontend_dist.resolve())
+    assert state["workspace"] == str(workspace.resolve())
+    frontend_arg = captured["command"].index("--frontend-dist")
+    assert captured["command"][frontend_arg + 1] == str(frontend_dist.resolve())
+    assert captured["kwargs"]["start_new_session"] is True
+
+
+def test_restart_missing_frontend_does_not_stop_or_spawn_service(monkeypatch, tmp_path) -> None:
+    from goodteam_os.frontend_assets import FrontendAssetsNotFound
+
+    attempted = tmp_path / "missing" / "frontend" / "dist"
+    monkeypatch.setattr(
+        service,
+        "resolve_frontend_dist",
+        lambda: (_ for _ in ()).throw(FrontendAssetsNotFound([attempted])),
+    )
+    monkeypatch.setattr(service, "stop_service", lambda: (_ for _ in ()).throw(AssertionError("must not stop")))
+    monkeypatch.setattr(
+        service.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not spawn")),
+    )
+
+    try:
+        service.restart_service(workspace=tmp_path)
+    except FrontendAssetsNotFound as exc:
+        assert str(attempted.resolve()) in str(exc)
+    else:
+        raise AssertionError("missing frontend must fail restart")
 
 
 def test_status_removes_stale_state(monkeypatch, tmp_path) -> None:
@@ -116,3 +185,14 @@ def test_serve_writes_ready_token_only_after_server_binds(monkeypatch, tmp_path)
     web.serve(tmp_path, ready_file=ready_path, ready_token="token-123")
 
     assert not ready_path.exists()
+
+
+def test_serve_rejects_invalid_explicit_frontend_before_binding(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        web,
+        "ThreadingHTTPServer",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not bind")),
+    )
+
+    with pytest.raises(RuntimeError, match="GOODTEAM_FRONTEND_DIST"):
+        web.serve(tmp_path, frontend_dist=tmp_path / "missing-dist")

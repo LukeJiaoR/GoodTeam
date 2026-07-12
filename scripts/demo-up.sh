@@ -84,9 +84,7 @@ else
   echo "[demo-up] workspace already seeded ($WS); use --reset to rebuild"
 fi
 
-# 3. serve resolves dist at <workspace>/frontend/dist, so link built dist in.
-mkdir -p "$WS/frontend"
-ln -sfn "$ROOT/frontend/dist" "$WS/frontend/dist"
+# 3. serve resolves application assets from this checkout, independently of $WS.
 
 # 4. Free the port so leftover servers cannot shadow this instance.
 existing="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
