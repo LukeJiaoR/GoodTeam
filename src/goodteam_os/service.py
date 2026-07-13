@@ -7,8 +7,21 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+from goodteam_os.frontend_assets import resolve_frontend_dist
+
+if os.name == "nt":
+    import msvcrt
+
+    fcntl = None
+else:
+    import fcntl
+
+    msvcrt = None
 
 DEFAULT_PORT = 21001
 START_TIMEOUT_SECONDS = 5.0
@@ -24,6 +37,11 @@ def service_state_dir() -> Path:
 
 
 def service_status() -> dict[str, Any]:
+    with _service_lock():
+        return _service_status_unlocked()
+
+
+def _service_status_unlocked() -> dict[str, Any]:
     state = _read_state()
     if not state:
         return {"running": False}
@@ -35,7 +53,13 @@ def service_status() -> dict[str, Any]:
 
 
 def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> dict[str, Any]:
-    stop_service()
+    frontend_dist = resolve_frontend_dist()
+    with _service_lock():
+        return _restart_service_unlocked(workspace, host=host, port=port, frontend_dist=frontend_dist)
+
+
+def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend_dist: Path) -> dict[str, Any]:
+    _stop_service_unlocked()
     state_dir = service_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
     log_path = state_dir / "server.log"
@@ -53,6 +77,8 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
         host,
         "--port",
         str(port),
+        "--frontend-dist",
+        str(frontend_dist),
         "--ready-file",
         str(ready_path),
         "--ready-token",
@@ -71,6 +97,7 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
         "host": host,
         "port": port,
         "workspace": str(workspace.resolve()),
+        "frontend_dist": str(frontend_dist),
         "log": str(log_path),
         "started_at": time.time(),
     }
@@ -88,6 +115,11 @@ def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAUL
 
 
 def stop_service() -> dict[str, Any]:
+    with _service_lock():
+        return _stop_service_unlocked()
+
+
+def _stop_service_unlocked() -> dict[str, Any]:
     state = _read_state()
     if not state:
         return {"stopped": False, "reason": "not running"}
@@ -103,6 +135,30 @@ def stop_service() -> dict[str, Any]:
         os.kill(pid, signal.SIGKILL)
     _state_path().unlink(missing_ok=True)
     return {"stopped": True, "pid": pid}
+
+
+@contextmanager
+def _service_lock() -> Iterator[None]:
+    state_dir = service_state_dir()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "server.lock").open("a+b") as lock_file:
+        if os.name == "nt":
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _wait_until_ready(process: subprocess.Popen[bytes], ready_path: Path, ready_token: str) -> bool:

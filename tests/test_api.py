@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 
 import goodteam_os.web as web
 from goodteam_os.memory import RoleMemoryStore
@@ -19,7 +20,7 @@ class FakeRequest:
         return BytesIO()
 
 
-def capture_get_handler(tmp_path, monkeypatch):
+def capture_get_handler(tmp_path, monkeypatch, *, frontend_dist=None):
     captured_handler_class = None
 
     def mock_server(addr, handler_class):
@@ -33,7 +34,7 @@ def capture_get_handler(tmp_path, monkeypatch):
         return FakeServer()
 
     monkeypatch.setattr("goodteam_os.web.ThreadingHTTPServer", mock_server)
-    serve(tmp_path, host="127.0.0.1", port=8788)
+    serve(tmp_path, host="127.0.0.1", port=8788, frontend_dist=frontend_dist)
     assert captured_handler_class is not None
 
     def simulate_get(path, headers=None):
@@ -1010,9 +1011,136 @@ def test_api_fs_mkdir_route_missing_parent_returns_404(tmp_path, monkeypatch):
     assert 404 in handler.responses
 
 
+def test_api_fs_choose_route_returns_native_picker_selection(tmp_path, monkeypatch):
+    selected = tmp_path / "项目 with spaces"
+    selected.mkdir()
+    captured = {}
+
+    def fake_choose(mode, initial_path, *, host):
+        captured.update(mode=mode, initial_path=initial_path, host=host)
+        return {"status": "selected", "path": str(selected)}
+
+    monkeypatch.setattr(web, "choose_native_path", fake_choose)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/fs/choose",
+        {"mode": "directory", "initial_path": str(tmp_path)},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+
+    assert 200 in handler.responses
+    assert json.loads(handler.wfile.getvalue().decode("utf-8")) == {
+        "status": "selected",
+        "path": str(selected),
+    }
+    assert captured == {"mode": "directory", "initial_path": str(tmp_path), "host": "127.0.0.1"}
+
+
+def test_api_fs_choose_rejects_unknown_mode_and_cross_origin_before_adapter(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(web, "choose_native_path", lambda *args, **kwargs: calls.append((args, kwargs)))
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    unknown = simulate_post(
+        "/api/fs/choose",
+        {"mode": "command", "initial_path": str(tmp_path)},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
+    )
+    cross_origin = simulate_post(
+        "/api/fs/choose",
+        {"mode": "directory", "initial_path": str(tmp_path)},
+        headers={"Host": "127.0.0.1:8788", "Origin": "https://evil.example"},
+    )
+
+    assert 400 in unknown.responses
+    assert "mode" in json.loads(unknown.wfile.getvalue().decode("utf-8"))["error"]
+    assert 403 in cross_origin.responses
+    assert calls == []
+
+
+def test_api_fs_choose_rejects_dns_rebinding_authority_before_adapter(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(web, "choose_native_path", lambda *args, **kwargs: calls.append((args, kwargs)))
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/fs/choose",
+        {"mode": "directory", "initial_path": str(tmp_path)},
+        headers={"Host": "evil.example:8788", "Origin": "http://evil.example:8788"},
+    )
+
+    assert 403 in response.responses
+    assert calls == []
+
+
+def test_api_fs_choose_rejects_other_local_origin_port_before_adapter(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(web, "choose_native_path", lambda *args, **kwargs: calls.append((args, kwargs)))
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/fs/choose",
+        {"mode": "directory", "initial_path": str(tmp_path)},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:3000"},
+    )
+
+    assert 403 in response.responses
+    assert calls == []
+
+
+def test_api_fs_choose_allows_explicit_vite_development_origin(tmp_path, monkeypatch):
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    monkeypatch.setattr(
+        web,
+        "choose_native_path",
+        lambda *args, **kwargs: {"status": "selected", "path": str(selected)},
+    )
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/fs/choose",
+        {"mode": "directory", "initial_path": str(tmp_path)},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://localhost:8790"},
+    )
+
+    assert 200 in response.responses
+
+
+@pytest.mark.parametrize(
+    ("picker_payload", "expected_status"),
+    [
+        ({"status": "cancelled", "path": ""}, 200),
+        ({"status": "unsupported", "reason": "native_picker_unavailable"}, 200),
+        ({"status": "error", "error": "native_picker_timeout"}, 500),
+    ],
+)
+def test_api_fs_choose_preserves_stable_status_payloads(tmp_path, monkeypatch, picker_payload, expected_status):
+    monkeypatch.setattr(web, "choose_native_path", lambda *args, **kwargs: picker_payload)
+    handler = capture_post_handler(tmp_path, monkeypatch)(
+        "/api/fs/choose",
+        {"mode": "file", "initial_path": str(tmp_path)},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert expected_status in handler.responses
+    assert json.loads(handler.wfile.getvalue().decode("utf-8")) == picker_payload
+
+
 def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     # 1. Capture the DashboardHandler class
     captured_handler_class = None
+    application_dist = tmp_path / "application" / "frontend" / "dist"
+    application_dist.mkdir(parents=True)
+    (application_dist / "index.html").write_text("Hello React", encoding="utf-8")
+    style_css = application_dist / "assets" / "style.css"
+    style_css.parent.mkdir(parents=True)
+    style_css.write_text("body { color: red; }", encoding="utf-8")
+    workspace_dist = tmp_path / "frontend" / "dist"
+    workspace_dist.mkdir(parents=True)
+    (workspace_dist / "index.html").write_text("Wrong workspace UI", encoding="utf-8")
+
     def mock_server(addr, handler_class):
         nonlocal captured_handler_class
         captured_handler_class = handler_class
@@ -1022,7 +1150,7 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
         return FakeServer()
 
     monkeypatch.setattr("goodteam_os.web.ThreadingHTTPServer", mock_server)
-    serve(tmp_path, host="127.0.0.1", port=8788)
+    serve(tmp_path, host="127.0.0.1", port=8788, frontend_dist=application_dist)
     
     assert captured_handler_class is not None
 
@@ -1106,11 +1234,12 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert handler.response_headers.get("Access-Control-Allow-Origin") == "http://localhost:8788"
     assert "GET" in handler.response_headers.get("Access-Control-Allow-Methods", "")
 
-    # 4. Test GET static files fallback (should fall back to render HTML template and return 200)
+    # 4. Product pages always come from application assets, never the data workspace.
     handler = simulate_get("/")
     assert 200 in handler.responses
-    assert handler.response_headers.get("Content-Type") == "text/html; charset=utf-8"
-    assert b"<!doctype html>" in handler.wfile.getvalue()
+    assert handler.response_headers.get("Content-Type") == "text/html"
+    assert handler.wfile.getvalue() == b"Hello React"
+    assert b"Wrong workspace UI" not in handler.wfile.getvalue()
 
     # 5. Test unknown project pages keep HTTP 400 semantics and render a product error surface.
     handler = simulate_get("/?project=UNKNOWN")
@@ -1122,13 +1251,7 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert "UNKNOWN" in body
     assert "GoodTeam Projects" in body
 
-    # 6. Test static file serving when file exists in frontend/dist
-    dist_dir = tmp_path / "frontend" / "dist"
-    dist_dir.mkdir(parents=True)
-    index_html = dist_dir / "index.html"
-    index_html.write_text("Hello React", encoding="utf-8")
-
-    # Serving from frontend/dist/index.html should succeed and return static text
+    # 6. The resolved application dist also serves hashed assets.
     handler = simulate_get("/")
     assert 200 in handler.responses
     assert handler.wfile.getvalue() == b"Hello React"
@@ -1139,15 +1262,34 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert b"Project not found" in handler.wfile.getvalue()
     assert b"Hello React" not in handler.wfile.getvalue()
 
-    # Static CSS serving
-    style_css = dist_dir / "assets" / "style.css"
-    style_css.parent.mkdir(parents=True, exist_ok=True)
-    style_css.write_text("body { color: red; }", encoding="utf-8")
-
     handler = simulate_get("/assets/style.css")
     assert 200 in handler.responses
     assert handler.wfile.getvalue() == b"body { color: red; }"
     assert handler.response_headers.get("Content-Type") == "text/css"
+
+
+def test_missing_frontend_returns_actionable_diagnostic_instead_of_legacy(tmp_path, monkeypatch):
+    from goodteam_os.frontend_assets import FrontendAssetsNotFound
+
+    missing_dist = tmp_path / "missing-dist"
+    monkeypatch.setattr(
+        web,
+        "resolve_frontend_dist",
+        lambda: (_ for _ in ()).throw(FrontendAssetsNotFound([missing_dist])),
+    )
+    simulate_get = capture_get_handler(tmp_path, monkeypatch)
+
+    for path in ("/", "/?project=UNKNOWN"):
+        handler = simulate_get(path)
+
+        assert 503 in handler.responses
+        body = handler.wfile.getvalue().decode("utf-8")
+        assert "GoodTeam React frontend is unavailable" in body
+        assert str(tmp_path.resolve()) in body
+        assert "Attempted paths" in body
+        assert "npm --prefix frontend run build" in body
+        assert "GOODTEAM_FRONTEND_DIST" in body
+        assert "GoodTeam Projects" not in body
 
 
 def test_api_handler_do_post_routing(tmp_path, monkeypatch):

@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from goodteam_os.dispatch import dispatch_tracks, parse_dispatch_track_spec, parse_dispatch_verify_spec
@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8788)
     serve_command.add_argument("--workspace", type=Path, default=Path("."))
+    serve_command.add_argument("--frontend-dist", type=Path, help=argparse.SUPPRESS)
     serve_command.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
     serve_command.add_argument("--ready-token", default="", help=argparse.SUPPRESS)
 
@@ -160,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             workspace=args.workspace,
             host=args.host,
             port=args.port,
+            frontend_dist=args.frontend_dist,
             ready_file=args.ready_file,
             ready_token=args.ready_token,
         )
@@ -170,9 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         except RuntimeError as exc:
             print(f"goodteam restart: {exc}", file=sys.stderr)
             return 1
-        print(f"GoodTeam is running at http://{payload['host']}:{payload['port']} (pid {payload['pid']})")
-        print(f"Workspace: {payload['workspace']}")
-        print(f"Log: {payload['log']}")
+        _print_service_status(payload)
         return 0
     if args.command == "stop":
         payload = stop_service()
@@ -183,9 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         if not payload.get("running"):
             print("GoodTeam is not running")
             return 1
-        print(f"GoodTeam is running at http://{payload['host']}:{payload['port']} (pid {payload['pid']})")
-        print(f"Workspace: {payload['workspace']}")
-        print(f"Log: {payload['log']}")
+        _print_service_status(payload)
         return 0
     if args.command == "init":
         result = init_project(
@@ -300,6 +299,21 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
         return 0
     return 1
+
+
+def _print_service_status(payload: dict[str, object]) -> None:
+    started_at = payload.get("started_at")
+    if isinstance(started_at, int | float):
+        started_label = datetime.fromtimestamp(started_at).astimezone().isoformat(timespec="seconds")
+    else:
+        started_label = str(started_at or "unknown")
+    print("Running: yes")
+    print(f"URL: http://{payload['host']}:{payload['port']}")
+    print(f"PID: {payload['pid']}")
+    print(f"Workspace: {payload['workspace']}")
+    print(f"Frontend dist: {payload.get('frontend_dist', 'unknown')}")
+    print(f"Log path: {payload['log']}")
+    print(f"Started at: {started_label}")
 
 
 def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:

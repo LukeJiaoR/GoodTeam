@@ -29,7 +29,7 @@ export default function NewProjectModalContainer({
   loadingDiscoveredAgents,
   modelProfile,
   newProjectModalOpen,
-  openDirectoryPicker,
+  chooseLocalPath,
   planeApiHost,
   planeApiKeyEnv,
   planeMcpServer,
@@ -127,7 +127,7 @@ export default function NewProjectModalContainer({
       loadingDiscoveredAgents={loadingDiscoveredAgents}
       modelProfile={modelProfile}
       onClose={closeNewProjectModal}
-      openDirectoryPicker={openDirectoryPicker}
+      chooseLocalPath={chooseLocalPath}
       planeApiHost={planeApiHost}
       planeApiKeyEnv={planeApiKeyEnv}
       planeMcpServer={planeMcpServer}

@@ -37,6 +37,8 @@ pytest -q
 Start and manage GoodTeam as a background service (default port `21001`):
 
 ```bash
+npm --prefix frontend install
+npm --prefix frontend run build
 goodteam restart                 # stop an existing managed server, then start it
 goodteam status
 goodteam stop
@@ -44,7 +46,18 @@ goodteam stop
 
 `restart` uses the current directory as its workspace. Override it or the port with
 `--workspace /path/to/workspace` and `--port 21002`. The existing `goodteam-os`
-command remains available for compatibility.
+command remains available for compatibility. The workspace stores project/runtime
+data only; React assets are resolved from the GoodTeam checkout or installation,
+independently of the current directory and workspace. For packaged deployments,
+set `GOODTEAM_FRONTEND_DIST=/absolute/path/to/frontend/dist` to select the build.
+If the build is missing or lacks `index.html`, startup fails with the attempted
+paths and build instructions instead of silently loading the legacy dashboard.
+
+On macOS, Project Root and Context Source Browse actions use the system Finder
+picker when GoodTeam is bound to a loopback host. Cancellation keeps the current
+form value. Non-macOS, headless, remote-bind, and native-picker error cases keep
+using GoodTeam's existing Web file/directory browser, including directory
+navigation and folder creation.
 
 ### Configure one worker backend (codex)
 
@@ -129,7 +142,7 @@ To deploy or host the React dashboard directly via the Python backend, compile t
 cd frontend
 npm run build
 ```
-Once compiled to `frontend/dist/`, starting the backend server (`goodteam_os.cli serve`) will automatically serve the built React application on `http://localhost:8788/` (falling back to legacy template rendering if the directory is missing or unbuilt).
+Once compiled to `frontend/dist/`, starting the backend server (`goodteam_os.cli serve`) automatically serves that React application on `http://localhost:8788/`, regardless of the data workspace. Use `GOODTEAM_FRONTEND_DIST` to point at a build outside the checkout. If no valid build can be resolved, product-page requests return an actionable diagnostic page; GoodTeam never presents the feature-incomplete legacy dashboard as the current UI.
 
 ## Model Profiles
 

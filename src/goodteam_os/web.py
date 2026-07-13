@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import hmac
 import os
@@ -25,6 +26,7 @@ from goodteam_os.dispatch import (
 )
 from goodteam_os.execution import ExecutionAPI
 from goodteam_os.execution.review_workbench_browser import render_review_workbench_html
+from goodteam_os.frontend_assets import FrontendAssetsNotFound, resolve_frontend_dist
 from goodteam_os.graph import (
     accept_refinement,
     advance_approved_workflow,
@@ -46,6 +48,7 @@ from goodteam_os.graph import (
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
+from goodteam_os.native_picker import choose_native_path
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
@@ -1141,6 +1144,50 @@ def _request_origin_is_same_origin(*, origin: str, host: str) -> bool:
     origin_name = (parsed.hostname or "").lower()
     request_name = request_host.rsplit(":", 1)[0]
     return origin_name in local_hosts and request_name in local_hosts
+
+
+def _native_picker_request_targets_local_server(*, request_host: str, port: int) -> bool:
+    if not request_host:
+        return False
+    try:
+        parsed = urlparse(f"//{request_host}")
+        request_port = parsed.port if parsed.port is not None else 80
+    except ValueError:
+        return False
+    hostname = (parsed.hostname or "").lower()
+    if hostname == "localhost":
+        is_loopback = True
+    else:
+        try:
+            is_loopback = ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            is_loopback = False
+    return is_loopback and request_port == port
+
+
+def _native_picker_origin_is_trusted(*, origin: str, request_host: str, port: int) -> bool:
+    if not origin:
+        return True
+    try:
+        parsed = urlparse(origin)
+        origin_port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    origin_hostname = (parsed.hostname or "").lower()
+    try:
+        origin_is_loopback = origin_hostname == "localhost" or ipaddress.ip_address(origin_hostname).is_loopback
+    except ValueError:
+        origin_is_loopback = False
+    if not origin_is_loopback:
+        return False
+
+    # The production console must use the exact server authority. Vite's fixed
+    # development port is the sole cross-port exception because it proxies /api.
+    if parsed.netloc.lower() == request_host.lower():
+        return True
+    return origin_port == 8790 and port != 8790
 
 
 def _dispatch_worktree_path(workspace: Path, name: str) -> Path:
@@ -8771,19 +8818,61 @@ def render_unknown_project_error(project_key: str, message: str) -> str:
 </html>"""
 
 
+def render_frontend_assets_diagnostic(workspace: Path, error: FrontendAssetsNotFound) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoodTeam React frontend unavailable</title>
+  <style>
+    body {{ margin: 0; padding: 32px; font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: #f7f7f7; color: #17211d; }}
+    main {{ max-width: 920px; margin: 0 auto; background: white; border: 2px solid #e5e5e5; border-radius: 16px; padding: 24px; }}
+    h1 {{ font: 800 24px/1.2 system-ui, sans-serif; }}
+    code, pre {{ white-space: pre-wrap; overflow-wrap: anywhere; }}
+    pre {{ background: #f1f1f1; border-radius: 10px; padding: 16px; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>GoodTeam React frontend is unavailable</h1>
+    <p>The server is using this data workspace:</p>
+    <pre>{escape(str(workspace.expanduser().resolve()))}</pre>
+    <p>Application assets are resolved independently from the data workspace. The legacy dashboard was not loaded.</p>
+    <pre>{escape(str(error))}</pre>
+  </main>
+</body>
+</html>"""
+
+
 def serve(
     workspace: Path,
     host: str = "127.0.0.1",
     port: int = 8788,
+    frontend_dist: Path | None = None,
     ready_file: Path | None = None,
     ready_token: str = "",
 ) -> None:
+    if frontend_dist is not None:
+        dist_dir = resolve_frontend_dist(environ={"GOODTEAM_FRONTEND_DIST": str(frontend_dist)})
+        frontend_error: FrontendAssetsNotFound | None = None
+    else:
+        try:
+            dist_dir = resolve_frontend_dist()
+            frontend_error = None
+        except FrontendAssetsNotFound as exc:
+            dist_dir = None
+            frontend_error = exc
+
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
             project_key = query.get("project", [""])[0]
             if maybe_send_favicon_response(self, parsed.path):
+                return
+            if parsed.path in {"/", "/index.html"} and frontend_error is not None:
+                self._send_html(503, render_frontend_assets_diagnostic(workspace, frontend_error))
                 return
             review_workbench_page = handle_review_workbench_page_get(parsed.path, query)
             if review_workbench_page is not None:
@@ -9026,15 +9115,13 @@ def serve(
                     self._send_json(400, {"error": str(exc)})
                 return
 
-            # Try serving from frontend/dist first
-            dist_dir = (workspace / "frontend" / "dist").resolve()
             if parsed.path in {"/", "/index.html"} and project_key:
                 try:
                     _project_config_for_key(workspace, project_key)
                 except Exception as exc:
                     self._send_html(400, render_unknown_project_error(project_key, str(exc)))
                     return
-            if not parsed.path.startswith("/api/"):
+            if not parsed.path.startswith("/api/") and dist_dir is not None:
                 rel_path = parsed.path.lstrip("/")
                 if not rel_path or rel_path == "index.html":
                     filepath = dist_dir / "index.html"
@@ -9066,22 +9153,10 @@ def serve(
             if parsed.path not in {"/", "/index.html"}:
                 self.send_error(404)
                 return
-            if not project_key:
-                body = render_project_overview(workspace).encode("utf-8")
-            else:
-                try:
-                    project_config = _project_config_for_key(workspace, project_key)
-                    start_context = build_start_console_context(workspace, project_config=project_config)
-                    body = render_dashboard(resolve_dashboard_state(workspace, project_key=project_key), start_context).encode("utf-8")
-                except Exception as exc:
-                    self._send_html(400, render_unknown_project_error(project_key, str(exc)))
-                    return
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            _send_cors_headers(self, host=host, port=port)
-            self.end_headers()
-            self.wfile.write(body)
+            if frontend_error is not None:
+                self._send_html(503, render_frontend_assets_diagnostic(workspace, frontend_error))
+                return
+            self.send_error(404)
 
         def do_POST(self) -> None:
             normalized_path = self.path
@@ -9091,7 +9166,7 @@ def serve(
                 re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision)", normalized_path)
             )
 
-            if not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/mkdir", "/server-actions/run", "/git-init"}:
+            if not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -9099,6 +9174,19 @@ def serve(
                 host=str(self.headers.get("Host", "")),
             ):
                 self._send_json(403, {"error": "cross-origin POST requests are not allowed"})
+                return
+            if normalized_path == "/fs/choose" and not _native_picker_request_targets_local_server(
+                request_host=str(self.headers.get("Host", "")),
+                port=port,
+            ):
+                self._send_json(403, {"error": "native picker requires the local GoodTeam origin"})
+                return
+            if normalized_path == "/fs/choose" and not _native_picker_origin_is_trusted(
+                origin=str(self.headers.get("Origin", "")),
+                request_host=str(self.headers.get("Host", "")),
+                port=port,
+            ):
+                self._send_json(403, {"error": "native picker requires the local GoodTeam origin"})
                 return
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
@@ -9111,6 +9199,17 @@ def serve(
                         return
                     status, result = execution_response
                     self._send_json(status, result)
+                    return
+                if normalized_path == "/fs/choose":
+                    mode = str(request.get("mode", "")).strip().lower()
+                    if mode not in {"file", "directory"}:
+                        raise ValueError("mode must be file or directory")
+                    result = choose_native_path(
+                        mode,
+                        str(request.get("initial_path", "")),
+                        host=host,
+                    )
+                    self._send_json(500 if result.get("status") == "error" else 200, result)
                     return
                 if normalized_path == "/fs/mkdir":
                     try:

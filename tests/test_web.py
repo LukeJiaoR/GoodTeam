@@ -3555,10 +3555,12 @@ def test_directory_picker_hook_is_extracted_from_app_shell():
     assert "export function useDirectoryPicker" in hook_source
     assert "import DirectoryPickerModal from '../components/DirectoryPickerModal';" in hook_source
     assert "openDirectoryPicker" in hook_source
+    assert "chooseLocalPath" in hook_source
     assert "directoryPickerModal" in hook_source
     assert "import { useDirectoryPicker } from './hooks/useDirectoryPicker';" in app
     assert "const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);" not in app
-    assert "const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker();" in app
+    assert "const { chooseLocalPath, directoryPickerModal } = useDirectoryPicker(" in app
+    assert "showToast(pickerError, true)" in app
     assert "const [pickerOpen" not in app
     assert "const [pickerInitialPath" not in app
     assert "const openDirectoryPicker" not in app
@@ -7438,18 +7440,32 @@ def test_frontend_contract_wires_context_sources_cost_preview():
 
 def test_frontend_contract_context_sources_can_browse_files_and_directories():
     root = Path(__file__).resolve().parents[1]
+    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
     container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
     modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
+    hook = (root / "frontend" / "src" / "hooks" / "useDirectoryPicker.js").read_text(encoding="utf-8")
+    helper = root / "frontend" / "src" / "utils" / "localPathPicker.js"
 
+    assert helper.is_file()
+    helper_source = helper.read_text(encoding="utf-8")
+    assert "/api/fs/choose" in helper_source
+    assert "initial_path: initialPath" in helper_source
+    assert "status === 'selected'" in helper_source
+    assert "status === 'cancelled'" in helper_source
+    assert "status === 'unsupported'" in helper_source
     assert "handleProjectRootBrowse" in modal
-    assert "handleProjectRootNativePick" in modal
-    assert "projectRootPickerRef" in modal
-    assert "type=\"file\"" in modal
-    assert "webkitdirectory=\"\"" in modal
-    assert "file?.path" in modal
-    assert "openDirectoryPicker(projectRoot, setProjectRoot, { mode: 'directory' })" in modal
+    assert "handleProjectRootNativePick" not in modal
+    assert "projectRootPickerRef" not in modal
+    assert "type=\"file\"" not in modal
+    assert "webkitdirectory" not in modal
+    assert "file?.path" not in modal
+    assert "chooseLocalPath({" in modal
+    assert "mode: 'directory'" in modal
+    assert "initialPath: projectRoot" in modal
+    assert "onSelected: setProjectRoot" in modal
     assert "contextBrowseInitialPath" in modal
-    assert "openDirectoryPicker(contextBrowseInitialPath(source), (selectedPath) => updateContextSource(index, { value: selectedPath }), {" in modal
+    assert "initialPath: contextBrowseInitialPath(source)" in modal
+    assert "onSelected: (selectedPath) => updateContextSource(index, { value: selectedPath })" in modal
     assert "mode: source.kind === 'file' ? 'file' : 'directory'" in modal
     assert "entry.is_dir" in (root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx").read_text(encoding="utf-8")
     assert "mode === 'file'" in (root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx").read_text(encoding="utf-8")
@@ -7457,4 +7473,10 @@ def test_frontend_contract_context_sources_can_browse_files_and_directories():
     assert "source.kind !== 'url'" in modal
     assert "grid-cols-[96px_minmax(0,1fr)_36px]" not in modal
     assert "grid-cols-[96px_minmax(0,1fr)_40px_36px]" in modal
-    assert "openDirectoryPicker={openDirectoryPicker}" in container
+    assert "chooseLocalPath={chooseLocalPath}" in app
+    assert "chooseLocalPath={chooseLocalPath}" in container
+    assert "chooseLocalPath," in hook
+    assert "openDirectoryPicker," in hook
+    assert "directoryPickerModal," in hook
+    assert "Preview cost" in modal
+    assert "Generate context" in modal

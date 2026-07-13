@@ -1,4 +1,3 @@
-import { useRef } from 'react';
 import {
   ChevronDown,
   Calculator,
@@ -41,7 +40,7 @@ export default function NewProjectModal({
   loadingDiscoveredAgents = false,
   modelProfile,
   onClose,
-  openDirectoryPicker,
+  chooseLocalPath,
   planeApiHost,
   planeApiKeyEnv,
   planeMcpServer,
@@ -106,7 +105,6 @@ export default function NewProjectModal({
   t = (key) => key,
   workerBackendMode,
 }) {
-  const projectRootPickerRef = useRef(null);
   const deliveryModeLabel = (option) => {
     const key = `newProject.deliveryModes.${option.value}`;
     const label = t(key);
@@ -127,27 +125,12 @@ export default function NewProjectModal({
     setContextSources(nextSources.length > 0 ? nextSources : [{ kind: 'dir', value: '' }]);
     setContextEstimate(null);
   };
-  const directoryFromNativeFile = (file) => {
-    const nativePath = file?.path || '';
-    if (!nativePath) return '';
-    const separatorIndex = Math.max(nativePath.lastIndexOf('/'), nativePath.lastIndexOf('\\'));
-    return separatorIndex > 0 ? nativePath.slice(0, separatorIndex) : nativePath;
-  };
-  const handleProjectRootNativePick = (event) => {
-    const nativeRoot = directoryFromNativeFile(event.target.files?.[0]);
-    event.target.value = '';
-    if (nativeRoot) {
-      setProjectRoot(nativeRoot);
-      return;
-    }
-    openDirectoryPicker(projectRoot, setProjectRoot, { mode: 'directory' });
-  };
   const handleProjectRootBrowse = () => {
-    if (projectRootPickerRef.current) {
-      projectRootPickerRef.current.click();
-      return;
-    }
-    openDirectoryPicker(projectRoot, setProjectRoot, { mode: 'directory' });
+    chooseLocalPath({
+      mode: 'directory',
+      initialPath: projectRoot,
+      onSelected: setProjectRoot,
+    });
   };
   const contextBrowseInitialPath = (source) => {
     const value = source.value.trim();
@@ -156,8 +139,10 @@ export default function NewProjectModal({
     return separatorIndex > 0 ? value.slice(0, separatorIndex) : value;
   };
   const handleContextSourceBrowse = (source, index) => {
-    openDirectoryPicker(contextBrowseInitialPath(source), (selectedPath) => updateContextSource(index, { value: selectedPath }), {
+    chooseLocalPath({
       mode: source.kind === 'file' ? 'file' : 'directory',
+      initialPath: contextBrowseInitialPath(source),
+      onSelected: (selectedPath) => updateContextSource(index, { value: selectedPath }),
     });
   };
   const hasContextSources = contextSources.some((source) => source.value.trim());
@@ -309,17 +294,6 @@ export default function NewProjectModal({
                   <div>
                     <label className="block text-2xs text-text-secondary mb-1 uppercase">{t('newProject.projectRoot.label')}</label>
                     <div className="flex gap-2">
-                      <input
-                        ref={projectRootPickerRef}
-                        type="file"
-                        webkitdirectory=""
-                        directory=""
-                        multiple
-                        tabIndex={-1}
-                        aria-hidden="true"
-                        onChange={handleProjectRootNativePick}
-                        className="hidden"
-                      />
                       <input
                         type="text"
                         value={projectRoot}
