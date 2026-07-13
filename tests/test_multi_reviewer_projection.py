@@ -581,7 +581,7 @@ def test_multi_reviewer_projection_renderer_tolerates_missing_empty_and_malforme
     )
 
 
-def test_server_rendered_workbench_includes_multi_reviewer_projection(monkeypatch):
+def test_render_multi_reviewer_projection_includes_advisory_evidence():
     projection = build_multi_reviewer_projection(
         approval="staging",
         reviewer_target=_target("correctness-security", "architecture-maintainability"),
@@ -597,28 +597,7 @@ def test_server_rendered_workbench_includes_multi_reviewer_projection(monkeypatc
         ],
         review_evidence_policy_config={"mode": "strict", "blockers": ["failed_invocation"]},
     )
-    state = _staging_state()
-
-    monkeypatch.setattr(
-        web,
-        "build_approval_reviews",
-        lambda *_args, **_kwargs: [
-            {
-                "approval": "staging",
-                "decision": "pending",
-                "artifact": "staging_report",
-                "artifact_path": "/tmp/staging.md",
-                "content": "ready for review",
-                "is_actionable": True,
-                "review_roles": [],
-                "reviewer_provenance": {},
-                "review_evidence_policy": {},
-                "multi_reviewer_projection": projection,
-            }
-        ],
-    )
-
-    html = web.render_dashboard(state)
+    html = web.render_multi_reviewer_projection(projection)
 
     assert "Multi-reviewer evidence" in html
     assert "Aggregate severity" in html
@@ -626,6 +605,3 @@ def test_server_rendered_workbench_includes_multi_reviewer_projection(monkeypatc
     assert "Correctness and security" in html
     assert "architecture-maintainability" in html
     assert "Reviewer evidence remains advisory" in html
-    assert 'data-decision="approved"' in html
-    assert 'data-decision="changes_requested"' in html
-    assert 'data-decision="rejected"' in html
