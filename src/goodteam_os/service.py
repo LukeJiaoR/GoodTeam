@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import secrets
@@ -14,6 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from goodteam_os.frontend_assets import resolve_frontend_dist
+
+if os.name == "nt":
+    import msvcrt
+
+    fcntl = None
+else:
+    import fcntl
+
+    msvcrt = None
 
 DEFAULT_PORT = 21001
 START_TIMEOUT_SECONDS = 5.0
@@ -134,11 +142,23 @@ def _service_lock() -> Iterator[None]:
     state_dir = service_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
     with (state_dir / "server.lock").open("a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        if os.name == "nt":
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            if os.name == "nt":
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _wait_until_ready(process: subprocess.Popen[bytes], ready_path: Path, ready_token: str) -> bool:

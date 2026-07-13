@@ -1074,6 +1074,40 @@ def test_api_fs_choose_rejects_dns_rebinding_authority_before_adapter(tmp_path, 
     assert calls == []
 
 
+def test_api_fs_choose_rejects_other_local_origin_port_before_adapter(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(web, "choose_native_path", lambda *args, **kwargs: calls.append((args, kwargs)))
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/fs/choose",
+        {"mode": "directory", "initial_path": str(tmp_path)},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:3000"},
+    )
+
+    assert 403 in response.responses
+    assert calls == []
+
+
+def test_api_fs_choose_allows_explicit_vite_development_origin(tmp_path, monkeypatch):
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    monkeypatch.setattr(
+        web,
+        "choose_native_path",
+        lambda *args, **kwargs: {"status": "selected", "path": str(selected)},
+    )
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    response = simulate_post(
+        "/api/fs/choose",
+        {"mode": "directory", "initial_path": str(tmp_path)},
+        headers={"Host": "127.0.0.1:8788", "Origin": "http://localhost:8790"},
+    )
+
+    assert 200 in response.responses
+
+
 @pytest.mark.parametrize(
     ("picker_payload", "expected_status"),
     [

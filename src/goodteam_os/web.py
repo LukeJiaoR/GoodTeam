@@ -1165,6 +1165,31 @@ def _native_picker_request_targets_local_server(*, request_host: str, port: int)
     return is_loopback and request_port == port
 
 
+def _native_picker_origin_is_trusted(*, origin: str, request_host: str, port: int) -> bool:
+    if not origin:
+        return True
+    try:
+        parsed = urlparse(origin)
+        origin_port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    origin_hostname = (parsed.hostname or "").lower()
+    try:
+        origin_is_loopback = origin_hostname == "localhost" or ipaddress.ip_address(origin_hostname).is_loopback
+    except ValueError:
+        origin_is_loopback = False
+    if not origin_is_loopback:
+        return False
+
+    # The production console must use the exact server authority. Vite's fixed
+    # development port is the sole cross-port exception because it proxies /api.
+    if parsed.netloc.lower() == request_host.lower():
+        return True
+    return origin_port == 8790 and port != 8790
+
+
 def _dispatch_worktree_path(workspace: Path, name: str) -> Path:
     return workspace.resolve().parent / f"goodteam-dev-{name}"
 
@@ -9151,6 +9176,13 @@ def serve(
                 self._send_json(403, {"error": "cross-origin POST requests are not allowed"})
                 return
             if normalized_path == "/fs/choose" and not _native_picker_request_targets_local_server(
+                request_host=str(self.headers.get("Host", "")),
+                port=port,
+            ):
+                self._send_json(403, {"error": "native picker requires the local GoodTeam origin"})
+                return
+            if normalized_path == "/fs/choose" and not _native_picker_origin_is_trusted(
+                origin=str(self.headers.get("Origin", "")),
                 request_host=str(self.headers.get("Host", "")),
                 port=port,
             ):

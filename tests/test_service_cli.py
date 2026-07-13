@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from goodteam_os import cli, service, web
+
+
+def test_service_lock_uses_platform_specific_backend() -> None:
+    if os.name == "nt":
+        assert service.msvcrt is not None
+        assert service.fcntl is None
+    else:
+        assert service.fcntl is not None
+        assert service.msvcrt is None
 
 
 def test_restart_parser_defaults_to_port_21001() -> None:
