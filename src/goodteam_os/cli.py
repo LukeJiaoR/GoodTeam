@@ -74,6 +74,17 @@ def build_parser() -> argparse.ArgumentParser:
     workers = subparsers.add_parser("workers")
     workers.add_argument("--project-root", type=Path, required=True)
 
+    worker_session = subparsers.add_parser("worker-session", help="Inspect or control a persistent worker session")
+    worker_session_subparsers = worker_session.add_subparsers(dest="worker_session_command", required=True)
+    for command in ("status", "steer", "follow-up", "abort"):
+        session_command = worker_session_subparsers.add_parser(command)
+        session_command.add_argument("--project-root", type=Path, required=True)
+        session_command.add_argument("--job-id", required=True)
+        if command in {"steer", "follow-up"}:
+            session_command.add_argument("--message", required=True)
+        if command == "abort":
+            session_command.add_argument("--reason", default="Operator requested abort")
+
     failure_patterns = subparsers.add_parser("failure-patterns")
     failure_patterns.add_argument("--project-root", type=Path, required=True)
     failure_patterns.add_argument("--min-hits", type=int, default=3)
@@ -219,6 +230,22 @@ def main(argv: list[str] | None = None) -> int:
             "project_root": str(args.project_root),
             "jobs": WorkerJobStore(args.project_root).list_jobs(),
         }
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "worker-session":
+        store = WorkerJobStore(args.project_root)
+        try:
+            if args.worker_session_command == "status":
+                payload = store.session_status(args.job_id)
+            elif args.worker_session_command == "steer":
+                payload = store.session_control(args.job_id, "steer", message=args.message)
+            elif args.worker_session_command == "follow-up":
+                payload = store.session_control(args.job_id, "follow_up", message=args.message)
+            else:
+                payload = store.session_control(args.job_id, "abort", reason=args.reason)
+        except ValueError as exc:
+            print(f"worker-session: {exc}", file=sys.stderr)
+            return 2
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "failure-patterns":

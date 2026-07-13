@@ -11,7 +11,7 @@ from goodteam_os.workers import worker_backend_doctor
 
 ProjectTarget = dict[str, object]
 
-WORKER_MODES = ("fake", "codex", "anthropic", "gemini", "opencode", "noop", "human", "manual")
+WORKER_MODES = ("fake", "codex", "anthropic", "gemini", "opencode", "pi", "pi-rpc", "noop", "human", "manual")
 DELIVERY_MODES = (
     "mvp",
     "init_project",
