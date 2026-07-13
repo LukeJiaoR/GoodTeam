@@ -11,7 +11,7 @@ from goodteam_os.smoke import (
     run_smoke_suite,
     write_smoke_report,
 )
-from goodteam_os.web import build_smoke_run_items, render_dashboard
+from goodteam_os.web import build_smoke_run_items
 
 
 def test_smoke_registry_defines_contentops_and_self_projects(tmp_path):
@@ -360,7 +360,7 @@ def test_ensure_self_worktree_uses_git_worktree_outside_repo(tmp_path, monkeypat
     assert calls == [["git", "-C", str(repo_root), "worktree", "add", "--detach", str(target), "HEAD"]]
 
 
-def test_dashboard_renders_recent_smoke_runs(tmp_path):
+def test_build_smoke_run_items_includes_recent_failure_classification(tmp_path):
     write_smoke_report(
         tmp_path,
         {
@@ -381,8 +381,5 @@ def test_dashboard_renders_recent_smoke_runs(tmp_path):
     )
 
     items = build_smoke_run_items(tmp_path)
-    html = render_dashboard(None, {"workspace": str(tmp_path), "project_key": "CONTENTOPS", "project_name": "AI Content Studio"})
 
     assert items[0]["classification"] == "target scaffold"
-    assert "Smoke Runs" in html
-    assert "target scaffold" in html

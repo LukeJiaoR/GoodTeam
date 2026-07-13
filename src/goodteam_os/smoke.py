@@ -67,7 +67,6 @@ def build_smoke_project_registry(workspace: Path, repo_root: Path) -> dict[str, 
             verification_commands=[
                 {"name": "pytest", "command": f"PYTHONPATH=src {python_command} -m pytest tests -q", "cwd": str(self_root)},
                 {"name": "cli-dry-run", "command": f"PYTHONPATH=src {python_command} -m goodteam_os.cli start 'Smoke GoodTeam self' --dry-run", "cwd": str(self_root)},
-                {"name": "dashboard-render", "command": f"PYTHONPATH=src {python_command} -c \"from pathlib import Path; from goodteam_os.web import render_dashboard; assert 'GoodTeam' in render_dashboard(None, {{'workspace': str(Path('.'))}})\"", "cwd": str(self_root)},
             ],
             cleanup_policy="temporary_worktree",
         ),

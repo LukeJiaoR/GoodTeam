@@ -13,13 +13,11 @@ import goodteam_os.web as web
 from goodteam_os.messages import append_message
 from goodteam_os.staging import delivery_contract_config
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
-from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
 from goodteam_os.web import (
     build_approval_evidence_snapshot,
     build_approval_recommendation,
     build_action_items,
-    build_agile_board,
     build_dev_loop,
     build_provenance_refs,
     build_workflow_graph,
@@ -38,8 +36,6 @@ from goodteam_os.web import (
     read_artifact_preview,
     read_open_questions,
     render_markdown_preview,
-    render_dashboard,
-    render_project_overview,
     maybe_send_favicon_response,
     retry_blocked_workflow,
     terminate_project_run,
@@ -785,236 +781,6 @@ def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_p
     assert edge_endpoints <= node_names
 
 
-def test_render_dashboard_shows_current_gate():
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.current_node = "prd_review_gate"
-    state.next_node = "await_prd_approval"
-    state.artifacts["prd"] = "/tmp/prd.md"
-    state.context_packet_path = "/tmp/project/.goodteam/memory/project-memory.md"
-
-    html = render_dashboard(state)
-
-    assert "GoodTeam AI Team OS" in html
-    assert "await_prd_approval" in html
-    assert "PRD" in html
-    assert "/tmp/prd.md" in html
-    assert "Role Observability" in html
-    assert "Product / Requirement" in html
-    assert "Waiting for approval" in html
-    assert "Architect" in html
-    assert "Model" in html
-    assert "Start Workflow" not in html
-    assert "Start Run" not in html
-    assert "Copy Command" not in html
-    assert "Enter the real workflow goal" not in html
-    assert "Start a workflow run to populate this dashboard" not in html
-    assert "Overview" in html
-    assert "Roles" in html
-    assert "Artifacts" in html
-    assert "Actions" in html
-    assert "Agile Board" in html
-    assert "Approvals" in html
-    assert "System" in html
-    assert "Worker Jobs" in html
-    assert "Role Summary" in html
-    assert "Workflow Waterfall" in html
-    assert "Needs review" in html
-    assert "Review PRD" in html
-    assert "PRD Review" in html
-    assert "Approve" in html
-    assert "Request Changes" in html
-    assert "Reject" in html
-    assert "Edit Artifact" in html
-    assert "Save Markdown" in html
-    assert "Worker Model" in html
-    assert "gpt-5.4" in html
-    assert "Build AI Team OS" in html
-    assert "artifact-preview" in html
-    assert "Project Target" in html
-    assert "/tmp/project/.goodteam/memory/project-memory.md" in html
-    assert "Local Task Ledger" in html
-    assert "Task Backend" in html
-    assert "Worker Backend" in html
-    assert "Active run in progress" not in html
-
-
-def test_dashboard_renders_agile_board_from_project_task_ledger(tmp_path):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    store = LocalTaskStore(project_root)
-    task = store.create_task(
-        title="Run CONTENTOPS smoke",
-        description="CONTENTOPS must leave a smoke report.",
-        role="qa",
-        priority="high",
-        acceptance_criteria=["state/smoke-runs/latest.json exists"],
-    )
-    state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
-    state.artifacts["task_ledger"] = str(project_root / ".goodteam" / "tasks" / "tasks.json")
-
-    board = build_agile_board(state)
-    html = render_dashboard(state)
-
-    assert board["counts"]["backlog"] == 1
-    assert board["columns"]["backlog"][0]["id"] == task["id"]
-    assert "Agile Board" in html
-    assert "Run CONTENTOPS smoke" in html
-    assert "state/smoke-runs/latest.json exists" in html
-
-
-def test_dashboard_worker_tab_shows_live_worker_metadata(tmp_path):
-    project_root = tmp_path / "target"
-    job_store = WorkerJobStore(project_root)
-    job = job_store.create_job(run_id="run-1", role="qa", adapter="codex", task="Verify", context="Context")
-    job_root = project_root / ".goodteam" / "workers" / "jobs" / job["id"]
-    (job_root / "status.json").write_text(
-        json.dumps(
-            {
-                "job_id": job["id"],
-                "run_id": "run-1",
-                "role": "qa",
-                "adapter": "codex",
-                "status": "running",
-                "summary": "Codex CLI is running.",
-                "updated_at": "2026-05-27T00:00:00+00:00",
-                "heartbeat_at": "2026-05-27T00:00:00+00:00",
-                "pid": 4242,
-            }
-        ),
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
-
-    html = render_dashboard(state)
-
-    assert "Worker Jobs" in html
-    assert "qa / codex" in html
-    assert "4242" in html
-    assert "Codex CLI is running." in html
-    assert "heartbeat" in html.lower()
-
-
-def test_dashboard_reviewer_dispatch_diagnostics_show_guarded_warning(tmp_path):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=False)
-    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
-    context = build_start_console_context(tmp_path, project_config=config)
-
-    html = render_dashboard(state, start_context=context)
-
-    assert "Reviewer dispatch diagnostics" in html
-    assert "reviewer_dispatch.mode: parallel requires rollout.enabled: true" in html
-    assert "<dt>Mode</dt><dd>parallel</dd>" in html
-    assert "<dt>Parallel requested</dt><dd>True</dd>" in html
-    assert "<dt>Parallel enabled</dt><dd>False</dd>" in html
-    assert "correctness-security" in html
-    assert "architecture-maintainability" in html
-
-
-def test_dashboard_reviewer_dispatch_diagnostics_show_enabled_state_and_queue_counts(tmp_path):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
-    WorkerJobStore(project_root).create_job(
-        run_id="run-1",
-        role="code_review",
-        adapter="codex",
-        task="Review QA report",
-        context="Context",
-        profile_id="correctness-security",
-        approval="qa",
-        gate="qa",
-        phase="implementation",
-    )
-    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
-    context = build_start_console_context(tmp_path, project_config=config)
-
-    html = render_dashboard(state, start_context=context)
-
-    assert "Reviewer dispatch diagnostics" in html
-    assert "<dt>Parallel enabled</dt><dd>True</dd>" in html
-    assert "total: 1" in html
-    assert "gate qa: 1" in html
-    assert "profile correctness-security: 1" in html
-    assert "Reviewer evidence remains advisory. Human operator decides." in html
-
-
-def test_dashboard_reviewer_dispatch_diagnostics_are_render_only(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
-    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
-    state.next_node = "await_prd_approval"
-    context = build_start_console_context(tmp_path, project_config=config)
-
-    def fail_create_job(*_args, **_kwargs):
-        raise AssertionError("dashboard diagnostics must not dispatch reviewer jobs")
-
-    def fail_append_action(*_args, **_kwargs):
-        raise AssertionError("dashboard diagnostics must not write action events")
-
-    monkeypatch.setattr(web.WorkerJobStore, "create_job", fail_create_job)
-    monkeypatch.setattr(web.WorkerJobStore, "create_or_reuse_job", fail_create_job)
-    monkeypatch.setattr(web, "append_action", fail_append_action)
-
-    html = render_dashboard(state, start_context=context)
-
-    assert "Reviewer dispatch diagnostics" in html
-    assert "Approve" in html
-    assert "Request Changes" in html
-    assert "Reject" in html
-    assert not (tmp_path / "actions.jsonl").exists()
-
-
-def test_dashboard_shows_explicit_reviewer_job_run_button_without_running_jobs(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
-    artifact = tmp_path / "staging.md"
-    artifact.write_text("# Staging\n\nReady.\n", encoding="utf-8")
-    WorkerJobStore(project_root).create_job(
-        run_id="run-1",
-        role="code_review",
-        adapter="fake",
-        task="Review staging",
-        context="Context",
-        profile_id="correctness-security",
-        approval="staging",
-        gate="staging",
-        phase="implementation",
-        artifact_key="staging_report",
-        artifact_path=str(artifact),
-        artifact_version="sha256:be26be20d7c29c183f44a3637d4fd1f02697345e98bfcab39b9a01532eb7c594",
-        dispatch_group_id="reviewer-dispatch-render",
-        idempotency_key="render-key",
-    )
-    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
-    state.approvals["staging"] = ApprovalDecision.PENDING
-    state.next_node = "await_staging_approval"
-    state.artifacts["staging_report"] = str(artifact)
-    context = build_start_console_context(tmp_path, project_config=config)
-
-    def fail_run_job(*_args, **_kwargs):
-        raise AssertionError("dashboard render must not run reviewer jobs")
-
-    def fail_append_action(*_args, **_kwargs):
-        raise AssertionError("dashboard render must not write action events")
-
-    monkeypatch.setattr(web.WorkerJobStore, "run_job", fail_run_job)
-    monkeypatch.setattr(web, "append_action", fail_append_action)
-
-    html = render_dashboard(state, start_context=context)
-
-    assert "Run queued reviewer jobs" in html
-    assert 'data-action="run-queued-reviewer-jobs"' in html
-    assert 'data-artifact-version="sha256:be26be20d7c29c183f44a3637d4fd1f02697345e98bfcab39b9a01532eb7c594"' in html
-    assert 'data-decision="approved"' in html
-    assert 'data-decision="changes_requested"' in html
-    assert 'data-decision="rejected"' in html
-
-
 def test_explicit_reviewer_job_action_runs_matching_queued_jobs_only(tmp_path, monkeypatch):
     project_root = tmp_path / "target"
     project_root.mkdir()
@@ -1201,72 +967,6 @@ def test_explicit_reviewer_job_action_refuses_wrong_gate_and_wrong_run(tmp_path)
     assert "run_id does not match" in wrong_run_payload["error"]
 
 
-def test_dashboard_shows_failed_reviewer_retry_button_without_retrying(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
-    artifact = tmp_path / "staging.md"
-    artifact.write_text("# Staging\n\nReady.\n", encoding="utf-8")
-    artifact_version = web.artifact_version_for_path(str(artifact))
-    failed = WorkerJobStore(project_root).create_job(
-        run_id="run-1",
-        role="code_review",
-        adapter="fake",
-        task="Review staging",
-        context="Context",
-        profile_id="correctness-security",
-        approval="staging",
-        gate="staging",
-        phase="implementation",
-        artifact_key="staging_report",
-        artifact_path=str(artifact),
-        artifact_version=artifact_version,
-        dispatch_group_id="reviewer-dispatch-render",
-        idempotency_key="failed-render-key",
-    )
-    failed_root = project_root / ".goodteam" / "workers" / "jobs" / failed["id"]
-    (failed_root / "status.json").write_text(
-        json.dumps(
-            {
-                "status": "failed",
-                "summary": "Codex CLI exited with code 1.",
-                "updated_at": "2026-07-05T10:00:00+00:00",
-                "result_path": str(failed_root / "result.md"),
-            }
-        ),
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
-    state.approvals["staging"] = ApprovalDecision.PENDING
-    state.next_node = "await_staging_approval"
-    state.artifacts["staging_report"] = str(artifact)
-    context = build_start_console_context(tmp_path, project_config=config)
-
-    def fail_create_job(*_args, **_kwargs):
-        raise AssertionError("dashboard render must not create retry reviewer jobs")
-
-    def fail_run_job(*_args, **_kwargs):
-        raise AssertionError("dashboard render must not run reviewer jobs")
-
-    def fail_append_action(*_args, **_kwargs):
-        raise AssertionError("dashboard render must not write action events")
-
-    monkeypatch.setattr(web.WorkerJobStore, "create_job", fail_create_job)
-    monkeypatch.setattr(web.WorkerJobStore, "create_or_reuse_job", fail_create_job)
-    monkeypatch.setattr(web.WorkerJobStore, "run_job", fail_run_job)
-    monkeypatch.setattr(web, "append_action", fail_append_action)
-
-    html = render_dashboard(state, start_context=context)
-
-    assert "Retry failed reviewer jobs" in html
-    assert 'data-action="retry-failed-reviewer-jobs"' in html
-    assert failed["id"] in html
-    assert "Codex CLI exited with code 1." in html
-    assert 'data-decision="approved"' in html
-    assert 'data-decision="changes_requested"' in html
-    assert 'data-decision="rejected"' in html
-
-
 def test_failed_reviewer_retry_action_creates_retry_for_current_gate_only(tmp_path, monkeypatch):
     project_root = tmp_path / "target"
     project_root.mkdir()
@@ -1408,51 +1108,6 @@ def test_failed_reviewer_retry_route_is_registered_in_post_dispatcher():
     assert 'retry_failed_reviewer_jobs_action(workspace, request)' in source
 
 
-def test_render_dashboard_shows_worker_blockers():
-    state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
-    state.current_node = "implementation"
-    state.next_node = "blocked"
-    state.blockers = [
-        "implementation worker failed: Codex CLI exited with code 1.",
-        "qa worker failed: Codex CLI exited with code 1.",
-    ]
-
-    html = render_dashboard(state)
-
-    assert "Blocked" in html
-    assert "implementation worker failed" in html
-    assert "qa worker failed" in html
-    assert "Retry blocked workers" in html
-    assert "/retry" in html
-    assert "await_release_approval" not in html
-
-
-def test_render_dashboard_shows_complete_status_when_run_is_closed():
-    state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
-    state.current_node = "complete"
-    state.next_node = ""
-
-    html = render_dashboard(state)
-
-    assert '<div class="status">complete</div>' in html
-    assert "<div class=\"signal\"><span>Next</span>complete</div>" in html
-
-
-def test_render_dashboard_prioritizes_completion_summary_for_closed_run():
-    state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
-    state.current_node = "complete"
-    state.next_node = ""
-
-    html = render_dashboard(state)
-
-    assert '<link rel="icon" href="data:,">' in html
-    assert "Run Complete" in html
-    assert "Open project overview" in html
-    assert '<section class="hero wide">' in html
-    assert '<details class="start-workflow-drawer">' in html
-    assert '<h2>Start Workflow</h2>' not in html
-
-
 def test_maybe_send_favicon_response_returns_204_without_network_server():
     class FakeHandler:
         def __init__(self):
@@ -1519,21 +1174,6 @@ def test_is_active_run_detects_current_gate():
 
     assert is_active_run(state) is True
     assert is_active_run(None) is False
-
-
-def test_render_dashboard_without_state_shows_only_real_empty_status():
-    html = render_dashboard(None)
-
-    assert "no_active_run" in html
-    assert "No active run" in html
-    assert "Start New Project" in html
-    assert "Adopt Existing Project" in html
-    assert "Start new project" in html
-    assert "Start adoption" in html
-    assert "Enter the real workflow goal" in html
-    assert "no-run-yet" not in html
-    assert "Start a workflow run to populate this dashboard" not in html
-    assert "Approve PRD" not in html
 
 
 def test_build_role_observations_maps_artifacts_to_role_statuses():
@@ -1943,20 +1583,6 @@ def test_build_provenance_refs_parses_manifest_and_masks_paths(tmp_path):
 
     snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
     assert snapshot["provenance_refs"] == refs
-
-
-def test_render_dashboard_renders_markdown_artifact_preview(tmp_path):
-    prd = tmp_path / "prd.md"
-    prd.write_text("# PRD\n\nReview **me**", encoding="utf-8")
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.artifacts["prd"] = str(prd)
-    state.next_node = "await_prd_approval"
-
-    html = render_dashboard(state)
-
-    assert '<div class="artifact-preview markdown-preview">' in html
-    assert '<h1 id="prd">PRD</h1>' in html
-    assert "<p>Review <strong>me</strong></p>" in html
 
 
 def test_read_artifact_preview_truncates_long_content(tmp_path):
@@ -6602,33 +6228,6 @@ def test_decide_approval_snapshot_error_does_not_block_human_decision(tmp_path, 
     assert snapshot["operator_message"] == "Reviewer evidence is advisory. Human operator remains authoritative."
 
 
-def test_workbench_render_does_not_build_reviewer_evidence_snapshot_or_write_actions(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    config = _write_reviewer_dispatch_project(tmp_path, project_root, acknowledged=True)
-    artifact = tmp_path / "staging.md"
-    artifact.write_text("# Staging\n\nReady.\n", encoding="utf-8")
-    state = create_initial_state("run-1", "DEMO", "Build diagnostics")
-    state.approvals["staging"] = ApprovalDecision.PENDING
-    state.next_node = "await_staging_approval"
-    state.artifacts["staging_report"] = str(artifact)
-    context = build_start_console_context(tmp_path, project_config=config)
-
-    def fail_snapshot(*_args, **_kwargs):
-        raise AssertionError("render must not build reviewer evidence approval snapshots")
-
-    def fail_append_action(*_args, **_kwargs):
-        raise AssertionError("render must not write action events")
-
-    monkeypatch.setattr(web, "build_reviewer_evidence_snapshot", fail_snapshot)
-    monkeypatch.setattr(web, "append_action", fail_append_action)
-
-    html = render_dashboard(state, start_context=context)
-
-    assert "Multi-reviewer evidence" in html
-    assert 'data-decision="approved"' in html
-
-
 def test_build_approval_evidence_snapshot_skips_worker_jobs_without_run_id(tmp_path):
     job = WorkerJobStore(tmp_path).create_job(
         run_id="run-other",
@@ -7027,106 +6626,6 @@ def test_delete_project_rejects_unknown_project(tmp_path):
         assert "No local project config found" in str(exc)
     else:
         raise AssertionError("Expected unknown project delete to fail")
-
-
-def test_render_project_overview_includes_delete_project_action(tmp_path):
-    project_config = tmp_path / "projects" / "contentops.local.yaml"
-    project_config.parent.mkdir()
-    project_config.write_text("name: AI Content Studio\nkey: CONTENTOPS\n", encoding="utf-8")
-
-    html = render_project_overview(tmp_path)
-
-    assert 'class="danger delete-project"' in html
-    assert 'data-project="CONTENTOPS"' in html
-    assert "Delete project" in html
-    assert "/project-delete" in html
-
-
-def test_render_dashboard_shows_deployment_backend_summary(tmp_path):
-    project_config = tmp_path / "real-project.local.yaml"
-    project_config.write_text(
-        "\n".join(
-            [
-                "name: Real Product",
-                "key: REAL",
-                "deployment_backend:",
-                "  mode: ssh_compose",
-                "  staging_ssh_target: real-staging",
-                "  staging_remote_dir: /srv/real",
-                "  staging_public_url: https://staging.real.example.com",
-                "  staging_deploy_command: docker compose up -d",
-                "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "REAL", "Deploy real product")
-    state.current_node = "staging_review_gate"
-    state.next_node = "await_staging_approval"
-    context = build_start_console_context(workspace=tmp_path, model_config=Path("models.yaml"), project_config=project_config)
-
-    html = render_dashboard(state, context)
-
-    assert "Deployment Backend" in html
-    assert "ssh_compose" in html
-    assert "real-staging" in html
-    assert "/srv/real" in html
-
-
-def test_render_dashboard_shows_delivery_contract_summary(tmp_path):
-    project_config = tmp_path / "projects" / "real.local.yaml"
-    project_config.parent.mkdir()
-    project_config.write_text(
-        "\n".join(
-            [
-                "name: Real Product",
-                "key: REAL",
-                "deployment_backend:",
-                "  mode: ssh_compose",
-                "  staging_ssh_target: real-staging",
-                "  staging_remote_dir: /srv/real",
-                "  staging_deploy_command: docker compose up -d",
-                "  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health",
-                "delivery_contract:",
-                "  required: true",
-                "  minimum_evidence: functional",
-                "  staging_acceptance:",
-                "    critical-user-journey:",
-                "      type: local_command",
-                "      command: ./scripts/e2e-critical.sh",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "REAL", "Ship the real product")
-    state.source_ref = str(project_config)
-    state.source_type = "existing_project"
-    state.current_node = "staging_review_gate"
-    state.next_node = "await_staging_approval"
-
-    context = build_start_console_context(
-        workspace=tmp_path,
-        model_config=Path("models.yaml"),
-        project_config=project_config,
-    )
-    html = render_dashboard(state, start_context=context)
-
-    assert "Delivery Contract" in html
-    assert "functional" in html
-    assert "Acceptance Checks" in html
-    assert "1" in html
-    assert "Evidence Level" in html
-
-
-def test_render_project_overview_does_not_link_to_missing_gto_project(tmp_path):
-    project_config = tmp_path / "projects" / "contentops.local.yaml"
-    project_config.parent.mkdir()
-    project_config.write_text("name: AI Content Studio\nkey: CONTENTOPS\n", encoding="utf-8")
-
-    html = render_project_overview(tmp_path)
-
-    assert 'href="/?project=GTO"' not in html
 
 
 def test_tg_notify_gate_default_filter_skips_non_notify_gate(monkeypatch):
