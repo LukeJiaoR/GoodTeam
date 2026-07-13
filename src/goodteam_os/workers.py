@@ -1164,6 +1164,8 @@ class WorkerJobStore:
             metadata = runtime.store.read_metadata() or {}
             if not metadata.get("initial_prompt_sent"):
                 runtime.send_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
+            elif str(job.get("worker_session_ref") or "").strip():
+                runtime.send_resume_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
 
             def tick() -> None:
                 nonlocal control_cursor

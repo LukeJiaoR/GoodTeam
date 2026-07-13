@@ -105,18 +105,34 @@ def test_pi_initial_run_persists_result_events_entries_and_runtime_cwd(monkeypat
 
 
 def test_pi_resume_switches_explicit_same_lineage_without_reprompt(monkeypatch, tmp_path):
-    configure_fake_pi(monkeypatch, tmp_path)
+    sessions = configure_fake_pi(monkeypatch, tmp_path)
     project = tmp_path / "project"
     project.mkdir()
     store = WorkerJobStore(project)
     first = create_pi_job(store)
     assert store.run_job(first["id"])["status"] == "completed"
-    resumed = create_pi_job(store, session_policy="resume", worker_session_ref=first["id"])
+    resumed = create_pi_job(
+        store,
+        session_policy="resume",
+        worker_session_ref=first["id"],
+        task="Create RESUMED.md and verify the existing tests.",
+    )
     status = store.run_job(resumed["id"])
     events = (store.root / resumed["id"] / "pi_events.jsonl").read_text(encoding="utf-8")
+    protocol = (store.root / resumed["id"] / "pi_protocol.jsonl").read_text(encoding="utf-8")
     assert status["status"] == "completed"
     assert "session_resumed" in events
-    assert "prompt_accepted" not in events
+    assert "resume_prompt_accepted" in events
+    assert '"command":"switch_session"' in protocol
+    assert protocol.count('"command":"prompt"') == 1
+    event_names = {json.loads(line)["event"] for line in events.splitlines()}
+    assert "prompt_accepted" not in event_names
+    session_file = sessions / "fake-session-1.jsonl"
+    entries = [json.loads(line) for line in session_file.read_text(encoding="utf-8").splitlines()]
+    user_messages = [entry["message"]["content"] for entry in entries if entry.get("message", {}).get("role") == "user"]
+    assert len(user_messages) == 2
+    assert len(set(user_messages)) == 2
+    assert sum("Create RESUMED.md and verify the existing tests." in message for message in user_messages) == 1
 
 
 def test_pi_resume_rejects_cross_project_reference(monkeypatch, tmp_path):
@@ -148,7 +164,12 @@ def test_pi_invalid_cursor_full_replays_without_duplicate_entries(monkeypatch, t
     metadata = json.loads((root / "pi_session.json").read_text(encoding="utf-8"))
     metadata["last_entry_id"] = "invalid-cursor"
     (root / "pi_session.json").write_text(json.dumps(metadata), encoding="utf-8")
-    resumed = create_pi_job(store, session_policy="resume", worker_session_ref=job["id"])
+    resumed = create_pi_job(
+        store,
+        session_policy="resume",
+        worker_session_ref=job["id"],
+        task="Continue after cursor recovery.",
+    )
     assert store.run_job(resumed["id"])["status"] == "completed"
     resumed_root = store.root / resumed["id"]
     entries = (resumed_root / "pi_entries.jsonl").read_text(encoding="utf-8").splitlines()

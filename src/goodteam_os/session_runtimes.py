@@ -65,6 +65,7 @@ class SessionRuntimeSpec:
 class SessionRuntime(Protocol):
     def start_or_resume(self) -> dict[str, Any]: ...
     def send_prompt(self, message: str) -> dict[str, Any]: ...
+    def send_resume_prompt(self, message: str) -> dict[str, Any]: ...
     def steer(self, message: str) -> dict[str, Any]: ...
     def follow_up(self, message: str) -> dict[str, Any]: ...
     def abort(self) -> dict[str, Any]: ...
@@ -386,6 +387,16 @@ class PiSessionRuntime:
         self.store.append_event("prompt_accepted")
         return response
 
+    def send_resume_prompt(self, message: str) -> dict[str, Any]:
+        if not message.strip():
+            raise ValueError("Pi resume prompt must not be empty")
+        rpc = self._rpc()
+        rpc.clear_settled()
+        self.already_settled = False
+        response = rpc.request({"type": "prompt", "message": message}, timeout=self.config.request_timeout)
+        self.store.append_event("resume_prompt_accepted")
+        return response
+
     def steer(self, message: str) -> dict[str, Any]:
         return self._message_control("steer", message)
 
@@ -491,6 +502,9 @@ class PiSessionRuntime:
             raise ValueError(f"Pi {command} message must not be empty")
         if self.metadata.get("status") != "running":
             raise PiRpcError(f"Pi session is not active ({self.metadata.get('status', 'unknown')})")
+        if command == "follow_up":
+            self._rpc().clear_settled()
+            self.already_settled = False
         response = self._rpc().request({"type": command, "message": message}, timeout=self.config.request_timeout)
         self.store.append_event(f"{command}_accepted")
         return response
