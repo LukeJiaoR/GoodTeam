@@ -64,6 +64,7 @@ def test_restart_records_and_passes_resolved_frontend_dist(monkeypatch, tmp_path
     monkeypatch.setenv("GOODTEAM_STATE_DIR", str(state_dir))
     monkeypatch.setattr(service, "stop_service", lambda: {"stopped": False})
     monkeypatch.setattr(service, "resolve_frontend_dist", lambda: frontend_dist.resolve())
+    monkeypatch.setattr(service, "_preflight_port", lambda host, port, old_state: None)
     monkeypatch.setattr(service, "_wait_until_ready", lambda process, path, token: True)
     captured = {}
 
