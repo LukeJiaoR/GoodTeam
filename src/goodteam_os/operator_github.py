@@ -44,6 +44,7 @@ class KnownProject:
     worker_backend: str
     merge_method: str
     base_branch: str
+    required_checks: tuple[str, ...]
 
 
 class GitHubCLIError(RuntimeError):
@@ -94,6 +95,7 @@ def resolve_known_project(workspace: Path, repository: str) -> KnownProject:
             merge_method = str(target.get("merge_method", "squash") or "squash").lower()
             if merge_method not in {"merge", "squash", "rebase"}:
                 merge_method = "squash"
+            required_checks = _normalized_required_checks(target.get("required_checks", []))
             return KnownProject(
                 key=str(target.get("key", config_path.stem)).strip().upper(),
                 config_path=config_path.resolve(),
@@ -102,6 +104,7 @@ def resolve_known_project(workspace: Path, repository: str) -> KnownProject:
                 worker_backend=backend,
                 merge_method=merge_method,
                 base_branch=str(target.get("base_branch", "") or "").strip(),
+                required_checks=required_checks,
             )
     raise ValueError(
         f"Unknown project repository: {repository}. Register it locally first; unknown-project adoption is tracked in #339."
@@ -290,7 +293,25 @@ class GhCliGitHubClient:
         }
 
     def fetch_checks(self, repo: str, ref: str) -> dict[str, Any]:
-        return self._json(["gh", "api", f"repos/{repo}/commits/{ref}/check-runs"])
+        return self._json(["gh", "api", f"repos/{repo}/commits/{ref}/check-runs?per_page=100"])
+
+    def fetch_required_checks(self, repo: str, base_branch: str) -> list[str]:
+        payload = self._json_optional(
+            [
+                "gh",
+                "api",
+                f"repos/{repo}/branches/{quote(base_branch, safe='')}/protection/required_status_checks",
+            ]
+        )
+        if not isinstance(payload, dict):
+            return []
+        names = [str(value) for value in payload.get("contexts", [])]
+        names.extend(
+            str(item.get("context", ""))
+            for item in payload.get("checks", [])
+            if isinstance(item, dict)
+        )
+        return list(_normalized_required_checks(names))
 
     def fetch_pr_reviews(self, repo: str, pr_number: int) -> list[dict[str, Any]]:
         value = self._json(["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews"])
@@ -459,6 +480,13 @@ def _normalized_comment(item: dict[str, Any]) -> dict[str, Any]:
         "created_at": str(item.get("createdAt", "") or item.get("created_at", "")),
         "url": str(item.get("url", "") or item.get("html_url", "")),
     }
+
+
+def _normalized_required_checks(value: Any) -> tuple[str, ...]:
+    values = list(value.values()) if isinstance(value, dict) else ([value] if isinstance(value, str) else value)
+    if not isinstance(values, (list, tuple)):
+        return ()
+    return tuple(sorted({str(item).strip() for item in values if str(item).strip()}))
 
 
 def _nested(value: Any, *keys: str) -> Any:

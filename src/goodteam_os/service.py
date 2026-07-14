@@ -265,7 +265,13 @@ def _preflight_port(host: str, port: int, *, old_state: dict[str, Any]) -> None:
         raise RuntimeError(f"invalid port: {port}")
     old_pid = int(old_state.get("pid", 0) or 0)
     old_identity = str(old_state.get("identity", "") or "")
-    if old_pid and _state_process_is_running(old_pid, old_identity):
+    same_managed_listener = (
+        old_pid
+        and _state_process_is_running(old_pid, old_identity)
+        and str(old_state.get("host", "")) == host
+        and int(old_state.get("port", 0) or 0) == port
+    )
+    if same_managed_listener:
         return
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:

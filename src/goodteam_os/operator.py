@@ -92,6 +92,7 @@ def enqueue_github_issue(
             "worker_backend": project.worker_backend,
             "merge_method": project.merge_method,
             "default_branch": project.base_branch or snapshot.default_branch,
+            "required_checks": list(project.required_checks),
             "head_sha": "",
             "base_sha": "",
             "pr_number": 0,
@@ -517,8 +518,16 @@ class LocalOperatorActions:
         head_sha = str(pr.get("head_sha", ""))
         checks = self._client(item).fetch_checks(repo, head_sha)
         runs = [run for run in checks.get("check_runs", []) if isinstance(run, dict)]
-        if not runs:
-            return {"status": "missing", "head_sha": head_sha, "checks": [], "reason": "no checks reported"}
+        required = _required_check_names(metadata.get("required_checks", []))
+        if not required:
+            return {
+                "status": "missing",
+                "head_sha": head_sha,
+                "checks": [],
+                "missing_checks": [],
+                "reason": "no required checks are configured or protected",
+            }
+        selected = _latest_required_runs(runs, required)
         evidence = [
             {
                 "id": run.get("id"),
@@ -527,24 +536,52 @@ class LocalOperatorActions:
                 "conclusion": run.get("conclusion", ""),
                 "head_sha": run.get("head_sha", head_sha),
             }
-            for run in runs
+            for run in selected.values()
         ]
-        if any(str(run.get("head_sha", head_sha)) != head_sha for run in runs):
+        missing = [name for name in required if name not in selected]
+        if missing:
+            return {
+                "status": "missing",
+                "head_sha": head_sha,
+                "checks": evidence,
+                "required_checks": required,
+                "missing_checks": missing,
+                "reason": f"required checks have not appeared: {', '.join(missing)}",
+            }
+        if any(str(run.get("head_sha", head_sha)) != head_sha for run in selected.values()):
             return {"status": "stale", "head_sha": head_sha, "checks": evidence, "reason": "check head mismatch"}
-        if any(run.get("status") != "completed" for run in runs):
-            return {"status": "pending", "head_sha": head_sha, "checks": evidence}
+        if any(str(run.get("status", "")).lower() != "completed" for run in selected.values()):
+            return {
+                "status": "pending",
+                "head_sha": head_sha,
+                "checks": evidence,
+                "required_checks": required,
+            }
         failures = [
-            run for run in runs if str(run.get("conclusion", "")).lower() not in {"success", "neutral", "skipped"}
+            run
+            for run in selected.values()
+            if str(run.get("conclusion", "")).lower() not in {"success", "neutral", "skipped"}
         ]
         if failures:
+            conclusions = {str(run.get("conclusion", "")).lower() for run in failures}
+            deterministic = conclusions == {"failure"}
             return {
                 "status": "failed",
                 "head_sha": head_sha,
                 "checks": evidence,
-                "deterministic": True,
-                "reason": ", ".join(str(run.get("name", "check")) for run in failures),
+                "required_checks": required,
+                "deterministic": deterministic,
+                "failure_class": "ci_code_failure" if deterministic else "ci_infrastructure_failure",
+                "reason": ", ".join(
+                    f"{run.get('name', 'check')}={run.get('conclusion', 'unknown')}" for run in failures
+                ),
             }
-        return {"status": "passed", "head_sha": head_sha, "checks": evidence}
+        return {
+            "status": "passed",
+            "head_sha": head_sha,
+            "checks": evidence,
+            "required_checks": required,
+        }
 
     def _hydrate(self, item: Mapping[str, Any]) -> dict[str, Any]:
         parsed = parse_github_issue_url(str(item["source_url"]))
@@ -564,11 +601,28 @@ class LocalOperatorActions:
         target = load_project_target(config)
         backend = str(metadata.get("worker_backend", "") or dict(target.get("worker_backend", {})).get("mode", "codex"))
         report = worker_backend_doctor(backend)
+        required_checks = _required_check_names(metadata.get("required_checks", target.get("required_checks", [])))
+        source = "project_config"
+        if not required_checks:
+            required_checks = self._client(item).fetch_required_checks(
+                str(item["repository_identity"]),
+                str(metadata.get("default_branch", "main")),
+            )
+            source = "branch_protection"
+        checks_ready = bool(required_checks)
+        backend_ready = bool(report.get("ready"))
+        reason = ""
+        if not backend_ready:
+            reason = str(report.get("hint", "worker backend is not ready"))
+        elif not checks_ready:
+            reason = "no required checks configured and the base branch has no protected check contexts"
         return {
-            "ready": bool(report.get("ready")),
+            "ready": backend_ready and checks_ready,
             "worker_backend": backend,
             "preflight": _redacted_preflight(report),
-            "reason": "" if report.get("ready") else str(report.get("hint", "worker backend is not ready")),
+            "required_checks": required_checks,
+            "required_checks_source": source,
+            "reason": reason,
         }
 
     def _execute(self, item: Mapping[str, Any]) -> dict[str, Any]:
@@ -838,6 +892,29 @@ class LocalOperatorActions:
     @staticmethod
     def _project(item: Mapping[str, Any]) -> Path:
         return Path(str(dict(item["metadata"])["project_root"])).resolve()
+
+
+def _required_check_names(value: Any) -> list[str]:
+    values = list(value.values()) if isinstance(value, dict) else ([value] if isinstance(value, str) else value)
+    if not isinstance(values, (list, tuple)):
+        return []
+    return sorted({str(item).strip() for item in values if str(item).strip()})
+
+
+def _latest_required_runs(runs: list[dict[str, Any]], required: list[str]) -> dict[str, dict[str, Any]]:
+    wanted = set(required)
+    selected: dict[str, tuple[int, dict[str, Any]]] = {}
+    for index, run in enumerate(runs):
+        name = str(run.get("name", "")).strip()
+        if name not in wanted:
+            continue
+        try:
+            rank = int(run.get("id", index) or index)
+        except (TypeError, ValueError):
+            rank = index
+        if name not in selected or rank >= selected[name][0]:
+            selected[name] = (rank, run)
+    return {name: selected[name][1] for name in required if name in selected}
 
 
 def _pr_result(pr: Mapping[str, Any]) -> dict[str, Any]:

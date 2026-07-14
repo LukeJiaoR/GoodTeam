@@ -19,7 +19,7 @@ from goodteam_os.smoke import run_smoke_suite
 from goodteam_os.operator import enqueue_github_issue
 from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.service import DEFAULT_PORT, restart_service, service_state_dir, service_status, stop_service
-from goodteam_os.supervisor import run_operator_component, run_supervisor, run_telegram_component
+from goodteam_os.supervisor import ComponentHeartbeat, run_operator_component, run_supervisor, run_telegram_component
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import poll_telegram_approvals
 from goodteam_os.web import serve, start_workflow
@@ -49,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--frontend-dist", type=Path, help=argparse.SUPPRESS)
     serve_command.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
     serve_command.add_argument("--ready-token", default="", help=argparse.SUPPRESS)
+    serve_command.add_argument("--heartbeat-file", type=Path, help=argparse.SUPPRESS)
+    serve_command.add_argument("--heartbeat-token", default="", help=argparse.SUPPRESS)
 
     restart = subparsers.add_parser("restart", help="Restart the background GoodTeam server")
     restart.add_argument("--host", default="127.0.0.1")
@@ -83,12 +85,16 @@ def build_parser() -> argparse.ArgumentParser:
     telegram_component.add_argument("--workspace", type=Path, required=True)
     telegram_component.add_argument("--ready-file", type=Path, required=True)
     telegram_component.add_argument("--ready-token", required=True)
+    telegram_component.add_argument("--heartbeat-file", type=Path, required=True)
+    telegram_component.add_argument("--heartbeat-token", required=True)
 
     operator_component = subparsers.add_parser("_operator-component", help=argparse.SUPPRESS)
     operator_component.add_argument("--workspace", type=Path, required=True)
     operator_component.add_argument("--state-dir", type=Path, required=True)
     operator_component.add_argument("--ready-file", type=Path, required=True)
     operator_component.add_argument("--ready-token", required=True)
+    operator_component.add_argument("--heartbeat-file", type=Path, required=True)
+    operator_component.add_argument("--heartbeat-token", required=True)
 
     init = subparsers.add_parser("init", help="Scaffold a project config and run doctor")
     init.add_argument("--key", required=True, help="Short project key, e.g. MYAPP")
@@ -204,6 +210,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "serve":
+        heartbeat = (
+            ComponentHeartbeat(args.heartbeat_file, args.heartbeat_token).beat if args.heartbeat_file else None
+        )
         serve(
             workspace=args.workspace,
             host=args.host,
@@ -211,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             frontend_dist=args.frontend_dist,
             ready_file=args.ready_file,
             ready_token=args.ready_token,
+            heartbeat_callback=heartbeat,
         )
         return 0
     if args.command == "supervise":
@@ -229,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
             workspace=args.workspace,
             ready_file=args.ready_file,
             ready_token=args.ready_token,
+            heartbeat_file=args.heartbeat_file,
+            heartbeat_token=args.heartbeat_token,
         )
     if args.command == "_operator-component":
         return run_operator_component(
@@ -236,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
             state_dir=args.state_dir,
             ready_file=args.ready_file,
             ready_token=args.ready_token,
+            heartbeat_file=args.heartbeat_file,
+            heartbeat_token=args.heartbeat_token,
         )
     if args.command == "restart":
         try:

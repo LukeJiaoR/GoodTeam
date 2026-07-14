@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
@@ -1928,7 +1929,13 @@ def send_approval_notification(
     }
 
 
-def poll_telegram_approvals(*, workspace: Path, project_key: str = "", once: bool = False) -> dict[str, object]:
+def poll_telegram_approvals(
+    *,
+    workspace: Path,
+    project_key: str = "",
+    once: bool = False,
+    heartbeat: Callable[[], None] | None = None,
+) -> dict[str, object]:
     token = os.getenv(TOKEN_ENV, "")
     chat_id = os.getenv(CHAT_ID_ENV, "")
     if not token or not chat_id:
@@ -1938,6 +1945,8 @@ def poll_telegram_approvals(*, workspace: Path, project_key: str = "", once: boo
     seen_callbacks: set[str] = set()
     allowed_users = [str(item) for item in telegram_config_from_env()["allowed_users"]]
     while True:
+        if heartbeat is not None:
+            heartbeat()
         payload = _telegram_request(token, "getUpdates", {"timeout": 20, "offset": offset})
         for update in payload.get("result", []):
             offset = max(offset, int(update.get("update_id", 0)) + 1)
@@ -1962,6 +1971,8 @@ def poll_telegram_approvals(*, workspace: Path, project_key: str = "", once: boo
                 )
             if result["status"] == "processed":
                 processed += 1
+        if heartbeat is not None:
+            heartbeat()
         if once:
             return {"processed": processed, "offset": offset}
 

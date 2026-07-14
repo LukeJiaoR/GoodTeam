@@ -7,7 +7,7 @@ import pytest
 
 from goodteam_os.execution.github import GitHubIssueSnapshot
 from goodteam_os.operator import enqueue_github_issue
-from goodteam_os.operator_github import parse_github_issue_url, resolve_known_project
+from goodteam_os.operator_github import GhCliGitHubClient, parse_github_issue_url, resolve_known_project
 from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os import operator, telegram
 
@@ -52,6 +52,9 @@ def _workspace(tmp_path: Path) -> tuple[Path, Path]:
                 "  mode: fake",
                 "base_branch: release/smoke",
                 "merge_method: squash",
+                "required_checks:",
+                "  backend: backend",
+                "  frontend: frontend",
                 "",
             ]
         ),
@@ -92,12 +95,27 @@ def test_known_project_is_resolved_from_local_config_and_remote(tmp_path):
     assert project.repository == "LukeJiaoR/GoodTeam"
     assert project.worker_backend == "fake"
     assert project.base_branch == "release/smoke"
+    assert project.required_checks == ("backend", "frontend")
 
 
 def test_unknown_project_is_rejected_with_adoption_issue(tmp_path):
     workspace, _repo = _workspace(tmp_path)
     with pytest.raises(ValueError, match="#339"):
         resolve_known_project(workspace, "LukeJiaoR/Unknown")
+
+
+def test_required_checks_can_be_discovered_from_branch_protection(tmp_path, monkeypatch):
+    client = GhCliGitHubClient(cwd=tmp_path)
+    monkeypatch.setattr(
+        client,
+        "_json_optional",
+        lambda command: {
+            "contexts": ["frontend"],
+            "checks": [{"context": "backend", "app_id": 15368}],
+        },
+    )
+
+    assert client.fetch_required_checks("LukeJiaoR/GoodTeam", "release/smoke") == ["backend", "frontend"]
 
 
 def test_enqueue_validates_issue_and_deduplicates_source(tmp_path):
@@ -121,6 +139,7 @@ def test_enqueue_validates_issue_and_deduplicates_source(tmp_path):
     assert duplicate["id"] == first["id"]
     assert first["source_revision"] == "2026-07-14T01:02:03Z"
     assert first["metadata"]["default_branch"] == "release/smoke"
+    assert first["metadata"]["required_checks"] == ["backend", "frontend"]
     assert first["metadata"]["project_root"].endswith("/repo")
     assert len(DurableOperatorQueue(tmp_path / "state").list_items()) == 1
     assert client.calls == [("LukeJiaoR/GoodTeam", 341), ("LukeJiaoR/GoodTeam", 341)]

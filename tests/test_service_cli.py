@@ -198,6 +198,7 @@ def test_terminate_process_kills_child_that_ignores_sigterm() -> None:
 
 def test_serve_writes_ready_token_only_after_server_binds(monkeypatch, tmp_path) -> None:
     ready_path = tmp_path / "ready"
+    heartbeats = []
 
     class FakeServer:
         def __init__(self, address, handler) -> None:
@@ -205,15 +206,22 @@ def test_serve_writes_ready_token_only_after_server_binds(monkeypatch, tmp_path)
 
         def serve_forever(self) -> None:
             assert ready_path.read_text(encoding="utf-8") == "token-123"
+            self.service_actions()
 
         def server_close(self) -> None:
             return None
 
     monkeypatch.setattr(web, "ThreadingHTTPServer", FakeServer)
 
-    web.serve(tmp_path, ready_file=ready_path, ready_token="token-123")
+    web.serve(
+        tmp_path,
+        ready_file=ready_path,
+        ready_token="token-123",
+        heartbeat_callback=lambda: heartbeats.append("beat"),
+    )
 
     assert not ready_path.exists()
+    assert heartbeats == ["beat", "beat"]
 
 
 def test_serve_rejects_invalid_explicit_frontend_before_binding(monkeypatch, tmp_path) -> None:

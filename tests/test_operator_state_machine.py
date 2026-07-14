@@ -5,6 +5,8 @@ from collections import Counter
 import pytest
 
 from goodteam_os.operator import (
+    AmbiguousOperation,
+    LocalOperatorActions,
     OperatorExecutionStateMachine,
     OperatorService,
     _structured_review_result,
@@ -248,6 +250,191 @@ def test_pending_ci_is_not_treated_as_passed(tmp_path):
 
     assert queue.active_item()["phase"] == "observing_ci"
     assert actions.calls["review"] == 0
+
+
+def test_missing_required_check_is_not_treated_as_passed(tmp_path, monkeypatch):
+    actions = LocalOperatorActions(workspace=tmp_path, state_dir=tmp_path / "state")
+
+    class Client:
+        def fetch_pr(self, repo, pr_number):
+            return {"head_sha": "head-1"}
+
+        def fetch_checks(self, repo, head_sha):
+            return {
+                "check_runs": [
+                    {
+                        "id": 1,
+                        "name": "frontend",
+                        "head_sha": "head-1",
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(actions, "_client", lambda item: Client())
+    result = actions.observe_ci(
+        {
+            "repository_identity": "LukeJiaoR/GoodTeam",
+            "metadata": {
+                "pr_number": 353,
+                "required_checks": ["backend", "frontend"],
+            },
+        }
+    )
+
+    assert result["status"] == "missing"
+    assert result["missing_checks"] == ["backend"]
+    assert [check["name"] for check in result["checks"]] == ["frontend"]
+
+
+@pytest.mark.parametrize("conclusion", ["cancelled", "timed_out", "startup_failure"])
+def test_infrastructure_check_outcome_never_starts_deterministic_fix(tmp_path, monkeypatch, conclusion):
+    actions = LocalOperatorActions(workspace=tmp_path, state_dir=tmp_path / "state")
+
+    class Client:
+        def fetch_pr(self, repo, pr_number):
+            return {"head_sha": "head-1"}
+
+        def fetch_checks(self, repo, head_sha):
+            return {
+                "check_runs": [
+                    {
+                        "id": 1,
+                        "name": "backend",
+                        "head_sha": "head-1",
+                        "status": "completed",
+                        "conclusion": conclusion,
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(actions, "_client", lambda item: Client())
+    result = actions.observe_ci(
+        {
+            "repository_identity": "LukeJiaoR/GoodTeam",
+            "metadata": {"pr_number": 353, "required_checks": ["backend"]},
+        }
+    )
+
+    assert result["status"] == "failed"
+    assert result["deterministic"] is False
+    assert result["failure_class"] == "ci_infrastructure_failure"
+
+
+def test_nondeterministic_ci_failure_pauses_instead_of_dispatching_fix(tmp_path):
+    queue, _ = _queue(tmp_path)
+    actions = FakeActions(
+        ci=[
+            {
+                "status": "failed",
+                "head_sha": "head-1",
+                "checks": [],
+                "deterministic": False,
+                "failure_class": "ci_infrastructure_failure",
+                "reason": "backend=cancelled",
+            }
+        ]
+    )
+    machine = OperatorExecutionStateMachine(queue, actions)
+
+    for _ in range(6):
+        machine.tick()
+
+    item = queue.active_item()
+    assert item["phase"] == "paused"
+    assert item["last_failure_class"] == "ci_failed"
+    assert actions.calls["fix"] == 0
+
+
+def test_preflight_fails_closed_without_configured_or_protected_checks(tmp_path, monkeypatch):
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: Demo",
+                "key: DEMO",
+                "repos:",
+                f"  root: {tmp_path}",
+                "worker_backend:",
+                "  mode: fake",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    actions = LocalOperatorActions(workspace=tmp_path, state_dir=tmp_path / "state")
+
+    class Client:
+        def fetch_required_checks(self, repo, base_branch):
+            return []
+
+    monkeypatch.setattr(actions, "_client", lambda item: Client())
+    monkeypatch.setattr(
+        "goodteam_os.operator.worker_backend_doctor",
+        lambda backend: {"mode": backend, "ready": True},
+    )
+    result = actions._preflight(
+        {
+            "repository_identity": "example/demo",
+            "metadata": {
+                "project_config": str(config),
+                "project_root": str(tmp_path),
+                "worker_backend": "fake",
+                "default_branch": "main",
+                "required_checks": [],
+            },
+        }
+    )
+
+    assert result["ready"] is False
+    assert result["required_checks"] == []
+    assert "no required checks" in result["reason"]
+
+
+def test_merge_revalidation_rejects_partial_required_check_set(tmp_path, monkeypatch):
+    actions = LocalOperatorActions(workspace=tmp_path, state_dir=tmp_path / "state")
+
+    class Client:
+        merge_calls = 0
+
+        def fetch_pr(self, repo, pr_number):
+            return {"head_sha": "head-1"}
+
+        def fetch_checks(self, repo, head_sha):
+            return {
+                "check_runs": [
+                    {
+                        "id": 1,
+                        "name": "frontend",
+                        "head_sha": "head-1",
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+            }
+
+        def merge_pr(self, *args, **kwargs):
+            self.merge_calls += 1
+            return {"merged": True, "sha": "merge-1"}
+
+    client = Client()
+    monkeypatch.setattr(actions, "_client", lambda item: client)
+    item = {
+        "repository_identity": "LukeJiaoR/GoodTeam",
+        "metadata": {
+            "pr_number": 353,
+            "head_sha": "head-1",
+            "required_checks": ["backend", "frontend"],
+            "decision": {"head_sha": "head-1"},
+            "review": {"head_sha": "head-1", "blockers": []},
+            "merge_method": "squash",
+        },
+    }
+
+    with pytest.raises(AmbiguousOperation, match="required checks"):
+        actions._merge(item)
+    assert client.merge_calls == 0
 
 
 def test_unknown_recovery_phase_pauses_fail_closed(tmp_path):

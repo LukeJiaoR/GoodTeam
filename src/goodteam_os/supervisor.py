@@ -9,12 +9,13 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from goodteam_os.operator_queue import DurableOperatorQueue
 
 
 HEARTBEAT_SECONDS = 0.5
+COMPONENT_HEARTBEAT_TIMEOUT_SECONDS = float(os.environ.get("GOODTEAM_COMPONENT_HEARTBEAT_TIMEOUT_SECONDS", "30"))
 COMPONENT_START_TIMEOUT_SECONDS = 8.0
 MAX_COMPONENT_RESTARTS = 3
 
@@ -25,12 +26,39 @@ class Component:
     command: list[str]
     ready_path: Path
     ready_token: str
+    heartbeat_path: Path
+    heartbeat_token: str
     process: subprocess.Popen[bytes] | None = None
     ready: bool = False
     status: str = "starting"
     last_error: str = ""
     restart_count: int = 0
     started_at: float = 0.0
+    last_heartbeat: float = 0.0
+    heartbeat_sequence: int = 0
+
+
+class ComponentHeartbeat:
+    """Child-owned progress heartbeat with generation and PID binding."""
+
+    def __init__(self, path: Path, token: str):
+        self.path = Path(path)
+        self.token = token
+        self.sequence = 0
+
+    def beat(self) -> None:
+        self.sequence += 1
+        payload = {
+            "schema_version": 1,
+            "token": self.token,
+            "pid": os.getpid(),
+            "sequence": self.sequence,
+            "updated_at": time.time(),
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        temporary.replace(self.path)
 
 
 def run_supervisor(
@@ -96,28 +124,27 @@ def run_supervisor(
         while not stopping:
             health = "healthy"
             for component in components:
-                process = component.process
-                if process is None or process.poll() is not None:
-                    if component.restart_count >= MAX_COMPONENT_RESTARTS:
-                        component.status = "failed"
-                        component.ready = False
-                        component.last_error = _component_exit_error(component)
-                        _pause_active_task_for_component_failure(queue, component)
+                failure = _component_failure(component)
+                if failure:
+                    restart_health = _restart_component(
+                        component,
+                        failure=failure,
+                        state_dir=state_dir,
+                        state_path=state_path,
+                        state=state,
+                        components=components,
+                        queue=queue,
+                    )
+                    if restart_health == "failed":
                         health = "failed"
-                        continue
-                    component.restart_count += 1
-                    component.status = "restarting"
-                    component.ready = False
-                    component.last_error = _component_exit_error(component)
-                    _write_projection(state_path, state, components, queue=queue)
-                    _start_component(component, state_dir=state_dir)
-                    try:
-                        _wait_for_component(component)
-                    except RuntimeError as exc:
-                        component.last_error = str(exc)
+                    elif restart_health == "degraded" and health != "failed":
                         health = "degraded"
-                if component.status in {"restarting", "failed"}:
-                    health = "failed" if component.status == "failed" else "degraded"
+                    if restart_health != "running":
+                        continue
+                if component.status == "failed":
+                    health = "failed"
+                elif component.status != "running":
+                    health = "degraded"
             state["supervisor"] = {
                 "status": health,
                 "ready": health != "failed",
@@ -144,24 +171,42 @@ def run_supervisor(
             _stop_component(component)
         for component in components:
             component.ready_path.unlink(missing_ok=True)
+            component.heartbeat_path.unlink(missing_ok=True)
         try:
             queue.set_desired_state("stopped")
         except Exception:
             pass
 
 
-def run_telegram_component(*, workspace: Path, ready_file: Path, ready_token: str) -> int:
+def run_telegram_component(
+    *,
+    workspace: Path,
+    ready_file: Path,
+    ready_token: str,
+    heartbeat_file: Path,
+    heartbeat_token: str,
+) -> int:
     from goodteam_os.telegram import poll_telegram_approvals, telegram_config_from_env
 
     _install_component_signal_handlers()
+    heartbeat = ComponentHeartbeat(heartbeat_file, heartbeat_token)
+    heartbeat.beat()
     _write_ready(ready_file, ready_token)
     if not telegram_config_from_env()["enabled"]:
-        return _idle_until_signal()
-    poll_telegram_approvals(workspace=workspace)
+        return _idle_until_signal(heartbeat=heartbeat.beat)
+    poll_telegram_approvals(workspace=workspace, heartbeat=heartbeat.beat)
     return 0
 
 
-def run_operator_component(*, workspace: Path, state_dir: Path, ready_file: Path, ready_token: str) -> int:
+def run_operator_component(
+    *,
+    workspace: Path,
+    state_dir: Path,
+    ready_file: Path,
+    ready_token: str,
+    heartbeat_file: Path,
+    heartbeat_token: str,
+) -> int:
     from goodteam_os.operator import OperatorService
 
     stop_requested = False
@@ -174,9 +219,12 @@ def run_operator_component(*, workspace: Path, state_dir: Path, ready_file: Path
     signal.signal(signal.SIGINT, request_stop)
     service = OperatorService(workspace=workspace, state_dir=state_dir)
     service.recover()
+    heartbeat = ComponentHeartbeat(heartbeat_file, heartbeat_token)
+    heartbeat.beat()
     _write_ready(ready_file, ready_token)
     while not stop_requested:
         service.tick()
+        heartbeat.beat()
         active = service.queue.active_item()
         phase = str(active.get("phase", "")) if active else ""
         if phase == "observing_ci":
@@ -201,7 +249,9 @@ def _component_specs(
 
     def component(name: str, args: list[str]) -> Component:
         token = secrets.token_urlsafe(18)
+        heartbeat_token = secrets.token_urlsafe(18)
         ready = runtime / f"{name}.ready"
+        heartbeat = runtime / f"{name}.heartbeat.json"
         return Component(
             name=name,
             command=[
@@ -213,9 +263,15 @@ def _component_specs(
                 str(ready),
                 "--ready-token",
                 token,
+                "--heartbeat-file",
+                str(heartbeat),
+                "--heartbeat-token",
+                heartbeat_token,
             ],
             ready_path=ready,
             ready_token=token,
+            heartbeat_path=heartbeat,
+            heartbeat_token=heartbeat_token,
         )
 
     return [
@@ -243,6 +299,7 @@ def _component_specs(
 
 def _start_component(component: Component, *, state_dir: Path) -> None:
     component.ready_path.unlink(missing_ok=True)
+    component.heartbeat_path.unlink(missing_ok=True)
     log_path = state_dir / f"{component.name}.log"
     with log_path.open("ab") as log_file:
         component.process = subprocess.Popen(
@@ -255,6 +312,8 @@ def _start_component(component: Component, *, state_dir: Path) -> None:
     component.started_at = time.time()
     component.status = "starting"
     component.ready = False
+    component.last_heartbeat = 0.0
+    component.heartbeat_sequence = 0
 
 
 def _wait_for_component(component: Component) -> None:
@@ -263,7 +322,8 @@ def _wait_for_component(component: Component) -> None:
         if component.process is None or component.process.poll() is not None:
             raise RuntimeError(f"{component.name} component exited before readiness")
         try:
-            if component.ready_path.read_text(encoding="utf-8") == component.ready_token:
+            ready = component.ready_path.read_text(encoding="utf-8") == component.ready_token
+            if ready and _refresh_component_heartbeat(component):
                 component.ready = True
                 component.status = "running"
                 component.last_error = ""
@@ -297,6 +357,72 @@ def _component_exit_error(component: Component) -> str:
     return f"component exited with code {code}"
 
 
+def _refresh_component_heartbeat(component: Component) -> bool:
+    process = component.process
+    if process is None or process.poll() is not None:
+        return False
+    try:
+        payload = json.loads(component.heartbeat_path.read_text(encoding="utf-8"))
+        token = str(payload.get("token", ""))
+        pid = int(payload.get("pid", 0) or 0)
+        sequence = int(payload.get("sequence", 0) or 0)
+        updated_at = float(payload.get("updated_at", 0.0) or 0.0)
+    except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+    if token != component.heartbeat_token or pid != process.pid or sequence <= 0 or updated_at <= 0:
+        return False
+    component.last_heartbeat = updated_at
+    component.heartbeat_sequence = sequence
+    return True
+
+
+def _component_failure(component: Component) -> str:
+    process = component.process
+    if process is None or process.poll() is not None:
+        return _component_exit_error(component)
+    _refresh_component_heartbeat(component)
+    if component.status != "running" or not component.ready:
+        return component.last_error or "component is alive but not ready"
+    age = time.time() - component.last_heartbeat if component.last_heartbeat else float("inf")
+    if age > COMPONENT_HEARTBEAT_TIMEOUT_SECONDS:
+        return f"component heartbeat is stale ({age:.1f}s)"
+    return ""
+
+
+def _restart_component(
+    component: Component,
+    *,
+    failure: str,
+    state_dir: Path,
+    state_path: Path,
+    state: dict[str, Any],
+    components: list[Component],
+    queue: DurableOperatorQueue,
+) -> str:
+    if component.restart_count >= MAX_COMPONENT_RESTARTS:
+        component.status = "failed"
+        component.ready = False
+        component.last_error = failure
+        _pause_active_task_for_component_failure(queue, component)
+        return "failed"
+    component.restart_count += 1
+    component.status = "restarting"
+    component.ready = False
+    component.last_error = failure
+    _stop_component(component)
+    _write_projection(state_path, state, components, queue=queue)
+    _start_component(component, state_dir=state_dir)
+    try:
+        _wait_for_component(component)
+    except RuntimeError as exc:
+        component.last_error = str(exc)
+        component.status = "restarting"
+        component.ready = False
+        _stop_component(component)
+        return "degraded"
+    return "running"
+
+
 def _pause_active_task_for_component_failure(queue: DurableOperatorQueue, component: Component) -> None:
     try:
         item = queue.active_item()
@@ -322,14 +448,14 @@ def _write_projection(
     *,
     queue: DurableOperatorQueue,
 ) -> None:
-    now = time.time()
     state["components"] = {
         component.name: {
             "identity": f"{component.name}:{component.process.pid if component.process else 0}",
             "pid": component.process.pid if component.process else 0,
             "ready": component.ready,
             "status": component.status,
-            "last_heartbeat": now if component.process and component.process.poll() is None else component.started_at,
+            "last_heartbeat": component.last_heartbeat,
+            "heartbeat_sequence": component.heartbeat_sequence,
             "last_error": component.last_error,
             "restart_count": component.restart_count,
             "terminal_failure": component.status == "failed",
@@ -360,6 +486,8 @@ def _install_component_signal_handlers() -> None:
     signal.signal(signal.SIGINT, stop)
 
 
-def _idle_until_signal() -> int:
+def _idle_until_signal(*, heartbeat: Callable[[], None] | None = None) -> int:
     while True:
-        time.sleep(60)
+        if heartbeat is not None:
+            heartbeat()
+        time.sleep(1.0)
