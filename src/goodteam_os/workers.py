@@ -1136,7 +1136,6 @@ class WorkerJobStore:
         )
         stop_heartbeat = threading.Event()
         heartbeat_thread: threading.Thread | None = None
-        control_cursor = 0
         running_summary = "Pi RPC session is running."
         started_at = self._now()
         try:
@@ -1161,17 +1160,17 @@ class WorkerJobStore:
                 daemon=True,
             )
             heartbeat_thread.start()
-            metadata = runtime.store.read_metadata() or {}
-            if not metadata.get("initial_prompt_sent"):
-                runtime.send_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
-            elif str(job.get("worker_session_ref") or "").strip():
-                runtime.send_resume_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
+            if not runtime.already_settled:
+                if str(job.get("worker_session_ref") or "").strip():
+                    runtime.send_resume_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
+                else:
+                    runtime.send_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
 
             def tick() -> None:
-                nonlocal control_cursor
-                control_cursor = self._process_pi_controls(job_root, job, runtime, control_cursor)
+                self._process_pi_controls(job_root, job, runtime)
 
             runtime.wait_until_settled(PI_OVERALL_TIMEOUT_SECONDS, tick=tick)
+            self._fail_pending_pi_controls(job_root, "Pi session settled before RPC acknowledgement")
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=1)
             if runtime.aborted:
@@ -1212,6 +1211,7 @@ class WorkerJobStore:
                 },
             )
         except (PiRpcError, TimeoutError, ValueError, FileNotFoundError) as exc:
+            self._fail_pending_pi_controls(job_root, f"Pi session stopped before RPC acknowledgement: {exc}")
             stop_heartbeat.set()
             if heartbeat_thread is not None:
                 heartbeat_thread.join(timeout=1)
@@ -1248,15 +1248,33 @@ class WorkerJobStore:
         job_root: Path,
         job: dict[str, Any],
         runtime: PiSessionRuntime,
-        cursor: int,
-    ) -> int:
+    ) -> None:
         path = job_root / "pi_control_queue.jsonl"
         if not path.is_file():
-            return cursor
+            return
+        states = self._pi_control_ack_states(job_root)
         lines = path.read_text(encoding="utf-8").splitlines()
-        for raw in lines[cursor:]:
+        for raw in lines:
+            control_id = ""
             try:
                 control = json.loads(raw)
+                control_id = str(control.get("id") or "")
+                if not control_id:
+                    raise ValueError("Pi control command is missing an id")
+                current_state = str(states.get(control_id, {}).get("state") or "queued")
+                if current_state in {"rpc_accepted", "failed"}:
+                    continue
+                if current_state == "processing":
+                    self._append_pi_control_ack(
+                        job_root,
+                        control_id,
+                        "failed",
+                        error="Pi control acknowledgement is ambiguous after worker restart",
+                    )
+                    states[control_id] = {"state": "failed"}
+                    continue
+                self._append_pi_control_ack(job_root, control_id, "processing")
+                states[control_id] = {"state": "processing"}
                 action = str(control.get("action") or "")
                 if action == "steer":
                     runtime.steer(str(control.get("message") or ""))
@@ -1266,9 +1284,12 @@ class WorkerJobStore:
                     runtime.abort()
                 else:
                     raise ValueError(f"unknown Pi control action: {action}")
+                self._append_pi_control_ack(job_root, control_id, "rpc_accepted")
+                states[control_id] = {"state": "rpc_accepted"}
                 runtime.store.append_event(
                     "operator_control_accepted",
                     {
+                        "control_id": control_id,
                         "action": action,
                         "actor": str(control.get("actor") or "cli"),
                         "source": str(control.get("source") or "cli"),
@@ -1278,8 +1299,70 @@ class WorkerJobStore:
                     },
                 )
             except (json.JSONDecodeError, PiRpcError, ValueError) as exc:
-                runtime.store.append_event("operator_control_failed", {"error": str(exc)[:500]})
-        return len(lines)
+                if control_id:
+                    self._append_pi_control_ack(job_root, control_id, "failed", error=str(exc)[:500])
+                    states[control_id] = {"state": "failed"}
+                runtime.store.append_event(
+                    "operator_control_failed",
+                    {"control_id": control_id, "error": str(exc)[:500]},
+                )
+
+    def _fail_pending_pi_controls(self, job_root: Path, error: str) -> None:
+        path = job_root / "pi_control_queue.jsonl"
+        if not path.is_file():
+            return
+        states = self._pi_control_ack_states(job_root)
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                control = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            control_id = str(control.get("id") or "")
+            state = str(states.get(control_id, {}).get("state") or "queued")
+            if control_id and state not in {"rpc_accepted", "failed"}:
+                self._append_pi_control_ack(job_root, control_id, "failed", error=error[:500])
+
+    def _pi_control_ack_states(self, job_root: Path) -> dict[str, dict[str, Any]]:
+        path = job_root / "pi_control_acks.jsonl"
+        if not path.is_file():
+            return {}
+        states: dict[str, dict[str, Any]] = {}
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            control_id = str(record.get("control_id") or "")
+            if control_id:
+                states[control_id] = record
+        return states
+
+    def _append_pi_control_ack(
+        self,
+        job_root: Path,
+        control_id: str,
+        state: str,
+        *,
+        error: str = "",
+    ) -> None:
+        payload = {
+            "control_id": control_id,
+            "state": state,
+            "recorded_at": self._now(),
+        }
+        if error:
+            payload["error"] = error
+        self._append_jsonl(job_root / "pi_control_acks.jsonl", payload)
+
+    @staticmethod
+    def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+        encoded = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, encoded)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     def session_status(self, job_id: str) -> dict[str, Any]:
         job_root, job = self._session_job(job_id)
@@ -1315,7 +1398,7 @@ class WorkerJobStore:
         actor: str = "cli",
         source: str = "cli",
     ) -> dict[str, Any]:
-        job_root, _job = self._session_job(job_id)
+        job_root, job = self._session_job(job_id)
         status = self.session_status(job_id)
         if action in {"steer", "follow_up"} and not message.strip():
             raise ValueError(f"{action} message must not be empty")
@@ -1331,13 +1414,40 @@ class WorkerJobStore:
             "reason": reason,
             "actor": actor,
             "source": source,
+            "job_id": job_id,
+            "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
         }
-        fd = os.open(job_root / "pi_control_queue.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        try:
-            os.write(fd, (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
-        finally:
-            os.close(fd)
-        return {**status, "accepted": True, "control_id": payload["id"], "action": action}
+        self._append_jsonl(job_root / "pi_control_queue.jsonl", payload)
+        timeout = float(os.getenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "5"))
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            acknowledgement = self._pi_control_ack_states(job_root).get(payload["id"], {})
+            state = str(acknowledgement.get("state") or "queued")
+            if state == "rpc_accepted":
+                return {
+                    **self.session_status(job_id),
+                    "accepted": True,
+                    "control_id": payload["id"],
+                    "action": action,
+                    "control_state": state,
+                }
+            if state == "failed":
+                return {
+                    **self.session_status(job_id),
+                    "accepted": False,
+                    "control_id": payload["id"],
+                    "action": action,
+                    "control_state": state,
+                    "error": str(acknowledgement.get("error") or "Pi rejected the control command"),
+                }
+            time.sleep(0.02)
+        return {
+            **self.session_status(job_id),
+            "accepted": False,
+            "control_id": payload["id"],
+            "action": action,
+            "control_state": "queued",
+        }
 
     def _session_job(self, job_id: str) -> tuple[Path, dict[str, Any]]:
         if not job_id or Path(job_id).name != job_id:

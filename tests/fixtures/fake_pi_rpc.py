@@ -87,7 +87,8 @@ def finish_prompt(message: str) -> None:
     if os.getenv("FAKE_PI_AGENT_ERROR") == "1":
         emit({"type": "extension_error", "error": "fake extension failed"})
     streaming = False
-    emit({"type": "agent_settled"})
+    if os.getenv("FAKE_PI_NO_SETTLED") != "1":
+        emit({"type": "agent_settled"})
 
 
 for raw in sys.stdin.buffer:
@@ -123,8 +124,9 @@ for raw in sys.stdin.buffer:
         response(request)
     elif command == "prompt":
         streaming = True
-        response(request)
         threading.Thread(target=finish_prompt, args=(str(request.get("message") or ""),), daemon=True).start()
+        if os.getenv("FAKE_PI_DROP_PROMPT_RESPONSE") != "1":
+            response(request)
     elif command in {"steer", "follow_up"}:
         response(request)
     elif command == "abort":

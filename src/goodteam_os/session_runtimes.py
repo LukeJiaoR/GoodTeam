@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -13,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from shutil import which
 from typing import Any, Protocol
+from uuid import uuid4
 
 from goodteam_os.pi_rpc import PiRpcError, PiRpcExited, PiRpcProcess, PiRpcRejected, monotonic_deadline, redact_pi_text
 
@@ -283,17 +285,24 @@ class PiSessionRuntime:
         self.aborted = False
         self.already_settled = False
         self.agent_error = ""
+        self._metadata_lock = threading.RLock()
+        self._abort_in_flight = False
+        self._closing_abort = False
 
     def start_or_resume(self) -> dict[str, Any]:
         self.config.session_dir.mkdir(parents=True, exist_ok=True)
         policy = str(self.job.get("session_policy") or "new")
         existing = self.store.read_metadata()
         explicit_ref = str(self.job.get("worker_session_ref") or "").strip()
-        resume = policy == "resume" or (existing is not None and bool(existing.get("initial_prompt_sent")))
+        recovering_current_job = existing is not None
+        resume = policy == "resume" or (
+            recovering_current_job
+            and bool(existing.get("initial_prompt_sent") or existing.get("active_operation"))
+        )
         if policy == "resume" and not explicit_ref and existing is None:
             raise PiSessionMissing("Pi resume requested without a valid worker_session_ref")
         source = existing
-        if explicit_ref:
+        if explicit_ref and not recovering_current_job:
             source_path = (self.project_root / ".goodteam" / "workers" / "jobs" / explicit_ref / "pi_session.json").resolve()
             jobs_root = (self.project_root / ".goodteam" / "workers" / "jobs").resolve()
             if not source_path.is_relative_to(jobs_root) or not source_path.is_file():
@@ -334,8 +343,12 @@ class PiSessionRuntime:
             "pid": self.rpc.pid,
         }
         if source:
-            for key in ("last_entry_id", "leaf_id", "initial_prompt_sent"):
+            for key in ("last_entry_id", "leaf_id"):
                 self.metadata[key] = source.get(key, self.metadata[key])
+        if recovering_current_job and source:
+            self.metadata["initial_prompt_sent"] = bool(source.get("initial_prompt_sent"))
+            if isinstance(source.get("active_operation"), dict):
+                self.metadata["active_operation"] = dict(source["active_operation"])
         self.store.write_metadata(self.metadata)
         if resume:
             if not source:
@@ -356,20 +369,15 @@ class PiSessionRuntime:
                 {"type": "set_thinking_level", "level": self.config.thinking_level}, timeout=self.config.request_timeout
             )
         state = self.get_state()
-        self.already_settled = bool(
-            resume
-            and source
-            and source.get("status") == "settled"
-            and not state.get("isStreaming")
-            and not int(state.get("pendingMessageCount") or 0)
-        )
-        if resume and source and source.get("initial_prompt_sent") and not state.get("isStreaming") and not self.already_settled:
-            last_text = self.get_last_assistant_text()
-            if last_text:
+        if recovering_current_job and source and (source.get("initial_prompt_sent") or source.get("active_operation")):
+            operation = source.get("active_operation")
+            operation_state = str(operation.get("state") or "") if isinstance(operation, dict) else ""
+            idle = not state.get("isStreaming") and not int(state.get("pendingMessageCount") or 0)
+            if operation_state == "settled" and idle:
                 self.already_settled = True
             else:
                 raise PiResumeFailed(
-                    "Pi session recovery is ambiguous; the initial prompt was not repeated and no settled assistant result exists"
+                    "Pi session recovery is ambiguous; the persisted prompt operation is not confirmed settled"
                 )
         self.metadata["status"] = "running"
         self.store.write_metadata(self.metadata)
@@ -377,25 +385,10 @@ class PiSessionRuntime:
         return state
 
     def send_prompt(self, message: str) -> dict[str, Any]:
-        if not message.strip():
-            raise ValueError("Pi prompt must not be empty")
-        rpc = self._rpc()
-        rpc.clear_settled()
-        response = rpc.request({"type": "prompt", "message": message}, timeout=self.config.request_timeout)
-        self.metadata["initial_prompt_sent"] = True
-        self.store.write_metadata(self.metadata)
-        self.store.append_event("prompt_accepted")
-        return response
+        return self._dispatch_prompt("initial_prompt", message)
 
     def send_resume_prompt(self, message: str) -> dict[str, Any]:
-        if not message.strip():
-            raise ValueError("Pi resume prompt must not be empty")
-        rpc = self._rpc()
-        rpc.clear_settled()
-        self.already_settled = False
-        response = rpc.request({"type": "prompt", "message": message}, timeout=self.config.request_timeout)
-        self.store.append_event("resume_prompt_accepted")
-        return response
+        return self._dispatch_prompt("resume_prompt", message)
 
     def steer(self, message: str) -> dict[str, Any]:
         return self._message_control("steer", message)
@@ -406,10 +399,20 @@ class PiSessionRuntime:
     def abort(self) -> dict[str, Any]:
         if self.aborted:
             return {"type": "response", "command": "abort", "success": True, "idempotent": True}
-        response = self._rpc().request({"type": "abort"}, timeout=min(self.config.request_timeout, 5.0))
+        self._abort_in_flight = True
+        try:
+            response = self._rpc().request({"type": "abort"}, timeout=min(self.config.request_timeout, 5.0))
+        except PiRpcError:
+            self._abort_in_flight = False
+            raise
         self.aborted = True
-        self.metadata["status"] = "aborted"
-        self.store.write_metadata(self.metadata)
+        self._abort_in_flight = False
+        with self._metadata_lock:
+            self.metadata["status"] = "aborted"
+            operation = self.metadata.get("active_operation")
+            if isinstance(operation, dict) and operation.get("state") != "settled":
+                self.metadata["active_operation"] = {**operation, "state": "aborted", "aborted_at": _now()}
+            self.store.write_metadata(self.metadata)
         self.store.append_event("abort")
         return response
 
@@ -469,9 +472,10 @@ class PiSessionRuntime:
 
     def wait_until_settled(self, timeout: float, tick: Callable[[], None] | None = None) -> None:
         if self.already_settled:
-            self.metadata["status"] = "settled"
-            self.metadata["settled_at"] = _now()
-            self.store.write_metadata(self.metadata)
+            with self._metadata_lock:
+                self.metadata["status"] = "settled"
+                self.metadata["settled_at"] = _now()
+                self.store.write_metadata(self.metadata)
             return
         deadline = monotonic_deadline(timeout)
         while time.monotonic() < deadline:
@@ -481,9 +485,16 @@ class PiSessionRuntime:
             if rpc.wait_settled(min(0.2, max(0.01, deadline - time.monotonic()))):
                 if self.agent_error and not self.aborted:
                     raise PiAgentFailed(self.agent_error)
-                self.metadata["status"] = "aborted" if self.aborted else "settled"
-                self.metadata["settled_at"] = _now()
-                self.store.write_metadata(self.metadata)
+                with self._metadata_lock:
+                    operation = self.metadata.get("active_operation")
+                    operation_state = str(operation.get("state") or "") if isinstance(operation, dict) else ""
+                    if not self.aborted and operation_state != "settled":
+                        raise PiResumeFailed(
+                            "Pi emitted an unbound settled event; the active prompt operation was not confirmed"
+                        )
+                    self.metadata["status"] = "aborted" if self.aborted else "settled"
+                    self.metadata["settled_at"] = _now()
+                    self.store.write_metadata(self.metadata)
                 return
             if not rpc.alive:
                 raise PiRpcExited("Pi RPC process exited before agent_settled")
@@ -495,7 +506,9 @@ class PiSessionRuntime:
 
     def close(self) -> None:
         if self.rpc is not None:
-            self.rpc.close(abort=self.metadata.get("status") == "running")
+            abort = self.metadata.get("status") == "running"
+            self._closing_abort = abort
+            self.rpc.close(abort=abort)
 
     def _message_control(self, command: str, message: str) -> dict[str, Any]:
         if not message.strip():
@@ -503,10 +516,60 @@ class PiSessionRuntime:
         if self.metadata.get("status") != "running":
             raise PiRpcError(f"Pi session is not active ({self.metadata.get('status', 'unknown')})")
         if command == "follow_up":
-            self._rpc().clear_settled()
-            self.already_settled = False
+            return self._dispatch_prompt("follow_up", message, rpc_command="follow_up")
         response = self._rpc().request({"type": command, "message": message}, timeout=self.config.request_timeout)
         self.store.append_event(f"{command}_accepted")
+        return response
+
+    def _dispatch_prompt(self, kind: str, message: str, *, rpc_command: str = "prompt") -> dict[str, Any]:
+        if not message.strip():
+            raise ValueError(f"Pi {kind.replace('_', ' ')} must not be empty")
+        rpc = self._rpc()
+        rpc.clear_settled()
+        self.already_settled = False
+        operation_id = f"operation-{uuid4()}"
+        request_id = f"pi-{uuid4()}"
+        operation = {
+            "id": operation_id,
+            "request_id": request_id,
+            "kind": kind,
+            "prompt_sha256": hashlib.sha256(message.encode("utf-8")).hexdigest(),
+            "state": "dispatching",
+            "dispatched_at": _now(),
+        }
+        with self._metadata_lock:
+            self.metadata["active_operation"] = operation
+            if kind == "initial_prompt":
+                self.metadata["initial_prompt_sent"] = True
+            self.store.write_metadata(self.metadata)
+        self.store.append_event("prompt_dispatching", {"operation_id": operation_id, "kind": kind})
+        try:
+            response = rpc.request(
+                {"type": rpc_command, "message": message, "id": request_id},
+                timeout=self.config.request_timeout,
+            )
+        except PiRpcRejected:
+            with self._metadata_lock:
+                current = self.metadata.get("active_operation")
+                if isinstance(current, dict) and current.get("id") == operation_id:
+                    self.metadata["active_operation"] = {
+                        **current,
+                        "state": "failed",
+                        "failed_at": _now(),
+                    }
+                    self.store.write_metadata(self.metadata)
+            raise
+        with self._metadata_lock:
+            current = self.metadata.get("active_operation")
+            if isinstance(current, dict) and current.get("id") == operation_id and current.get("state") == "dispatching":
+                self.metadata["active_operation"] = {
+                    **current,
+                    "state": "accepted",
+                    "accepted_at": _now(),
+                }
+                self.store.write_metadata(self.metadata)
+        accepted_event = "resume_prompt_accepted" if kind == "resume_prompt" else f"{rpc_command}_accepted"
+        self.store.append_event(accepted_event, {"operation_id": operation_id})
         return response
 
     def _validate_lineage(self, source: Mapping[str, Any]) -> None:
@@ -521,6 +584,24 @@ class PiSessionRuntime:
 
     def _on_record(self, record: dict[str, Any]) -> None:
         self.store.append_protocol(record)
+        if record.get("type") == "agent_start":
+            with self._metadata_lock:
+                operation = self.metadata.get("active_operation")
+                if isinstance(operation, dict) and operation.get("state") in {"dispatching", "accepted"}:
+                    self.metadata["active_operation"] = {**operation, "turn_started_at": _now()}
+                    self.store.write_metadata(self.metadata)
+        if record.get("type") == "agent_settled" and not self._abort_in_flight and not self._closing_abort:
+            with self._metadata_lock:
+                operation = self.metadata.get("active_operation")
+                if (
+                    isinstance(operation, dict)
+                    and operation.get("state") in {"dispatching", "accepted"}
+                    and operation.get("turn_started_at")
+                ):
+                    now = _now()
+                    self.metadata["active_operation"] = {**operation, "state": "settled", "settled_at": now}
+                    self.metadata["settled_operation_id"] = str(operation.get("id") or "")
+                    self.store.write_metadata(self.metadata)
         if record.get("type") == "extension_error":
             self.agent_error = str(record.get("error") or record.get("message") or "Pi extension failed")[:500]
         update = record.get("assistantMessageEvent")

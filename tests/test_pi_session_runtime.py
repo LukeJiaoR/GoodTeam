@@ -37,6 +37,14 @@ def create_pi_job(store: WorkerJobStore, **overrides):
     return store.create_job(**values)
 
 
+def set_pi_request_timeout(store: WorkerJobStore, job_id: str, timeout: float) -> None:
+    job_path = store.root / job_id / "job.json"
+    payload = json.loads(job_path.read_text(encoding="utf-8"))
+    payload["pi_path"] = str(FAKE_PI)
+    payload["pi_request_timeout"] = timeout
+    job_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_pi_doctor_missing_does_not_affect_builtin(monkeypatch, tmp_path):
     monkeypatch.setenv("GOODTEAM_PI_PATH", str(tmp_path / "missing-pi"))
     monkeypatch.setenv("GOODTEAM_PI_SESSION_DIR", str(tmp_path / "sessions"))
@@ -95,6 +103,9 @@ def test_pi_initial_run_persists_result_events_entries_and_runtime_cwd(monkeypat
     assert status["runtime_cwd"] == str(workspace)
     assert metadata["session_id"] == "fake-session-1"
     assert metadata["status"] == "settled"
+    assert metadata["active_operation"]["state"] == "settled"
+    assert metadata["active_operation"]["turn_started_at"]
+    assert metadata["settled_operation_id"] == metadata["active_operation"]["id"]
     assert metadata["last_entry_id"] == "entry-2"
     assert "Fake Pi completed" in (job_root / "result.md").read_text(encoding="utf-8")
     assert "agent_settled" in (job_root / "pi_protocol.jsonl").read_text(encoding="utf-8")
@@ -153,6 +164,79 @@ def test_pi_resume_rejects_cross_project_reference(monkeypatch, tmp_path):
     assert "different project" in status["summary"]
 
 
+def test_pi_lost_prompt_response_recovers_only_from_bound_settled_marker(monkeypatch, tmp_path):
+    sessions = configure_fake_pi(monkeypatch, tmp_path)
+    monkeypatch.setenv("FAKE_PI_DROP_PROMPT_RESPONSE", "1")
+    project = tmp_path / "project"
+    project.mkdir()
+    store = WorkerJobStore(project)
+    job = create_pi_job(store)
+    set_pi_request_timeout(store, job["id"], 0.05)
+
+    first = store.run_job(job["id"])
+    assert first["status"] == "failed"
+    assert first["failure_class"] == "pi_request_timeout"
+    metadata = json.loads((store.root / job["id"] / "pi_session.json").read_text(encoding="utf-8"))
+    assert metadata["active_operation"]["state"] == "settled"
+
+    monkeypatch.delenv("FAKE_PI_DROP_PROMPT_RESPONSE")
+    recovered = store.run_job(job["id"])
+    assert recovered["status"] == "completed"
+    entries = [json.loads(line) for line in (sessions / "fake-session-1.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert sum(entry.get("message", {}).get("role") == "user" for entry in entries) == 1
+
+
+def test_pi_recovery_fails_closed_when_prompt_settlement_is_ambiguous(monkeypatch, tmp_path):
+    sessions = configure_fake_pi(monkeypatch, tmp_path)
+    monkeypatch.setenv("FAKE_PI_DROP_PROMPT_RESPONSE", "1")
+    monkeypatch.setenv("FAKE_PI_NO_SETTLED", "1")
+    project = tmp_path / "project"
+    project.mkdir()
+    store = WorkerJobStore(project)
+    job = create_pi_job(store)
+    set_pi_request_timeout(store, job["id"], 0.05)
+
+    first = store.run_job(job["id"])
+    assert first["failure_class"] == "pi_request_timeout"
+    metadata = json.loads((store.root / job["id"] / "pi_session.json").read_text(encoding="utf-8"))
+    assert metadata["active_operation"]["state"] == "dispatching"
+    assert (sessions / "fake-session-1.jsonl").read_text(encoding="utf-8")
+
+    monkeypatch.delenv("FAKE_PI_DROP_PROMPT_RESPONSE")
+    monkeypatch.delenv("FAKE_PI_NO_SETTLED")
+    recovered = store.run_job(job["id"])
+    assert recovered["status"] == "failed"
+    assert recovered["failure_class"] == "pi_resume_failed"
+    entries = [json.loads(line) for line in (sessions / "fake-session-1.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert sum(entry.get("message", {}).get("role") == "user" for entry in entries) == 1
+
+
+def test_pi_resume_prompt_uses_same_fail_closed_operation_marker(monkeypatch, tmp_path):
+    sessions = configure_fake_pi(monkeypatch, tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    store = WorkerJobStore(project)
+    first = create_pi_job(store)
+    assert store.run_job(first["id"])["status"] == "completed"
+    resumed = create_pi_job(
+        store,
+        session_policy="resume",
+        worker_session_ref=first["id"],
+        task="Continue exactly once.",
+    )
+    set_pi_request_timeout(store, resumed["id"], 0.05)
+    monkeypatch.setenv("FAKE_PI_DROP_PROMPT_RESPONSE", "1")
+    monkeypatch.setenv("FAKE_PI_NO_SETTLED", "1")
+    assert store.run_job(resumed["id"])["failure_class"] == "pi_request_timeout"
+
+    monkeypatch.delenv("FAKE_PI_DROP_PROMPT_RESPONSE")
+    monkeypatch.delenv("FAKE_PI_NO_SETTLED")
+    recovered = store.run_job(resumed["id"])
+    assert recovered["failure_class"] == "pi_resume_failed"
+    entries = [json.loads(line) for line in (sessions / "fake-session-1.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert sum(entry.get("message", {}).get("role") == "user" for entry in entries) == 2
+
+
 def test_pi_invalid_cursor_full_replays_without_duplicate_entries(monkeypatch, tmp_path):
     configure_fake_pi(monkeypatch, tmp_path)
     project = tmp_path / "project"
@@ -178,7 +262,7 @@ def test_pi_invalid_cursor_full_replays_without_duplicate_entries(monkeypatch, t
 
 def test_running_session_accepts_cli_steer_followup_and_abort(monkeypatch, tmp_path, capsys):
     configure_fake_pi(monkeypatch, tmp_path)
-    monkeypatch.setenv("FAKE_PI_SETTLE_DELAY", "0.5")
+    monkeypatch.setenv("FAKE_PI_SETTLE_DELAY", "2")
     project = tmp_path / "project"
     project.mkdir()
     store = WorkerJobStore(project)
@@ -207,6 +291,51 @@ def test_running_session_accepts_cli_steer_followup_and_abort(monkeypatch, tmp_p
     assert "steer_accepted" in events
     assert "follow_up_accepted" in events
     assert "abort" in events
+    acknowledgements = [
+        json.loads(line)
+        for line in (store.root / job["id"] / "pi_control_acks.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    latest = {record["control_id"]: record["state"] for record in acknowledgements}
+    assert set(latest.values()) == {"rpc_accepted"}
+
+
+def test_session_control_timeout_reports_queued_instead_of_accepted(monkeypatch, tmp_path):
+    configure_fake_pi(monkeypatch, tmp_path)
+    monkeypatch.setenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "0.05")
+    project = tmp_path / "project"
+    project.mkdir()
+    store = WorkerJobStore(project)
+    job = create_pi_job(store)
+    active = {
+        "job_id": job["id"],
+        "session_status": "running",
+        "process_alive": True,
+    }
+    monkeypatch.setattr(store, "session_status", lambda _job_id: active)
+
+    result = store.session_control(job["id"], "steer", message="queued command")
+    assert result["accepted"] is False
+    assert result["control_state"] == "queued"
+
+
+def test_processing_control_is_failed_not_replayed_after_restart(monkeypatch, tmp_path):
+    configure_fake_pi(monkeypatch, tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    store = WorkerJobStore(project)
+    job = create_pi_job(store)
+    root = store.root / job["id"]
+    control_id = "control-restart-window"
+    store._append_jsonl(
+        root / "pi_control_queue.jsonl",
+        {"id": control_id, "action": "steer", "message": "must not replay"},
+    )
+    store._append_pi_control_ack(root, control_id, "processing")
+
+    store._process_pi_controls(root, job, None)  # type: ignore[arg-type]
+    acknowledgement = store._pi_control_ack_states(root)[control_id]
+    assert acknowledgement["state"] == "failed"
+    assert "ambiguous after worker restart" in acknowledgement["error"]
 
 
 def test_settled_session_rejects_steer_and_abort_is_idempotent(monkeypatch, tmp_path):
@@ -252,11 +381,7 @@ def test_pi_rpc_timeout_is_classified(monkeypatch, tmp_path):
     project.mkdir()
     store = WorkerJobStore(project)
     job = create_pi_job(store)
-    job_path = store.root / job["id"] / "job.json"
-    payload = json.loads(job_path.read_text(encoding="utf-8"))
-    payload["pi_path"] = str(FAKE_PI)
-    payload["pi_request_timeout"] = 0.05
-    job_path.write_text(json.dumps(payload), encoding="utf-8")
+    set_pi_request_timeout(store, job["id"], 0.05)
     status = store.run_job(job["id"])
     assert status["status"] == "failed"
     assert status["failure_class"] == "pi_request_timeout"
