@@ -177,7 +177,14 @@ def run_operator_component(*, workspace: Path, state_dir: Path, ready_file: Path
     _write_ready(ready_file, ready_token)
     while not stop_requested:
         service.tick()
-        time.sleep(0.25)
+        active = service.queue.active_item()
+        phase = str(active.get("phase", "")) if active else ""
+        if phase == "observing_ci":
+            time.sleep(15.0)
+        elif phase == "waiting_telegram" or active is None:
+            time.sleep(1.0)
+        else:
+            time.sleep(0.25)
     return 0
 
 
