@@ -199,9 +199,9 @@ class TelegramRuntimeControlService:
             user_id=user_id,
             command=command,
         )
-        key, root, run_id = self._current_project_context()
+        key, root = self._configured_project_root()
         store = WorkerJobStore(root)
-        existing = store.find_session_control(control_id, run_id=run_id, project_key=key) if run_id else None
+        existing = store.find_session_control(control_id, project_key=key)
         if existing is not None:
             job_id, request = existing
             if str(request.get("action") or "") != action:

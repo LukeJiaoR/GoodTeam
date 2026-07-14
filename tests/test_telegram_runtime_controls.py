@@ -368,6 +368,89 @@ def test_terminal_session_duplicate_update_replays_durable_ack(
     assert "accepted" in sent[-1]["text"]
 
 
+def test_old_update_replays_run_a_control_without_touching_active_run_b(monkeypatch, tmp_path):
+    workspace, project = _configured_workspace(tmp_path)
+    StateStore(workspace).write_project_current(create_initial_state("run-b", "GOODTEAM", "next run"))
+    old_root = _write_job(project, "job-run-a", run_id="run-a")
+    new_root = _write_job(project, "job-run-b", run_id="run-b")
+    store = WorkerJobStore(project)
+    control_id = TelegramRuntimeControlService.stable_control_id(
+        chat_id=999,
+        message_id=42,
+        user_id="111",
+        command="steer",
+    )
+    store._append_jsonl(
+        old_root / "pi_control_queue.jsonl",
+        {
+            "id": control_id,
+            "action": "steer",
+            "message": "run A instruction",
+            "source": "telegram",
+            "actor": "telegram:user:111",
+            "job_id": "job-run-a",
+            "execution_id": "execution-a",
+            "audit_context": {
+                "telegram_chat_id": "999",
+                "telegram_message_id": "42",
+                "telegram_user_id": "111",
+                "command": "steer",
+                "project_key": "GOODTEAM",
+            },
+        },
+    )
+    store._append_pi_control_ack(old_root, control_id, "rpc_accepted")
+
+    def status(_self, job_id):
+        if job_id == "job-run-a":
+            return {**_active_status(job_id), "session_status": "settled", "process_alive": False}
+        return _active_status(job_id)
+
+    monkeypatch.setattr(WorkerJobStore, "session_status", status)
+    monkeypatch.setenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "0")
+    monkeypatch.setenv(telegram.TOKEN_ENV, "fake-token")
+    sent = []
+    monkeypatch.setattr(telegram, "_telegram_request", lambda _token, _method, params: sent.append(params) or {"ok": True})
+    update = {
+        "update_id": 7,
+        "message": {
+            "message_id": 42,
+            "from": {"id": 111},
+            "chat": {"id": 999},
+            "text": "/gt steer run A instruction",
+        },
+    }
+
+    replay = telegram.process_telegram_update(
+        update,
+        workspace=workspace,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="GOODTEAM",
+    )
+
+    assert replay["accepted"] is True
+    assert replay["control_state"] == "rpc_accepted"
+    assert replay["control_id"] == control_id
+    assert len((old_root / "pi_control_queue.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+    assert not (new_root / "pi_control_queue.jsonl").exists()
+    assert "Job: …ob-run-a" in sent[-1]["text"]
+
+
+def test_duplicate_control_identity_across_project_history_fails_closed(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    first_root = _write_job(project, "job-run-a", run_id="run-a")
+    second_root = _write_job(project, "job-run-b", run_id="run-b")
+    store = WorkerJobStore(project)
+    control_id = "control-tg-history123"
+    store._append_jsonl(first_root / "pi_control_queue.jsonl", {"id": control_id, "action": "steer"})
+    store._append_jsonl(second_root / "pi_control_queue.jsonl", {"id": control_id, "action": "steer"})
+
+    with pytest.raises(ValueError, match="ambiguous within the configured project"):
+        store.find_session_control(control_id, project_key="GOODTEAM")
+
+
 def _queued_telegram_control(store: WorkerJobStore, root: Path, control_id: str = "control-tg-terminal123"):
     control = {
         "id": control_id,
@@ -452,6 +535,58 @@ def test_terminal_ack_without_audit_is_reconciled_once(tmp_path):
     assert len(audits) == 1
     assert audits[0]["control_state"] == "failed"
     assert audits[0]["error"] == "crash window"
+
+
+def test_terminal_telegram_audit_check_and_append_are_atomic_across_store_instances(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    root = _write_job(project, "job-active")
+    seed_store = WorkerJobStore(project)
+    job = json.loads((root / "job.json").read_text(encoding="utf-8"))
+    control = _queued_telegram_control(seed_store, root)
+    seed_store._append_pi_control_ack(root, control["id"], "rpc_accepted")
+
+    original_terminal_ids = WorkerJobStore._telegram_terminal_control_ids
+    counter_lock = threading.Lock()
+    active_checks = 0
+    max_active_checks = 0
+
+    def slow_terminal_ids(job_root):
+        nonlocal active_checks, max_active_checks
+        result = original_terminal_ids(job_root)
+        with counter_lock:
+            active_checks += 1
+            max_active_checks = max(max_active_checks, active_checks)
+        time.sleep(0.03)
+        with counter_lock:
+            active_checks -= 1
+        return result
+
+    monkeypatch.setattr(WorkerJobStore, "_telegram_terminal_control_ids", staticmethod(slow_terminal_ids))
+    worker_count = 8
+    start = threading.Barrier(worker_count)
+    errors = []
+
+    def reconcile():
+        try:
+            start.wait()
+            WorkerJobStore(project)._record_pi_control_terminal(root, job, control, "rpc_accepted")
+        except Exception as exc:  # pragma: no cover - asserted through errors
+            errors.append(exc)
+
+    threads = [threading.Thread(target=reconcile) for _ in range(worker_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    events = [json.loads(line) for line in (root / "pi_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    audits = [event for event in events if event.get("event") == "telegram_runtime_control"]
+    assert errors == []
+    assert all(not thread.is_alive() for thread in threads)
+    assert max_active_checks == 1
+    assert len(audits) == 1
+    assert audits[0]["control_state"] == "rpc_accepted"
 
 
 def test_queued_and_failed_are_never_reported_as_accepted(tmp_path):

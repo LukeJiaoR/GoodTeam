@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import pty
@@ -1394,28 +1395,34 @@ class WorkerJobStore:
 
         if str(control.get("source") or "") != "telegram":
             return
-        if control_id in self._telegram_terminal_control_ids(job_root):
-            return
-        audit_context = control.get("audit_context", {})
-        payload = {
-            "recorded_at": self._now(),
-            "event": "telegram_runtime_control",
-            "project_key": str(job.get("project_key") or ""),
-            "job_id": str(job.get("id") or ""),
-            "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
-            "action": str(control.get("action") or ""),
-            "control_id": control_id,
-            "control_state": state,
-            "actor_ref": str(control.get("actor") or ""),
-            **(
-                {str(key): str(value) for key, value in audit_context.items()}
-                if isinstance(audit_context, dict)
-                else {}
-            ),
-        }
-        if error:
-            payload["error"] = error[:500]
-        self._append_jsonl(job_root / "pi_events.jsonl", payload)
+        lock_fd = os.open(job_root / ".pi_control_terminal.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if control_id in self._telegram_terminal_control_ids(job_root):
+                return
+            audit_context = control.get("audit_context", {})
+            payload = {
+                "recorded_at": self._now(),
+                "event": "telegram_runtime_control",
+                "project_key": str(job.get("project_key") or ""),
+                "job_id": str(job.get("id") or ""),
+                "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
+                "action": str(control.get("action") or ""),
+                "control_id": control_id,
+                "control_state": state,
+                "actor_ref": str(control.get("actor") or ""),
+                **(
+                    {str(key): str(value) for key, value in audit_context.items()}
+                    if isinstance(audit_context, dict)
+                    else {}
+                ),
+            }
+            if error:
+                payload["error"] = error[:500]
+            self._append_jsonl(job_root / "pi_events.jsonl", payload)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
     @staticmethod
     def _telegram_terminal_control_ids(job_root: Path) -> set[str]:
@@ -1594,14 +1601,14 @@ class WorkerJobStore:
         self,
         control_id: str,
         *,
-        run_id: str,
         project_key: str,
+        run_id: str | None = None,
     ) -> tuple[str, dict[str, Any]] | None:
         matches: list[tuple[str, dict[str, Any]]] = []
         for job in self.list_jobs():
             if str(job.get("adapter") or "") not in SESSION_BACKENDS:
                 continue
-            if str(job.get("run_id") or "") != run_id:
+            if run_id is not None and str(job.get("run_id") or "") != run_id:
                 continue
             if str(job.get("project_key") or "") != project_key:
                 continue
@@ -1610,7 +1617,7 @@ class WorkerJobStore:
             if request is not None:
                 matches.append((job_id, request))
         if len(matches) > 1:
-            raise ValueError("Telegram control identity is ambiguous within the current project run")
+            raise ValueError("Telegram control identity is ambiguous within the configured project")
         return matches[0] if matches else None
 
     def _wait_for_pi_control_ack(
