@@ -1256,6 +1256,7 @@ class WorkerJobStore:
         lines = path.read_text(encoding="utf-8").splitlines()
         for raw in lines:
             control_id = ""
+            control: dict[str, Any] = {}
             try:
                 control = json.loads(raw)
                 control_id = str(control.get("id") or "")
@@ -1296,8 +1297,35 @@ class WorkerJobStore:
                         "job_id": str(job.get("id") or ""),
                         "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
                         "reason": str(control.get("reason") or ""),
+                        **(
+                            {
+                                str(key): str(value)
+                                for key, value in control.get("audit_context", {}).items()
+                            }
+                            if isinstance(control.get("audit_context"), dict)
+                            else {}
+                        ),
                     },
                 )
+                if str(control.get("source") or "") == "telegram":
+                    audit_context = control.get("audit_context", {})
+                    runtime.store.append_event(
+                        "telegram_runtime_control",
+                        {
+                            "project_key": str(job.get("project_key") or ""),
+                            "job_id": str(job.get("id") or ""),
+                            "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
+                            "action": action,
+                            "control_id": control_id,
+                            "control_state": "rpc_accepted",
+                            "actor_ref": str(control.get("actor") or ""),
+                            **(
+                                {str(key): str(value) for key, value in audit_context.items()}
+                                if isinstance(audit_context, dict)
+                                else {}
+                            ),
+                        },
+                    )
             except (json.JSONDecodeError, PiRpcError, ValueError) as exc:
                 if control_id:
                     self._append_pi_control_ack(job_root, control_id, "failed", error=str(exc)[:500])
@@ -1306,6 +1334,26 @@ class WorkerJobStore:
                     "operator_control_failed",
                     {"control_id": control_id, "error": str(exc)[:500]},
                 )
+                if isinstance(control, dict) and str(control.get("source") or "") == "telegram":
+                    audit_context = control.get("audit_context", {})
+                    runtime.store.append_event(
+                        "telegram_runtime_control",
+                        {
+                            "project_key": str(job.get("project_key") or ""),
+                            "job_id": str(job.get("id") or ""),
+                            "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
+                            "action": str(control.get("action") or ""),
+                            "control_id": control_id,
+                            "control_state": "failed",
+                            "actor_ref": str(control.get("actor") or ""),
+                            "error": str(exc)[:500],
+                            **(
+                                {str(key): str(value) for key, value in audit_context.items()}
+                                if isinstance(audit_context, dict)
+                                else {}
+                            ),
+                        },
+                    )
 
     def _fail_pending_pi_controls(self, job_root: Path, error: str) -> None:
         path = job_root / "pi_control_queue.jsonl"
@@ -1397,17 +1445,38 @@ class WorkerJobStore:
         reason: str = "",
         actor: str = "cli",
         source: str = "cli",
+        control_id: str = "",
+        audit_context: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         job_root, job = self._session_job(job_id)
-        status = self.session_status(job_id)
         if action in {"steer", "follow_up"} and not message.strip():
             raise ValueError(f"{action} message must not be empty")
+        requested_control_id = control_id.strip()
+        if requested_control_id and (
+            Path(requested_control_id).name != requested_control_id
+            or not re.fullmatch(r"control-[A-Za-z0-9_-]{8,128}", requested_control_id)
+        ):
+            raise ValueError("control_id is invalid")
+        if requested_control_id:
+            existing = self._pi_control_request(job_root, requested_control_id)
+            if existing is not None:
+                if str(existing.get("action") or "") != action:
+                    raise ValueError("control_id is already bound to another action")
+                return self._wait_for_pi_control_ack(
+                    job_id,
+                    job_root,
+                    requested_control_id,
+                    action,
+                    idempotent=True,
+                )
+
+        status = self.session_status(job_id)
         if status["session_status"] != "running" or not status["process_alive"]:
             if action == "abort" and status["session_status"] == "aborted":
                 return {**status, "accepted": True, "idempotent": True}
             raise ValueError(f"Pi session for job {job_id} is not active ({status['session_status']})")
         payload = {
-            "id": f"control-{uuid4()}",
+            "id": requested_control_id or f"control-{uuid4()}",
             "created_at": self._now(),
             "action": action,
             "message": message,
@@ -1417,36 +1486,77 @@ class WorkerJobStore:
             "job_id": job_id,
             "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
         }
+        if audit_context:
+            payload["audit_context"] = {
+                str(key): str(value)
+                for key, value in audit_context.items()
+                if value and key in {
+                    "telegram_chat_id",
+                    "telegram_message_id",
+                    "telegram_user_id",
+                    "command",
+                    "project_key",
+                }
+            }
         self._append_jsonl(job_root / "pi_control_queue.jsonl", payload)
+        return self._wait_for_pi_control_ack(job_id, job_root, payload["id"], action)
+
+    def _pi_control_request(self, job_root: Path, control_id: str) -> dict[str, Any] | None:
+        path = job_root / "pi_control_queue.jsonl"
+        if not path.is_file():
+            return None
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if str(record.get("id") or "") == control_id:
+                return record
+        return None
+
+    def _wait_for_pi_control_ack(
+        self,
+        job_id: str,
+        job_root: Path,
+        control_id: str,
+        action: str,
+        *,
+        idempotent: bool = False,
+    ) -> dict[str, Any]:
         timeout = float(os.getenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "5"))
         deadline = time.monotonic() + max(0.0, timeout)
-        while time.monotonic() < deadline:
-            acknowledgement = self._pi_control_ack_states(job_root).get(payload["id"], {})
+        while True:
+            acknowledgement = self._pi_control_ack_states(job_root).get(control_id, {})
             state = str(acknowledgement.get("state") or "queued")
             if state == "rpc_accepted":
                 return {
                     **self.session_status(job_id),
                     "accepted": True,
-                    "control_id": payload["id"],
+                    "control_id": control_id,
                     "action": action,
                     "control_state": state,
+                    "idempotent": idempotent,
                 }
             if state == "failed":
                 return {
                     **self.session_status(job_id),
                     "accepted": False,
-                    "control_id": payload["id"],
+                    "control_id": control_id,
                     "action": action,
                     "control_state": state,
                     "error": str(acknowledgement.get("error") or "Pi rejected the control command"),
+                    "idempotent": idempotent,
                 }
+            if time.monotonic() >= deadline:
+                break
             time.sleep(0.02)
         return {
             **self.session_status(job_id),
             "accepted": False,
-            "control_id": payload["id"],
+            "control_id": control_id,
             "action": action,
             "control_state": "queued",
+            "idempotent": idempotent,
         }
 
     def _session_job(self, job_id: str) -> tuple[Path, dict[str, Any]]:

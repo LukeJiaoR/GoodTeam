@@ -160,6 +160,12 @@ def truncate_text(text: str, max_chars: int = 150) -> str:
 
 
 def mask_sensitive_data(text: str) -> str:
+    text = re.sub(
+        r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|API_KEY|PASSWORD))\s*=\s*[^\s]+",
+        r"\1=[REDACTED]",
+        text,
+    )
+    text = re.sub(r"\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b", "[REDACTED]", text)
     text = re.sub(r'[a-zA-Z0-9_\-]+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', 'staging-host', text)
     text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', 'staging-ip', text)
     text = re.sub(r'/srv/[a-zA-Z0-9_\-]+', 'deployment-dir', text)
@@ -609,6 +615,9 @@ def _parse_telegram_command(text: str) -> str:
         "bug",
         "ask",
         "tell",
+        "steer",
+        "followup",
+        "stop",
     } else ""
 
 
@@ -930,7 +939,10 @@ def _worker_error_excerpt(job: dict[str, object]) -> str:
 def _format_status_command(*, workspace: Path, project_key: str) -> str:
     state = _read_command_state(workspace, project_key)
     if state is None:
-        return f"GoodTeam status\nProject: {project_key or 'unknown'}\nNo active run."
+        base = f"GoodTeam status\nProject: {project_key or 'unknown'}\nNo active run."
+        from goodteam_os.telegram_runtime_controls import TelegramRuntimeControlService
+
+        return f"{base}\n\n{TelegramRuntimeControlService(workspace, project_key, redact=mask_sensitive_data).status_section()}"
     from goodteam_os.web import current_approval_gate
 
     root = _project_runtime_root(workspace, project_key or str(getattr(state, "project_key", "")), state)
@@ -941,7 +953,7 @@ def _format_status_command(*, workspace: Path, project_key: str) -> str:
     gate = current_approval_gate(state) or "none"
     run_id = str(getattr(state, "run_id", "") or "")
     run_label = f"…{run_id[-6:]}" if run_id else "unknown"
-    return "\n".join(
+    base = "\n".join(
         [
             "GoodTeam status",
             f"Project: {getattr(state, 'project_key', project_key or 'unknown')}",
@@ -951,6 +963,10 @@ def _format_status_command(*, workspace: Path, project_key: str) -> str:
             f"Blockers: {blocker_count}",
         ]
     )
+    from goodteam_os.telegram_runtime_controls import TelegramRuntimeControlService
+
+    pi_section = TelegramRuntimeControlService(workspace, project_key, redact=mask_sensitive_data).status_section()
+    return f"{base}\n\n{pi_section}"
 
 
 def _format_workers_command(*, workspace: Path, project_key: str) -> str:
@@ -1131,6 +1147,42 @@ def _process_telegram_command(
 ) -> dict[str, object]:
     if context_session is not None:
         project_key = str(context_session.get("project_key", project_key) or project_key)
+
+    if command in {"steer", "followup", "stop"}:
+        argument = _extract_command_arg(raw_text, command)
+        if command in {"steer", "followup"} and not argument:
+            _send_masked_telegram_message(
+                token=token,
+                chat_id=chat_id,
+                text=f"Usage: /gt {command} <message>",
+            )
+            return {"status": "processed", "command": command}
+        from goodteam_os.telegram_runtime_controls import (
+            RuntimeControlResolutionError,
+            TelegramRuntimeControlService,
+        )
+
+        service = TelegramRuntimeControlService(workspace, project_key, redact=mask_sensitive_data)
+        try:
+            result, response = service.control(
+                command,
+                message=argument if command != "stop" else "",
+                reason=argument if command == "stop" else "",
+                chat_id=chat_id,
+                message_id=command_message_id,
+                user_id=user_id,
+            )
+        except (RuntimeControlResolutionError, ValueError, OSError) as exc:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text=f"❌ {exc}")
+            return {"status": "processed", "command": command, "accepted": False}
+        _send_masked_telegram_message(token=token, chat_id=chat_id, text=response)
+        return {
+            "status": "processed",
+            "command": command,
+            "accepted": bool(result.get("accepted")),
+            "control_id": str(result.get("control_id") or ""),
+            "control_state": str(result.get("control_state") or ""),
+        }
 
     if command in {"ask", "tell"}:
         role_key, body, parse_error = _parse_role_command_args(raw_text, command)
@@ -1959,6 +2011,8 @@ def process_telegram_update(
             user = dict(message.get("from", {}) or {})
             user_id = str(user.get("id", ""))
             if allowed_users and user_id not in allowed_users:
+                return {"status": "ignored", "reason": "unauthorized user"}
+            if command in {"steer", "followup", "stop"} and user_id not in allowed_users:
                 return {"status": "ignored", "reason": "unauthorized user"}
             chat_id = int(message.get("chat", {}).get("id", 0))
             reply_to_message_id = int(dict(message.get("reply_to_message", {}) or {}).get("message_id", 0) or 0)
