@@ -7,7 +7,6 @@ on:
   pull_request:
     branches:
       - main
-      - codex/operator-smoke-base-019f6134
 
 jobs:
   backend:
