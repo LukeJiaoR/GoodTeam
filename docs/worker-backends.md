@@ -37,6 +37,7 @@ sequenceDiagram
 | `fake` | First-run demos, deterministic smoke, credential-free local tests. | Good default for onboarding and docs examples. |
 | `anthropic` | Claude CLI-backed agent work. | Requires local CLI and credential readiness. |
 | `codex` | Codex CLI-backed agent work. | Requires local CLI and credential readiness. |
+| `pi` | Pi RPC persistent-session agent work. | Optional; supports resume, steering, follow-up, abort, and incremental event replay. |
 | `human` | Human-performed or externally coordinated work. | Useful when GoodTeam should track the slot but not run an agent. |
 | `noop` | Disabled or intentionally inert work. | Should not be mistaken for completed implementation. |
 
@@ -117,6 +118,83 @@ flowchart TD
 
 Do not discover auth failures by dispatching expensive or mutating work. Preflight
 first.
+
+## Pi Persistent Sessions
+
+Pi is the first backend that does not use the one-shot `CLI_BACKENDS` execution
+loop. `pi` is the canonical adapter and `pi-rpc` is an accepted compatibility
+alias. Install the optional CLI yourself; GoodTeam never installs it:
+
+```bash
+npm install -g @earendil-works/pi-coding-agent
+```
+
+Configure Pi through local environment settings. Empty provider and thinking
+values use Pi defaults; an empty or `auto` model does not force a model:
+
+```bash
+export GOODTEAM_PI_PATH=pi
+export GOODTEAM_PI_PROVIDER=anthropic
+export GOODTEAM_PI_MODEL=auto
+export GOODTEAM_PI_THINKING_LEVEL=medium
+export GOODTEAM_PI_SESSION_DIR=/absolute/customer-owned/path/pi-sessions
+```
+
+Select and verify it like other workers:
+
+```yaml
+worker_backend:
+  mode: pi
+workers:
+  implementation: pi
+```
+
+```bash
+goodteam-os doctor --project-config projects/DEMO.local.yaml
+goodteam-os start "Implement the approved task" --project-key DEMO \
+  --project-config projects/DEMO.local.yaml --workspace /tmp/goodteam-demo-run
+```
+
+The runtime boundary is:
+
+```mermaid
+flowchart TD
+    Job[GoodTeam task/job]
+    Policy[GoodTeam runtime policy + worktree]
+    Pi[Pi RPC session]
+    Tools[Pi tools/model execution]
+    Evidence[GoodTeam result/evidence/session metadata]
+    Job --> Policy --> Pi --> Tools --> Evidence
+```
+
+Each job stores `pi_session.json`, `pi_protocol.jsonl`, `pi_events.jsonl`, and
+`pi_entries.jsonl` beside the normal `result.md`, `stdout.txt`, `stderr.txt`, and
+`status.json`. Session files live under `GOODTEAM_PI_SESSION_DIR`, or by default
+under `<project-root>/.goodteam/pi/sessions/`. All of these remain local. GoodTeam
+does not publish or upload Pi sessions, transcripts, diffs, or build logs.
+
+New jobs use `session_policy=new`. Infrastructure recovery of the same job reuses
+its recorded session without sending the initial prompt twice. A later attempt
+may resume only when its caller explicitly supplies a trusted `worker_session_ref`;
+GoodTeam validates the project and execution lineage and rejects arbitrary paths.
+After a service restart the runtime starts a new `pi --mode rpc` process and uses
+Pi's `switch_session` command; PID is never treated as persistent identity.
+
+Control an explicitly bound active job from another shell:
+
+```bash
+goodteam-os worker-session status --project-root /path/to/project --job-id job-...
+goodteam-os worker-session steer --project-root /path/to/project --job-id job-... --message "Focus on the failing test"
+goodteam-os worker-session follow-up --project-root /path/to/project --job-id job-... --message "Also summarize risks"
+goodteam-os worker-session abort --project-root /path/to/project --job-id job-... --reason "Operator stopped the run"
+```
+
+Pi itself does not provide a filesystem, process, or network permission boundary.
+GoodTeam therefore continues to choose the runtime cwd, enforce its existing
+worktree/sandbox policy, record claimed paths, and own task/execution, retry,
+artifact, PR, CI, review, and approval state. This slice intentionally does not
+wire Telegram steering or implement the complete operator loop; the session API
+is designed so those adapters can bind to an explicit job later.
 
 ## Result Semantics
 

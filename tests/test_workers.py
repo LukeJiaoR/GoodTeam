@@ -1652,13 +1652,14 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
 
     discovered = discover_installed_agents()
 
-    assert [item["backend"] for item in discovered] == ["agy", "claude", "codex", "gemini", "opencode"]
+    assert [item["backend"] for item in discovered] == ["agy", "claude", "codex", "gemini", "opencode", "pi"]
     assert [item["aliases"] for item in discovered] == [
         ["agy", "antigravity"],
         ["anthropic", "claude"],
         ["codex"],
         ["gemini"],
         ["opencode"],
+        ["pi", "pi-rpc"],
     ]
     by_backend = {item["backend"]: item for item in discovered}
     assert by_backend["codex"]["available"] is True
@@ -1690,6 +1691,7 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     assert by_backend["opencode"]["models"] == ["auto"]
     assert by_backend["opencode"]["model_default"] == "auto"
     assert by_backend["opencode"]["models_source"] == "static"
+    assert by_backend["pi"]["runtime_kind"] == "persistent_session"
 
 
 def test_discover_installed_agents_uses_live_codex_models(monkeypatch):

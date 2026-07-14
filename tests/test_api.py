@@ -2034,6 +2034,7 @@ def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatc
         "gemini",
         "agy",
         "opencode",
+        "pi",
         "fake",
         "noop",
         "human",

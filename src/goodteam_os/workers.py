@@ -17,6 +17,14 @@ from uuid import uuid4
 
 from goodteam_os.memory import RoleMemoryStore, default_embedder
 from goodteam_os.roles import role_definition, stable_role_prompt
+from goodteam_os.pi_rpc import PiRpcError
+from goodteam_os.session_runtimes import (
+    SESSION_BACKENDS,
+    PiSessionRuntime,
+    capabilities_dict,
+    pi_backend_doctor,
+    pi_runtime_config,
+)
 
 
 DEFAULT_CODEX_PATH = os.getenv("GOODTEAM_CODEX_PATH", "/opt/homebrew/bin/codex")
@@ -49,6 +57,7 @@ WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
 WORKER_MAX_ATTEMPTS = 3
 WORKER_RETRY_BACKOFF_SECONDS = (2, 8, 30)
+PI_OVERALL_TIMEOUT_SECONDS = 1800
 WORKER_JOB_IDENTITY_FIELDS = (
     "profile_id",
     "approval",
@@ -785,6 +794,15 @@ class WorkerJobStore:
         original_failed_job_id: str = "",
         retry_attempt: str | int = "",
         retry_of_idempotency_key: str = "",
+        session_policy: str = "new",
+        worker_session_ref: str = "",
+        execution_id: str = "",
+        project_key: str = "",
+        pi_path: str = "",
+        pi_provider: str = "",
+        pi_model: str = "",
+        pi_thinking_level: str = "",
+        pi_session_dir: str = "",
     ) -> dict[str, Any]:
         job_id = f"job-{uuid4()}"
         job_root = self.root / job_id
@@ -803,7 +821,20 @@ class WorkerJobStore:
             "constraints_source": constraints_source,
             "research_report_source": research_report_source,
             "expected_artifacts": expected_artifacts or [],
+            "session_policy": session_policy,
+            "worker_session_ref": worker_session_ref,
+            "execution_id": execution_id,
+            "project_key": project_key,
         }
+        for key, value in {
+            "pi_path": pi_path,
+            "pi_provider": pi_provider,
+            "pi_model": pi_model,
+            "pi_thinking_level": pi_thinking_level,
+            "pi_session_dir": pi_session_dir,
+        }.items():
+            if value:
+                job[key] = value
         job.update(
             _clean_identity_fields(
                 {
@@ -932,6 +963,20 @@ class WorkerJobStore:
                             "workspace_cwd_fallback",
                             "workspace_cwd_fallback_reason",
                             "pythonpath_workspace_src",
+                            "runtime_kind",
+                            "runtime_provider",
+                            "runtime_thinking_level",
+                            "runtime_capabilities",
+                            "runtime_events_path",
+                            "runtime_session_metadata_path",
+                            "pi_session_id",
+                            "pi_session_file",
+                            "session_status",
+                            "last_entry_cursor",
+                            "isStreaming",
+                            "isCompacting",
+                            "pendingMessageCount",
+                            "process_alive",
                         }
                     },
                 }
@@ -957,6 +1002,8 @@ class WorkerJobStore:
             status_payload = self._complete_fake(job_root, job)
         elif adapter == "human":
             status_payload = self._wait_for_human(job_root, job)
+        elif adapter in SESSION_BACKENDS:
+            status_payload = self._run_session_backend(job_root, job)
         else:
             spec = CLI_BACKENDS.get(adapter)
             if spec is None:
@@ -1009,6 +1056,410 @@ class WorkerJobStore:
                 status_payload["memory_provenance"] = {"status": "error", "error": str(exc)}
         self._write_json(job_root / "status.json", status_payload)
         return status_payload
+
+    def _run_session_backend(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        """Run a persistent session backend without entering the one-shot CLI loop."""
+        runtime_context = self._worker_runtime_cwd(job)
+        config = pi_runtime_config(self.project_root, job)
+        preflight = pi_backend_doctor(self.project_root, job)
+        result_path = job_root / "result.md"
+        stdout_path = job_root / "stdout.txt"
+        stderr_path = job_root / "stderr.txt"
+        protocol_path = job_root / "pi_protocol.jsonl"
+        events_path = job_root / "pi_events.jsonl"
+        metadata_path = job_root / "pi_session.json"
+        command = [config.binary, "--mode", "rpc", "--name", f"goodteam-{job['id']}", "--session-dir", str(config.session_dir)]
+        if config.provider:
+            command.extend(["--provider", config.provider])
+        if config.model:
+            command.extend(["--model", config.model])
+        runtime_evidence = {
+            **_worker_runtime_evidence(
+                runtime_context,
+                pythonpath_workspace_src=(runtime_context.runtime_cwd / "src").is_dir(),
+            ),
+            "runtime_adapter": "pi",
+            "runtime_kind": "persistent_session",
+            "runtime_binary": str(preflight.get("command_path") or config.binary),
+            "runtime_version": str(preflight.get("version") or "unknown"),
+            "runtime_version_warning": not bool(preflight.get("version")),
+            "runtime_version_warning_reason": "" if preflight.get("version") else "runtime_version_unavailable",
+            "runtime_version_failure_reason": "" if preflight.get("version") else "version command unavailable",
+            "runtime_model": config.model or "auto",
+            "runtime_provider": config.provider,
+            "runtime_thinking_level": config.thinking_level or "default",
+            "runtime_capabilities": list(capabilities_dict()),
+            "runtime_sandbox_mode": "goodteam_worktree_or_project_root",
+            "runtime_approval_policy": "unknown",
+            "runtime_unsafe_mode": False,
+            "runtime_policy_warning": True,
+            "runtime_policy_warning_reason": "pi_has_no_builtin_permission_boundary",
+            "runtime_transcript_path": str(protocol_path),
+            "runtime_events_path": str(events_path),
+            "runtime_session_metadata_path": str(metadata_path),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "result_path": str(result_path),
+        }
+        base_extra = {
+            "command": command,
+            "model": config.model or "auto",
+            "preflight": preflight,
+            **runtime_evidence,
+            "invocation_evidence": {
+                **runtime_evidence,
+                "kind": "session_runtime",
+                "provider": config.provider or "pi-configured",
+                "external_invocation": bool(preflight.get("available")),
+                "command_available": bool(preflight.get("available")),
+                "reason": "Pi RPC session invocation attempted",
+            },
+        }
+        stdout_path.write_text("", encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
+        if not preflight.get("ready"):
+            summary = str(preflight.get("hint") or "Pi preflight failed")
+            return self._write_status(
+                job_root,
+                job,
+                "failed",
+                summary,
+                extra={**base_extra, "exit_code": None, "failure_class": "pi_not_installed" if not preflight.get("available") else "pi_preflight_failed"},
+            )
+        runtime = PiSessionRuntime(
+            project_root=self.project_root,
+            job_root=job_root,
+            job=job,
+            runtime_cwd=runtime_context.runtime_cwd,
+            config=config,
+            stderr_path=stderr_path,
+        )
+        stop_heartbeat = threading.Event()
+        heartbeat_thread: threading.Thread | None = None
+        running_summary = "Pi RPC session is running."
+        started_at = self._now()
+        try:
+            state = runtime.start_or_resume()
+            session_extra = {
+                **base_extra,
+                "started_at": started_at,
+                "pid": runtime.rpc.pid if runtime.rpc else None,
+                "heartbeat_at": self._now(),
+                "pi_session_id": str(state.get("sessionId") or ""),
+                "pi_session_file": _relative_session_evidence_path(state.get("sessionFile"), config.session_dir),
+                "session_status": "running",
+                "isStreaming": bool(state.get("isStreaming")),
+                "isCompacting": bool(state.get("isCompacting")),
+                "pendingMessageCount": int(state.get("pendingMessageCount") or 0),
+            }
+            self._write_status(job_root, job, "running", running_summary, extra=session_extra)
+            heartbeat_thread = threading.Thread(
+                target=self._heartbeat_until_stopped,
+                args=(job_root, job, stop_heartbeat),
+                kwargs={"summary": running_summary, "extra": session_extra},
+                daemon=True,
+            )
+            heartbeat_thread.start()
+            if not runtime.already_settled:
+                if str(job.get("worker_session_ref") or "").strip():
+                    runtime.send_resume_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
+                else:
+                    runtime.send_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
+
+            def tick() -> None:
+                self._process_pi_controls(job_root, job, runtime)
+
+            runtime.wait_until_settled(PI_OVERALL_TIMEOUT_SECONDS, tick=tick)
+            self._fail_pending_pi_controls(job_root, "Pi session settled before RPC acknowledgement")
+            stop_heartbeat.set()
+            heartbeat_thread.join(timeout=1)
+            if runtime.aborted:
+                aborted = PiRpcError("Pi session was aborted by operator")
+                aborted.failure_class = "pi_aborted"
+                raise aborted
+            state = runtime.get_state()
+            stats = runtime.get_session_stats()
+            runtime.get_entries()
+            assistant_text = runtime.get_last_assistant_text()
+            if assistant_text:
+                result_path.write_text(assistant_text.rstrip() + "\n", encoding="utf-8")
+            else:
+                result_path.write_text(
+                    "# Worker Result\n\nStatus: completed-without-assistant-text\n\nPi settled but returned no assistant text. Inspect local Pi evidence files.\n",
+                    encoding="utf-8",
+                )
+            stdout_path.write_text(
+                json.dumps({"session_state": state, "session_stats": stats}, indent=2), encoding="utf-8"
+            )
+            metadata = runtime.store.read_metadata() or {}
+            return self._write_status(
+                job_root,
+                job,
+                "completed",
+                "Pi RPC session settled successfully.",
+                extra={
+                    **base_extra,
+                    "started_at": started_at,
+                    "exit_code": 0,
+                    "pid": runtime.rpc.pid if runtime.rpc else None,
+                    "pi_session_id": str(metadata.get("session_id") or ""),
+                    "pi_session_file": _relative_session_evidence_path(metadata.get("session_file"), config.session_dir),
+                    "session_status": str(metadata.get("status") or "settled"),
+                    "last_entry_cursor": str(metadata.get("last_entry_id") or ""),
+                    "pi_session_stats": stats,
+                    "process_alive": False,
+                },
+            )
+        except (PiRpcError, TimeoutError, ValueError, FileNotFoundError) as exc:
+            self._fail_pending_pi_controls(job_root, f"Pi session stopped before RPC acknowledgement: {exc}")
+            stop_heartbeat.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=1)
+            failure_class = getattr(exc, "failure_class", "pi_overall_timeout" if isinstance(exc, TimeoutError) else "pi_session_mismatch")
+            summary = f"Pi session failed [{failure_class}]: {exc}"
+            result_path.write_text(f"# Worker Result\n\nStatus: failed\n\n{summary}\n", encoding="utf-8")
+            metadata = runtime.store.read_metadata() or {}
+            metadata.update({"status": "aborted" if runtime.aborted else "failed", "last_error": str(exc)})
+            runtime.store.write_metadata(metadata)
+            runtime.store.append_event("failure", {"failure_class": failure_class, "summary": str(exc)[:500]})
+            return self._write_status(
+                job_root,
+                job,
+                "failed",
+                summary,
+                extra={
+                    **base_extra,
+                    "started_at": started_at,
+                    "exit_code": None,
+                    "pid": runtime.rpc.pid if runtime.rpc else None,
+                    "failure_class": failure_class,
+                    "session_status": metadata.get("status", "failed"),
+                    "process_alive": False,
+                },
+            )
+        finally:
+            stop_heartbeat.set()
+            if heartbeat_thread is not None and heartbeat_thread is not threading.current_thread():
+                heartbeat_thread.join(timeout=1)
+            runtime.close()
+
+    def _process_pi_controls(
+        self,
+        job_root: Path,
+        job: dict[str, Any],
+        runtime: PiSessionRuntime,
+    ) -> None:
+        path = job_root / "pi_control_queue.jsonl"
+        if not path.is_file():
+            return
+        states = self._pi_control_ack_states(job_root)
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for raw in lines:
+            control_id = ""
+            try:
+                control = json.loads(raw)
+                control_id = str(control.get("id") or "")
+                if not control_id:
+                    raise ValueError("Pi control command is missing an id")
+                current_state = str(states.get(control_id, {}).get("state") or "queued")
+                if current_state in {"rpc_accepted", "failed"}:
+                    continue
+                if current_state == "processing":
+                    self._append_pi_control_ack(
+                        job_root,
+                        control_id,
+                        "failed",
+                        error="Pi control acknowledgement is ambiguous after worker restart",
+                    )
+                    states[control_id] = {"state": "failed"}
+                    continue
+                self._append_pi_control_ack(job_root, control_id, "processing")
+                states[control_id] = {"state": "processing"}
+                action = str(control.get("action") or "")
+                if action == "steer":
+                    runtime.steer(str(control.get("message") or ""))
+                elif action == "follow_up":
+                    runtime.follow_up(str(control.get("message") or ""))
+                elif action == "abort":
+                    runtime.abort()
+                else:
+                    raise ValueError(f"unknown Pi control action: {action}")
+                self._append_pi_control_ack(job_root, control_id, "rpc_accepted")
+                states[control_id] = {"state": "rpc_accepted"}
+                runtime.store.append_event(
+                    "operator_control_accepted",
+                    {
+                        "control_id": control_id,
+                        "action": action,
+                        "actor": str(control.get("actor") or "cli"),
+                        "source": str(control.get("source") or "cli"),
+                        "job_id": str(job.get("id") or ""),
+                        "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
+                        "reason": str(control.get("reason") or ""),
+                    },
+                )
+            except (json.JSONDecodeError, PiRpcError, ValueError) as exc:
+                if control_id:
+                    self._append_pi_control_ack(job_root, control_id, "failed", error=str(exc)[:500])
+                    states[control_id] = {"state": "failed"}
+                runtime.store.append_event(
+                    "operator_control_failed",
+                    {"control_id": control_id, "error": str(exc)[:500]},
+                )
+
+    def _fail_pending_pi_controls(self, job_root: Path, error: str) -> None:
+        path = job_root / "pi_control_queue.jsonl"
+        if not path.is_file():
+            return
+        states = self._pi_control_ack_states(job_root)
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                control = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            control_id = str(control.get("id") or "")
+            state = str(states.get(control_id, {}).get("state") or "queued")
+            if control_id and state not in {"rpc_accepted", "failed"}:
+                self._append_pi_control_ack(job_root, control_id, "failed", error=error[:500])
+
+    def _pi_control_ack_states(self, job_root: Path) -> dict[str, dict[str, Any]]:
+        path = job_root / "pi_control_acks.jsonl"
+        if not path.is_file():
+            return {}
+        states: dict[str, dict[str, Any]] = {}
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            control_id = str(record.get("control_id") or "")
+            if control_id:
+                states[control_id] = record
+        return states
+
+    def _append_pi_control_ack(
+        self,
+        job_root: Path,
+        control_id: str,
+        state: str,
+        *,
+        error: str = "",
+    ) -> None:
+        payload = {
+            "control_id": control_id,
+            "state": state,
+            "recorded_at": self._now(),
+        }
+        if error:
+            payload["error"] = error
+        self._append_jsonl(job_root / "pi_control_acks.jsonl", payload)
+
+    @staticmethod
+    def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+        encoded = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, encoded)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    def session_status(self, job_id: str) -> dict[str, Any]:
+        job_root, job = self._session_job(job_id)
+        status = self._read_json(job_root / "status.json") if (job_root / "status.json").is_file() else {}
+        metadata = self._read_json(job_root / "pi_session.json") if (job_root / "pi_session.json").is_file() else {}
+        return {
+            "job_id": job_id,
+            "execution_id": str(metadata.get("execution_id") or job.get("execution_id") or job.get("run_id") or ""),
+            "pi_session_id": str(metadata.get("session_id") or ""),
+            "session_status": str(metadata.get("status") or status.get("status") or "unknown"),
+            "isStreaming": bool(metadata.get("isStreaming")),
+            "isCompacting": bool(metadata.get("isCompacting")),
+            "pendingMessageCount": int(metadata.get("pendingMessageCount") or 0),
+            "model": str(metadata.get("model") or job.get("model") or "auto"),
+            "provider": str(metadata.get("provider") or ""),
+            "runtime_cwd": str(metadata.get("runtime_cwd") or status.get("runtime_cwd") or ""),
+            "last_entry_cursor": str(metadata.get("last_entry_id") or ""),
+            "heartbeat": str(status.get("heartbeat_at") or ""),
+            "process_alive": (
+                _pid_alive(status.get("pid"))
+                and status.get("status") == "running"
+                and not _is_stale_heartbeat(_heartbeat_reference(status))
+            ),
+        }
+
+    def session_control(
+        self,
+        job_id: str,
+        action: str,
+        *,
+        message: str = "",
+        reason: str = "",
+        actor: str = "cli",
+        source: str = "cli",
+    ) -> dict[str, Any]:
+        job_root, job = self._session_job(job_id)
+        status = self.session_status(job_id)
+        if action in {"steer", "follow_up"} and not message.strip():
+            raise ValueError(f"{action} message must not be empty")
+        if status["session_status"] != "running" or not status["process_alive"]:
+            if action == "abort" and status["session_status"] == "aborted":
+                return {**status, "accepted": True, "idempotent": True}
+            raise ValueError(f"Pi session for job {job_id} is not active ({status['session_status']})")
+        payload = {
+            "id": f"control-{uuid4()}",
+            "created_at": self._now(),
+            "action": action,
+            "message": message,
+            "reason": reason,
+            "actor": actor,
+            "source": source,
+            "job_id": job_id,
+            "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
+        }
+        self._append_jsonl(job_root / "pi_control_queue.jsonl", payload)
+        timeout = float(os.getenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "5"))
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            acknowledgement = self._pi_control_ack_states(job_root).get(payload["id"], {})
+            state = str(acknowledgement.get("state") or "queued")
+            if state == "rpc_accepted":
+                return {
+                    **self.session_status(job_id),
+                    "accepted": True,
+                    "control_id": payload["id"],
+                    "action": action,
+                    "control_state": state,
+                }
+            if state == "failed":
+                return {
+                    **self.session_status(job_id),
+                    "accepted": False,
+                    "control_id": payload["id"],
+                    "action": action,
+                    "control_state": state,
+                    "error": str(acknowledgement.get("error") or "Pi rejected the control command"),
+                }
+            time.sleep(0.02)
+        return {
+            **self.session_status(job_id),
+            "accepted": False,
+            "control_id": payload["id"],
+            "action": action,
+            "control_state": "queued",
+        }
+
+    def _session_job(self, job_id: str) -> tuple[Path, dict[str, Any]]:
+        if not job_id or Path(job_id).name != job_id:
+            raise ValueError("job_id is invalid")
+        job_root = self.root / job_id
+        path = job_root / "job.json"
+        if not path.is_file():
+            raise ValueError(f"Worker job not found: {job_id}")
+        job = self._read_json(path)
+        if str(job.get("adapter")) not in SESSION_BACKENDS:
+            raise ValueError(f"Worker job {job_id} is not a persistent-session backend")
+        return job_root, job
 
     def _memory_citations_from_pickup_packet(self, job_root: Path) -> list[str]:
         packet_path = job_root / "role_pickup_packet.json"
@@ -1453,7 +1904,8 @@ class WorkerJobStore:
         configured_model = (model or str(job.get("model", ""))).strip()
         if not configured_model:
             adapter = str(job.get("adapter", ""))
-            configured_model = CLI_BACKENDS.get(adapter, CODEX_BACKEND).model_default
+            spec = CLI_BACKENDS.get(adapter)
+            configured_model = spec.model_default if spec is not None else "auto"
         pickup_context = self._render_worker_pickup_context(job_root)
         sandbox_context = _worker_sandbox_context_prompt(job)
         return "\n\n".join(
@@ -1612,6 +2064,26 @@ def _timeout_text(value: object) -> str:
 
 def _is_repo_workspace(path: Path) -> bool:
     return path.is_dir() and (path / ".git").exists()
+
+
+def _pid_alive(value: object) -> bool:
+    try:
+        pid = int(value or 0)
+        if pid <= 0:
+            return False
+        os.kill(pid, 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _relative_session_evidence_path(value: object, session_root: Path) -> str:
+    if not value:
+        return ""
+    try:
+        return str(Path(str(value)).expanduser().resolve().relative_to(session_root.resolve()))
+    except (OSError, ValueError):
+        return ""
 
 
 def _worker_runtime_evidence(
@@ -1820,9 +2292,13 @@ def worker_backend_doctor(mode: str) -> dict[str, Any]:
             "ready": True,
             "hint": f"The `{mode}` worker runs locally and needs no CLI or credentials.",
         }
+    if mode in SESSION_BACKENDS:
+        report = pi_backend_doctor()
+        report["mode"] = "pi" if mode == "pi-rpc" else mode
+        return report
     spec = CLI_BACKENDS.get(mode)
     if spec is None:
-        known = ", ".join(["fake", *sorted(CLI_BACKENDS), "noop", "human"])
+        known = ", ".join(["fake", *sorted(CLI_BACKENDS), *sorted(SESSION_BACKENDS), "noop", "human"])
         return {
             "mode": mode,
             "kind": "unknown",
@@ -1886,6 +2362,31 @@ def worker_backend_local_preflight(
     """Inspect CLI readiness without exposing target content or invoking an agent."""
     requested_mode = (mode or "").strip() or "codex"
     canonical_mode = "anthropic" if requested_mode == "claude" else requested_mode
+    if canonical_mode in SESSION_BACKENDS:
+        doctor = worker_backend_doctor(canonical_mode)
+        version = str(doctor.get("version") or "")
+        return {
+            "mode": "pi",
+            "kind": "session",
+            "status": "ready" if doctor.get("ready") else "fail",
+            "local_only": True,
+            "external_invocation": False,
+            "real_run_opt_in": allow_real_worker,
+            "dry_run": dry_run,
+            "checks": {
+                "backend_selected": True,
+                "binary_available": bool(doctor.get("available")),
+                "version_readable": bool(version),
+                "session_directory_writable": bool(doctor.get("session_directory_writable")),
+                "config_ready": bool(doctor.get("ready")),
+            },
+            "version": version,
+            "planned_command": ["pi", "--mode", "rpc", "--session-dir", "<local-session-dir>"],
+            "cwd": "goodteam-runtime-workspace",
+            "sandbox_mode": "goodteam-worktree-boundary",
+            "capabilities": list(capabilities_dict()),
+            "message": str(doctor.get("hint") or ""),
+        }
     spec = CLI_BACKENDS.get(canonical_mode)
     if spec is None:
         return _non_cli_local_preflight(canonical_mode, dry_run, allow_real_worker)
@@ -2090,7 +2591,24 @@ def discover_installed_agents() -> list[dict[str, Any]]:
                 "model_default": spec.model_default,
             }
         )
-    return discovered
+    pi_report = worker_backend_doctor("pi")
+    discovered.append(
+        {
+            "backend": "pi",
+            "aliases": ["pi", "pi-rpc"],
+            "available": bool(pi_report.get("available")),
+            "ready": bool(pi_report.get("ready")),
+            "command": "pi",
+            "command_path": str(pi_report.get("command_path") or ""),
+            "hint": str(pi_report.get("hint") or ""),
+            "models": [str(pi_report.get("model") or "auto")],
+            "models_source": "configured",
+            "model_default": "auto",
+            "runtime_kind": "persistent_session",
+            "capabilities": list(capabilities_dict()),
+        }
+    )
+    return sorted(discovered, key=lambda item: str(item["backend"]))
 
 
 def _generic_cli_hint(spec: CliBackendSpec, available: bool, auth_present: bool) -> str:

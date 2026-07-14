@@ -1,4 +1,4 @@
-export const DEFAULT_BACKEND_OPTIONS = ["fake", "codex", "claude", "noop", "human"];
+export const DEFAULT_BACKEND_OPTIONS = ["fake", "codex", "claude", "pi", "noop", "human"];
 export const DEFAULT_WORKER_ROLES = ["ui", "implementation", "qa"];
 export const MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human"];
 export const INIT_WORKER_ROUTING_BUCKET_KEYS = ['product', 'implementation', 'quality'];
@@ -38,11 +38,16 @@ export const FALLBACK_AGENT_MODES = {
   opencode: {
     models: ["auto"],
     model_default: "auto"
+  },
+  pi: {
+    models: ["auto"],
+    model_default: "auto"
   }
 };
 
 export function canonicalBackendForOption(backend) {
   if (backend === 'anthropic') return 'claude';
   if (backend === 'antigravity') return 'agy';
+  if (backend === 'pi-rpc') return 'pi';
   return backend;
 }

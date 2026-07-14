@@ -94,7 +94,7 @@ from goodteam_os.workflow_table import (
     workflow_execution_plan,
     workflow_execution_plan_v2,
 )
-from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, WorkerJobStore, discover_installed_agents
+from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
 
@@ -104,13 +104,13 @@ PRD_REVIEW_ROLES = [
     "Review / QA",
 ]
 
-_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "gemini", "agy", "opencode", "fake", "noop", "human")
+_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "gemini", "agy", "opencode", "pi", "fake", "noop", "human")
 WORKER_BACKEND_OPTIONS = [
     mode
     for mode in _PREFERRED_WORKER_BACKEND_ORDER
-    if mode in {*BUILTIN_WORKER_MODES, *CLI_BACKENDS}
+    if mode in {*BUILTIN_WORKER_MODES, *CLI_BACKENDS, *SESSION_BACKENDS}
 ]
-WORKER_BACKEND_ACCEPTED_OPTIONS = sorted({*WORKER_BACKEND_OPTIONS, *CLI_BACKENDS, "manual"})
+WORKER_BACKEND_ACCEPTED_OPTIONS = sorted({*WORKER_BACKEND_OPTIONS, *CLI_BACKENDS, *SESSION_BACKENDS, "manual"})
 WORKER_ROLES = [
     "orchestrator",
     "research",
