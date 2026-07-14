@@ -1170,7 +1170,7 @@ class WorkerJobStore:
                 self._process_pi_controls(job_root, job, runtime)
 
             runtime.wait_until_settled(PI_OVERALL_TIMEOUT_SECONDS, tick=tick)
-            self._fail_pending_pi_controls(job_root, "Pi session settled before RPC acknowledgement")
+            self._fail_pending_pi_controls(job_root, job, "Pi session settled before RPC acknowledgement")
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=1)
             if runtime.aborted:
@@ -1211,7 +1211,7 @@ class WorkerJobStore:
                 },
             )
         except (PiRpcError, TimeoutError, ValueError, FileNotFoundError) as exc:
-            self._fail_pending_pi_controls(job_root, f"Pi session stopped before RPC acknowledgement: {exc}")
+            self._fail_pending_pi_controls(job_root, job, f"Pi session stopped before RPC acknowledgement: {exc}")
             stop_heartbeat.set()
             if heartbeat_thread is not None:
                 heartbeat_thread.join(timeout=1)
@@ -1264,15 +1264,24 @@ class WorkerJobStore:
                     raise ValueError("Pi control command is missing an id")
                 current_state = str(states.get(control_id, {}).get("state") or "queued")
                 if current_state in {"rpc_accepted", "failed"}:
+                    self._record_pi_control_terminal(
+                        job_root,
+                        job,
+                        control,
+                        current_state,
+                        error=str(states.get(control_id, {}).get("error") or ""),
+                        states=states,
+                    )
                     continue
                 if current_state == "processing":
-                    self._append_pi_control_ack(
+                    self._record_pi_control_terminal(
                         job_root,
-                        control_id,
+                        job,
+                        control,
                         "failed",
                         error="Pi control acknowledgement is ambiguous after worker restart",
+                        states=states,
                     )
-                    states[control_id] = {"state": "failed"}
                     continue
                 self._append_pi_control_ack(job_root, control_id, "processing")
                 states[control_id] = {"state": "processing"}
@@ -1285,8 +1294,13 @@ class WorkerJobStore:
                     runtime.abort()
                 else:
                     raise ValueError(f"unknown Pi control action: {action}")
-                self._append_pi_control_ack(job_root, control_id, "rpc_accepted")
-                states[control_id] = {"state": "rpc_accepted"}
+                self._record_pi_control_terminal(
+                    job_root,
+                    job,
+                    control,
+                    "rpc_accepted",
+                    states=states,
+                )
                 runtime.store.append_event(
                     "operator_control_accepted",
                     {
@@ -1307,55 +1321,22 @@ class WorkerJobStore:
                         ),
                     },
                 )
-                if str(control.get("source") or "") == "telegram":
-                    audit_context = control.get("audit_context", {})
-                    runtime.store.append_event(
-                        "telegram_runtime_control",
-                        {
-                            "project_key": str(job.get("project_key") or ""),
-                            "job_id": str(job.get("id") or ""),
-                            "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
-                            "action": action,
-                            "control_id": control_id,
-                            "control_state": "rpc_accepted",
-                            "actor_ref": str(control.get("actor") or ""),
-                            **(
-                                {str(key): str(value) for key, value in audit_context.items()}
-                                if isinstance(audit_context, dict)
-                                else {}
-                            ),
-                        },
-                    )
             except (json.JSONDecodeError, PiRpcError, ValueError) as exc:
                 if control_id:
-                    self._append_pi_control_ack(job_root, control_id, "failed", error=str(exc)[:500])
-                    states[control_id] = {"state": "failed"}
+                    self._record_pi_control_terminal(
+                        job_root,
+                        job,
+                        control,
+                        "failed",
+                        error=str(exc)[:500],
+                        states=states,
+                    )
                 runtime.store.append_event(
                     "operator_control_failed",
                     {"control_id": control_id, "error": str(exc)[:500]},
                 )
-                if isinstance(control, dict) and str(control.get("source") or "") == "telegram":
-                    audit_context = control.get("audit_context", {})
-                    runtime.store.append_event(
-                        "telegram_runtime_control",
-                        {
-                            "project_key": str(job.get("project_key") or ""),
-                            "job_id": str(job.get("id") or ""),
-                            "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
-                            "action": str(control.get("action") or ""),
-                            "control_id": control_id,
-                            "control_state": "failed",
-                            "actor_ref": str(control.get("actor") or ""),
-                            "error": str(exc)[:500],
-                            **(
-                                {str(key): str(value) for key, value in audit_context.items()}
-                                if isinstance(audit_context, dict)
-                                else {}
-                            ),
-                        },
-                    )
 
-    def _fail_pending_pi_controls(self, job_root: Path, error: str) -> None:
+    def _fail_pending_pi_controls(self, job_root: Path, job: dict[str, Any], error: str) -> None:
         path = job_root / "pi_control_queue.jsonl"
         if not path.is_file():
             return
@@ -1367,8 +1348,93 @@ class WorkerJobStore:
                 continue
             control_id = str(control.get("id") or "")
             state = str(states.get(control_id, {}).get("state") or "queued")
-            if control_id and state not in {"rpc_accepted", "failed"}:
-                self._append_pi_control_ack(job_root, control_id, "failed", error=error[:500])
+            if not control_id:
+                continue
+            terminal_state = state if state in {"rpc_accepted", "failed"} else "failed"
+            terminal_error = str(states.get(control_id, {}).get("error") or "") if state == "failed" else ""
+            if state not in {"rpc_accepted", "failed"}:
+                terminal_error = error[:500]
+            self._record_pi_control_terminal(
+                job_root,
+                job,
+                control,
+                terminal_state,
+                error=terminal_error,
+                states=states,
+            )
+
+    def _record_pi_control_terminal(
+        self,
+        job_root: Path,
+        job: dict[str, Any],
+        control: dict[str, Any],
+        state: str,
+        *,
+        error: str = "",
+        states: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        if state not in {"rpc_accepted", "failed"}:
+            raise ValueError(f"Pi control terminal state is invalid: {state}")
+        control_id = str(control.get("id") or "")
+        if not control_id:
+            return
+        current_states = states if states is not None else self._pi_control_ack_states(job_root)
+        current = current_states.get(control_id, {})
+        current_state = str(current.get("state") or "queued")
+        if current_state not in {"rpc_accepted", "failed"}:
+            self._append_pi_control_ack(job_root, control_id, state, error=error)
+            current_states[control_id] = {
+                "control_id": control_id,
+                "state": state,
+                **({"error": error} if error else {}),
+            }
+        else:
+            state = current_state
+            error = str(current.get("error") or error)
+
+        if str(control.get("source") or "") != "telegram":
+            return
+        if control_id in self._telegram_terminal_control_ids(job_root):
+            return
+        audit_context = control.get("audit_context", {})
+        payload = {
+            "recorded_at": self._now(),
+            "event": "telegram_runtime_control",
+            "project_key": str(job.get("project_key") or ""),
+            "job_id": str(job.get("id") or ""),
+            "execution_id": str(job.get("execution_id") or job.get("run_id") or ""),
+            "action": str(control.get("action") or ""),
+            "control_id": control_id,
+            "control_state": state,
+            "actor_ref": str(control.get("actor") or ""),
+            **(
+                {str(key): str(value) for key, value in audit_context.items()}
+                if isinstance(audit_context, dict)
+                else {}
+            ),
+        }
+        if error:
+            payload["error"] = error[:500]
+        self._append_jsonl(job_root / "pi_events.jsonl", payload)
+
+    @staticmethod
+    def _telegram_terminal_control_ids(job_root: Path) -> set[str]:
+        path = job_root / "pi_events.jsonl"
+        if not path.is_file():
+            return set()
+        control_ids: set[str] = set()
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if (
+                event.get("event") == "telegram_runtime_control"
+                and event.get("control_state") in {"rpc_accepted", "failed"}
+                and event.get("control_id")
+            ):
+                control_ids.add(str(event["control_id"]))
+        return control_ids
 
     def _pi_control_ack_states(self, job_root: Path) -> dict[str, dict[str, Any]]:
         path = job_root / "pi_control_acks.jsonl"
@@ -1462,6 +1528,16 @@ class WorkerJobStore:
             if existing is not None:
                 if str(existing.get("action") or "") != action:
                     raise ValueError("control_id is already bound to another action")
+                acknowledgement = self._pi_control_ack_states(job_root).get(requested_control_id, {})
+                acknowledgement_state = str(acknowledgement.get("state") or "queued")
+                if acknowledgement_state in {"rpc_accepted", "failed"}:
+                    self._record_pi_control_terminal(
+                        job_root,
+                        job,
+                        existing,
+                        acknowledgement_state,
+                        error=str(acknowledgement.get("error") or ""),
+                    )
                 return self._wait_for_pi_control_ack(
                     job_id,
                     job_root,
@@ -1513,6 +1589,29 @@ class WorkerJobStore:
             if str(record.get("id") or "") == control_id:
                 return record
         return None
+
+    def find_session_control(
+        self,
+        control_id: str,
+        *,
+        run_id: str,
+        project_key: str,
+    ) -> tuple[str, dict[str, Any]] | None:
+        matches: list[tuple[str, dict[str, Any]]] = []
+        for job in self.list_jobs():
+            if str(job.get("adapter") or "") not in SESSION_BACKENDS:
+                continue
+            if str(job.get("run_id") or "") != run_id:
+                continue
+            if str(job.get("project_key") or "") != project_key:
+                continue
+            job_id = str(job.get("id") or "")
+            request = self._pi_control_request(self.root / job_id, control_id)
+            if request is not None:
+                matches.append((job_id, request))
+        if len(matches) > 1:
+            raise ValueError("Telegram control identity is ambiguous within the current project run")
+        return matches[0] if matches else None
 
     def _wait_for_pi_control_ack(
         self,

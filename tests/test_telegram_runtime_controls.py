@@ -271,6 +271,189 @@ def test_worker_control_id_is_restart_safe_and_does_not_duplicate_queue(monkeypa
     assert len(queued) == 1
 
 
+@pytest.mark.parametrize(
+    ("command_text", "command", "action", "terminal_status"),
+    [
+        ("/gt stop scope changed", "stop", "abort", "aborted"),
+        ("/gt steer focus tests", "steer", "steer", "settled"),
+    ],
+)
+def test_terminal_session_duplicate_update_replays_durable_ack(
+    monkeypatch,
+    tmp_path,
+    command_text,
+    command,
+    action,
+    terminal_status,
+):
+    workspace, project = _configured_workspace(tmp_path)
+    root = _write_job(project, "job-terminal")
+    (root / "pi_session.json").write_text(
+        json.dumps(
+            {
+                "session_id": "session-terminal",
+                "status": terminal_status,
+                "execution_id": "execution-1",
+                "provider": "fake-provider",
+                "model": "fake-model",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "status.json").write_text(json.dumps({"status": "failed" if terminal_status == "aborted" else "completed"}), encoding="utf-8")
+    store = WorkerJobStore(project)
+    control_id = TelegramRuntimeControlService.stable_control_id(
+        chat_id=999,
+        message_id=42,
+        user_id="111",
+        command=command,
+    )
+    store._append_jsonl(
+        root / "pi_control_queue.jsonl",
+        {
+            "id": control_id,
+            "action": action,
+            "message": "focus tests" if action == "steer" else "",
+            "reason": "scope changed" if action == "abort" else "",
+            "source": "telegram",
+            "actor": "telegram:user:111",
+            "job_id": "job-terminal",
+            "execution_id": "execution-1",
+            "audit_context": {
+                "telegram_chat_id": "999",
+                "telegram_message_id": "42",
+                "telegram_user_id": "111",
+                "command": command,
+                "project_key": "GOODTEAM",
+            },
+        },
+    )
+    store._append_pi_control_ack(root, control_id, "rpc_accepted")
+    sent = []
+    monkeypatch.setenv(telegram.TOKEN_ENV, "fake-token")
+    monkeypatch.setattr(telegram, "_telegram_request", lambda _token, _method, params: sent.append(params) or {"ok": True})
+    update = {
+        "update_id": 7,
+        "message": {
+            "message_id": 42,
+            "from": {"id": 111},
+            "chat": {"id": 999},
+            "text": command_text,
+        },
+    }
+
+    first_replay = telegram.process_telegram_update(
+        update,
+        workspace=workspace,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="GOODTEAM",
+    )
+    second_replay = telegram.process_telegram_update(
+        update,
+        workspace=workspace,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="GOODTEAM",
+    )
+
+    assert first_replay["accepted"] is second_replay["accepted"] is True
+    assert first_replay["control_state"] == second_replay["control_state"] == "rpc_accepted"
+    assert first_replay["control_id"] == second_replay["control_id"] == control_id
+    assert len((root / "pi_control_queue.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+    events = [json.loads(line) for line in (root / "pi_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    audits = [event for event in events if event.get("event") == "telegram_runtime_control"]
+    assert len(audits) == 1
+    assert audits[0]["control_state"] == "rpc_accepted"
+    assert "accepted" in sent[-1]["text"]
+
+
+def _queued_telegram_control(store: WorkerJobStore, root: Path, control_id: str = "control-tg-terminal123"):
+    control = {
+        "id": control_id,
+        "action": "steer",
+        "message": "focus tests",
+        "source": "telegram",
+        "actor": "telegram:user:111",
+        "job_id": "job-active",
+        "execution_id": "execution-1",
+        "audit_context": {
+            "telegram_chat_id": "999",
+            "telegram_message_id": "42",
+            "telegram_user_id": "111",
+            "command": "steer",
+            "project_key": "GOODTEAM",
+        },
+    }
+    store._append_jsonl(root / "pi_control_queue.jsonl", control)
+    return control
+
+
+@pytest.mark.parametrize(
+    "error",
+    ["Pi session settled before RPC acknowledgement", "Pi session stopped before RPC acknowledgement: crash"],
+)
+def test_settle_or_crash_before_ack_records_one_failed_telegram_audit(tmp_path, error):
+    project = tmp_path / "project"
+    project.mkdir()
+    root = _write_job(project, "job-active")
+    store = WorkerJobStore(project)
+    job = json.loads((root / "job.json").read_text(encoding="utf-8"))
+    control = _queued_telegram_control(store, root)
+
+    store._fail_pending_pi_controls(root, job, error)
+    store._fail_pending_pi_controls(root, job, error)
+
+    acknowledgement = store._pi_control_ack_states(root)[control["id"]]
+    events = [json.loads(line) for line in (root / "pi_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    audits = [event for event in events if event.get("event") == "telegram_runtime_control"]
+    assert acknowledgement["state"] == "failed"
+    assert acknowledgement["error"] == error
+    assert len(audits) == 1
+    assert audits[0]["control_state"] == "failed"
+    assert audits[0]["telegram_message_id"] == "42"
+
+
+def test_restart_processing_failure_records_one_telegram_audit(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    root = _write_job(project, "job-active")
+    store = WorkerJobStore(project)
+    job = json.loads((root / "job.json").read_text(encoding="utf-8"))
+    control = _queued_telegram_control(store, root)
+    store._append_pi_control_ack(root, control["id"], "processing")
+
+    store._process_pi_controls(root, job, None)  # type: ignore[arg-type]
+    store._process_pi_controls(root, job, None)  # type: ignore[arg-type]
+
+    acknowledgement = store._pi_control_ack_states(root)[control["id"]]
+    events = [json.loads(line) for line in (root / "pi_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    audits = [event for event in events if event.get("event") == "telegram_runtime_control"]
+    assert acknowledgement["state"] == "failed"
+    assert "ambiguous after worker restart" in acknowledgement["error"]
+    assert len(audits) == 1
+    assert audits[0]["control_state"] == "failed"
+
+
+def test_terminal_ack_without_audit_is_reconciled_once(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    root = _write_job(project, "job-active")
+    store = WorkerJobStore(project)
+    job = json.loads((root / "job.json").read_text(encoding="utf-8"))
+    control = _queued_telegram_control(store, root)
+    store._append_pi_control_ack(root, control["id"], "failed", error="crash window")
+
+    store._fail_pending_pi_controls(root, job, "unused")
+    store._fail_pending_pi_controls(root, job, "unused")
+
+    events = [json.loads(line) for line in (root / "pi_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    audits = [event for event in events if event.get("event") == "telegram_runtime_control"]
+    assert len(audits) == 1
+    assert audits[0]["control_state"] == "failed"
+    assert audits[0]["error"] == "crash window"
+
+
 def test_queued_and_failed_are_never_reported_as_accepted(tmp_path):
     service = TelegramRuntimeControlService(tmp_path, "GOODTEAM")
     queued = service.format_control_result("steer", "GOODTEAM", {"accepted": False, "control_state": "queued"})

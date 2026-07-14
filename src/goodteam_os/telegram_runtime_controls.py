@@ -75,11 +75,9 @@ class TelegramRuntimeControlService:
         raise RuntimeControlResolutionError("unknown_project", f"Unknown configured project: {self.project_key}.")
 
     def _session_candidates(self) -> list[ActivePiSession]:
-        key, root = self._configured_project_root()
-        state = StateStore(self.workspace).read_project_current(key)
-        if state is None:
+        key, root, run_id = self._current_project_context()
+        if not run_id:
             return []
-        run_id = str(state.run_id or "")
         store = WorkerJobStore(root)
         sessions: list[ActivePiSession] = []
         for job in store.list_jobs():
@@ -97,6 +95,13 @@ class TelegramRuntimeControlService:
                 continue
             sessions.append(ActivePiSession(key, root, job, status))
         return sessions
+
+    def _current_project_context(self) -> tuple[str, Path, str]:
+        key, root = self._configured_project_root()
+        state = StateStore(self.workspace).read_project_current(key)
+        if state is None:
+            return key, root, ""
+        return key, root, str(state.run_id or "")
 
     def active_sessions(self) -> list[ActivePiSession]:
         return [
@@ -188,13 +193,29 @@ class TelegramRuntimeControlService:
         action = {"steer": "steer", "followup": "follow_up", "stop": "abort"}.get(command)
         if action is None:
             raise ValueError(f"Unsupported Telegram runtime control: {command}")
-        session = self.resolve_one()
         control_id = self.stable_control_id(
             chat_id=chat_id,
             message_id=message_id,
             user_id=user_id,
             command=command,
         )
+        key, root, run_id = self._current_project_context()
+        store = WorkerJobStore(root)
+        existing = store.find_session_control(control_id, run_id=run_id, project_key=key) if run_id else None
+        if existing is not None:
+            job_id, request = existing
+            if str(request.get("action") or "") != action:
+                raise ValueError("Telegram control identity is already bound to another action")
+            result = store.session_control(
+                job_id,
+                action,
+                message=self.redact(message),
+                reason=self.redact(reason),
+                control_id=control_id,
+            )
+            return result, self.format_control_result(command, key, result)
+
+        session = self.resolve_one()
         store = WorkerJobStore(session.root)
         result = store.session_control(
             str(session.job["id"]),
