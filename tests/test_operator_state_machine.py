@@ -304,6 +304,44 @@ def test_telegram_operator_callback_records_exact_head_decision(tmp_path, monkey
     assert store.get("card01")["decided"] is True
 
 
+def test_telegram_operator_callback_fails_closed_without_allowed_users(tmp_path, monkeypatch):
+    queue, _ = _queue(tmp_path / "state")
+    waiting = _advance_to_waiting(OperatorExecutionStateMachine(queue, FakeActions()), queue)
+    store = telegram.TelegramReviewSessionStore(tmp_path)
+    store.save(
+        "card00",
+        {
+            "session_id": "card00",
+            "run_id": waiting["id"],
+            "project_key": "GOODTEAM",
+            "gate": "operator-head-1",
+            "chat_id": 12345,
+            "message_id": 87,
+            "items": [],
+            "decided": False,
+            "operator_task_id": waiting["id"],
+            "operator_head_sha": "head-1",
+            "operator_state_dir": str(tmp_path / "state"),
+        },
+    )
+    monkeypatch.setattr(telegram, "_telegram_request", lambda *args, **kwargs: {"ok": True})
+    result = telegram.process_telegram_update(
+        {
+            "callback_query": {
+                "id": "callback-0",
+                "from": {"id": 111},
+                "data": "v1:A:card00",
+                "message": {"message_id": 87, "chat": {"id": 12345}},
+            }
+        },
+        workspace=tmp_path,
+        allowed_users=[],
+        processed_callbacks=set(),
+    )
+    assert result == {"status": "ignored", "reason": "unauthorized user"}
+    assert queue.active_item()["metadata"]["decision"] == {}
+
+
 def test_telegram_operator_reject_button_requires_text_reason(tmp_path, monkeypatch):
     queue, _ = _queue(tmp_path / "state")
     machine = OperatorExecutionStateMachine(queue, FakeActions())

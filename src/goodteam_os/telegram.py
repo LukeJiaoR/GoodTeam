@@ -2165,6 +2165,13 @@ def process_telegram_update(
                 reply_to_message_id=reply_to_message_id,
                 project_key=project_key,
             )
+            if (
+                command in {"approve", "reject", "changes"}
+                and context_session is not None
+                and context_session.get("operator_task_id")
+                and user_id not in allowed_users
+            ):
+                return {"status": "ignored", "reason": "unauthorized user"}
             return _process_telegram_command(
                 command,
                 token=token,
@@ -2227,6 +2234,9 @@ def process_telegram_update(
         session = store.get(session_id)
         if not session:
             return {"status": "ignored", "reason": "session expired or not found"}
+
+        if session.get("operator_task_id") and user_id not in allowed_users:
+            return {"status": "ignored", "reason": "unauthorized user"}
 
         if session.get("decided", False):
             return {"status": "ignored", "reason": "already decided"}
