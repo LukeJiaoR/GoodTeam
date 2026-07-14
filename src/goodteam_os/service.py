@@ -58,7 +58,7 @@ def _service_status_unlocked() -> dict[str, Any]:
         return state
     _state_path().unlink(missing_ok=True)
     result = {"running": False, "stale_pid": pid or None}
-    if pid and _process_is_running(pid):
+    if pid and identity and _process_is_running(pid):
         result["identity_mismatch"] = True
     return result
 
@@ -303,7 +303,7 @@ def _managed_process_is_running(pid: int, *, identity: str = "") -> bool:
         return False
     try:
         result = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)],
+            ["ps", "-ww", "-o", "command=", "-p", str(pid)],
             capture_output=True,
             check=False,
             text=True,
