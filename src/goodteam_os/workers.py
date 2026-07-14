@@ -1263,6 +1263,8 @@ class WorkerJobStore:
                 control_id = str(control.get("id") or "")
                 if not control_id:
                     raise ValueError("Pi control command is missing an id")
+                self._reconcile_pi_control_terminal_audit(job_root, job, control)
+                states = self._pi_control_ack_states(job_root)
                 current_state = str(states.get(control_id, {}).get("state") or "queued")
                 if current_state in {"rpc_accepted", "failed"}:
                     self._record_pi_control_terminal(
@@ -1348,6 +1350,8 @@ class WorkerJobStore:
             except json.JSONDecodeError:
                 continue
             control_id = str(control.get("id") or "")
+            self._reconcile_pi_control_terminal_audit(job_root, job, control)
+            states = self._pi_control_ack_states(job_root)
             state = str(states.get(control_id, {}).get("state") or "queued")
             if not control_id:
                 continue
@@ -1379,29 +1383,58 @@ class WorkerJobStore:
         control_id = str(control.get("id") or "")
         if not control_id:
             return
-        current_states = states if states is not None else self._pi_control_ack_states(job_root)
-        current = current_states.get(control_id, {})
-        current_state = str(current.get("state") or "queued")
-        if current_state not in {"rpc_accepted", "failed"}:
-            self._append_pi_control_ack(job_root, control_id, state, error=error)
-            current_states[control_id] = {
-                "control_id": control_id,
-                "state": state,
-                **({"error": error} if error else {}),
-            }
-        else:
-            state = current_state
-            error = str(current.get("error") or error)
-
-        if str(control.get("source") or "") != "telegram":
-            return
         lock_fd = os.open(job_root / ".pi_control_terminal.lock", os.O_WRONLY | os.O_CREAT, 0o600)
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            if control_id in self._telegram_terminal_control_ids(job_root):
+            current_states = self._pi_control_ack_states(job_root)
+            current = current_states.get(control_id, {})
+            current_state = str(current.get("state") or "queued")
+            audit = self._telegram_terminal_control(job_root, control_id)
+
+            if audit is not None:
+                audit_state = str(audit.get("control_state") or "")
+                if current_state in {"rpc_accepted", "failed"} and current_state != audit_state:
+                    raise ValueError("Pi control terminal acknowledgement conflicts with its Telegram audit")
+                if (
+                    current_state == audit_state == "failed"
+                    and str(current.get("error") or "") != str(audit.get("error") or "")
+                ):
+                    raise ValueError("Pi control terminal acknowledgement error conflicts with its Telegram audit")
+                if state != audit_state:
+                    raise ValueError("Pi control terminal state conflicts with its durable Telegram audit")
+                state = audit_state
+                error = str(audit.get("error") or "")
+                if current_state not in {"rpc_accepted", "failed"}:
+                    self._append_pi_control_ack(job_root, control_id, state, error=error)
+                    current_states[control_id] = {
+                        "control_id": control_id,
+                        "state": state,
+                        **({"error": error} if error else {}),
+                    }
+            elif current_state in {"rpc_accepted", "failed"}:
+                if state != current_state:
+                    raise ValueError("Pi control terminal state conflicts with its durable acknowledgement")
+                state = current_state
+                error = str(current.get("error") or "")
+            else:
+                self._append_pi_control_ack(job_root, control_id, state, error=error)
+                current_states[control_id] = {
+                    "control_id": control_id,
+                    "state": state,
+                    **({"error": error} if error else {}),
+                }
+
+            if states is not None:
+                states[control_id] = current_states[control_id]
+            if str(control.get("source") or "") != "telegram" or audit is not None:
                 return
             audit_context = control.get("audit_context", {})
             payload = {
+                **(
+                    {str(key): str(value) for key, value in audit_context.items()}
+                    if isinstance(audit_context, dict)
+                    else {}
+                ),
                 "recorded_at": self._now(),
                 "event": "telegram_runtime_control",
                 "project_key": str(job.get("project_key") or ""),
@@ -1411,11 +1444,6 @@ class WorkerJobStore:
                 "control_id": control_id,
                 "control_state": state,
                 "actor_ref": str(control.get("actor") or ""),
-                **(
-                    {str(key): str(value) for key, value in audit_context.items()}
-                    if isinstance(audit_context, dict)
-                    else {}
-                ),
             }
             if error:
                 payload["error"] = error[:500]
@@ -1424,12 +1452,34 @@ class WorkerJobStore:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
 
+    def _reconcile_pi_control_terminal_audit(
+        self,
+        job_root: Path,
+        job: dict[str, Any],
+        control: dict[str, Any],
+    ) -> None:
+        if str(control.get("source") or "") != "telegram":
+            return
+        control_id = str(control.get("id") or "")
+        if not control_id:
+            return
+        audit = self._telegram_terminal_control(job_root, control_id)
+        if audit is None:
+            return
+        self._record_pi_control_terminal(
+            job_root,
+            job,
+            control,
+            str(audit.get("control_state") or ""),
+            error=str(audit.get("error") or ""),
+        )
+
     @staticmethod
-    def _telegram_terminal_control_ids(job_root: Path) -> set[str]:
+    def _telegram_terminal_control(job_root: Path, control_id: str) -> dict[str, Any] | None:
         path = job_root / "pi_events.jsonl"
         if not path.is_file():
-            return set()
-        control_ids: set[str] = set()
+            return None
+        matches: list[dict[str, Any]] = []
         for raw in path.read_text(encoding="utf-8").splitlines():
             try:
                 event = json.loads(raw)
@@ -1438,10 +1488,12 @@ class WorkerJobStore:
             if (
                 event.get("event") == "telegram_runtime_control"
                 and event.get("control_state") in {"rpc_accepted", "failed"}
-                and event.get("control_id")
+                and str(event.get("control_id") or "") == control_id
             ):
-                control_ids.add(str(event["control_id"]))
-        return control_ids
+                matches.append(event)
+        if len(matches) > 1:
+            raise ValueError("Telegram control has multiple durable terminal audit events")
+        return matches[0] if matches else None
 
     def _pi_control_ack_states(self, job_root: Path) -> dict[str, dict[str, Any]]:
         path = job_root / "pi_control_acks.jsonl"
@@ -1535,6 +1587,7 @@ class WorkerJobStore:
             if existing is not None:
                 if str(existing.get("action") or "") != action:
                     raise ValueError("control_id is already bound to another action")
+                self._reconcile_pi_control_terminal_audit(job_root, job, existing)
                 acknowledgement = self._pi_control_ack_states(job_root).get(requested_control_id, {})
                 acknowledgement_state = str(acknowledgement.get("state") or "queued")
                 if acknowledgement_state in {"rpc_accepted", "failed"}:
@@ -1588,27 +1641,27 @@ class WorkerJobStore:
         path = job_root / "pi_control_queue.jsonl"
         if not path.is_file():
             return None
+        matches: list[dict[str, Any]] = []
         for raw in path.read_text(encoding="utf-8").splitlines():
             try:
                 record = json.loads(raw)
             except json.JSONDecodeError:
                 continue
             if str(record.get("id") or "") == control_id:
-                return record
-        return None
+                matches.append(record)
+        if len(matches) > 1:
+            raise ValueError("Pi control identity is ambiguous within the worker job")
+        return matches[0] if matches else None
 
-    def find_session_control(
+    def find_project_session_control(
         self,
         control_id: str,
         *,
         project_key: str,
-        run_id: str | None = None,
     ) -> tuple[str, dict[str, Any]] | None:
         matches: list[tuple[str, dict[str, Any]]] = []
         for job in self.list_jobs():
             if str(job.get("adapter") or "") not in SESSION_BACKENDS:
-                continue
-            if run_id is not None and str(job.get("run_id") or "") != run_id:
                 continue
             if str(job.get("project_key") or "") != project_key:
                 continue
@@ -1619,6 +1672,18 @@ class WorkerJobStore:
         if len(matches) > 1:
             raise ValueError("Telegram control identity is ambiguous within the configured project")
         return matches[0] if matches else None
+
+    def find_session_control(
+        self,
+        control_id: str,
+        *,
+        project_key: str,
+        run_id: str | None = None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Compatibility wrapper; Telegram control lookup must be project-wide."""
+        if run_id is not None:
+            raise ValueError("run-scoped Telegram control lookup is unsafe")
+        return self.find_project_session_control(control_id, project_key=project_key)
 
     def _wait_for_pi_control_ack(
         self,
@@ -1661,7 +1726,7 @@ class WorkerJobStore:
             "accepted": False,
             "control_id": control_id,
             "action": action,
-            "control_state": "queued",
+            "control_state": state,
             "idempotent": idempotent,
         }
 

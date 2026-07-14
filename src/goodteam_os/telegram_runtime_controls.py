@@ -201,11 +201,27 @@ class TelegramRuntimeControlService:
         )
         key, root = self._configured_project_root()
         store = WorkerJobStore(root)
-        existing = store.find_session_control(control_id, project_key=key)
+        existing = store.find_project_session_control(control_id, project_key=key)
         if existing is not None:
             job_id, request = existing
-            if str(request.get("action") or "") != action:
-                raise ValueError("Telegram control identity is already bound to another action")
+            expected_context = {
+                "telegram_chat_id": str(chat_id),
+                "telegram_message_id": str(message_id),
+                "telegram_user_id": user_id,
+                "command": command,
+                "project_key": key,
+            }
+            actual_context = request.get("audit_context")
+            if (
+                str(request.get("action") or "") != action
+                or str(request.get("source") or "") != "telegram"
+                or str(request.get("actor") or "") != f"telegram:user:{user_id}"
+                or str(request.get("message") or "") != self.redact(message)
+                or str(request.get("reason") or "") != self.redact(reason)
+                or not isinstance(actual_context, dict)
+                or any(str(actual_context.get(field) or "") != value for field, value in expected_context.items())
+            ):
+                raise ValueError("Telegram control identity conflicts with its durable request context")
             result = store.session_control(
                 job_id,
                 action,
