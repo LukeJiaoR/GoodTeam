@@ -66,6 +66,11 @@ def test_restart_records_and_passes_resolved_frontend_dist(monkeypatch, tmp_path
     monkeypatch.setattr(service, "resolve_frontend_dist", lambda: frontend_dist.resolve())
     monkeypatch.setattr(service, "_preflight_port", lambda host, port, old_state: None)
     monkeypatch.setattr(service, "_wait_until_ready", lambda process, path, token: True)
+    monkeypatch.setattr(
+        service.secrets,
+        "token_urlsafe",
+        lambda size: "-ready-token" if size == 24 else "-service-identity",
+    )
     captured = {}
 
     class Process:
@@ -86,6 +91,8 @@ def test_restart_records_and_passes_resolved_frontend_dist(monkeypatch, tmp_path
     assert state["workspace"] == str(workspace.resolve())
     frontend_arg = captured["command"].index("--frontend-dist")
     assert captured["command"][frontend_arg + 1] == str(frontend_dist.resolve())
+    assert "--identity=-service-identity" in captured["command"]
+    assert "--ready-token=-ready-token" in captured["command"]
     assert captured["kwargs"]["start_new_session"] is True
 
 

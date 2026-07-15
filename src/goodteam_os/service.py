@@ -99,12 +99,10 @@ def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend
         str(frontend_dist),
         "--state-dir",
         str(state_dir),
-        "--identity",
-        identity,
+        f"--identity={identity}",
         "--ready-file",
         str(ready_path),
-        "--ready-token",
-        ready_token,
+        f"--ready-token={ready_token}",
     ]
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(

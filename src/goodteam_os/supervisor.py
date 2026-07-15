@@ -6,7 +6,9 @@ import secrets
 import signal
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -18,6 +20,22 @@ HEARTBEAT_SECONDS = 0.5
 COMPONENT_HEARTBEAT_TIMEOUT_SECONDS = float(os.environ.get("GOODTEAM_COMPONENT_HEARTBEAT_TIMEOUT_SECONDS", "30"))
 COMPONENT_START_TIMEOUT_SECONDS = 8.0
 MAX_COMPONENT_RESTARTS = 3
+OPERATOR_HEARTBEAT_SECONDS = 0.5
+OPERATOR_IDLE_DEADLINE_SECONDS = float(os.environ.get("GOODTEAM_OPERATOR_IDLE_DEADLINE_SECONDS", "60"))
+OPERATOR_SHORT_DEADLINE_SECONDS = float(os.environ.get("GOODTEAM_OPERATOR_SHORT_DEADLINE_SECONDS", "120"))
+OPERATOR_LONG_DEADLINE_SECONDS = float(os.environ.get("GOODTEAM_OPERATOR_LONG_DEADLINE_SECONDS", "1860"))
+OPERATOR_LONG_PHASES = {"executing", "review_ready", "fixing"}
+OPERATOR_PHASE_KINDS = {
+    "hydrating": "hydrate",
+    "preflight": "preflight",
+    "executing": "execute",
+    "pr_ready": "ensure_pr",
+    "observing_ci": "observe_ci",
+    "review_ready": "review",
+    "fixing": "fix",
+    "waiting_telegram": "send_approval",
+    "merging": "merge",
+}
 
 
 @dataclass
@@ -36,6 +54,7 @@ class Component:
     started_at: float = 0.0
     last_heartbeat: float = 0.0
     heartbeat_sequence: int = 0
+    heartbeat_details: dict[str, Any] | None = None
 
 
 class ComponentHeartbeat:
@@ -46,7 +65,7 @@ class ComponentHeartbeat:
         self.token = token
         self.sequence = 0
 
-    def beat(self) -> None:
+    def beat(self, details: Mapping[str, Any] | None = None) -> None:
         self.sequence += 1
         payload = {
             "schema_version": 1,
@@ -54,11 +73,225 @@ class ComponentHeartbeat:
             "pid": os.getpid(),
             "sequence": self.sequence,
             "updated_at": time.time(),
+            "details": dict(details or {}),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
         temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         temporary.replace(self.path)
+
+
+class OperatorLivenessHeartbeat:
+    """Publish operator liveness while a bounded synchronous action is in flight.
+
+    The main loop advances progress before and after every tick. A watchdog thread
+    may keep the child-owned heartbeat fresh while that tick is blocked in a
+    worker or remote operation, but only until the persisted operation-specific
+    deadline. Once the deadline expires without main-loop progress, publication
+    stops and the supervisor's normal stale-component recovery takes over.
+    """
+
+    def __init__(
+        self,
+        *,
+        queue: DurableOperatorQueue,
+        emitter: ComponentHeartbeat,
+        heartbeat_interval: float = OPERATOR_HEARTBEAT_SECONDS,
+        idle_deadline: float = OPERATOR_IDLE_DEADLINE_SECONDS,
+        short_deadline: float = OPERATOR_SHORT_DEADLINE_SECONDS,
+        long_deadline: float = OPERATOR_LONG_DEADLINE_SECONDS,
+    ):
+        self.queue = queue
+        self.emitter = emitter
+        self.heartbeat_interval = heartbeat_interval
+        self.idle_deadline = idle_deadline
+        self.short_deadline = short_deadline
+        self.long_deadline = long_deadline
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._details: dict[str, Any] = {}
+        self._operation_key = ""
+        self._queue_revision = ""
+        self._worker_revision = ""
+        self._main_progress_sequence = 0
+        self._deadline_at = 0.0
+        self._deadline_expiration_published = False
+
+    def start(self) -> None:
+        self.progress("component_started")
+        self._publish_once()
+        self._thread = threading.Thread(target=self._run, name="goodteam-operator-heartbeat", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(1.0, self.heartbeat_interval * 3))
+
+    def progress(self, event: str) -> None:
+        item = self._active_item()
+        now = time.time()
+        with self._lock:
+            self._main_progress_sequence += 1
+            self._record_item(item, now=now, reset_deadline=True)
+            self._details.update(
+                {
+                    "progress_event": event,
+                    "main_progress_sequence": self._main_progress_sequence,
+                    "main_progress_at": now,
+                }
+            )
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.heartbeat_interval):
+            self._publish_once()
+
+    def _publish_once(self) -> None:
+        item = self._active_item()
+        worker = _latest_worker_progress(item)
+        now = time.time()
+        with self._lock:
+            self._record_item(item, now=now, reset_deadline=False)
+            worker_revision = str(worker.get("heartbeat_at", ""))
+            if worker_revision and worker_revision != self._worker_revision:
+                self._worker_revision = worker_revision
+                self._details["operation_progress_sequence"] = int(
+                    self._details.get("operation_progress_sequence", 0)
+                ) + 1
+            self._details["worker"] = worker
+            self._details["deadline_at"] = self._deadline_at
+            expired = now > self._deadline_at
+            self._details["deadline_expired"] = expired
+            details = dict(self._details)
+            publish = not expired or not self._deadline_expiration_published
+            if expired:
+                self._deadline_expiration_published = True
+        if publish:
+            self.emitter.beat(details)
+
+    def _record_item(self, item: dict[str, Any] | None, *, now: float, reset_deadline: bool) -> None:
+        phase = str(item.get("phase", "idle")) if item else "idle"
+        operation = _latest_operator_operation(item)
+        operation_id = str(operation.get("operation_id", "")) or _predicted_operator_operation(item, phase)
+        operation_key = f"{item.get('id', '') if item else 'idle'}:{phase}:{operation_id}"
+        queue_revision = str(item.get("updated_at", "")) if item else ""
+        if reset_deadline or operation_key != self._operation_key:
+            self._operation_key = operation_key
+            deadline_seconds = self._deadline_for_phase(phase)
+            self._deadline_at = now + deadline_seconds
+            self._deadline_expiration_published = False
+            self._details["operation_started_at"] = now
+            self._details["deadline_seconds"] = deadline_seconds
+            self._details["operation_progress_sequence"] = int(
+                self._details.get("operation_progress_sequence", 0)
+            ) + 1
+        if queue_revision and queue_revision != self._queue_revision:
+            self._queue_revision = queue_revision
+            self._details["operation_progress_sequence"] = int(
+                self._details.get("operation_progress_sequence", 0)
+            ) + 1
+        self._details.update(
+            {
+                "task_id": str(item.get("id", "")) if item else "",
+                "phase": phase,
+                "attempt": int(item.get("attempt", 0) or 0) if item else 0,
+                "operation_id": operation_id,
+                "operation_kind": str(operation.get("kind", "")),
+                "operation_state": str(operation.get("state", "")),
+                "queue_revision": queue_revision,
+            }
+        )
+
+    def _deadline_for_phase(self, phase: str) -> float:
+        if phase == "idle" or phase == "waiting_telegram":
+            return self.idle_deadline
+        if phase in OPERATOR_LONG_PHASES:
+            return self.long_deadline
+        return self.short_deadline
+
+    def _active_item(self) -> dict[str, Any] | None:
+        try:
+            return self.queue.active_item()
+        except Exception:
+            return None
+
+
+def _latest_operator_operation(item: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not item:
+        return {}
+    operations = item.get("operations", {})
+    if not isinstance(operations, Mapping):
+        return {}
+    attempt_prefix = f"{item.get('id', '')}:{int(item.get('attempt', 0) or 0)}:"
+    phase = str(item.get("phase", ""))
+    candidates = [
+        dict(operation)
+        for operation_id, operation in operations.items()
+        if str(operation_id).startswith(attempt_prefix)
+        and isinstance(operation, Mapping)
+        and isinstance(operation.get("payload"), Mapping)
+        and str(operation["payload"].get("phase", "")) == phase
+    ]
+    if not candidates:
+        return {}
+    return max(candidates, key=lambda operation: str(operation.get("updated_at", "")))
+
+
+def _predicted_operator_operation(item: Mapping[str, Any] | None, phase: str) -> str:
+    if not item:
+        return "operator:idle"
+    kind = OPERATOR_PHASE_KINDS.get(phase, phase or "idle")
+    metadata = item.get("metadata", {})
+    head = str(metadata.get("head_sha", "")) if isinstance(metadata, Mapping) else ""
+    return f"{item.get('id', '')}:{int(item.get('attempt', 0) or 0)}:{kind}:{head or 'none'}"
+
+
+def _latest_worker_progress(item: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not item:
+        return {}
+    metadata = item.get("metadata", {})
+    if not isinstance(metadata, Mapping):
+        return {}
+    project_root = str(metadata.get("project_root", "")).strip()
+    if not project_root:
+        return {}
+    jobs_root = Path(project_root) / ".goodteam" / "workers" / "jobs"
+    if not jobs_root.is_dir():
+        return {}
+    phase = str(item.get("phase", ""))
+    expected_role = "qa" if phase == "review_ready" else "implementation" if phase in {"executing", "fixing"} else ""
+    execution_id = str(item.get("execution_id", ""))
+    candidates: list[dict[str, Any]] = []
+    try:
+        status_paths = list(jobs_root.glob("*/status.json"))
+    except OSError:
+        return {}
+    for status_path in status_paths:
+        try:
+            payload = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("status") != "running":
+            continue
+        if expected_role and str(payload.get("role", "")) != expected_role:
+            continue
+        if execution_id and str(payload.get("run_id", "")) != execution_id:
+            continue
+        heartbeat_at = str(payload.get("heartbeat_at", ""))
+        if not heartbeat_at:
+            continue
+        candidates.append(
+            {
+                "job_id": str(payload.get("job_id", "")),
+                "role": str(payload.get("role", "")),
+                "status": "running",
+                "heartbeat_at": heartbeat_at,
+            }
+        )
+    if not candidates:
+        return {}
+    return max(candidates, key=lambda candidate: candidate["heartbeat_at"])
 
 
 def run_supervisor(
@@ -219,20 +452,27 @@ def run_operator_component(
     signal.signal(signal.SIGINT, request_stop)
     service = OperatorService(workspace=workspace, state_dir=state_dir)
     service.recover()
-    heartbeat = ComponentHeartbeat(heartbeat_file, heartbeat_token)
-    heartbeat.beat()
+    liveness = OperatorLivenessHeartbeat(
+        queue=service.queue,
+        emitter=ComponentHeartbeat(heartbeat_file, heartbeat_token),
+    )
+    liveness.start()
     _write_ready(ready_file, ready_token)
-    while not stop_requested:
-        service.tick()
-        heartbeat.beat()
-        active = service.queue.active_item()
-        phase = str(active.get("phase", "")) if active else ""
-        if phase == "observing_ci":
-            time.sleep(15.0)
-        elif phase == "waiting_telegram" or active is None:
-            time.sleep(1.0)
-        else:
-            time.sleep(0.25)
+    try:
+        while not stop_requested:
+            liveness.progress("tick_started")
+            service.tick()
+            liveness.progress("tick_completed")
+            active = service.queue.active_item()
+            phase = str(active.get("phase", "")) if active else ""
+            if phase == "observing_ci":
+                time.sleep(15.0)
+            elif phase == "waiting_telegram" or active is None:
+                time.sleep(1.0)
+            else:
+                time.sleep(0.25)
+    finally:
+        liveness.stop()
     return 0
 
 
@@ -261,12 +501,10 @@ def _component_specs(
                 *args,
                 "--ready-file",
                 str(ready),
-                "--ready-token",
-                token,
+                f"--ready-token={token}",
                 "--heartbeat-file",
                 str(heartbeat),
-                "--heartbeat-token",
-                heartbeat_token,
+                f"--heartbeat-token={heartbeat_token}",
             ],
             ready_path=ready,
             ready_token=token,
@@ -314,6 +552,7 @@ def _start_component(component: Component, *, state_dir: Path) -> None:
     component.ready = False
     component.last_heartbeat = 0.0
     component.heartbeat_sequence = 0
+    component.heartbeat_details = {}
 
 
 def _wait_for_component(component: Component) -> None:
@@ -367,12 +606,20 @@ def _refresh_component_heartbeat(component: Component) -> bool:
         pid = int(payload.get("pid", 0) or 0)
         sequence = int(payload.get("sequence", 0) or 0)
         updated_at = float(payload.get("updated_at", 0.0) or 0.0)
+        details = payload.get("details", {})
     except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
         return False
-    if token != component.heartbeat_token or pid != process.pid or sequence <= 0 or updated_at <= 0:
+    if (
+        token != component.heartbeat_token
+        or pid != process.pid
+        or sequence <= 0
+        or updated_at <= 0
+        or not isinstance(details, dict)
+    ):
         return False
     component.last_heartbeat = updated_at
     component.heartbeat_sequence = sequence
+    component.heartbeat_details = dict(details)
     return True
 
 
@@ -456,6 +703,7 @@ def _write_projection(
             "status": component.status,
             "last_heartbeat": component.last_heartbeat,
             "heartbeat_sequence": component.heartbeat_sequence,
+            "heartbeat_details": dict(component.heartbeat_details or {}),
             "last_error": component.last_error,
             "restart_count": component.restart_count,
             "terminal_failure": component.status == "failed",
