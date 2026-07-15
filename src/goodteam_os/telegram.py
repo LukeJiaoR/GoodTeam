@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
@@ -125,6 +126,15 @@ class TelegramReviewSessionStore:
                     return data
             except Exception:
                 continue
+        return None
+
+    def find_for_operator_task(self, task_id: str, head_sha: str) -> dict[str, object] | None:
+        for data in self._iter_sessions():
+            if (
+                str(data.get("operator_task_id", "")) == task_id
+                and str(data.get("operator_head_sha", "")) == head_sha
+            ):
+                return data
         return None
 
 
@@ -618,6 +628,7 @@ def _parse_telegram_command(text: str) -> str:
         "steer",
         "followup",
         "stop",
+        "task",
     } else ""
 
 
@@ -942,7 +953,10 @@ def _format_status_command(*, workspace: Path, project_key: str) -> str:
         base = f"GoodTeam status\nProject: {project_key or 'unknown'}\nNo active run."
         from goodteam_os.telegram_runtime_controls import TelegramRuntimeControlService
 
-        return f"{base}\n\n{TelegramRuntimeControlService(workspace, project_key, redact=mask_sensitive_data).status_section()}"
+        return (
+            f"{base}\n\n{_operator_status_section()}\n\n"
+            f"{TelegramRuntimeControlService(workspace, project_key, redact=mask_sensitive_data).status_section()}"
+        )
     from goodteam_os.web import current_approval_gate
 
     root = _project_runtime_root(workspace, project_key or str(getattr(state, "project_key", "")), state)
@@ -966,7 +980,41 @@ def _format_status_command(*, workspace: Path, project_key: str) -> str:
     from goodteam_os.telegram_runtime_controls import TelegramRuntimeControlService
 
     pi_section = TelegramRuntimeControlService(workspace, project_key, redact=mask_sensitive_data).status_section()
-    return f"{base}\n\n{pi_section}"
+    return f"{base}\n\n{_operator_status_section()}\n\n{pi_section}"
+
+
+def _operator_status_section() -> str:
+    try:
+        from goodteam_os.operator_queue import DurableOperatorQueue
+        from goodteam_os.service import service_state_dir
+
+        summary = DurableOperatorQueue(service_state_dir()).summary()
+    except Exception as exc:
+        return f"Operator queue\nStatus: unavailable ({exc.__class__.__name__})"
+    active = summary.get("active")
+    active = active if isinstance(active, dict) else {}
+    metadata = active.get("metadata", {})
+    metadata = metadata if isinstance(metadata, dict) else {}
+    lines = [
+        "Operator queue",
+        f"Desired state: {summary.get('desired_state', 'unknown')}",
+        f"Depth: {summary.get('depth', 0)}",
+        f"Active task: {active.get('id', 'none')}",
+    ]
+    if active:
+        lines.extend(
+            [
+                f"Project: {active.get('project_key', 'unknown')}",
+                f"Phase: {active.get('phase', 'unknown')}",
+                f"Issue: {active.get('source_url', '')}",
+                f"PR: {metadata.get('pr_url', 'none')}",
+                f"Head: {str(metadata.get('head_sha', ''))[:12] or 'none'}",
+                f"Attempt: {active.get('attempt', 0)}",
+                f"Waiting decision: {'yes' if active.get('status') == 'waiting' else 'no'}",
+                f"Last failure: {active.get('last_failure_class', '') or 'none'}",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def _format_workers_command(*, workspace: Path, project_key: str) -> str:
@@ -1147,6 +1195,45 @@ def _process_telegram_command(
 ) -> dict[str, object]:
     if context_session is not None:
         project_key = str(context_session.get("project_key", project_key) or project_key)
+
+    if command == "task":
+        issue_url = _extract_command_arg(raw_text, "task")
+        if not issue_url:
+            _send_masked_telegram_message(
+                token=token,
+                chat_id=chat_id,
+                text="Usage: /gt task <github-issue-url>",
+            )
+            return {"status": "processed", "command": command, "accepted": False}
+        try:
+            from goodteam_os.operator import enqueue_github_issue
+            from goodteam_os.service import service_state_dir
+
+            item, created = enqueue_github_issue(
+                workspace=workspace,
+                state_dir=service_state_dir(),
+                issue_url=issue_url,
+            )
+        except (RuntimeError, ValueError) as exc:
+            _send_masked_telegram_message(token=token, chat_id=chat_id, text=f"❌ {exc}")
+            return {"status": "processed", "command": command, "accepted": False}
+        _send_masked_telegram_message(
+            token=token,
+            chat_id=chat_id,
+            text=(
+                f"{'Queued' if created else 'Already queued'}: {item['id']}\n"
+                f"Project: {item['project_key']}\n"
+                f"Issue: {item['source_url']}\n"
+                f"Phase: {item['phase']}"
+            ),
+        )
+        return {
+            "status": "processed",
+            "command": command,
+            "accepted": True,
+            "created": created,
+            "task_id": item["id"],
+        }
 
     if command in {"steer", "followup", "stop"}:
         argument = _extract_command_arg(raw_text, command)
@@ -1392,6 +1479,32 @@ def _process_telegram_command(
         review_session_id = str(context_session.get("session_id", "") or "") if context_session else ""
         review_items = _session_review_items(context_session) if context_session is not None and review_mode != "quick" else []
         card_message_id = context_session.get("message_id", "") if context_session is not None else ""
+
+        if context_session is not None and context_session.get("operator_task_id"):
+            operator_decision = {
+                "approve": "approve",
+                "reject": "reject",
+                "changes": "request_changes",
+            }[command]
+            try:
+                _record_operator_session_decision(
+                    context_session,
+                    decision=operator_decision,
+                    reason=note,
+                    user_id=user_id,
+                )
+            except (RuntimeError, ValueError) as exc:
+                _send_masked_telegram_message(token=token, chat_id=chat_id, text=f"❌ {exc}")
+                return {"status": "processed", "command": command, "accepted": False}
+            store = TelegramReviewSessionStore(workspace)
+            context_session["decided"] = True
+            store.save(str(context_session["session_id"]), context_session)
+            _send_masked_telegram_message(
+                token=token,
+                chat_id=chat_id,
+                text=f"Operator decision recorded for exact head {context_session.get('operator_head_sha', '')[:12]}.",
+            )
+            return {"status": "processed", "command": command, "accepted": True}
 
         decide_approval(
             workspace=workspace,
@@ -1665,6 +1778,7 @@ def send_approval_notification(
     artifact_path: str = "",
     summary: str = "",
     workspace: Path = Path("."),
+    session_metadata: dict[str, object] | None = None,
 ) -> dict[str, object]:
     config = telegram_config_from_env()
     if not config["enabled"]:
@@ -1713,6 +1827,9 @@ def send_approval_notification(
     store = TelegramReviewSessionStore(workspace)
     existing_session = store.find_live_for_gate(project_key, run_id, gate)
     if existing_session is not None:
+        if session_metadata:
+            existing_session.update(session_metadata)
+            store.save(str(existing_session["session_id"]), existing_session)
         session_id = str(existing_session["session_id"])
         message_id = int(existing_session["message_id"])
         card_payload = _approval_notification_payload(
@@ -1773,6 +1890,7 @@ def send_approval_notification(
         "decided": False,
         "created_at": datetime.now(UTC).isoformat(),
         "expires_at": (datetime.now(UTC) + timedelta(hours=24)).isoformat(),
+        **dict(session_metadata or {}),
     }
     store.save(session_id, session_data)
 
@@ -1811,7 +1929,13 @@ def send_approval_notification(
     }
 
 
-def poll_telegram_approvals(*, workspace: Path, project_key: str = "", once: bool = False) -> dict[str, object]:
+def poll_telegram_approvals(
+    *,
+    workspace: Path,
+    project_key: str = "",
+    once: bool = False,
+    heartbeat: Callable[[], None] | None = None,
+) -> dict[str, object]:
     token = os.getenv(TOKEN_ENV, "")
     chat_id = os.getenv(CHAT_ID_ENV, "")
     if not token or not chat_id:
@@ -1821,6 +1945,8 @@ def poll_telegram_approvals(*, workspace: Path, project_key: str = "", once: boo
     seen_callbacks: set[str] = set()
     allowed_users = [str(item) for item in telegram_config_from_env()["allowed_users"]]
     while True:
+        if heartbeat is not None:
+            heartbeat()
         payload = _telegram_request(token, "getUpdates", {"timeout": 20, "offset": offset})
         for update in payload.get("result", []):
             offset = max(offset, int(update.get("update_id", 0)) + 1)
@@ -1845,8 +1971,35 @@ def poll_telegram_approvals(*, workspace: Path, project_key: str = "", once: boo
                 )
             if result["status"] == "processed":
                 processed += 1
+        if heartbeat is not None:
+            heartbeat()
         if once:
             return {"processed": processed, "offset": offset}
+
+
+def _record_operator_session_decision(
+    session: dict[str, object],
+    *,
+    decision: str,
+    reason: str,
+    user_id: str,
+) -> dict[str, object]:
+    from goodteam_os.operator import record_operator_decision
+    from goodteam_os.operator_queue import DurableOperatorQueue
+
+    state_dir = Path(str(session.get("operator_state_dir", "")))
+    task_id = str(session.get("operator_task_id", ""))
+    head_sha = str(session.get("operator_head_sha", ""))
+    if not state_dir.is_absolute() or not task_id or not head_sha:
+        raise ValueError("operator approval session is incomplete")
+    return record_operator_decision(
+        queue=DurableOperatorQueue(state_dir),
+        item_id=task_id,
+        decision=decision,
+        approved_head_sha=head_sha,
+        reason=reason,
+        actor_ref=f"telegram:user:{user_id}",
+    )
 
 
 def _send_chooser_stale_message(*, token: str, chat_id: object) -> dict[str, object]:
@@ -2012,7 +2165,7 @@ def process_telegram_update(
             user_id = str(user.get("id", ""))
             if allowed_users and user_id not in allowed_users:
                 return {"status": "ignored", "reason": "unauthorized user"}
-            if command in {"steer", "followup", "stop"} and user_id not in allowed_users:
+            if command in {"steer", "followup", "stop", "task"} and user_id not in allowed_users:
                 return {"status": "ignored", "reason": "unauthorized user"}
             chat_id = int(message.get("chat", {}).get("id", 0))
             reply_to_message_id = int(dict(message.get("reply_to_message", {}) or {}).get("message_id", 0) or 0)
@@ -2023,6 +2176,13 @@ def process_telegram_update(
                 reply_to_message_id=reply_to_message_id,
                 project_key=project_key,
             )
+            if (
+                command in {"approve", "reject", "changes"}
+                and context_session is not None
+                and context_session.get("operator_task_id")
+                and user_id not in allowed_users
+            ):
+                return {"status": "ignored", "reason": "unauthorized user"}
             return _process_telegram_command(
                 command,
                 token=token,
@@ -2086,10 +2246,27 @@ def process_telegram_update(
         if not session:
             return {"status": "ignored", "reason": "session expired or not found"}
 
+        if session.get("operator_task_id") and user_id not in allowed_users:
+            return {"status": "ignored", "reason": "unauthorized user"}
+
         if session.get("decided", False):
             return {"status": "ignored", "reason": "already decided"}
 
         if action == "A":
+            if session.get("operator_task_id"):
+                try:
+                    _record_operator_session_decision(
+                        session,
+                        decision="approve",
+                        reason="",
+                        user_id=user_id,
+                    )
+                except (RuntimeError, ValueError) as exc:
+                    return {"status": "ignored", "reason": str(exc)}
+                session["decided"] = True
+                store.save(session_id, session)
+                processed_callbacks.add(callback_id)
+                return {"status": "processed", "callback_id": callback_id}
             review_mode = "step_by_step" if _session_was_reviewed(session) else "quick"
             decide_approval(
                 workspace=workspace,
@@ -2120,6 +2297,27 @@ def process_telegram_update(
             )
 
         elif action == "C":
+            if session.get("operator_task_id"):
+                reason = "; ".join(
+                    str(item.get("note", "")).strip()
+                    for item in session.get("items", [])
+                    if isinstance(item, dict) and str(item.get("note", "")).strip()
+                )
+                if not reason:
+                    return {"status": "ignored", "reason": "request_changes requires a reason"}
+                try:
+                    _record_operator_session_decision(
+                        session,
+                        decision="request_changes",
+                        reason=reason,
+                        user_id=user_id,
+                    )
+                except (RuntimeError, ValueError) as exc:
+                    return {"status": "ignored", "reason": str(exc)}
+                session["decided"] = True
+                store.save(session_id, session)
+                processed_callbacks.add(callback_id)
+                return {"status": "processed", "callback_id": callback_id}
             compile_and_write_review_notes(workspace, session)
             decide_approval(
                 workspace=workspace,
@@ -2150,6 +2348,13 @@ def process_telegram_update(
             )
 
         elif action == "J":
+            if session.get("operator_task_id"):
+                _send_masked_telegram_message(
+                    token=token,
+                    chat_id=chat_id,
+                    text="Rejecting an operator task requires a reason. Reply to this card with /gt reject <reason>.",
+                )
+                return {"status": "ignored", "reason": "reject requires a reason"}
             reject_keyboard = {
                 "inline_keyboard": [
                     [

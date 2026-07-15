@@ -4,6 +4,7 @@ import json
 import os
 import secrets
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from goodteam_os.frontend_assets import resolve_frontend_dist
+from goodteam_os.operator_queue import DurableOperatorQueue
 
 if os.name == "nt":
     import msvcrt
@@ -24,8 +26,8 @@ else:
     msvcrt = None
 
 DEFAULT_PORT = 21001
-START_TIMEOUT_SECONDS = 5.0
-STOP_TIMEOUT_SECONDS = 5.0
+START_TIMEOUT_SECONDS = 15.0
+STOP_TIMEOUT_SECONDS = 8.0
 
 
 def service_state_dir() -> Path:
@@ -45,44 +47,62 @@ def _service_status_unlocked() -> dict[str, Any]:
     state = _read_state()
     if not state:
         return {"running": False}
-    pid = int(state.get("pid", 0))
-    if pid > 0 and _managed_process_is_running(pid):
-        return {"running": True, **state}
+    pid = int(state.get("pid", 0) or 0)
+    identity = str(state.get("identity", "") or "")
+    if pid > 0 and _state_process_is_running(pid, identity):
+        state["running"] = True
+        try:
+            state["queue"] = DurableOperatorQueue(service_state_dir()).summary()
+        except Exception as exc:
+            state["queue"] = {"error": f"{exc.__class__.__name__}: {exc}"}
+        return state
     _state_path().unlink(missing_ok=True)
-    return {"running": False, "stale_pid": pid or None}
+    result = {"running": False, "stale_pid": pid or None}
+    if pid and identity and _process_is_running(pid):
+        result["identity_mismatch"] = True
+    return result
 
 
 def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> dict[str, Any]:
     frontend_dist = resolve_frontend_dist()
+    workspace = workspace.expanduser().resolve()
+    if not workspace.is_dir():
+        raise RuntimeError(f"workspace does not exist: {workspace}")
     with _service_lock():
         return _restart_service_unlocked(workspace, host=host, port=port, frontend_dist=frontend_dist)
 
 
 def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend_dist: Path) -> dict[str, Any]:
-    _stop_service_unlocked()
+    old_state = _read_state()
+    _preflight_port(host, port, old_state=old_state)
+    _stop_service_unlocked(set_stopped=False)
+
     state_dir = service_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
     log_path = state_dir / "server.log"
-    ready_path = state_dir / "server.ready"
+    ready_path = state_dir / "supervisor.ready"
     ready_token = secrets.token_urlsafe(24)
+    identity = secrets.token_urlsafe(18)
     ready_path.unlink(missing_ok=True)
     command = [
         sys.executable,
         "-m",
         "goodteam_os.cli",
-        "serve",
+        "supervise",
         "--workspace",
-        str(workspace.resolve()),
+        str(workspace),
         "--host",
         host,
         "--port",
         str(port),
         "--frontend-dist",
         str(frontend_dist),
+        "--state-dir",
+        str(state_dir),
+        f"--identity={identity}",
         "--ready-file",
         str(ready_path),
-        "--ready-token",
-        ready_token,
+        f"--ready-token={ready_token}",
     ]
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(
@@ -92,23 +112,33 @@ def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-    state = {
+    boot_state = {
+        "schema_version": 2,
         "pid": process.pid,
+        "identity": identity,
         "host": host,
         "port": port,
-        "workspace": str(workspace.resolve()),
+        "workspace": str(workspace),
         "frontend_dist": str(frontend_dist),
         "log": str(log_path),
         "started_at": time.time(),
+        "desired_state": "running",
+        "supervisor": {"status": "starting", "ready": False},
+        "components": {},
     }
     try:
-        _write_state(state)
+        _write_state(boot_state)
         if not _wait_until_ready(process, ready_path, ready_token):
-            raise RuntimeError(f"server failed to start; see {log_path}")
-        return {"running": True, **state}
+            failure = _read_state().get("supervisor", {}).get("last_error", "")
+            suffix = f": {failure}" if failure else ""
+            raise RuntimeError(f"supervisor failed to start{suffix}; see {log_path}")
+        payload = _read_state()
+        return {"running": True, **payload}
     except BaseException:
-        _terminate_process(process)
-        _state_path().unlink(missing_ok=True)
+        _terminate_process_group(process)
+        current = _read_state()
+        if int(current.get("pid", 0) or 0) == process.pid:
+            _state_path().unlink(missing_ok=True)
         raise
     finally:
         ready_path.unlink(missing_ok=True)
@@ -119,20 +149,38 @@ def stop_service() -> dict[str, Any]:
         return _stop_service_unlocked()
 
 
-def _stop_service_unlocked() -> dict[str, Any]:
+def _stop_service_unlocked(*, set_stopped: bool = True) -> dict[str, Any]:
     state = _read_state()
     if not state:
+        if set_stopped:
+            DurableOperatorQueue(service_state_dir()).set_desired_state("stopped")
         return {"stopped": False, "reason": "not running"}
-    pid = int(state.get("pid", 0))
-    if pid <= 0 or not _managed_process_is_running(pid):
+    pid = int(state.get("pid", 0) or 0)
+    identity = str(state.get("identity", "") or "")
+    if pid <= 0 or not _state_process_is_running(pid, identity):
+        mismatch = pid > 0 and _process_is_running(pid)
         _state_path().unlink(missing_ok=True)
-        return {"stopped": False, "reason": "not running"}
+        if set_stopped:
+            DurableOperatorQueue(service_state_dir()).set_desired_state("stopped")
+        return {
+            "stopped": False,
+            "reason": "identity mismatch" if mismatch else "not running",
+            "pid": pid or None,
+        }
+
+    queue = DurableOperatorQueue(service_state_dir())
+    queue.set_desired_state("draining")
     os.kill(pid, signal.SIGTERM)
     deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
-    while time.monotonic() < deadline and _managed_process_is_running(pid):
+    while time.monotonic() < deadline and _state_process_is_running(pid, identity):
         time.sleep(0.05)
-    if _managed_process_is_running(pid):
-        os.kill(pid, signal.SIGKILL)
+    if _state_process_is_running(pid, identity):
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    if set_stopped:
+        queue.set_desired_state("stopped")
     _state_path().unlink(missing_ok=True)
     return {"stopped": True, "pid": pid}
 
@@ -187,6 +235,54 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
         process.wait()
 
 
+def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            process.terminate()
+        else:
+            os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=STOP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name == "nt":
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
+def _preflight_port(host: str, port: int, *, old_state: dict[str, Any]) -> None:
+    if not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536:
+        raise RuntimeError(f"invalid port: {port}")
+    old_pid = int(old_state.get("pid", 0) or 0)
+    old_identity = str(old_state.get("identity", "") or "")
+    same_managed_listener = (
+        old_pid
+        and _state_process_is_running(old_pid, old_identity)
+        and str(old_state.get("host", "")) == host
+        and int(old_state.get("port", 0) or 0) == port
+    )
+    if same_managed_listener:
+        return
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+    except PermissionError:
+        # Some restricted test/container environments prohibit bind probes.
+        # The web component readiness handshake remains the final authority.
+        return
+    except OSError as exc:
+        raise RuntimeError(f"configured port {host}:{port} is occupied by an unmanaged process") from exc
+
+
 def _process_is_running(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -206,12 +302,12 @@ def _process_is_running(pid: int) -> bool:
     return result.returncode == 0 and not result.stdout.strip().startswith("Z")
 
 
-def _managed_process_is_running(pid: int) -> bool:
+def _managed_process_is_running(pid: int, *, identity: str = "") -> bool:
     if not _process_is_running(pid):
         return False
     try:
         result = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)],
+            ["ps", "-ww", "-o", "command=", "-p", str(pid)],
             capture_output=True,
             check=False,
             text=True,
@@ -219,7 +315,14 @@ def _managed_process_is_running(pid: int) -> bool:
     except OSError:
         return False
     command = result.stdout.strip()
-    return result.returncode == 0 and "goodteam_os.cli serve" in command
+    expected = "goodteam_os.cli supervise"
+    return result.returncode == 0 and expected in command and (not identity or identity in command)
+
+
+def _state_process_is_running(pid: int, identity: str) -> bool:
+    if identity:
+        return _managed_process_is_running(pid, identity=identity)
+    return _managed_process_is_running(pid)
 
 
 def _state_path() -> Path:
@@ -236,6 +339,7 @@ def _read_state() -> dict[str, Any]:
 
 def _write_state(state: dict[str, Any]) -> None:
     path = _state_path()
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
     temporary.replace(path)

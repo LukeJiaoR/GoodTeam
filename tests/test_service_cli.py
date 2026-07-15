@@ -64,7 +64,13 @@ def test_restart_records_and_passes_resolved_frontend_dist(monkeypatch, tmp_path
     monkeypatch.setenv("GOODTEAM_STATE_DIR", str(state_dir))
     monkeypatch.setattr(service, "stop_service", lambda: {"stopped": False})
     monkeypatch.setattr(service, "resolve_frontend_dist", lambda: frontend_dist.resolve())
+    monkeypatch.setattr(service, "_preflight_port", lambda host, port, old_state: None)
     monkeypatch.setattr(service, "_wait_until_ready", lambda process, path, token: True)
+    monkeypatch.setattr(
+        service.secrets,
+        "token_urlsafe",
+        lambda size: "-ready-token" if size == 24 else "-service-identity",
+    )
     captured = {}
 
     class Process:
@@ -85,6 +91,8 @@ def test_restart_records_and_passes_resolved_frontend_dist(monkeypatch, tmp_path
     assert state["workspace"] == str(workspace.resolve())
     frontend_arg = captured["command"].index("--frontend-dist")
     assert captured["command"][frontend_arg + 1] == str(frontend_dist.resolve())
+    assert "--identity=-service-identity" in captured["command"]
+    assert "--ready-token=-ready-token" in captured["command"]
     assert captured["kwargs"]["start_new_session"] is True
 
 
@@ -197,6 +205,7 @@ def test_terminate_process_kills_child_that_ignores_sigterm() -> None:
 
 def test_serve_writes_ready_token_only_after_server_binds(monkeypatch, tmp_path) -> None:
     ready_path = tmp_path / "ready"
+    heartbeats = []
 
     class FakeServer:
         def __init__(self, address, handler) -> None:
@@ -204,15 +213,22 @@ def test_serve_writes_ready_token_only_after_server_binds(monkeypatch, tmp_path)
 
         def serve_forever(self) -> None:
             assert ready_path.read_text(encoding="utf-8") == "token-123"
+            self.service_actions()
 
         def server_close(self) -> None:
             return None
 
     monkeypatch.setattr(web, "ThreadingHTTPServer", FakeServer)
 
-    web.serve(tmp_path, ready_file=ready_path, ready_token="token-123")
+    web.serve(
+        tmp_path,
+        ready_file=ready_path,
+        ready_token="token-123",
+        heartbeat_callback=lambda: heartbeats.append("beat"),
+    )
 
     assert not ready_path.exists()
+    assert heartbeats == ["beat", "beat"]
 
 
 def test_serve_rejects_invalid_explicit_frontend_before_binding(monkeypatch, tmp_path) -> None:

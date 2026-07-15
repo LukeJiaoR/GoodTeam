@@ -16,7 +16,10 @@ from goodteam_os.projects import (
     load_project_target,
 )
 from goodteam_os.smoke import run_smoke_suite
-from goodteam_os.service import DEFAULT_PORT, restart_service, service_status, stop_service
+from goodteam_os.operator import enqueue_github_issue
+from goodteam_os.operator_queue import DurableOperatorQueue
+from goodteam_os.service import DEFAULT_PORT, restart_service, service_state_dir, service_status, stop_service
+from goodteam_os.supervisor import ComponentHeartbeat, run_operator_component, run_supervisor, run_telegram_component
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import poll_telegram_approvals
 from goodteam_os.web import serve, start_workflow
@@ -46,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--frontend-dist", type=Path, help=argparse.SUPPRESS)
     serve_command.add_argument("--ready-file", type=Path, help=argparse.SUPPRESS)
     serve_command.add_argument("--ready-token", default="", help=argparse.SUPPRESS)
+    serve_command.add_argument("--heartbeat-file", type=Path, help=argparse.SUPPRESS)
+    serve_command.add_argument("--heartbeat-token", default="", help=argparse.SUPPRESS)
 
     restart = subparsers.add_parser("restart", help="Restart the background GoodTeam server")
     restart.add_argument("--host", default="127.0.0.1")
@@ -54,6 +59,42 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("stop", help="Stop the background GoodTeam server")
     subparsers.add_parser("status", help="Show the background GoodTeam server status")
+
+    task = subparsers.add_parser("task", help="Enqueue a known-project source task")
+    task_subparsers = task.add_subparsers(dest="task_command", required=True)
+    task_enqueue = task_subparsers.add_parser("enqueue")
+    task_enqueue.add_argument("issue_url")
+    task_enqueue.add_argument("--workspace", type=Path, default=Path("."))
+
+    queue = subparsers.add_parser("queue", help="Inspect or drain the durable operator queue")
+    queue_subparsers = queue.add_subparsers(dest="queue_command", required=True)
+    for queue_command in ("list", "drain", "resume"):
+        queue_subparsers.add_parser(queue_command)
+
+    supervise = subparsers.add_parser("supervise", help=argparse.SUPPRESS)
+    supervise.add_argument("--workspace", type=Path, required=True)
+    supervise.add_argument("--host", required=True)
+    supervise.add_argument("--port", type=int, required=True)
+    supervise.add_argument("--frontend-dist", type=Path, required=True)
+    supervise.add_argument("--state-dir", type=Path, required=True)
+    supervise.add_argument("--identity", required=True)
+    supervise.add_argument("--ready-file", type=Path, required=True)
+    supervise.add_argument("--ready-token", required=True)
+
+    telegram_component = subparsers.add_parser("_telegram-component", help=argparse.SUPPRESS)
+    telegram_component.add_argument("--workspace", type=Path, required=True)
+    telegram_component.add_argument("--ready-file", type=Path, required=True)
+    telegram_component.add_argument("--ready-token", required=True)
+    telegram_component.add_argument("--heartbeat-file", type=Path, required=True)
+    telegram_component.add_argument("--heartbeat-token", required=True)
+
+    operator_component = subparsers.add_parser("_operator-component", help=argparse.SUPPRESS)
+    operator_component.add_argument("--workspace", type=Path, required=True)
+    operator_component.add_argument("--state-dir", type=Path, required=True)
+    operator_component.add_argument("--ready-file", type=Path, required=True)
+    operator_component.add_argument("--ready-token", required=True)
+    operator_component.add_argument("--heartbeat-file", type=Path, required=True)
+    operator_component.add_argument("--heartbeat-token", required=True)
 
     init = subparsers.add_parser("init", help="Scaffold a project config and run doctor")
     init.add_argument("--key", required=True, help="Short project key, e.g. MYAPP")
@@ -169,6 +210,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "serve":
+        heartbeat = (
+            ComponentHeartbeat(args.heartbeat_file, args.heartbeat_token).beat if args.heartbeat_file else None
+        )
         serve(
             workspace=args.workspace,
             host=args.host,
@@ -176,8 +220,37 @@ def main(argv: list[str] | None = None) -> int:
             frontend_dist=args.frontend_dist,
             ready_file=args.ready_file,
             ready_token=args.ready_token,
+            heartbeat_callback=heartbeat,
         )
         return 0
+    if args.command == "supervise":
+        return run_supervisor(
+            workspace=args.workspace,
+            host=args.host,
+            port=args.port,
+            frontend_dist=args.frontend_dist,
+            state_dir=args.state_dir,
+            identity=args.identity,
+            ready_file=args.ready_file,
+            ready_token=args.ready_token,
+        )
+    if args.command == "_telegram-component":
+        return run_telegram_component(
+            workspace=args.workspace,
+            ready_file=args.ready_file,
+            ready_token=args.ready_token,
+            heartbeat_file=args.heartbeat_file,
+            heartbeat_token=args.heartbeat_token,
+        )
+    if args.command == "_operator-component":
+        return run_operator_component(
+            workspace=args.workspace,
+            state_dir=args.state_dir,
+            ready_file=args.ready_file,
+            ready_token=args.ready_token,
+            heartbeat_file=args.heartbeat_file,
+            heartbeat_token=args.heartbeat_token,
+        )
     if args.command == "restart":
         try:
             payload = restart_service(workspace=args.workspace, host=args.host, port=args.port)
@@ -196,6 +269,28 @@ def main(argv: list[str] | None = None) -> int:
             print("GoodTeam is not running")
             return 1
         _print_service_status(payload)
+        return 0
+    if args.command == "task":
+        try:
+            item, created = enqueue_github_issue(
+                workspace=args.workspace,
+                state_dir=service_state_dir(),
+                issue_url=args.issue_url,
+            )
+        except (RuntimeError, ValueError) as exc:
+            print(f"goodteam task enqueue: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({"created": created, "item": item}, indent=2))
+        return 0
+    if args.command == "queue":
+        queue_store = DurableOperatorQueue(service_state_dir())
+        if args.queue_command == "list":
+            payload = {"summary": queue_store.summary(), "items": queue_store.list_items()}
+        elif args.queue_command == "drain":
+            payload = queue_store.set_desired_state("draining")
+        else:
+            payload = queue_store.set_desired_state("running")
+        print(json.dumps(payload, indent=2))
         return 0
     if args.command == "init":
         result = init_project(
@@ -334,13 +429,46 @@ def _print_service_status(payload: dict[str, object]) -> None:
         started_label = datetime.fromtimestamp(started_at).astimezone().isoformat(timespec="seconds")
     else:
         started_label = str(started_at or "unknown")
+    print("GoodTeam service")
+    supervisor = payload.get("supervisor", {})
+    supervisor = supervisor if isinstance(supervisor, dict) else {}
     print("Running: yes")
+    print(f"Supervisor: {supervisor.get('status', 'unknown')}")
+    print(f"Desired state: {payload.get('desired_state', 'running')}")
     print(f"URL: http://{payload['host']}:{payload['port']}")
     print(f"PID: {payload['pid']}")
     print(f"Workspace: {payload['workspace']}")
     print(f"Frontend dist: {payload.get('frontend_dist', 'unknown')}")
     print(f"Log path: {payload['log']}")
     print(f"Started at: {started_label}")
+    components = payload.get("components", {})
+    if isinstance(components, dict):
+        print("\nComponents")
+        for name in ("web", "telegram", "operator"):
+            component = components.get(name, {})
+            component = component if isinstance(component, dict) else {}
+            print(
+                f"{name.title()}: {component.get('status', 'unknown')} "
+                f"(ready={str(bool(component.get('ready'))).lower()}, restarts={component.get('restart_count', 0)})"
+            )
+    queue = payload.get("queue", {})
+    if isinstance(queue, dict):
+        active = queue.get("active")
+        active = active if isinstance(active, dict) else {}
+        metadata = active.get("metadata", {})
+        metadata = metadata if isinstance(metadata, dict) else {}
+        print("\nQueue")
+        print(f"Depth: {queue.get('depth', 0)}")
+        print(f"Active task: {active.get('id', 'none')}")
+        if active:
+            print(f"Project: {active.get('project_key', 'unknown')}")
+            print(f"Phase: {active.get('phase', 'unknown')}")
+            print(f"Issue: {active.get('source_url', '')}")
+            print(f"PR: {metadata.get('pr_url', 'none')}")
+            print(f"Head: {str(metadata.get('head_sha', ''))[:12] or 'none'}")
+            print(f"Attempt: {active.get('attempt', 0)}")
+            print(f"Waiting decision: {'yes' if active.get('status') == 'waiting' else 'no'}")
+            print(f"Last failure: {active.get('last_failure_class', '') or 'none'}")
 
 
 def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:

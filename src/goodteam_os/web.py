@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -5439,6 +5439,7 @@ def serve(
     frontend_dist: Path | None = None,
     ready_file: Path | None = None,
     ready_token: str = "",
+    heartbeat_callback: Callable[[], None] | None = None,
 ) -> None:
     if frontend_dist is not None:
         dist_dir = resolve_frontend_dist(environ={"GOODTEAM_FRONTEND_DIST": str(frontend_dist)})
@@ -6054,7 +6055,18 @@ def serve(
             return
 
     server = ThreadingHTTPServer((host, port), DashboardHandler)
+    if heartbeat_callback is not None:
+        parent_service_actions = getattr(server, "service_actions", None)
+
+        def heartbeat_service_actions() -> None:
+            heartbeat_callback()
+            if parent_service_actions is not None:
+                parent_service_actions()
+
+        server.service_actions = heartbeat_service_actions
     try:
+        if heartbeat_callback is not None:
+            heartbeat_callback()
         if ready_file is not None:
             ready_file.write_text(ready_token, encoding="utf-8")
         server.serve_forever()

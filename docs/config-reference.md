@@ -169,6 +169,23 @@ Operator rules:
 - Keep `.local.yaml` out of git when paths reveal private machine details.
 - Confirm the dashboard project key before approving or dispatching work.
 
+## Operator CI Gate
+
+Known-project Issue automation must declare every check context that is required
+before review, Telegram approval, or merge. The values must match GitHub check-run
+names exactly:
+
+```yaml
+required_checks:
+  backend: backend
+  frontend: frontend
+```
+
+When this mapping is omitted, the operator queries protected required-status
+contexts from the configured base branch. If neither source provides a non-empty
+set, preflight fails closed. A check that has not appeared yet remains missing;
+an unrelated successful check never satisfies this gate.
+
 ## Worker Backend
 
 The global default is configured under `worker_backend.mode`:

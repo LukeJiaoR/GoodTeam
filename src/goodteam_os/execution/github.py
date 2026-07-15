@@ -42,6 +42,10 @@ class GitHubIssueSnapshot:
     body: str | None
     url: str
     labels: list[str]
+    comments: list[dict[str, Any]] | None = None
+    updated_at: str = ""
+    default_branch: str = "main"
+    references: list[str] | None = None
 
     def __post_init__(self) -> None:
         _normalize_repo(self.repo)
@@ -55,6 +59,10 @@ class GitHubIssueSnapshot:
 
         object.__setattr__(self, "body", self.body or "")
         object.__setattr__(self, "labels", list(self.labels))
+        object.__setattr__(self, "comments", [dict(item) for item in (self.comments or [])])
+        object.__setattr__(self, "updated_at", str(self.updated_at or ""))
+        object.__setattr__(self, "default_branch", str(self.default_branch or "main"))
+        object.__setattr__(self, "references", [str(item) for item in (self.references or [])])
 
 
 class GitHubClient(Protocol):
@@ -251,6 +259,8 @@ def _task_contract_from_github_issue(snapshot: GitHubIssueSnapshot, *, task_id: 
             "url": snapshot.url,
             "title": snapshot.title,
             "body": body,
+            "source_revision": snapshot.updated_at,
+            "references": list(snapshot.references or []),
         },
         task_identity={
             "task_id": task_id,
@@ -269,7 +279,20 @@ def _task_contract_from_github_issue(snapshot: GitHubIssueSnapshot, *, task_id: 
         verification_expectations=sections.get("verification", []),
         review_expectations=sections.get("review", []),
         pr_metadata={"title": snapshot.title, "body": f"Refs #{snapshot.issue_number}"},
-        metadata={"labels": list(snapshot.labels)},
+        metadata={
+            "labels": list(snapshot.labels),
+            "comment_references": [
+                {
+                    key: comment.get(key, "")
+                    for key in ("id", "url", "author", "created_at")
+                    if comment.get(key)
+                }
+                for comment in (snapshot.comments or [])
+            ],
+            "default_branch": snapshot.default_branch,
+            "source_revision": snapshot.updated_at,
+            "provenance_references": [snapshot.url, *list(snapshot.references or [])],
+        },
     )
 
 

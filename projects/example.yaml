@@ -23,6 +23,13 @@ source_type: existing_project    # new_project | existing_project
 repos:
   root: /absolute/path/to/your/repo
 
+# Exact GitHub check-run names required by the Issue-to-merge operator. If this
+# mapping is omitted, protected required-status contexts are queried from the
+# base branch; if neither source declares checks, operator preflight fails closed.
+required_checks:
+  backend: backend
+  frontend: frontend
+
 # Default worker backend for any role not listed under `workers:` below.
 # `fake` needs no credentials and is great for a first end-to-end run. For real
 # runs, use `anthropic` (drives the `claude` CLI, set ANTHROPIC_API_KEY) or
