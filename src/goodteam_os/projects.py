@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from shutil import which
@@ -33,6 +34,27 @@ def load_project_target(config_path: Path) -> ProjectTarget:
 def _slug(value: str) -> str:
     cleaned = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
     return "-".join(part for part in cleaned.split("-") if part) or "project"
+
+
+def _yaml_scalar(value: object) -> str:
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def build_registered_project_config(key: str, name: str, root: Path) -> str:
+    return (
+        f"name: {_yaml_scalar(name)}\n"
+        f"key: {_yaml_scalar(key)}\n"
+        "source_type: unconfirmed\n"
+        "model_profile: balanced\n"
+        "delivery_mode: init_project\n"
+        "repos:\n"
+        f"  root: {_yaml_scalar(root.resolve())}\n"
+        "worker_backend:\n"
+        "  mode: codex\n"
+        "task_backend:\n"
+        "  mode: local\n"
+        "  sync: \n"
+    )
 
 
 def build_project_config(
