@@ -17,6 +17,7 @@ from goodteam_os.state import normalize_project_key
 IMPORT_LOCK_NAME = ".project-import.lock"
 _THREAD_LOCKS: dict[str, threading.Lock] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
+FileIdentity = tuple[int, int]
 
 
 class ProjectImportError(ValueError):
@@ -79,7 +80,13 @@ def _import_project_locked(
         existing = _find_root_match(registered, root)
         if existing is not None:
             _validate_project_state_destination(workspace, root, str(existing["key"]))
-            return _existing_result(readiness_store, existing, root)
+            return _verified_existing_result(
+                readiness_store,
+                existing,
+                root,
+                workspace_fd=workspace_fd,
+                projects_fd=projects_fd,
+            )
 
         name = display_name.strip() or root.name
         base_key = normalize_project_key(requested_key or name)
@@ -96,8 +103,9 @@ def _import_project_locked(
             if projects_fd is None:
                 projects_fd = _open_directory_at(workspace_fd, "projects", create=True)
                 assert projects_fd is not None
+            _verify_directory_identity_at(workspace_fd, "projects", projects_fd)
             try:
-                _publish_config_exclusively(
+                published_identity = _publish_config_exclusively(
                     config_path,
                     build_registered_project_config(key, name, root),
                     directory_fd=projects_fd,
@@ -115,20 +123,56 @@ def _import_project_locked(
                         root,
                         str(existing["key"]),
                     )
-                    return _existing_result(readiness_store, existing, root)
+                    return _verified_existing_result(
+                        readiness_store,
+                        existing,
+                        root,
+                        workspace_fd=workspace_fd,
+                        projects_fd=projects_fd,
+                    )
                 occupied_keys.update(project["key"] for project in registered)
                 suffix += 1
                 continue
 
-            readiness = readiness_store.initialize(key, root)
-            return _result(
-                created=True,
-                key=key,
-                name=name,
-                root=root,
-                config_path=config_path,
-                readiness=readiness,
-            )
+            try:
+                _verify_published_config(
+                    workspace_fd,
+                    projects_fd,
+                    config_path.name,
+                    published_identity,
+                )
+                readiness = readiness_store.initialize(key, root)
+                readiness_store._verify_anchored_write(key)
+                _verify_published_config(
+                    workspace_fd,
+                    projects_fd,
+                    config_path.name,
+                    published_identity,
+                )
+                result = _result(
+                    created=True,
+                    key=key,
+                    name=name,
+                    root=root,
+                    config_path=config_path,
+                    readiness=readiness,
+                )
+                readiness_store._commit_anchored_write(key)
+                return result
+            except BaseException:
+                try:
+                    readiness_store._rollback_anchored_write(key)
+                except OSError:
+                    pass
+                try:
+                    _unlink_if_identity(
+                        projects_fd,
+                        config_path.name,
+                        published_identity,
+                    )
+                except OSError:
+                    pass
+                raise
     finally:
         if projects_fd is not None:
             os.close(projects_fd)
@@ -285,7 +329,7 @@ def _publish_config_exclusively(
     content: str,
     *,
     directory_fd: int | None = None,
-) -> None:
+) -> FileIdentity:
     owned_directory_fd = directory_fd is None
     if directory_fd is None:
         flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
@@ -307,6 +351,7 @@ def _publish_config_exclusively(
             dst_dir_fd=directory_fd,
             follow_symlinks=False,
         )
+        published_identity = _entry_identity(directory_fd, destination.name)
     finally:
         if temporary_created:
             try:
@@ -315,6 +360,60 @@ def _publish_config_exclusively(
                 pass
         if owned_directory_fd:
             os.close(directory_fd)
+    return published_identity
+
+
+def _verify_published_config(
+    workspace_fd: int,
+    projects_fd: int,
+    name: str,
+    expected_identity: FileIdentity,
+) -> None:
+    _verify_directory_identity_at(workspace_fd, "projects", projects_fd)
+    try:
+        current_identity = _entry_identity(projects_fd, name)
+    except FileNotFoundError as exc:
+        raise OSError(errno.ENOTDIR, f"Published config disappeared: {name}") from exc
+    if current_identity != expected_identity:
+        raise OSError(errno.ENOTDIR, f"Published config changed during import: {name}")
+
+
+def _verify_directory_identity_at(parent_fd: int, name: str, pinned_fd: int) -> None:
+    current_fd = _open_directory_at(parent_fd, name, create=False)
+    if current_fd is None:
+        raise OSError(errno.ENOTDIR, f"Workspace directory disappeared: {name}")
+    try:
+        if _descriptor_identity(current_fd) != _descriptor_identity(pinned_fd):
+            raise OSError(errno.ENOTDIR, f"Workspace directory changed: {name}")
+    finally:
+        os.close(current_fd)
+
+
+def _descriptor_identity(descriptor: int) -> FileIdentity:
+    stat_result = os.fstat(descriptor)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _entry_identity(directory_fd: int, name: str) -> FileIdentity:
+    stat_result = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _unlink_if_identity(
+    directory_fd: int,
+    name: str,
+    expected_identity: FileIdentity,
+) -> None:
+    try:
+        current_identity = _entry_identity(directory_fd, name)
+    except FileNotFoundError:
+        return
+    if current_identity != expected_identity:
+        return
+    try:
+        os.unlink(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        pass
 
 
 def _load_registered_projects(
@@ -384,6 +483,30 @@ def _existing_result(
         config_path=Path(project["config_path"]),
         readiness=readiness,
     )
+
+
+def _verified_existing_result(
+    readiness_store: ProjectReadinessStore,
+    project: dict[str, object],
+    root: Path,
+    *,
+    workspace_fd: int,
+    projects_fd: int | None,
+) -> dict[str, object]:
+    key = str(project["key"])
+    try:
+        result = _existing_result(readiness_store, project, root)
+        if projects_fd is not None:
+            _verify_directory_identity_at(workspace_fd, "projects", projects_fd)
+        readiness_store._verify_anchored_write(key)
+        readiness_store._commit_anchored_write(key)
+        return result
+    except BaseException:
+        try:
+            readiness_store._rollback_anchored_write(key)
+        except OSError:
+            pass
+        raise
 
 
 def _configured_root(config_path: Path, target: dict[str, object]) -> Path | None:

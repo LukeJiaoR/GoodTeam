@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import secrets
@@ -31,6 +32,8 @@ MODE_STEPS = {
         "worker_preflight",
     ],
 }
+FileIdentity = tuple[int, int]
+AnchoredWrite = tuple[tuple[int, ...], FileIdentity]
 
 
 def classify_project_mode(root: Path) -> str:
@@ -52,6 +55,7 @@ class ProjectReadinessStore:
     def __init__(self, workspace: Path, *, workspace_fd: int | None = None):
         self.workspace = workspace
         self.workspace_fd = workspace_fd
+        self._anchored_writes: dict[str, AnchoredWrite] = {}
 
     def initialize(self, project_key: str, root: Path) -> dict[str, object]:
         key = normalize_project_key(project_key)
@@ -128,6 +132,61 @@ class ProjectReadinessStore:
         self._write(key, readiness)
         return readiness
 
+    def _verify_anchored_write(self, project_key: str) -> None:
+        if self.workspace_fd is None:
+            return
+        key = normalize_project_key(project_key)
+        expected = self._anchored_writes.get(key)
+        if expected is None:
+            return
+        descriptors = self._open_project_directory_chain(key, create=False)
+        if descriptors is None:
+            raise OSError(errno.ENOTDIR, f"Readiness directory disappeared: {key}")
+        try:
+            pinned, expected_readiness = expected
+            if tuple(_descriptor_identity(fd) for fd in descriptors) != tuple(
+                _descriptor_identity(fd) for fd in pinned
+            ):
+                raise OSError(errno.ENOTDIR, f"Readiness directory changed: {key}")
+            self._verify_current_chain(key, descriptors)
+            try:
+                readiness_identity = _entry_identity(descriptors[-1], "readiness.json")
+            except FileNotFoundError as exc:
+                raise OSError(errno.ENOTDIR, f"Readiness file disappeared: {key}") from exc
+            if readiness_identity != expected_readiness:
+                raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
+        finally:
+            _close_descriptors(descriptors)
+
+    def _commit_anchored_write(self, project_key: str) -> None:
+        self._close_anchored_write(normalize_project_key(project_key))
+
+    def _rollback_anchored_write(self, project_key: str) -> None:
+        key = normalize_project_key(project_key)
+        anchored = self._anchored_writes.pop(key, None)
+        if anchored is None:
+            return
+        descriptors, readiness_identity = anchored
+        try:
+            _unlink_if_identity(descriptors[-1], "readiness.json", readiness_identity)
+        finally:
+            _close_descriptors(list(descriptors))
+
+    def _close_anchored_write(self, project_key: str) -> None:
+        anchored = self._anchored_writes.pop(project_key, None)
+        if anchored is not None:
+            _close_descriptors(list(anchored[0]))
+
+    def close(self) -> None:
+        for key in list(self._anchored_writes):
+            self._close_anchored_write(key)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except OSError:
+            pass
+
     def _path(self, project_key: str) -> Path:
         key = normalize_project_key(project_key)
         return self.workspace / "state" / "projects" / key / "readiness.json"
@@ -158,30 +217,41 @@ class ProjectReadinessStore:
                 temporary_path.unlink(missing_ok=True)
 
     def _read_anchored(self, project_key: str) -> object | None:
-        project_fd = self._open_project_directory(project_key, create=False)
-        if project_fd is None:
+        key = normalize_project_key(project_key)
+        descriptors = self._open_project_directory_chain(key, create=False)
+        if descriptors is None:
             return None
+        project_fd = descriptors[-1]
         try:
+            self._verify_current_chain(key, descriptors)
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
             try:
                 descriptor = os.open("readiness.json", flags, dir_fd=project_fd)
             except FileNotFoundError:
+                self._verify_current_chain(key, descriptors)
                 return None
             with os.fdopen(descriptor, encoding="utf-8") as readiness_file:
-                return json.load(readiness_file)
+                readiness = json.load(readiness_file)
+            self._verify_current_chain(key, descriptors)
+            return readiness
         finally:
-            os.close(project_fd)
+            _close_descriptors(descriptors)
 
     def _write_anchored(
         self,
         project_key: str,
         readiness: dict[str, object],
     ) -> None:
-        project_fd = self._open_project_directory(project_key, create=True)
-        assert project_fd is not None
+        key = normalize_project_key(project_key)
+        self._rollback_anchored_write(key)
+        descriptors = self._open_project_directory_chain(key, create=True)
+        assert descriptors is not None
+        project_fd = descriptors[-1]
         temporary_name = f".readiness.json.{secrets.token_hex(8)}.tmp"
         temporary_created = False
+        published_identity: FileIdentity | None = None
         try:
+            self._verify_current_chain(key, descriptors)
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(temporary_name, flags, 0o600, dir_fd=project_fd)
             temporary_created = True
@@ -190,6 +260,8 @@ class ProjectReadinessStore:
                 temporary.write("\n")
                 temporary.flush()
                 os.fsync(temporary.fileno())
+                published_identity = _descriptor_identity(temporary.fileno())
+            self._verify_current_chain(key, descriptors)
             os.replace(
                 temporary_name,
                 "readiness.json",
@@ -197,15 +269,38 @@ class ProjectReadinessStore:
                 dst_dir_fd=project_fd,
             )
             temporary_created = False
+            self._verify_current_chain(key, descriptors)
+            if _entry_identity(project_fd, "readiness.json") != published_identity:
+                raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
+            pinned: list[int] = []
+            try:
+                for descriptor in descriptors:
+                    pinned.append(os.dup(descriptor))
+            except BaseException:
+                _close_descriptors(pinned)
+                raise
+            self._anchored_writes[key] = (tuple(pinned), published_identity)
+        except BaseException:
+            if published_identity is not None:
+                try:
+                    _unlink_if_identity(project_fd, "readiness.json", published_identity)
+                except OSError:
+                    pass
+            raise
         finally:
             if temporary_created:
                 try:
                     os.unlink(temporary_name, dir_fd=project_fd)
                 except FileNotFoundError:
                     pass
-            os.close(project_fd)
+            _close_descriptors(descriptors)
 
-    def _open_project_directory(self, project_key: str, *, create: bool) -> int | None:
+    def _open_project_directory_chain(
+        self,
+        project_key: str,
+        *,
+        create: bool,
+    ) -> list[int] | None:
         assert self.workspace_fd is not None
         descriptors: list[int] = []
         parent_fd = self.workspace_fd
@@ -213,13 +308,34 @@ class ProjectReadinessStore:
             for name in ("state", "projects", normalize_project_key(project_key)):
                 descriptor = _open_directory_at(parent_fd, name, create=create)
                 if descriptor is None:
+                    _close_descriptors(descriptors)
                     return None
                 descriptors.append(descriptor)
                 parent_fd = descriptor
-            return descriptors.pop()
+            return descriptors
+        except BaseException:
+            _close_descriptors(descriptors)
+            raise
+
+    def _verify_current_chain(self, project_key: str, pinned: list[int]) -> None:
+        assert self.workspace_fd is not None
+        current: list[int] = []
+        parent_fd = self.workspace_fd
+        try:
+            for name, pinned_fd in zip(
+                ("state", "projects", normalize_project_key(project_key)),
+                pinned,
+                strict=True,
+            ):
+                descriptor = _open_directory_at(parent_fd, name, create=False)
+                if descriptor is None:
+                    raise OSError(errno.ENOTDIR, f"Readiness directory disappeared: {name}")
+                current.append(descriptor)
+                if _descriptor_identity(descriptor) != _descriptor_identity(pinned_fd):
+                    raise OSError(errno.ENOTDIR, f"Readiness directory changed: {name}")
+                parent_fd = descriptor
         finally:
-            for descriptor in reversed(descriptors):
-                os.close(descriptor)
+            _close_descriptors(current)
 
 
 def build_capabilities(readiness: dict[str, object]) -> dict[str, object]:
@@ -257,3 +373,35 @@ def _open_directory_at(parent_fd: int, name: str, *, create: bool) -> int | None
         if not create:
             return None
         raise
+
+
+def _descriptor_identity(descriptor: int) -> FileIdentity:
+    stat_result = os.fstat(descriptor)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _entry_identity(directory_fd: int, name: str) -> FileIdentity:
+    stat_result = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _unlink_if_identity(
+    directory_fd: int,
+    name: str,
+    expected_identity: FileIdentity,
+) -> None:
+    try:
+        current_identity = _entry_identity(directory_fd, name)
+    except FileNotFoundError:
+        return
+    if current_identity != expected_identity:
+        return
+    try:
+        os.unlink(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        pass
+
+
+def _close_descriptors(descriptors: list[int]) -> None:
+    for descriptor in reversed(descriptors):
+        os.close(descriptor)

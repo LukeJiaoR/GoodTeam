@@ -8,7 +8,9 @@ from threading import Barrier, Event
 import pytest
 
 from goodteam_os import project_import
+from goodteam_os import project_readiness
 from goodteam_os.project_import import import_project
+from goodteam_os.project_readiness import ProjectReadinessStore
 from goodteam_os.projects import build_registered_project_config
 
 
@@ -301,6 +303,206 @@ def test_import_fails_closed_when_workspace_directory_is_swapped_after_validatio
         import_project(workspace, str(root))
 
     assert error.value.code == "project_workspace_not_isolated"
+    assert list(workspace.rglob("*.local.yaml")) == []
+    assert list(workspace.rglob("*.tmp")) == []
+    assert snapshot_target(root) == before
+
+
+def test_import_rolls_back_config_when_readiness_initialization_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    before = snapshot_target(root)
+
+    def fail_readiness(*_args, **_kwargs):
+        raise RuntimeError("readiness failed")
+
+    monkeypatch.setattr(ProjectReadinessStore, "initialize", fail_readiness)
+    with pytest.raises(RuntimeError, match="readiness failed"):
+        import_project(workspace, str(root))
+
+    assert list(workspace.rglob("*.local.yaml")) == []
+    assert list(workspace.rglob("*.tmp")) == []
+    assert snapshot_target(root) == before
+
+
+def test_import_rollback_does_not_delete_replacement_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace = tmp_path / "workspace"
+    config_path = workspace / "projects" / "project.local.yaml"
+    replacement = "name: External\nkey: EXTERNAL\n"
+
+    def replace_config_then_fail(*_args, **_kwargs):
+        config_path.unlink()
+        config_path.write_text(replacement, encoding="utf-8")
+        raise RuntimeError("readiness failed")
+
+    monkeypatch.setattr(
+        ProjectReadinessStore,
+        "initialize",
+        replace_config_then_fail,
+    )
+    with pytest.raises(RuntimeError, match="readiness failed"):
+        import_project(workspace, str(root))
+
+    assert config_path.read_text(encoding="utf-8") == replacement
+
+
+def test_import_fails_closed_when_open_projects_directory_is_replaced(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    root = tmp_path / "project"
+    redirected = root / "redirected"
+    redirected.mkdir(parents=True)
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    projects_dir = workspace / "projects"
+    projects_dir.mkdir(parents=True)
+    detached_projects = workspace / "projects-detached"
+    before = snapshot_target(root)
+    original_validate = project_import._validate_write_destination
+    swapped = False
+
+    def validate_then_swap(path: Path, target_root: Path, destination: Path):
+        nonlocal swapped
+        original_validate(path, target_root, destination)
+        if not swapped and destination.name.endswith(".local.yaml"):
+            swapped = True
+            projects_dir.rename(detached_projects)
+            projects_dir.symlink_to(redirected, target_is_directory=True)
+
+    monkeypatch.setattr(project_import, "_validate_write_destination", validate_then_swap)
+    with pytest.raises(ProjectImportError) as error:
+        import_project(workspace, str(root))
+
+    assert error.value.code == "project_workspace_not_isolated"
+    assert list(tmp_path.rglob("*.local.yaml")) == []
+    assert list(tmp_path.rglob("*.tmp")) == []
+    assert snapshot_target(root) == before
+
+
+def test_import_rolls_back_detached_config_when_projects_moves_after_publish(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    root = tmp_path / "project"
+    redirected = root / "redirected"
+    redirected.mkdir(parents=True)
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    projects_dir = workspace / "projects"
+    detached_projects = workspace / "projects-detached"
+    before = snapshot_target(root)
+    original_link = os.link
+
+    def link_then_swap(source, target, *args, **kwargs):
+        result = original_link(source, target, *args, **kwargs)
+        projects_dir.rename(detached_projects)
+        projects_dir.symlink_to(redirected, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(project_import.os, "link", link_then_swap)
+    with pytest.raises(ProjectImportError) as error:
+        import_project(workspace, str(root))
+
+    assert error.value.code == "project_workspace_not_isolated"
+    assert list(tmp_path.rglob("*.local.yaml")) == []
+    assert list(tmp_path.rglob("*.tmp")) == []
+    assert snapshot_target(root) == before
+
+
+@pytest.mark.parametrize("swapped_level", ["state", "projects", "key"])
+def test_import_fails_closed_when_open_readiness_directory_is_replaced(
+    tmp_path: Path,
+    monkeypatch,
+    swapped_level: str,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    root = tmp_path / "project"
+    redirected = root / "redirected"
+    redirected.mkdir(parents=True)
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    before = snapshot_target(root)
+    original_open = project_readiness._open_directory_at
+    swapped = False
+
+    def open_then_swap(parent_fd: int, name: str, *, create: bool):
+        nonlocal swapped
+        descriptor = original_open(parent_fd, name, create=create)
+        matches = name == swapped_level or (swapped_level == "key" and name == "PROJECT")
+        if descriptor is not None and matches and not swapped:
+            swapped = True
+            if swapped_level == "state":
+                path = workspace / "state"
+                detached = workspace / "state-detached"
+            elif swapped_level == "projects":
+                path = workspace / "state" / "projects"
+                detached = workspace / "state" / "projects-detached"
+            else:
+                path = workspace / "state" / "projects" / "PROJECT"
+                detached = workspace / "state" / "projects" / "PROJECT-detached"
+            path.rename(detached)
+            path.symlink_to(redirected, target_is_directory=True)
+        return descriptor
+
+    monkeypatch.setattr(project_readiness, "_open_directory_at", open_then_swap)
+    with pytest.raises(ProjectImportError) as error:
+        import_project(workspace, str(root))
+
+    assert error.value.code == "project_workspace_not_isolated"
+    assert list(tmp_path.rglob("*.local.yaml")) == []
+    assert list(tmp_path.rglob("*.tmp")) == []
+    assert not (
+        workspace / "state" / "projects" / "PROJECT" / "readiness.json"
+    ).exists()
+    assert snapshot_target(root) == before
+
+
+def test_import_rolls_back_detached_readiness_when_key_moves_after_replace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    root = tmp_path / "project"
+    redirected = root / "redirected"
+    redirected.mkdir(parents=True)
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    key_dir = workspace / "state" / "projects" / "PROJECT"
+    detached_key = workspace / "state" / "projects" / "PROJECT-detached"
+    before = snapshot_target(root)
+    original_replace = os.replace
+
+    def replace_then_swap(source, target, *args, **kwargs):
+        result = original_replace(source, target, *args, **kwargs)
+        key_dir.rename(detached_key)
+        key_dir.symlink_to(redirected, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(project_readiness.os, "replace", replace_then_swap)
+    with pytest.raises(ProjectImportError) as error:
+        import_project(workspace, str(root))
+
+    assert error.value.code == "project_workspace_not_isolated"
+    assert list(tmp_path.rglob("*.local.yaml")) == []
+    assert list(tmp_path.rglob("*.tmp")) == []
+    assert not (detached_key / "readiness.json").exists()
     assert snapshot_target(root) == before
 
 
