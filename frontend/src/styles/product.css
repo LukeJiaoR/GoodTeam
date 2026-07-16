@@ -215,6 +215,255 @@
   border-color: var(--product-danger);
 }
 
+.product-shell .projects-page {
+  width: min(100% - 2rem, 1180px);
+  margin-inline: auto;
+  padding: clamp(2rem, 5vw, 4.5rem) 0 4rem;
+}
+
+.product-shell .projects-page-header {
+  max-width: 44rem;
+  margin-bottom: clamp(2.25rem, 5vw, 4.5rem);
+}
+
+.product-shell .projects-page-header h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 4.35rem);
+  font-weight: 660;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.product-shell .projects-page-header p,
+.product-shell .projects-section-heading p {
+  max-width: 56ch;
+  margin: 0.8rem 0 0;
+  color: var(--product-text-muted);
+}
+
+.product-shell .projects-page-grid {
+  display: grid;
+  grid-template-columns: minmax(16rem, 0.78fr) minmax(0, 1.55fr);
+  gap: clamp(2.5rem, 7vw, 6.5rem);
+  align-items: start;
+}
+
+.product-shell .projects-load-panel,
+.product-shell .projects-portfolio {
+  min-width: 0;
+}
+
+.product-shell .projects-load-panel {
+  position: sticky;
+  top: 2rem;
+}
+
+.product-shell .projects-section-heading h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+}
+
+.product-shell .projects-load-form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.product-shell .projects-path-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.product-shell .projects-path-field label {
+  font-weight: 640;
+}
+
+.product-shell .projects-path-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+}
+
+.product-shell .projects-path-controls input {
+  min-width: 0;
+  min-height: 40px;
+  padding: 0.55rem 0.7rem;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+  font: inherit;
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.84rem;
+}
+
+.product-shell .projects-path-controls input::placeholder {
+  color: var(--product-text-muted);
+  opacity: 1;
+}
+
+.product-shell .projects-path-controls input:hover {
+  border-color: var(--product-text-muted);
+}
+
+.product-shell .projects-path-controls input:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .projects-path-controls input[aria-invalid="true"] {
+  border-color: var(--product-danger);
+}
+
+.product-shell .projects-field-help {
+  color: var(--product-text-muted);
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.73rem;
+}
+
+.product-shell .projects-recovery-guidance {
+  display: block;
+}
+
+.product-shell .projects-list-state,
+.product-shell .project-groups {
+  margin-top: 1.5rem;
+}
+
+.product-shell .projects-list-skeleton {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .project-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1.5rem;
+  align-items: center;
+  padding: 1.2rem 0;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .project-row--skeleton {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 7.5rem;
+}
+
+.product-shell .project-skeleton-line {
+  display: block;
+  background: var(--product-surface-muted);
+  border-radius: calc(var(--product-radius) / 2);
+}
+
+.product-shell .project-skeleton-line--title {
+  width: min(44%, 12rem);
+  height: 1.15rem;
+  align-self: end;
+}
+
+.product-shell .project-skeleton-line--path {
+  grid-column: 1;
+  width: min(72%, 20rem);
+  height: 0.72rem;
+  align-self: start;
+}
+
+.product-shell .project-skeleton-line--action {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 7.5rem;
+  height: 2.5rem;
+}
+
+.product-shell .project-groups {
+  display: grid;
+  gap: 2.35rem;
+}
+
+.product-shell .project-group {
+  min-width: 0;
+}
+
+.product-shell .project-group h3 {
+  margin: 0 0 0.35rem;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.product-shell .project-group-rows {
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .project-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.product-shell .project-row-title h4 {
+  margin: 0;
+  font-size: 1.08rem;
+  font-weight: 650;
+  letter-spacing: -0.018em;
+}
+
+.product-shell .project-row-path {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.32rem;
+  overflow: hidden;
+  color: var(--product-text-muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-shell .project-row-context {
+  margin: 0.45rem 0 0;
+  color: var(--product-text-muted);
+  font-size: 0.84rem;
+}
+
+.product-shell .projects-open-project,
+.product-shell .projects-inline-action {
+  padding: 0;
+  color: var(--product-accent-strong);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  border-radius: 0;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 640;
+  line-height: 1.45;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.product-shell .projects-open-project:hover,
+.product-shell .projects-inline-action:hover {
+  color: var(--product-accent);
+}
+
+.product-shell .projects-open-project:active,
+.product-shell .projects-inline-action:active {
+  transform: translateY(1px);
+}
+
+.product-shell .projects-open-project:focus-visible,
+.product-shell .projects-inline-action:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 3px;
+}
+
 .dark .product-shell {
   --product-bg: #191816;
   --product-surface: #23211e;
@@ -234,6 +483,39 @@
 @media (max-width: 640px) {
   .product-shell .product-inline-notice {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 767px) {
+  .product-shell .projects-page {
+    width: min(100% - 2rem, 42rem);
+    padding: 2rem 0 3rem;
+  }
+
+  .product-shell .projects-page-header {
+    margin-bottom: 2.5rem;
+  }
+
+  .product-shell .projects-page-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3rem;
+  }
+
+  .product-shell .projects-load-panel {
+    position: static;
+  }
+
+  .product-shell .project-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.85rem;
+  }
+
+  .product-shell .projects-open-project {
+    width: fit-content;
+  }
+
+  .product-shell .project-row--skeleton {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 

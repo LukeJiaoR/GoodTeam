@@ -237,6 +237,7 @@ export const en = {
   'projects.errors.project_readiness_missing': 'This project has no saved readiness record.',
   'projects.errors.same_origin_required': 'Open this action from the GoodTeam application.',
   'projects.errors.internal_error': 'GoodTeam could not complete this request.',
+  'projects.errors.invalid_response': 'GoodTeam received an invalid server response.',
   'projects.recovery.fix_permissions': 'Check directory permissions',
   'projects.recovery.choose_another_directory': 'Choose another directory',
   'projects.recovery.reload_project': 'Reload project',

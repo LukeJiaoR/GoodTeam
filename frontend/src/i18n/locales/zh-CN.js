@@ -237,6 +237,7 @@ export const zhCN = {
   'projects.errors.project_readiness_missing': '该项目没有已保存的就绪记录。',
   'projects.errors.same_origin_required': '请从 GoodTeam 应用中打开此操作。',
   'projects.errors.internal_error': 'GoodTeam 无法完成此请求。',
+  'projects.errors.invalid_response': 'GoodTeam 收到了无效的服务器响应。',
   'projects.recovery.fix_permissions': '检查目录权限',
   'projects.recovery.choose_another_directory': '选择其他目录',
   'projects.recovery.reload_project': '重新加载项目',
