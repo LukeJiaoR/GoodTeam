@@ -133,6 +133,223 @@ def _post_web_json(workspace: Path, route: str, payload: dict[str, object], *, o
         thread.join(timeout=5)
 
 
+def _get_web_json(workspace: Path, route: str):
+    server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(workspace))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}{route}",
+                timeout=5,
+            ) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_api_project_import_returns_created_home_contract(tmp_path: Path) -> None:
+    root = tmp_path / "target"
+    root.mkdir()
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(root), "display_name": "Target"},
+    )
+    assert status == 201
+    assert payload["created"] is True
+    assert payload["project"]["project_key"] == "TARGET"
+    assert payload["readiness"]["lifecycle"] == "preparing"
+    assert payload["capabilities"]["start_workflow"] is False
+    assert payload["home_url"] == "/projects/TARGET/home"
+
+
+def test_api_project_import_returns_structured_missing_root_error(tmp_path: Path) -> None:
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(tmp_path / "missing")},
+    )
+    assert status == 404
+    assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
+    assert payload["code"] == "project_root_not_found"
+    assert payload["recovery"] == ["choose_another_directory"]
+    assert payload["request_id"]
+
+
+def test_api_project_import_duplicate_returns_ok(tmp_path: Path) -> None:
+    root = tmp_path / "target"
+    root.mkdir()
+    assert _post_web_json(tmp_path, "/api/projects/import", {"root": str(root)})[0] == 201
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(root)},
+    )
+
+    assert status == 200
+    assert payload["created"] is False
+
+
+def test_api_project_import_rejects_cross_origin_mutation(tmp_path: Path) -> None:
+    root = tmp_path / "target"
+    root.mkdir()
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(root)},
+        origin="https://attacker.example",
+    )
+
+    assert status == 403
+    assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
+    assert payload["code"] == "same_origin_required"
+    assert payload["request_id"]
+    assert not (tmp_path / "projects").exists()
+
+
+def test_api_project_mode_confirmation_updates_home_projection(tmp_path: Path) -> None:
+    root = tmp_path / "ambiguous"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"x")
+    _post_web_json(tmp_path, "/api/projects/import", {"root": str(root)})
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/AMBIGUOUS/mode",
+        {"mode": "existing_project"},
+    )
+    assert status == 200
+    assert payload["readiness"]["project_mode"] == "existing_project"
+    assert payload["next_action"]["id"] == "repository_understanding"
+
+
+def test_project_home_restores_from_disk_after_handler_restart(tmp_path: Path) -> None:
+    root = tmp_path / "existing"
+    root.mkdir()
+    (root / "package.json").write_text('{"name":"existing"}', encoding="utf-8")
+
+    first_status, imported = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(root)},
+    )
+    assert first_status == 201
+
+    second_status, restored = _get_web_json(
+        tmp_path,
+        f"/api/projects/{imported['project']['project_key']}/home",
+    )
+    assert second_status == 200
+    assert restored["readiness"] == imported["readiness"]
+    assert restored["project"]["root"] == str(root.resolve())
+
+
+def test_project_list_projects_attention_and_active_run_fields(tmp_path: Path) -> None:
+    root = tmp_path / "ambiguous"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    _post_web_json(tmp_path, "/api/projects/import", {"root": str(root)})
+
+    status, payload = _get_web_json(tmp_path, "/api/projects")
+
+    assert status == 200
+    assert len(payload["projects"]) == 1
+    assert payload["projects"][0]["readiness"]["lifecycle"] == "attention_required"
+    assert payload["projects"][0]["attention_count"] == 1
+    assert payload["projects"][0]["active_run"] is None
+
+
+def test_project_list_keeps_legacy_readiness_read_only(tmp_path: Path) -> None:
+    root = tmp_path / "legacy"
+    root.mkdir()
+    _post_web_json(tmp_path, "/api/projects/import", {"root": str(root)})
+    readiness_path = tmp_path / "state" / "projects" / "LEGACY" / "readiness.json"
+    readiness_path.unlink()
+
+    status, payload = _get_web_json(tmp_path, "/api/projects")
+
+    assert status == 200
+    assert payload["projects"][0]["readiness"]["lifecycle"] == "legacy"
+    assert payload["projects"][0]["attention_count"] == 0
+    assert readiness_path.exists() is False
+
+
+def test_unknown_project_home_uses_stable_error_shape(tmp_path: Path) -> None:
+    status, payload = _get_web_json(tmp_path, "/api/projects/MISSING/home")
+
+    assert status == 404
+    assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
+    assert payload["code"] == "project_not_found"
+    assert payload["details"] == {"project_key": "MISSING"}
+    assert payload["recovery"] == ["return_to_projects"]
+    assert payload["request_id"]
+
+
+def test_invalid_project_mode_uses_stable_error_shape(tmp_path: Path) -> None:
+    root = tmp_path / "ambiguous"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    _post_web_json(tmp_path, "/api/projects/import", {"root": str(root)})
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/AMBIGUOUS/mode",
+        {"mode": "guess"},
+    )
+    assert status == 400
+    assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
+    assert payload["code"] == "invalid_project_mode"
+    assert payload["recovery"] == ["choose_project_mode"]
+    assert payload["request_id"]
+
+
+def test_project_import_hides_unexpected_exception_text(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def fail_import(*args, **kwargs):
+        raise RuntimeError("sensitive internal detail")
+
+    monkeypatch.setattr(web, "import_project", fail_import)
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(tmp_path)},
+    )
+    assert status == 500
+    assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
+    assert payload["code"] == "internal_error"
+    assert payload["message"] == "GoodTeam could not complete this request."
+    assert payload["details"] == {}
+    assert payload["recovery"] == ["retry", "report_request_id"]
+    assert "sensitive" not in json.dumps(payload)
+    assert payload["request_id"]
+
+
+def test_product_spa_path_contract() -> None:
+    assert web.is_product_spa_path("/projects") is True
+    assert web.is_product_spa_path("/projects/DEMO/home") is True
+    assert web.is_product_spa_path("/inbox") is False
+    assert web.is_product_spa_path("/api/projects") is False
+    assert web.is_product_spa_path("/review-workbench/run-1") is False
+    assert web.is_product_spa_path("/assets/index.js") is False
+
+
+def test_focused_and_full_handlers_share_project_api_dispatch() -> None:
+    focused_source = inspect.getsource(web.build_dashboard_handler)
+    full_source = inspect.getsource(web.serve)
+
+    for helper_name in ("handle_project_api_get", "handle_project_api_post"):
+        assert helper_name in focused_source
+        assert helper_name in full_source
+
+
 def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(path)], check=True)
 
