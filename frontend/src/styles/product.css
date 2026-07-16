@@ -1,0 +1,244 @@
+.product-shell {
+  --product-bg: #f3f0e9;
+  --product-surface: #fffdf8;
+  --product-surface-muted: #ece8df;
+  --product-border: #d8d2c8;
+  --product-text: #292723;
+  --product-text-muted: #716b60;
+  --product-accent: #9d5d42;
+  --product-accent-strong: #7f4933;
+  --product-success: #41735a;
+  --product-warning: #8a6b25;
+  --product-danger: #984f49;
+  --product-on-accent: #fffdf8;
+  --product-focus: #7f4933;
+  --product-radius: 8px;
+  min-height: 100dvh;
+  color: var(--product-text);
+  background: var(--product-bg);
+  font-family: "Geist Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.product-shell code,
+.product-shell pre,
+.product-shell [data-monospace] {
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+}
+
+.product-shell .product-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid transparent;
+  border-radius: var(--product-radius);
+  font: inherit;
+  font-size: 0.933rem;
+  font-weight: 620;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease,
+    transform 120ms ease;
+}
+
+.product-shell .product-button--primary {
+  color: var(--product-on-accent);
+  background: var(--product-accent-strong);
+  border-color: var(--product-accent-strong);
+}
+
+.product-shell .product-button--primary:hover:not(:disabled) {
+  background: var(--product-accent);
+  border-color: var(--product-accent);
+}
+
+.product-shell .product-button--secondary {
+  color: var(--product-text);
+  background: var(--product-surface);
+  border-color: var(--product-border);
+}
+
+.product-shell .product-button--secondary:hover:not(:disabled) {
+  background: var(--product-surface-muted);
+}
+
+.product-shell .product-button--danger {
+  color: var(--product-on-accent);
+  background: var(--product-danger);
+  border-color: var(--product-danger);
+}
+
+.product-shell .product-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.product-shell .product-button:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .product-button:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.product-shell .product-inline-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-inline-start: 3px solid var(--product-accent);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .product-inline-notice[data-tone="success"] {
+  border-inline-start-color: var(--product-success);
+}
+
+.product-shell .product-inline-notice[data-tone="warning"] {
+  border-inline-start-color: var(--product-warning);
+}
+
+.product-shell .product-inline-notice[data-tone="danger"],
+.product-shell .product-inline-notice[data-tone="error"] {
+  border-inline-start-color: var(--product-danger);
+}
+
+.product-shell .product-inline-notice__title {
+  display: block;
+  font-weight: 650;
+}
+
+.product-shell .product-inline-notice__description {
+  margin-top: 0.18rem;
+  color: var(--product-text-muted);
+}
+
+.product-shell .product-inline-notice__action {
+  flex: none;
+}
+
+.product-shell .product-page-state {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1.25rem;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .product-page-state__marker {
+  min-height: 2.5rem;
+  background: var(--product-accent);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .product-page-state[data-kind="complete"] .product-page-state__marker {
+  background: var(--product-success);
+}
+
+.product-shell .product-page-state[data-kind="needs_input"] .product-page-state__marker {
+  background: var(--product-warning);
+}
+
+.product-shell .product-page-state[data-kind="error"] .product-page-state__marker {
+  background: var(--product-danger);
+}
+
+.product-shell .product-page-state__title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 660;
+  line-height: 1.35;
+}
+
+.product-shell .product-page-state__description {
+  margin-top: 0.35rem;
+  color: var(--product-text-muted);
+}
+
+.product-shell .product-page-state__action {
+  margin-top: 0.9rem;
+}
+
+.product-shell .product-status-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.2rem 0.48rem;
+  color: var(--product-text-muted);
+  background: var(--product-surface-muted);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+  font-size: 0.8rem;
+  font-weight: 620;
+  line-height: 1.3;
+}
+
+.product-shell .product-status-badge[data-tone="active"],
+.product-shell .product-status-badge[data-tone="accent"] {
+  color: var(--product-accent-strong);
+  border-color: var(--product-accent);
+}
+
+.product-shell .product-status-badge[data-tone="complete"],
+.product-shell .product-status-badge[data-tone="success"] {
+  color: var(--product-success);
+  border-color: var(--product-success);
+}
+
+.product-shell .product-status-badge[data-tone="pending"],
+.product-shell .product-status-badge[data-tone="needs_input"],
+.product-shell .product-status-badge[data-tone="warning"] {
+  color: var(--product-warning);
+  border-color: var(--product-warning);
+}
+
+.product-shell .product-status-badge[data-tone="error"],
+.product-shell .product-status-badge[data-tone="danger"] {
+  color: var(--product-danger);
+  border-color: var(--product-danger);
+}
+
+.dark .product-shell {
+  --product-bg: #191816;
+  --product-surface: #23211e;
+  --product-surface-muted: #151412;
+  --product-border: #3b3832;
+  --product-text: #eee9df;
+  --product-text-muted: #aaa398;
+  --product-accent: #c07859;
+  --product-accent-strong: #d18b6c;
+  --product-success: #78a98c;
+  --product-warning: #d0ad61;
+  --product-danger: #d3827b;
+  --product-on-accent: #191816;
+  --product-focus: #d18b6c;
+}
+
+@media (max-width: 640px) {
+  .product-shell .product-inline-notice {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-shell *,
+  .product-shell *::before,
+  .product-shell *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

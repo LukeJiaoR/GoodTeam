@@ -6,6 +6,7 @@ export const LANGUAGE_PREFERENCE_AUTO = 'auto';
 export const LANGUAGE_EN = 'en';
 export const LANGUAGE_ZH_CN = 'zh-CN';
 export const SUPPORTED_LANGUAGE_PREFERENCES = ['auto', 'en', 'zh-CN'];
+export const PRODUCT_I18N_PREFIXES = ['product.', 'projects.', 'readiness.'];
 
 const LOCALES = {
   [LANGUAGE_EN]: en,
@@ -47,4 +48,12 @@ export function translate(language, key, params = {}) {
   const resolvedLanguage = language === LANGUAGE_ZH_CN ? LANGUAGE_ZH_CN : LANGUAGE_EN;
   const template = LOCALES[resolvedLanguage]?.[key] ?? LOCALES[LANGUAGE_EN]?.[key] ?? key;
   return interpolate(template, params);
+}
+
+export function missingTranslationKeys(language) {
+  const locale = LOCALES[language] || {};
+  return Object.keys(en)
+    .filter((key) => PRODUCT_I18N_PREFIXES.some((prefix) => key.startsWith(prefix)))
+    .filter((key) => !Object.prototype.hasOwnProperty.call(locale, key))
+    .sort();
 }
