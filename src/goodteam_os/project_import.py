@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
+import secrets
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import Iterator
 
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
@@ -41,75 +42,96 @@ def import_project(
     root = Path(root_value).expanduser().resolve()
     _validate_root(root)
     workspace = _validate_workspace_isolation(workspace, root)
-    with _workspace_import_lock(workspace):
-        return _import_project_locked(
-            workspace,
-            root,
-            display_name=display_name,
-            requested_key=requested_key,
-            existing_configs=existing_configs,
-        )
+    try:
+        with _workspace_import_lock(workspace) as workspace_fd:
+            return _import_project_locked(
+                workspace,
+                root,
+                workspace_fd=workspace_fd,
+                display_name=display_name,
+                requested_key=requested_key,
+                existing_configs=existing_configs,
+            )
+    except OSError as exc:
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise
+        raise _workspace_not_isolated_error(workspace, root) from exc
 
 
 def _import_project_locked(
     workspace: Path,
     root: Path,
     *,
+    workspace_fd: int,
     display_name: str,
     requested_key: str,
     existing_configs: list[Path] | None,
 ) -> dict[str, object]:
     projects_dir = workspace / "projects"
-    config_paths = (
-        list(existing_configs)
-        if existing_configs is not None
-        else sorted(projects_dir.glob("*.local.yaml"))
-    )
-    readiness_store = ProjectReadinessStore(workspace)
-    registered = _load_registered_projects(config_paths)
-
-    existing = _find_root_match(registered, root)
-    if existing is not None:
-        _validate_project_state_destination(workspace, root, str(existing["key"]))
-        return _existing_result(readiness_store, existing, root)
-
-    name = display_name.strip() or root.name
-    base_key = normalize_project_key(requested_key or name)
-    occupied_keys = {project["key"] for project in registered}
-    suffix = 1
-    while True:
-        key = base_key if suffix == 1 else f"{base_key}-{suffix}"
-        if key in occupied_keys:
-            suffix += 1
-            continue
-        config_path = projects_dir / f"{key.lower()}.local.yaml"
-        _validate_write_destination(workspace, root, config_path)
-        _validate_project_state_destination(workspace, root, key)
-        projects_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            _publish_config_exclusively(
-                config_path,
-                build_registered_project_config(key, name, root),
-            )
-        except FileExistsError:
-            registered = _load_registered_projects(sorted(projects_dir.glob("*.local.yaml")))
-            existing = _find_root_match(registered, root)
-            if existing is not None:
-                _validate_project_state_destination(workspace, root, str(existing["key"]))
-                return _existing_result(readiness_store, existing, root)
-            occupied_keys.update(project["key"] for project in registered)
-            suffix += 1
-            continue
-
-        readiness = readiness_store.initialize(key, root)
-        return _result(
-            created=True,
-            key=key,
-            name=name,
-            root=root,
-            config_path=config_path,
-            readiness=readiness,
+    projects_fd = _open_directory_at(workspace_fd, "projects", create=False)
+    try:
+        registered = _load_registered_projects(
+            list(existing_configs or []),
+            workspace_projects_dir=projects_dir,
+            projects_fd=projects_fd,
         )
+        readiness_store = ProjectReadinessStore(workspace, workspace_fd=workspace_fd)
+        existing = _find_root_match(registered, root)
+        if existing is not None:
+            _validate_project_state_destination(workspace, root, str(existing["key"]))
+            return _existing_result(readiness_store, existing, root)
+
+        name = display_name.strip() or root.name
+        base_key = normalize_project_key(requested_key or name)
+        occupied_keys = {project["key"] for project in registered}
+        suffix = 1
+        while True:
+            key = base_key if suffix == 1 else f"{base_key}-{suffix}"
+            if key in occupied_keys:
+                suffix += 1
+                continue
+            config_path = projects_dir / f"{key.lower()}.local.yaml"
+            _validate_write_destination(workspace, root, config_path)
+            _validate_project_state_destination(workspace, root, key)
+            if projects_fd is None:
+                projects_fd = _open_directory_at(workspace_fd, "projects", create=True)
+                assert projects_fd is not None
+            try:
+                _publish_config_exclusively(
+                    config_path,
+                    build_registered_project_config(key, name, root),
+                    directory_fd=projects_fd,
+                )
+            except FileExistsError:
+                registered = _load_registered_projects(
+                    list(existing_configs or []),
+                    workspace_projects_dir=projects_dir,
+                    projects_fd=projects_fd,
+                )
+                existing = _find_root_match(registered, root)
+                if existing is not None:
+                    _validate_project_state_destination(
+                        workspace,
+                        root,
+                        str(existing["key"]),
+                    )
+                    return _existing_result(readiness_store, existing, root)
+                occupied_keys.update(project["key"] for project in registered)
+                suffix += 1
+                continue
+
+            readiness = readiness_store.initialize(key, root)
+            return _result(
+                created=True,
+                key=key,
+                name=name,
+                root=root,
+                config_path=config_path,
+                readiness=readiness,
+            )
+    finally:
+        if projects_fd is not None:
+            os.close(projects_fd)
 
 
 def _validate_root(root: Path) -> None:
@@ -170,6 +192,18 @@ def _validate_write_destination(workspace: Path, root: Path, destination: Path) 
     )
 
 
+def _workspace_not_isolated_error(workspace: Path, root: Path) -> ProjectImportError:
+    return ProjectImportError(
+        "project_workspace_not_isolated",
+        f"GoodTeam workspace changed during import: {workspace}",
+        details={
+            "root": str(root),
+            "workspace": str(workspace),
+            "destination": str(workspace),
+        },
+    )
+
+
 def _path_is_within(path: Path, parent: Path) -> bool:
     try:
         path.relative_to(parent)
@@ -185,56 +219,147 @@ def _thread_lock_for(workspace: Path) -> threading.Lock:
 
 
 @contextmanager
-def _workspace_import_lock(workspace: Path) -> Iterator[None]:
+def _workspace_import_lock(workspace: Path) -> Iterator[int]:
     with _thread_lock_for(workspace):
-        workspace.mkdir(parents=True, exist_ok=True)
-        lock_path = workspace / IMPORT_LOCK_NAME
-        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(lock_path, flags, 0o600)
+        workspace_descriptor = _open_absolute_directory(workspace)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
             try:
-                yield
+                lock_descriptor = os.open(
+                    IMPORT_LOCK_NAME,
+                    lock_flags,
+                    0o600,
+                    dir_fd=workspace_descriptor,
+                )
+            except FileNotFoundError:
+                lock_descriptor = os.open(
+                    IMPORT_LOCK_NAME,
+                    lock_flags,
+                    0o600,
+                    dir_fd=workspace_descriptor,
+                )
+            try:
+                fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+                try:
+                    yield workspace_descriptor
+                finally:
+                    fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
             finally:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(lock_descriptor)
         finally:
-            os.close(descriptor)
+            os.close(workspace_descriptor)
 
 
-def _publish_config_exclusively(destination: Path, content: str) -> None:
-    temporary_path: Path | None = None
+def _open_absolute_directory(path: Path) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path.anchor, flags)
     try:
-        with NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
+        for name in path.parts[1:]:
+            child_descriptor = _open_directory_at(descriptor, name, create=True)
+            assert child_descriptor is not None
+            os.close(descriptor)
+            descriptor = child_descriptor
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _open_directory_at(parent_fd: int, name: str, *, create: bool) -> int | None:
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    if create:
+        try:
+            os.mkdir(name, mode=0o755, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+    try:
+        return os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        if not create:
+            return None
+        raise
+
+
+def _publish_config_exclusively(
+    destination: Path,
+    content: str,
+    *,
+    directory_fd: int | None = None,
+) -> None:
+    owned_directory_fd = directory_fd is None
+    if directory_fd is None:
+        flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(destination.parent, flags)
+    temporary_name = f".{destination.name}.{secrets.token_hex(8)}.tmp"
+    temporary_created = False
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
+        temporary_created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary:
             temporary.write(content)
             temporary.flush()
             os.fsync(temporary.fileno())
-        os.link(temporary_path, destination)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-
-
-def _load_registered_projects(config_paths: list[Path]) -> list[dict[str, object]]:
-    registered: list[dict[str, object]] = []
-    for config_path in config_paths:
-        target = load_project_target(config_path)
-        registered.append(
-            {
-                "config_path": config_path,
-                "key": normalize_project_key(str(target.get("key", config_path.stem))),
-                "name": str(target.get("name", config_path.stem)),
-                "root": _configured_root(config_path, target),
-            }
+        os.link(
+            temporary_name,
+            destination.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+            follow_symlinks=False,
         )
+    finally:
+        if temporary_created:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        if owned_directory_fd:
+            os.close(directory_fd)
+
+
+def _load_registered_projects(
+    config_paths: list[Path],
+    *,
+    workspace_projects_dir: Path,
+    projects_fd: int | None,
+) -> list[dict[str, object]]:
+    registered: list[dict[str, object]] = []
+    workspace_paths: set[Path] = set()
+    if projects_fd is not None:
+        for name in sorted(os.listdir(projects_fd)):
+            if not name.endswith(".local.yaml"):
+                continue
+            config_path = workspace_projects_dir / name
+            target = _load_project_target_at(projects_fd, name)
+            registered.append(_registered_project(config_path, target))
+            workspace_paths.add(config_path.absolute())
+    for config_path in config_paths:
+        if config_path.absolute() in workspace_paths:
+            continue
+        target = load_project_target(config_path)
+        registered.append(_registered_project(config_path, target))
     return registered
+
+
+def _load_project_target_at(directory_fd: int, name: str) -> dict[str, object]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(name, flags, dir_fd=directory_fd)
+    try:
+        return load_project_target(Path(f"/dev/fd/{descriptor}"))
+    finally:
+        os.close(descriptor)
+
+
+def _registered_project(
+    config_path: Path,
+    target: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "config_path": config_path,
+        "key": normalize_project_key(str(target.get("key", config_path.stem))),
+        "name": str(target.get("name", config_path.stem)),
+        "root": _configured_root(config_path, target),
+    }
 
 
 def _find_root_match(

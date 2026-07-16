@@ -1,4 +1,5 @@
 import os
+import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -147,6 +148,26 @@ def test_import_recovers_when_filename_appears_after_config_snapshot(tmp_path: P
     assert len(list((workspace / "projects").glob("*.local.yaml"))) == 2
 
 
+def test_import_merges_stale_explicit_configs_with_workspace_discovery(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "sample"
+    root.mkdir()
+
+    first = import_project(workspace, str(root), requested_key="FIRST")
+    second = import_project(
+        workspace,
+        str(root),
+        requested_key="SECOND",
+        existing_configs=[],
+    )
+
+    assert first["project"]["project_key"] == second["project"]["project_key"]
+    assert second["created"] is False
+    assert len(list((workspace / "projects").glob("*.local.yaml"))) == 1
+
+
 def test_import_rejects_target_root_as_workspace_without_writing(tmp_path: Path) -> None:
     root = tmp_path / "project"
     root.mkdir()
@@ -222,6 +243,67 @@ def test_concurrent_import_same_root_with_different_keys_creates_one_project(
     assert len(list((tmp_path / "workspace" / "projects").glob("*.local.yaml"))) == 1
 
 
+def test_concurrent_import_merges_both_stale_explicit_config_snapshots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    results = _run_barrier_imports(
+        tmp_path,
+        monkeypatch,
+        requested_keys=("FIRST", "SECOND"),
+        existing_configs=[],
+    )
+
+    assert len({result["project"]["project_key"] for result in results}) == 1
+    assert sorted(result["created"] for result in results) == [False, True]
+    assert len(list((tmp_path / "workspace" / "projects").glob("*.local.yaml"))) == 1
+
+
+@pytest.mark.parametrize("redirected_name", ["projects", "state"])
+def test_import_fails_closed_when_workspace_directory_is_swapped_after_validation(
+    tmp_path: Path,
+    monkeypatch,
+    redirected_name: str,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    root = tmp_path / "project"
+    redirected = root / "redirected"
+    redirected.mkdir(parents=True)
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    before = snapshot_target(root)
+    if redirected_name == "projects":
+        original_validate = project_import._validate_write_destination
+        swapped = False
+
+        def validate_then_swap(path: Path, target_root: Path, destination: Path):
+            nonlocal swapped
+            original_validate(path, target_root, destination)
+            if not swapped and destination.name.endswith(".local.yaml"):
+                swapped = True
+                (path / "projects").symlink_to(redirected, target_is_directory=True)
+
+        monkeypatch.setattr(project_import, "_validate_write_destination", validate_then_swap)
+    else:
+        original_validate_state = project_import._validate_project_state_destination
+
+        def validate_state_then_swap(path: Path, target_root: Path, key: str):
+            original_validate_state(path, target_root, key)
+            (path / "state").symlink_to(redirected, target_is_directory=True)
+
+        monkeypatch.setattr(
+            project_import,
+            "_validate_project_state_destination",
+            validate_state_then_swap,
+        )
+    with pytest.raises(ProjectImportError) as error:
+        import_project(workspace, str(root))
+
+    assert error.value.code == "project_workspace_not_isolated"
+    assert snapshot_target(root) == before
+
+
 def test_config_publish_does_not_expose_partial_content(
     tmp_path: Path,
     monkeypatch,
@@ -235,7 +317,14 @@ def test_config_publish_does_not_expose_partial_content(
     original_link = os.link
 
     def guarded_link(source, target, *args, **kwargs):
-        assert Path(source).read_text(encoding="utf-8") == content
+        source_dir_fd = kwargs.get("src_dir_fd")
+        if source_dir_fd is None:
+            observed = Path(source).read_text(encoding="utf-8")
+        else:
+            descriptor = os.open(source, os.O_RDONLY, dir_fd=source_dir_fd)
+            with os.fdopen(descriptor, encoding="utf-8") as source_file:
+                observed = source_file.read()
+        assert observed == content
         ready_to_publish.set()
         assert allow_publish.wait(timeout=5)
         return original_link(source, target, *args, **kwargs)
@@ -277,6 +366,7 @@ def _run_barrier_imports(
     monkeypatch,
     *,
     requested_keys: tuple[str, str],
+    existing_configs: list[Path] | None = None,
 ) -> list[dict[str, object]]:
     workspace = tmp_path / "workspace"
     root = tmp_path / "sample"
@@ -287,8 +377,8 @@ def _run_barrier_imports(
     @contextmanager
     def synchronized_lock(path: Path):
         contenders_ready.wait(timeout=5)
-        with original_lock(path):
-            yield
+        with original_lock(path) as workspace_fd:
+            yield workspace_fd
 
     monkeypatch.setattr(project_import, "_workspace_import_lock", synchronized_lock)
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -298,7 +388,80 @@ def _run_barrier_imports(
                 workspace,
                 str(root),
                 requested_key=requested_key,
+                existing_configs=existing_configs,
             )
             for requested_key in requested_keys
         ]
         return [future.result(timeout=10) for future in futures]
+
+
+def _process_import_worker(
+    workspace_value: str,
+    root_value: str,
+    requested_key: str,
+    barrier,
+    results,
+) -> None:
+    barrier.wait(timeout=10)
+    result = import_project(
+        Path(workspace_value),
+        root_value,
+        requested_key=requested_key,
+    )
+    results.put((result["created"], result["project"]["project_key"]))
+
+
+def _process_exit_while_locked(workspace_value: str, ready) -> None:
+    with project_import._workspace_import_lock(Path(workspace_value)):
+        ready.set()
+        os._exit(17)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="project import locking requires POSIX")
+def test_concurrent_process_imports_create_one_project(tmp_path: Path) -> None:
+    context = multiprocessing.get_context("spawn")
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "sample"
+    root.mkdir()
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_process_import_worker,
+            args=(str(workspace), str(root), requested_key, barrier, results),
+        )
+        for requested_key in ("FIRST", "SECOND")
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=15)
+        assert process.exitcode == 0
+
+    observed = [results.get(timeout=5) for _ in processes]
+    assert sorted(created for created, _key in observed) == [False, True]
+    assert len({key for _created, key in observed}) == 1
+    assert len(list((workspace / "projects").glob("*.local.yaml"))) == 1
+
+
+@pytest.mark.skipif(os.name != "posix", reason="project import locking requires POSIX")
+def test_process_exit_releases_workspace_lock(tmp_path: Path) -> None:
+    context = multiprocessing.get_context("spawn")
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "sample"
+    root.mkdir()
+    ready = context.Event()
+    process = context.Process(
+        target=_process_exit_while_locked,
+        args=(str(workspace), ready),
+    )
+
+    process.start()
+    assert ready.wait(timeout=10)
+    process.join(timeout=10)
+    assert process.exitcode == 17
+
+    result = import_project(workspace, str(root))
+    assert result["created"] is True
+    assert result["project"]["project_key"] == "SAMPLE"
