@@ -3,14 +3,48 @@ import Button from '../../components/ui/Button';
 import InlineNotice from '../../components/ui/InlineNotice';
 import { useDirectoryPicker } from '../../hooks/useDirectoryPicker';
 import { translate } from '../../i18n';
-
-const RETRY_RECOVERY_ACTIONS = new Set(['retry', 'retry_request']);
+import {
+  projectErrorMessageKey,
+  projectRecoveryPresentation,
+} from './projectPresentation';
 
 function isAbortError(error) {
   return error?.name === 'AbortError';
 }
 
-export default function LoadProjectPanel({ api, language, onImported }) {
+function defaultReloadPage() {
+  globalThis.location?.reload();
+}
+
+function pickerStrings(t) {
+  return {
+    browserLabel: t('projects.directoryPicker.browserLabel'),
+    directoryTitle: t('projects.directoryPicker.directoryTitle'),
+    fileTitle: t('projects.directoryPicker.fileTitle'),
+    directoryDescription: t('projects.directoryPicker.directoryDescription'),
+    fileDescription: t('projects.directoryPicker.fileDescription'),
+    close: t('projects.directoryPicker.close'),
+    up: t('projects.directoryPicker.up'),
+    newFolderLabel: t('projects.directoryPicker.newFolderLabel'),
+    newFolderPlaceholder: t('projects.directoryPicker.newFolderPlaceholder'),
+    newFolderAction: t('projects.directoryPicker.newFolderAction'),
+    newFolderRequired: t('projects.directoryPicker.newFolderRequired'),
+    loading: t('projects.directoryPicker.loading'),
+    errorTitle: t('projects.directoryPicker.errorTitle'),
+    emptyDirectory: t('projects.directoryPicker.emptyDirectory'),
+    noSelectableFiles: t('projects.directoryPicker.noSelectableFiles'),
+    cancel: t('projects.directoryPicker.cancel'),
+    selectFolder: t('projects.directoryPicker.selectFolder'),
+    gitRepository: t('projects.directoryPicker.gitRepository'),
+  };
+}
+
+export default function LoadProjectPanel({
+  api,
+  language,
+  onImported,
+  reloadPage = defaultReloadPage,
+}) {
   const inputId = useId();
   const inputRef = useRef(null);
   const [root, setRoot] = useState('');
@@ -21,6 +55,7 @@ export default function LoadProjectPanel({ api, language, onImported }) {
   const { chooseLocalPath, directoryPickerModal } = useDirectoryPicker(
     (path) => setRoot(path),
     () => setError({ code: 'internal_error', recovery: ['choose_another_directory'] }),
+    { strings: pickerStrings(t) },
   );
 
   const browse = () => {
@@ -36,14 +71,32 @@ export default function LoadProjectPanel({ api, language, onImported }) {
     });
   };
 
+  const returnToProjects = () => {
+    setError(null);
+    inputRef.current?.focus();
+  };
+
   const submit = async (event) => {
     event?.preventDefault();
     if (busy) return;
+    const trimmedRoot = root.trim();
+    if (!trimmedRoot.startsWith('/')) {
+      setError({ code: 'invalid_project_root', recovery: ['choose_another_directory'] });
+      inputRef.current?.focus();
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
-      const payload = await api.importProject({ root: root.trim() });
-      onImported(payload);
+      const payload = await api.importProject({ root: trimmedRoot });
+      if (!payload || typeof payload.home_url !== 'string' || !payload.home_url) {
+        throw Object.assign(new Error('Invalid import response.'), {
+          code: 'invalid_response',
+          recovery: ['retry'],
+        });
+      }
+      onImported?.(payload);
     } catch (caught) {
       if (!isAbortError(caught)) {
         setError(caught);
@@ -53,8 +106,19 @@ export default function LoadProjectPanel({ api, language, onImported }) {
     }
   };
 
-  const errorCode = error?.code || 'internal_error';
   const recovery = Array.isArray(error?.recovery) ? error.recovery : [];
+  const guidance = [...new Set(recovery.filter(
+    (item) => projectRecoveryPresentation(item) === 'guidance',
+  ))];
+  const recoveryActions = [];
+  const actionKinds = new Set();
+  for (const item of recovery) {
+    const presentation = projectRecoveryPresentation(item);
+    if (!['choose', 'retry', 'reload_page', 'return'].includes(presentation)) continue;
+    if (actionKinds.has(presentation)) continue;
+    actionKinds.add(presentation);
+    recoveryActions.push({ item, presentation });
+  }
 
   return (
     <section className="projects-load-panel" aria-labelledby="projects-load-title">
@@ -85,12 +149,7 @@ export default function LoadProjectPanel({ api, language, onImported }) {
               aria-invalid={error ? 'true' : undefined}
               aria-describedby={error ? `${inputId}-error` : `${inputId}-help`}
             />
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={browse}
-              aria-label={t('projects.directory.browse')}
-            >
+            <Button type="button" variant="secondary" onClick={browse}>
               {t('projects.directory.browse')}
             </Button>
           </div>
@@ -103,24 +162,38 @@ export default function LoadProjectPanel({ api, language, onImported }) {
           <InlineNotice
             id={`${inputId}-error`}
             tone="error"
-            title={t(`projects.errors.${errorCode}`)}
-            action={recovery.includes('choose_another_directory') ? (
-              <Button type="button" variant="secondary" onClick={browse}>
-                {t('projects.recovery.choose_another_directory')}
-              </Button>
-            ) : recovery.some((item) => RETRY_RECOVERY_ACTIONS.has(item)) ? (
-              <Button type="button" variant="secondary" onClick={submit}>
-                {t('projects.recovery.retry')}
-              </Button>
+            title={t(projectErrorMessageKey(error?.code))}
+            action={recoveryActions.length > 0 ? (
+              <div className="projects-recovery-actions">
+                {recoveryActions.map(({ item, presentation }) => (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    key={presentation}
+                    onClick={presentation === 'choose'
+                      ? browse
+                      : presentation === 'reload_page'
+                        ? reloadPage
+                        : presentation === 'return'
+                          ? returnToProjects
+                          : submit}
+                  >
+                    {t(`projects.recovery.${item}`)}
+                  </Button>
+                ))}
+              </div>
             ) : null}
           >
-            {recovery
-              .filter((item) => item !== 'choose_another_directory' && !RETRY_RECOVERY_ACTIONS.has(item))
-              .map((item) => (
-                <span className="projects-recovery-guidance" key={item}>
-                  {t(`projects.recovery.${item}`)}
-                </span>
-              ))}
+            {guidance.map((item) => (
+              <span className="projects-recovery-guidance" key={item}>
+                {t(`projects.recovery.${item}`)}
+              </span>
+            ))}
+            {error?.requestId ? (
+              <span className="projects-request-id" data-monospace>
+                {t('projects.requestId', { requestId: error.requestId })}
+              </span>
+            ) : null}
           </InlineNotice>
         ) : null}
 

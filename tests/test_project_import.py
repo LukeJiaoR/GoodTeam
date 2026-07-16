@@ -602,6 +602,19 @@ def test_import_rejects_missing_root_with_stable_code(tmp_path: Path) -> None:
         raise AssertionError("expected missing root to fail")
 
 
+def test_import_rejects_relative_root_before_workspace_or_target_resolution(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+
+    with pytest.raises(project_import.ProjectImportError) as error:
+        import_project(workspace, "relative/project")
+
+    assert error.value.code == "project_root_not_absolute"
+    assert error.value.details == {"root": "relative/project"}
+    assert workspace.exists() is False
+
+
 def test_import_rejects_unreadable_root_with_stable_code(
     tmp_path: Path,
     monkeypatch,

@@ -328,6 +328,23 @@
   display: block;
 }
 
+.product-shell .projects-request-id {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+}
+
+.product-shell .projects-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.product-shell [role="dialog"] :focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
 .product-shell .projects-list-state,
 .product-shell .project-groups {
   margin-top: 1.5rem;

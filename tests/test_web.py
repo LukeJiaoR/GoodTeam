@@ -231,6 +231,22 @@ def test_api_project_import_returns_structured_missing_root_error(tmp_path: Path
     assert payload["request_id"]
 
 
+def test_api_project_import_rejects_relative_root_with_stable_recovery(
+    tmp_path: Path,
+) -> None:
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": "relative/project"},
+    )
+
+    assert status == 400
+    assert payload["code"] == "project_root_not_absolute"
+    assert payload["details"] == {"root": "relative/project"}
+    assert payload["recovery"] == ["choose_another_directory"]
+    assert payload["request_id"]
+
+
 def test_api_project_import_duplicate_returns_ok(tmp_path: Path) -> None:
     root = tmp_path / "target"
     root.mkdir()

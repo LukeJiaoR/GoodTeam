@@ -40,7 +40,15 @@ def import_project(
     requested_key: str = "",
     existing_configs: list[Path] | None = None,
 ) -> dict[str, object]:
-    root = Path(root_value).expanduser().resolve()
+    raw_root = str(root_value)
+    unresolved_root = Path(raw_root)
+    if not unresolved_root.is_absolute():
+        raise ProjectImportError(
+            "project_root_not_absolute",
+            "Project root must be an absolute path.",
+            details={"root": raw_root},
+        )
+    root = unresolved_root.expanduser().resolve()
     _validate_root(root)
     workspace = _validate_workspace_isolation(workspace, root)
     try:

@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -5,6 +6,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ApiError, requestJson } from '../../lib/api/client';
 import ProjectsPage from './ProjectsPage';
 import { importProject } from './projectApi';
+import { normalizeProjectsPayload } from './projectList';
+import {
+  projectErrorMessageKey,
+  projectRecoveryPresentation,
+} from './projectPresentation';
 
 const chooseLocalPath = vi.hoisted(() => vi.fn());
 
@@ -25,10 +31,15 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function renderProjects({ api, language = 'en', navigate = vi.fn() } = {}) {
+function renderProjects({ api, language = 'en', navigate = vi.fn(), ...pageProps } = {}) {
   const result = render(
     <MemoryRouter>
-      <ProjectsPage api={api} navigate={navigate} language={language} />
+      <ProjectsPage
+        api={api}
+        navigate={navigate}
+        language={language}
+        {...pageProps}
+      />
     </MemoryRouter>,
   );
   return { ...result, navigate };
@@ -104,6 +115,86 @@ describe('requestJson', () => {
       code: 'invalid_response',
     });
   });
+
+  test.each([
+    ['empty', ''],
+    ['null', 'null'],
+    ['array', '[]'],
+    ['string', '"payload"'],
+    ['number', '42'],
+  ])('rejects a successful %s body as invalid_response', async (_label, body) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 200 })));
+
+    await expect(requestJson('/api/projects')).rejects.toMatchObject({
+      code: 'invalid_response',
+      status: 200,
+    });
+  });
+
+  test('preserves a fetch-level network failure', async () => {
+    const failure = new TypeError('offline');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(failure));
+
+    await expect(requestJson('/api/projects')).rejects.toBe(failure);
+  });
+
+  test('rejects array-shaped structured error details', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 'invalid_request',
+      message: 'bad request',
+      details: ['not', 'an', 'object'],
+    }), { status: 400 })));
+
+    await expect(requestJson('/api/projects')).rejects.toMatchObject({
+      code: 'invalid_request',
+      details: {},
+    });
+  });
+});
+
+test.each([
+  'invalid_request',
+  'invalid_project_root',
+  'project_root_not_absolute',
+  'invalid_project_key',
+  'invalid_project_mode',
+  'project_not_found',
+  'project_root_not_found',
+  'project_root_not_directory',
+  'project_root_not_readable',
+  'project_root_unavailable',
+  'project_workspace_not_isolated',
+  'project_readiness_mismatch',
+  'project_readiness_missing',
+  'same_origin_required',
+  'internal_error',
+  'invalid_response',
+])('maps known project error %s to an explicit translation key', (code) => {
+  expect(projectErrorMessageKey(code)).toBe(`projects.errors.${code}`);
+});
+
+test('maps unknown project errors to generic localized copy', () => {
+  expect(projectErrorMessageKey('raw_server_secret')).toBe('product.errors.generic');
+});
+
+test.each([
+  ['choose_another_directory', 'choose'],
+  ['retry', 'retry'],
+  ['retry_request', 'retry'],
+  ['retry_from_goodteam_origin', 'reload_page'],
+  ['reload_project', 'retry'],
+  ['return_to_projects', 'return'],
+  ['fix_permissions', 'guidance'],
+  ['report_request_id', 'guidance'],
+  ['edit_project_settings', 'ignore'],
+  ['choose_project_mode', 'ignore'],
+  ['choose_project', 'ignore'],
+])('classifies known recovery %s without raw-key rendering', (recovery, presentation) => {
+  expect(projectRecoveryPresentation(recovery)).toBe(presentation);
+});
+
+test('safely ignores unknown recovery identifiers', () => {
+  expect(projectRecoveryPresentation('open_untrusted_url')).toBe('ignore');
 });
 
 test('project import posts only the selected root', async () => {
@@ -162,6 +253,9 @@ test('shows a shape-matching skeleton, then groups projects in product priority 
   expect(groups.map((group) => within(group).getByRole('heading', { level: 3 }).textContent))
     .toEqual(['Needs attention', 'Active runs', 'Preparing', 'Ready', 'Legacy projects']);
   expect(screen.getAllByRole('article')).toHaveLength(5);
+  const attentionArticle = screen.getByRole('heading', { level: 4, name: 'Attention' }).closest('article');
+  expect(within(attentionArticle).getByText('Needs attention')).toBeVisible();
+  expect(within(attentionArticle).queryByText('Active run')).not.toBeInTheDocument();
 });
 
 test('renders a localized empty portfolio after the project list resolves', async () => {
@@ -195,6 +289,24 @@ test('loads a selected project once and navigates to its server home URL', async
   expect(api.importProject).toHaveBeenCalledTimes(1);
   expect(api.importProject).toHaveBeenCalledWith({ root: '/tmp/demo' });
   expect(navigate).toHaveBeenCalledWith('/projects/DEMO/home');
+});
+
+test('rejects a relative project path inline without posting and returns focus to the field', async () => {
+  const user = userEvent.setup();
+  const api = {
+    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
+    importProject: vi.fn(),
+  };
+  renderProjects({ api });
+  const input = await screen.findByLabelText('Project directory');
+  await user.type(input, 'relative/project');
+
+  await user.click(screen.getByRole('button', { name: 'Load project' }));
+
+  expect(api.importProject).not.toHaveBeenCalled();
+  expect(await screen.findByText('Enter an absolute project directory.')).toBeVisible();
+  expect(input).toHaveValue('relative/project');
+  expect(input).toHaveFocus();
 });
 
 test('uses the directory picker and writes its selection into the absolute path field', async () => {
@@ -281,8 +393,201 @@ test('shows localized server recovery inline and preserves the entered path', as
 
   expect(await screen.findByText('GoodTeam cannot read this directory.')).toBeVisible();
   expect(screen.getByText('Check directory permissions')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Choose another directory' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Choose another directory' }));
+  expect(chooseLocalPath).toHaveBeenCalledTimes(1);
   expect(input).toHaveValue('/private/repo');
+});
+
+test('localizes unknown errors, ignores unknown recovery, and exposes the request ID', async () => {
+  const user = userEvent.setup();
+  const api = {
+    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
+    importProject: vi.fn().mockRejectedValue(Object.assign(new Error('sensitive raw text'), {
+      code: 'unmapped_backend_error',
+      recovery: ['open_untrusted_url'],
+      requestId: 'req-safe-42',
+    })),
+  };
+  renderProjects({ api, language: 'zh-CN' });
+  await user.type(await screen.findByLabelText('项目目录'), '/private/repo');
+  await user.click(screen.getByRole('button', { name: '加载项目' }));
+
+  expect(await screen.findByText('GoodTeam 无法完成此请求。')).toBeVisible();
+  expect(screen.getByText('请求 ID：req-safe-42')).toBeVisible();
+  expect(screen.queryByText(/unmapped_backend_error|open_untrusted_url|sensitive raw text/))
+    .not.toBeInTheDocument();
+});
+
+test('runs origin recovery through the injected reload action', async () => {
+  const user = userEvent.setup();
+  const reloadPage = vi.fn();
+  const api = {
+    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
+    importProject: vi.fn().mockRejectedValue(Object.assign(new Error('origin'), {
+      code: 'same_origin_required',
+      recovery: ['retry_from_goodteam_origin'],
+    })),
+  };
+  renderProjects({ api, reloadPage });
+  await user.type(await screen.findByLabelText('Project directory'), '/work/demo');
+  await user.click(screen.getByRole('button', { name: 'Load project' }));
+
+  await user.click(await screen.findByRole('button', { name: 'Retry from the GoodTeam application' }));
+  expect(reloadPage).toHaveBeenCalledTimes(1);
+});
+
+test.each([
+  ['retry', 'Try again'],
+  ['retry_request', 'Try again'],
+  ['reload_project', 'Reload project'],
+])('executes %s recovery by resubmitting the preserved root', async (recovery, label) => {
+  const user = userEvent.setup();
+  const navigate = vi.fn();
+  const api = {
+    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
+    importProject: vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('retry'), {
+        code: 'internal_error',
+        recovery: [recovery],
+      }))
+      .mockResolvedValueOnce({ home_url: '/projects/RETRIED/home' }),
+  };
+  renderProjects({ api, navigate });
+  await user.type(await screen.findByLabelText('Project directory'), '/work/retry');
+  await user.click(screen.getByRole('button', { name: 'Load project' }));
+
+  await user.click(await screen.findByRole('button', { name: label }));
+
+  expect(api.importProject).toHaveBeenCalledTimes(2);
+  expect(api.importProject).toHaveBeenLastCalledWith({ root: '/work/retry' });
+  expect(navigate).toHaveBeenCalledWith('/projects/RETRIED/home');
+});
+
+test('return-to-projects recovery clears the inline error and focuses the preserved field', async () => {
+  const user = userEvent.setup();
+  const api = {
+    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
+    importProject: vi.fn().mockRejectedValue(Object.assign(new Error('return'), {
+      code: 'project_readiness_mismatch',
+      recovery: ['return_to_projects'],
+    })),
+  };
+  renderProjects({ api });
+  const input = await screen.findByLabelText('Project directory');
+  await user.type(input, '/work/return');
+  await user.click(screen.getByRole('button', { name: 'Load project' }));
+
+  await user.click(await screen.findByRole('button', { name: 'Return to projects' }));
+
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(input).toHaveValue('/work/return');
+  expect(input).toHaveFocus();
+});
+
+test.each([
+  { label: 'missing project object', payload: { projects: [{}] } },
+  {
+    label: 'empty project key',
+    payload: { projects: [project({ key: '', name: 'Broken', lifecycle: 'ready' })] },
+  },
+  {
+    label: 'invalid root',
+    payload: { projects: [{
+      ...project({ key: 'BROKEN', name: 'Broken', lifecycle: 'ready' }),
+      project: { project_key: 'BROKEN', display_name: 'Broken', root: null },
+    }] },
+  },
+  {
+    label: 'invalid readiness',
+    payload: { projects: [{
+      ...project({ key: 'BROKEN', name: 'Broken', lifecycle: 'ready' }),
+      readiness: null,
+    }] },
+  },
+  {
+    label: 'invalid attention count',
+    payload: { projects: [{
+      ...project({ key: 'BROKEN', name: 'Broken', lifecycle: 'ready' }),
+      attention_count: -1,
+    }] },
+  },
+  {
+    label: 'invalid active run',
+    payload: { projects: [{
+      ...project({ key: 'BROKEN', name: 'Broken', lifecycle: 'ready' }),
+      active_run: { run_id: '', next_node: 'work' },
+    }] },
+  },
+])('turns $label list payload into a stable list error', async ({ payload }) => {
+  const api = {
+    listProjects: vi.fn().mockResolvedValue(payload),
+    importProject: vi.fn(),
+  };
+  renderProjects({ api });
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('GoodTeam could not complete this request.');
+  expect(screen.queryByRole('article')).not.toBeInTheDocument();
+});
+
+test('normalizes unknown lifecycle to legacy and keeps the first duplicate key', () => {
+  const payload = {
+    projects: [
+      project({ key: 'SAME', name: 'First', lifecycle: 'future_state' }),
+      project({ key: 'SAME', name: 'Second', lifecycle: 'ready' }),
+    ],
+  };
+
+  expect(normalizeProjectsPayload(payload)).toMatchObject([
+    {
+      project: { project_key: 'SAME', display_name: 'First' },
+      readiness: { lifecycle: 'legacy' },
+    },
+  ]);
+});
+
+test('survives StrictMode list cancellation and renders only the current request', async () => {
+  const signals = [];
+  const api = {
+    listProjects: vi.fn(({ signal }) => {
+      signals.push(signal);
+      return Promise.resolve({
+        projects: [project({ key: 'CURRENT', name: 'Current', lifecycle: 'ready' })],
+      });
+    }),
+    importProject: vi.fn(),
+  };
+
+  render(
+    <StrictMode>
+      <MemoryRouter>
+        <ProjectsPage api={api} navigate={vi.fn()} language="en" />
+      </MemoryRouter>
+    </StrictMode>,
+  );
+
+  expect(await screen.findByRole('article')).toHaveTextContent('Current');
+  expect(api.listProjects).toHaveBeenCalledTimes(2);
+  expect(signals[0].aborted).toBe(true);
+  expect(signals[1].aborted).toBe(false);
+});
+
+test('retry replaces the list error with only the fresh normalized response', async () => {
+  const user = userEvent.setup();
+  const api = {
+    listProjects: vi.fn()
+      .mockRejectedValueOnce(new Error('first failed'))
+      .mockResolvedValueOnce({
+        projects: [project({ key: 'FRESH', name: 'Fresh', lifecycle: 'ready' })],
+      }),
+    importProject: vi.fn(),
+  };
+  renderProjects({ api });
+  await screen.findByRole('alert');
+
+  await user.click(screen.getByRole('button', { name: 'Try again' }));
+
+  expect(await screen.findByRole('article')).toHaveTextContent('Fresh');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 
 test('renders no first-slice dead navigation', async () => {

@@ -9,7 +9,9 @@ export class ApiError extends Error {
     this.name = 'ApiError';
     this.status = status;
     this.code = normalizedPayload.code || 'unknown_error';
-    this.details = normalizedPayload.details && typeof normalizedPayload.details === 'object'
+    this.details = normalizedPayload.details
+      && typeof normalizedPayload.details === 'object'
+      && !Array.isArray(normalizedPayload.details)
       ? normalizedPayload.details
       : {};
     this.recovery = Array.isArray(normalizedPayload.recovery)

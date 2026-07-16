@@ -142,6 +142,7 @@ FS_LIST_IGNORED_NAMES = {".git", ".github", ".venv", "__pycache__", "node_module
 DISPATCH_TRACK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 IMPORT_ERROR_STATUS = {
+    "project_root_not_absolute": 400,
     "project_root_not_found": 404,
     "project_root_not_directory": 400,
     "project_root_not_readable": 403,
@@ -149,6 +150,7 @@ IMPORT_ERROR_STATUS = {
     "project_readiness_mismatch": 409,
 }
 IMPORT_ERROR_RECOVERY = {
+    "project_root_not_absolute": ["choose_another_directory"],
     "project_root_not_found": ["choose_another_directory"],
     "project_root_not_directory": ["choose_another_directory"],
     "project_root_not_readable": ["fix_permissions", "choose_another_directory"],

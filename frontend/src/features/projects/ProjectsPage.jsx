@@ -5,6 +5,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import { translate } from '../../i18n';
 import LoadProjectPanel from './LoadProjectPanel';
 import { projectApi } from './projectApi';
+import { normalizeProjectsPayload } from './projectList';
 
 const GROUP_ORDER = ['attentionRequired', 'activeRun', 'preparing', 'ready', 'legacy'];
 
@@ -20,8 +21,8 @@ function groupForProject(item) {
 }
 
 function lifecycleTone(lifecycle, activeRun) {
-  if (activeRun) return 'active';
   if (lifecycle === 'attention_required') return 'warning';
+  if (activeRun) return 'active';
   if (lifecycle === 'ready') return 'success';
   if (lifecycle === 'preparing') return 'pending';
   return 'neutral';
@@ -55,6 +56,7 @@ export default function ProjectsPage({
   api: apiOverride,
   navigate: navigateOverride,
   language: languageOverride,
+  reloadPage,
 }) {
   const routerNavigate = useNavigate();
   const outletContext = useOutletContext();
@@ -71,16 +73,12 @@ export default function ProjectsPage({
     api.listProjects({ signal: controller.signal })
       .then((payload) => {
         if (controller.signal.aborted) return;
-        if (!Array.isArray(payload?.projects)) {
-          throw Object.assign(new Error('Invalid project list response.'), {
-            code: 'invalid_response',
-          });
-        }
-        setProjects(payload.projects);
+        setProjects(normalizeProjectsPayload(payload));
         setStatus('ready');
       })
       .catch((error) => {
         if (!isAbortError(error, controller.signal)) {
+          setProjects([]);
           setStatus('error');
         }
       });
@@ -109,6 +107,7 @@ export default function ProjectsPage({
         <LoadProjectPanel
           api={api}
           language={language}
+          reloadPage={reloadPage}
           onImported={(payload) => navigate(payload.home_url)}
         />
 
@@ -159,9 +158,11 @@ export default function ProjectsPage({
                     {group.projects.map((item) => {
                       const project = item.project || {};
                       const lifecycle = item.readiness?.lifecycle || 'legacy';
-                      const statusLabel = item.active_run
-                        ? t('projects.lifecycle.active')
-                        : t(`projects.lifecycle.${lifecycle}`);
+                      const statusLabel = lifecycle === 'attention_required'
+                        ? t('projects.lifecycle.attention_required')
+                        : item.active_run
+                          ? t('projects.lifecycle.active')
+                          : t(`projects.lifecycle.${lifecycle}`);
                       const attentionCount = Number(item.attention_count) || 0;
                       return (
                         <article className="project-row" key={project.project_key}>
