@@ -59,6 +59,40 @@ def import_project(
         raise _workspace_not_isolated_error(workspace, root) from exc
 
 
+def confirm_project_mode(
+    workspace: Path,
+    project_key: str,
+    root: Path,
+    mode: str,
+) -> dict[str, object]:
+    root = Path(root).expanduser().resolve()
+    _validate_root(root)
+    workspace = _validate_workspace_isolation(workspace, root)
+    key = normalize_project_key(project_key)
+    _validate_project_state_destination(workspace, root, key)
+    try:
+        with _workspace_import_lock(workspace) as workspace_fd:
+            readiness_store = ProjectReadinessStore(
+                workspace,
+                workspace_fd=workspace_fd,
+            )
+            try:
+                readiness = readiness_store.confirm_mode(key, mode)
+                readiness_store._verify_anchored_write(key)
+                readiness_store._commit_anchored_write(key)
+                return readiness
+            except BaseException:
+                try:
+                    readiness_store._rollback_anchored_write(key)
+                except OSError:
+                    pass
+                raise
+    except OSError as exc:
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise
+        raise _workspace_not_isolated_error(workspace, root) from exc
+
+
 def _import_project_locked(
     workspace: Path,
     root: Path,

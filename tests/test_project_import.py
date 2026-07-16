@@ -1,3 +1,4 @@
+import json
 import os
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +40,104 @@ def test_import_writes_only_goodteam_workspace_state(tmp_path: Path) -> None:
     assert (workspace / "state" / "projects" / "EXISTING" / "readiness.json").is_file()
     assert not (root / "docs").exists()
     assert not (root / ".git").exists()
+
+
+def test_confirm_project_mode_serializes_concurrent_read_modify_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+    readiness["steps"].append({"id": "external_fact", "status": "pending", "required": False})
+    readiness_path.write_text(json.dumps(readiness), encoding="utf-8")
+    contenders_ready = Barrier(2)
+    original_lock = project_import._workspace_import_lock
+
+    @contextmanager
+    def synchronized_lock(path: Path):
+        contenders_ready.wait(timeout=5)
+        with original_lock(path) as workspace_fd:
+            yield workspace_fd
+
+    monkeypatch.setattr(project_import, "_workspace_import_lock", synchronized_lock)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                project_import.confirm_project_mode,
+                workspace,
+                key,
+                root,
+                mode,
+            )
+            for mode in ("new_project", "existing_project")
+        ]
+        results = [future.result(timeout=10) for future in futures]
+
+    final = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert {result["project_mode"] for result in results} == {
+        "new_project",
+        "existing_project",
+    }
+    assert final["project_mode"] in {"new_project", "existing_project"}
+    assert [step["id"] for step in final["steps"]].count("external_fact") == 1
+    assert not list(readiness_path.parent.glob("*.tmp"))
+
+
+def test_confirm_project_mode_fails_closed_after_state_validation_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    redirected = root / "redirected"
+    redirected.mkdir(parents=True)
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    source_readiness = workspace / "state" / "projects" / key / "readiness.json"
+    external_payload = json.loads(source_readiness.read_text(encoding="utf-8"))
+    external_payload["owner"] = "external"
+    external_content = json.dumps(external_payload, sort_keys=True) + "\n"
+    external_readiness = redirected / "readiness.json"
+    external_readiness.write_text(external_content, encoding="utf-8")
+    before = snapshot_target(root)
+    original_validate = project_import._validate_project_state_destination
+    swapped = False
+
+    def validate_then_swap(path: Path, target_root: Path, project_key: str):
+        nonlocal swapped
+        original_validate(path, target_root, project_key)
+        if not swapped:
+            swapped = True
+            state_dir = workspace / "state"
+            state_dir.rename(workspace / "state-detached")
+            state_dir.symlink_to(redirected, target_is_directory=True)
+
+    monkeypatch.setattr(
+        project_import,
+        "_validate_project_state_destination",
+        validate_then_swap,
+    )
+
+    with pytest.raises(ProjectImportError) as error:
+        project_import.confirm_project_mode(
+            workspace,
+            key,
+            root,
+            "existing_project",
+        )
+
+    assert error.value.code == "project_workspace_not_isolated"
+    assert external_readiness.read_text(encoding="utf-8") == external_content
+    assert snapshot_target(root) == before
 
 
 def test_reimport_returns_existing_project_without_duplicate_config(tmp_path: Path) -> None:

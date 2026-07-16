@@ -13,7 +13,7 @@ from datetime import datetime, UTC
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote_to_bytes, urlparse
 from urllib.request import urlopen
 from uuid import uuid4
 
@@ -53,7 +53,11 @@ from goodteam_os.native_picker import choose_native_path
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
-from goodteam_os.project_import import ProjectImportError, import_project
+from goodteam_os.project_import import (
+    ProjectImportError,
+    confirm_project_mode,
+    import_project,
+)
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
 from goodteam_os.reviewer_evidence_snapshot import build_reviewer_evidence_snapshot
 from goodteam_os.reviewer_dispatch import (
@@ -141,11 +145,13 @@ IMPORT_ERROR_STATUS = {
     "project_root_not_found": 404,
     "project_root_not_directory": 400,
     "project_root_not_readable": 403,
+    "project_workspace_not_isolated": 400,
 }
 IMPORT_ERROR_RECOVERY = {
     "project_root_not_found": ["choose_another_directory"],
     "project_root_not_directory": ["choose_another_directory"],
     "project_root_not_readable": ["fix_permissions", "choose_another_directory"],
+    "project_workspace_not_isolated": ["choose_another_directory"],
 }
 
 
@@ -4240,7 +4246,10 @@ def _project_config_for_key(workspace: Path, project_key: str) -> Path:
     raise ValueError(f"No local project config found for project: {key}")
 
 
-def build_project_home(workspace: Path, project_key: str) -> dict[str, object]:
+def _project_target_and_root(
+    workspace: Path,
+    project_key: str,
+) -> tuple[str, dict[str, object], Path]:
     key = normalize_project_key(project_key)
     try:
         config = _project_config_for_key(workspace, key)
@@ -4255,15 +4264,6 @@ def build_project_home(workspace: Path, project_key: str) -> dict[str, object]:
     target = load_project_target(config)
     key = normalize_project_key(str(target.get("key", key)))
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
-    readiness = ProjectReadinessStore(workspace).read(key)
-    if readiness is None:
-        raise ProjectApiError(
-            "project_readiness_missing",
-            f"Project readiness is missing: {key}",
-            409,
-            details={"project_key": key},
-            recovery=["return_to_projects", "reload_project"],
-        )
     if root is None:
         raise ProjectApiError(
             "project_root_unavailable",
@@ -4271,6 +4271,27 @@ def build_project_home(workspace: Path, project_key: str) -> dict[str, object]:
             409,
             details={"project_key": key},
             recovery=["edit_project_settings", "return_to_projects"],
+        )
+    return key, target, root
+
+
+def build_project_home(
+    workspace: Path,
+    project_key: str,
+    *,
+    readiness_override: dict[str, object] | None = None,
+) -> dict[str, object]:
+    key, target, root = _project_target_and_root(workspace, project_key)
+    readiness = readiness_override
+    if readiness is None:
+        readiness = ProjectReadinessStore(workspace).read(key)
+    if readiness is None:
+        raise ProjectApiError(
+            "project_readiness_missing",
+            f"Project readiness is missing: {key}",
+            409,
+            details={"project_key": key},
+            recovery=["return_to_projects", "reload_project"],
         )
     state = StateStore(workspace).read_project_current(key)
     active_run = (
@@ -4357,9 +4378,9 @@ def handle_project_api_get(
 ) -> tuple[int, dict[str, object]] | None:
     if path == "/api/projects":
         return 200, build_project_list(workspace)
-    home_match = re.fullmatch(r"/api/projects/([^/]+)/home", path)
-    if home_match is not None:
-        return 200, build_project_home(workspace, home_match.group(1))
+    if path.startswith("/api/projects/") and path.endswith("/home"):
+        encoded_key = path.removeprefix("/api/projects/").removesuffix("/home")
+        return 200, build_project_home(workspace, _decode_project_api_key(encoded_key))
     return None
 
 
@@ -4384,9 +4405,10 @@ def handle_project_api_post(
             requested_key=str(request.get("project_key", "")),
         )
         return (201 if result["created"] else 200), result
-    mode_match = re.fullmatch(r"/api/projects/([^/]+)/mode", path)
-    if mode_match is None:
+    if not path.startswith("/api/projects/") or not path.endswith("/mode"):
         return None
+    encoded_key = path.removeprefix("/api/projects/").removesuffix("/mode")
+    key = _decode_project_api_key(encoded_key)
     mode = str(request.get("mode", ""))
     if mode not in {"new_project", "existing_project"}:
         raise ProjectApiError(
@@ -4396,10 +4418,69 @@ def handle_project_api_post(
             details={"mode": mode},
             recovery=["choose_project_mode"],
         )
-    key = normalize_project_key(mode_match.group(1))
-    build_project_home(workspace, key)
-    ProjectReadinessStore(workspace).confirm_mode(key, mode)
-    return 200, build_project_home(workspace, key)
+    key, _target, root = _project_target_and_root(workspace, key)
+    try:
+        readiness = confirm_project_mode(workspace, key, root, mode)
+    except ValueError as exc:
+        if not str(exc).startswith("No readiness found for project:"):
+            raise
+        raise ProjectApiError(
+            "project_readiness_missing",
+            f"Project readiness is missing: {key}",
+            409,
+            details={"project_key": key},
+            recovery=["return_to_projects", "reload_project"],
+        ) from exc
+    return 200, build_project_home(
+        workspace,
+        key,
+        readiness_override=readiness,
+    )
+
+
+def _decode_project_api_key(encoded_key: str) -> str:
+    try:
+        if re.search(r"%(?![0-9A-Fa-f]{2})", encoded_key):
+            raise ValueError("malformed percent escape")
+        decoded = unquote_to_bytes(encoded_key).decode("utf-8", errors="strict")
+        if "/" in decoded or "\x00" in decoded:
+            raise ValueError("project key must be one URL segment")
+        return normalize_project_key(decoded)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ProjectApiError(
+            "invalid_project_key",
+            "Project key must be one valid UTF-8 URL segment.",
+            400,
+            details={"project_key": encoded_key},
+            recovery=["return_to_projects", "choose_project"],
+        ) from exc
+
+
+def _is_project_api_post_path(path: str) -> bool:
+    return bool(
+        path == "/api/projects/import"
+        or (path.startswith("/api/projects/") and path.endswith("/mode"))
+    )
+
+
+def _parse_project_api_request(raw_body: bytes) -> dict[str, object]:
+    try:
+        request = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProjectApiError(
+            "invalid_request",
+            "Request body must be a JSON object.",
+            400,
+            recovery=["retry_request"],
+        ) from exc
+    if not isinstance(request, dict):
+        raise ProjectApiError(
+            "invalid_request",
+            "Request body must be a JSON object.",
+            400,
+            recovery=["retry_request"],
+        )
+    return request
 
 
 def _project_api_error_response(
@@ -4660,10 +4741,7 @@ def build_dashboard_handler(workspace: Path):
 
         def do_POST(self) -> None:
             project_path = urlparse(self.path).path
-            is_project_path = bool(
-                project_path == "/api/projects/import"
-                or re.fullmatch(r"/api/projects/[^/]+/mode", project_path)
-            )
+            is_project_path = _is_project_api_post_path(project_path)
             normalized_path = project_path
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
@@ -4693,13 +4771,14 @@ def build_dashboard_handler(workspace: Path):
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length)
-                request = json.loads(raw_body.decode("utf-8") or "{}")
                 if is_project_path:
+                    request = _parse_project_api_request(raw_body)
                     response = handle_project_api_post(workspace, project_path, request)
                     assert response is not None
                     status, result = response
                     self._send_json(status, result)
                     return
+                request = json.loads(raw_body.decode("utf-8") or "{}")
                 if normalized_path == "/context-estimate":
                     result = context_estimate_for_request(workspace, request)
                 elif normalized_path == "/context-generate":
@@ -6040,10 +6119,7 @@ def serve(
 
         def do_POST(self) -> None:
             project_path = urlparse(self.path).path
-            is_project_path = bool(
-                project_path == "/api/projects/import"
-                or re.fullmatch(r"/api/projects/[^/]+/mode", project_path)
-            )
+            is_project_path = _is_project_api_post_path(project_path)
             normalized_path = project_path
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
@@ -6086,8 +6162,8 @@ def serve(
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length)
-                request = json.loads(raw_body.decode("utf-8") or "{}")
                 if is_project_path:
+                    request = _parse_project_api_request(raw_body)
                     project_response = handle_project_api_post(
                         workspace,
                         project_path,
@@ -6097,6 +6173,7 @@ def serve(
                     status, result = project_response
                     self._send_json(status, result)
                     return
+                request = json.loads(raw_body.decode("utf-8") or "{}")
                 if is_execution_path:
                     execution_response = handle_execution_post(normalized_path, request)
                     if execution_response is None:

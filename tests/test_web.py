@@ -1,7 +1,9 @@
 import json
 import inspect
+import queue
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import subprocess
 from pathlib import Path
@@ -9,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from goodteam_os import project_import
 import goodteam_os.web as web
 from goodteam_os.messages import append_message
 from goodteam_os.staging import delivery_contract_config
@@ -120,6 +123,37 @@ def _post_web_json(workspace: Path, route: str, payload: dict[str, object], *, o
             headers={
                 "Content-Type": "application/json",
                 "Origin": origin or f"http://127.0.0.1:{server.server_port}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _post_web_raw(
+    workspace: Path,
+    route: str,
+    payload: bytes,
+    *,
+    content_type: str = "application/json",
+):
+    server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(workspace))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}{route}",
+            data=payload,
+            method="POST",
+            headers={
+                "Content-Type": content_type,
+                "Origin": f"http://127.0.0.1:{server.server_port}",
             },
         )
         try:
@@ -348,6 +382,298 @@ def test_focused_and_full_handlers_share_project_api_dispatch() -> None:
     for helper_name in ("handle_project_api_get", "handle_project_api_post"):
         assert helper_name in focused_source
         assert helper_name in full_source
+
+
+@pytest.mark.parametrize(
+    "encoded_key",
+    [
+        "%",
+        "%ZZ",
+        "%E4",
+        "DEMO/OTHER",
+        "DEMO%2FOTHER",
+        "DEMO%2fOTHER",
+        "%00",
+        "---",
+    ],
+)
+def test_project_home_rejects_invalid_encoded_project_key(
+    tmp_path: Path,
+    encoded_key: str,
+) -> None:
+    status, payload = _get_web_json(
+        tmp_path,
+        f"/api/projects/{encoded_key}/home",
+    )
+
+    assert status == 400
+    assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
+    assert payload["code"] == "invalid_project_key"
+
+
+def test_project_mode_rejects_encoded_multi_segment_key(tmp_path: Path) -> None:
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/DEMO%2fOTHER/mode",
+        {"mode": "existing_project"},
+    )
+
+    assert status == 400
+    assert payload["code"] == "invalid_project_key"
+
+
+def test_unicode_project_key_home_and_mode_http_roundtrip(tmp_path: Path) -> None:
+    root = tmp_path / "unicode"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported_status, imported = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(root), "project_key": "项目", "display_name": "项目"},
+    )
+    encoded_key = urllib.parse.quote("项目", safe="")
+
+    home_status, home = _get_web_json(
+        tmp_path,
+        f"/api/projects/{encoded_key}/home",
+    )
+    mode_status, confirmed = _post_web_json(
+        tmp_path,
+        f"/api/projects/{encoded_key}/mode",
+        {"mode": "existing_project"},
+    )
+
+    assert imported_status == 201
+    assert imported["project"]["project_key"] == "项目"
+    assert home_status == 200
+    assert home["project"]["project_key"] == "项目"
+    assert mode_status == 200
+    assert confirmed["readiness"]["project_mode"] == "existing_project"
+
+
+@pytest.mark.parametrize("payload", [b"{", b"[]", b'"value"', b"null"])
+def test_project_post_rejects_malformed_or_non_object_json(
+    tmp_path: Path,
+    payload: bytes,
+) -> None:
+    status, response = _post_web_raw(
+        tmp_path,
+        "/api/projects/import",
+        payload,
+    )
+
+    assert status == 400
+    assert set(response) == {"code", "message", "details", "recovery", "request_id"}
+    assert response["code"] == "invalid_request"
+    assert payload.decode("utf-8", errors="ignore") not in response["message"]
+
+
+def test_project_import_workspace_isolation_has_explicit_http_recovery(
+    tmp_path: Path,
+) -> None:
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(tmp_path)},
+    )
+
+    assert status == 400
+    assert payload["code"] == "project_workspace_not_isolated"
+    assert "choose_another_directory" in payload["recovery"]
+
+
+def test_project_mode_static_symlink_fails_closed_without_target_write(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    redirected = root / "redirected"
+    redirected.mkdir(parents=True)
+    (root / "blob.bin").write_bytes(b"asset")
+    _post_web_json(workspace, "/api/projects/import", {"root": str(root)})
+    key_dir = workspace / "state" / "projects" / "PROJECT"
+    external_payload = json.loads((key_dir / "readiness.json").read_text(encoding="utf-8"))
+    external_payload["owner"] = "external"
+    external_content = json.dumps(external_payload, sort_keys=True) + "\n"
+    external_readiness = redirected / "readiness.json"
+    external_readiness.write_text(external_content, encoding="utf-8")
+    before = {
+        str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+        for path in sorted(root.rglob("*"))
+    }
+    key_dir.rename(workspace / "state" / "projects" / "PROJECT-detached")
+    key_dir.symlink_to(redirected, target_is_directory=True)
+
+    status, payload = _post_web_json(
+        workspace,
+        "/api/projects/PROJECT/mode",
+        {"mode": "existing_project"},
+    )
+
+    after = {
+        str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+        for path in sorted(root.rglob("*"))
+    }
+    assert status == 400
+    assert payload["code"] == "project_workspace_not_isolated"
+    assert external_readiness.read_text(encoding="utf-8") == external_content
+    assert after == before
+
+
+def test_project_mode_validation_swap_has_stable_http_isolation_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    redirected = root / "redirected"
+    redirected.mkdir(parents=True)
+    (root / "blob.bin").write_bytes(b"asset")
+    _post_web_json(workspace, "/api/projects/import", {"root": str(root)})
+    source_readiness = workspace / "state" / "projects" / "PROJECT" / "readiness.json"
+    external_payload = json.loads(source_readiness.read_text(encoding="utf-8"))
+    external_payload["owner"] = "external"
+    external_content = json.dumps(external_payload, sort_keys=True) + "\n"
+    external_readiness = redirected / "readiness.json"
+    external_readiness.write_text(external_content, encoding="utf-8")
+    before = {
+        str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+        for path in sorted(root.rglob("*"))
+    }
+    original_validate = project_import._validate_project_state_destination
+    swapped = False
+
+    def validate_then_swap(path: Path, target_root: Path, project_key: str):
+        nonlocal swapped
+        original_validate(path, target_root, project_key)
+        if not swapped:
+            swapped = True
+            state_dir = workspace / "state"
+            state_dir.rename(workspace / "state-detached")
+            state_dir.symlink_to(redirected, target_is_directory=True)
+
+    monkeypatch.setattr(
+        project_import,
+        "_validate_project_state_destination",
+        validate_then_swap,
+    )
+
+    status, payload = _post_web_json(
+        workspace,
+        "/api/projects/PROJECT/mode",
+        {"mode": "existing_project"},
+    )
+
+    after = {
+        str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+        for path in sorted(root.rglob("*"))
+    }
+    assert status == 400
+    assert payload["code"] == "project_workspace_not_isolated"
+    assert "choose_another_directory" in payload["recovery"]
+    assert external_readiness.read_text(encoding="utf-8") == external_content
+    assert after == before
+
+
+def test_full_handler_project_routes_use_shared_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    frontend_dist = tmp_path / "dist"
+    frontend_dist.mkdir()
+    (frontend_dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    created_servers: queue.Queue = queue.Queue()
+    server_type = web.ThreadingHTTPServer
+
+    class CapturingServer(server_type):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created_servers.put(self)
+
+    monkeypatch.setattr(web, "ThreadingHTTPServer", CapturingServer)
+    thread = threading.Thread(
+        target=web.serve,
+        kwargs={
+            "workspace": workspace,
+            "host": "127.0.0.1",
+            "port": 0,
+            "frontend_dist": frontend_dist,
+        },
+        daemon=True,
+    )
+    thread.start()
+    server = created_servers.get(timeout=5)
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        request = urllib.request.Request(
+            f"{base_url}/api/projects/import",
+            data=json.dumps({"root": str(root)}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": base_url},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            imported_status = response.status
+            imported = json.loads(response.read().decode("utf-8"))
+
+        malformed = urllib.request.Request(
+            f"{base_url}/api/projects/import",
+            data=b"{",
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": base_url},
+        )
+        with pytest.raises(urllib.error.HTTPError) as malformed_error:
+            urllib.request.urlopen(malformed, timeout=5)
+        malformed_payload = json.loads(malformed_error.value.read().decode("utf-8"))
+
+        non_object = urllib.request.Request(
+            f"{base_url}/api/projects/import",
+            data=b"[]",
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": base_url},
+        )
+        with pytest.raises(urllib.error.HTTPError) as non_object_error:
+            urllib.request.urlopen(non_object, timeout=5)
+        non_object_payload = json.loads(non_object_error.value.read().decode("utf-8"))
+
+        cross_origin = urllib.request.Request(
+            f"{base_url}/api/projects/PROJECT/mode",
+            data=json.dumps({"mode": "existing_project"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": "https://attacker.example"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as cross_origin_error:
+            urllib.request.urlopen(cross_origin, timeout=5)
+        cross_origin_payload = json.loads(cross_origin_error.value.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert imported_status == 201
+    assert imported["created"] is True
+    assert malformed_error.value.code == 400
+    assert set(malformed_payload) == {
+        "code",
+        "message",
+        "details",
+        "recovery",
+        "request_id",
+    }
+    assert malformed_payload["code"] == "invalid_request"
+    assert non_object_error.value.code == 400
+    assert set(non_object_payload) == {
+        "code",
+        "message",
+        "details",
+        "recovery",
+        "request_id",
+    }
+    assert non_object_payload["code"] == "invalid_request"
+    assert cross_origin_error.value.code == 403
+    assert cross_origin_payload["code"] == "same_origin_required"
 
 
 def _init_git_repo(path: Path) -> None:
