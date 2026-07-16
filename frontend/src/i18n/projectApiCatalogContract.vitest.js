@@ -10,34 +10,34 @@ const backendSource = fs.readFileSync(
 );
 
 function quotedValues(source) {
-  return [...source.matchAll(/"([a-z][a-z0-9_]*)"/g)].map((match) => match[1]);
+  return [...source.matchAll(/(["'])([a-z][a-z0-9_]*)\1/g)].map((match) => match[2]);
 }
 
-function mappingBlock(name) {
-  const match = backendSource.match(new RegExp(`${name} = \\{([\\s\\S]*?)\\n\\}`));
+function mappingBlock(source, name) {
+  const match = source.match(new RegExp(`${name} = \\{([\\s\\S]*?)\\n\\}`));
   if (!match) throw new Error(`Missing backend mapping: ${name}`);
   return match[1];
 }
 
-function mappingListValues(name) {
-  return [...mappingBlock(name).matchAll(/:\s*\[([^\]]*)\]/g)]
+function mappingListValues(source, name) {
+  return [...mappingBlock(source, name).matchAll(/:\s*\[([^\]]*)\]/g)]
     .flatMap((match) => quotedValues(match[1]));
 }
 
-function callBodies(name) {
+function callBodies(source, name) {
   const marker = `${name}(`;
   const bodies = [];
   let cursor = 0;
-  while (cursor < backendSource.length) {
-    const callStart = backendSource.indexOf(marker, cursor);
+  while (cursor < source.length) {
+    const callStart = source.indexOf(marker, cursor);
     if (callStart < 0) break;
     const bodyStart = callStart + marker.length;
     let depth = 1;
     let quote = '';
     let escaped = false;
     let index = bodyStart;
-    for (; index < backendSource.length; index += 1) {
-      const character = backendSource[index];
+    for (; index < source.length; index += 1) {
+      const character = source[index];
       if (quote) {
         if (escaped) escaped = false;
         else if (character === '\\') escaped = true;
@@ -52,56 +52,57 @@ function callBodies(name) {
       }
     }
     if (depth !== 0) throw new Error(`Unclosed backend call: ${name}`);
-    bodies.push(backendSource.slice(bodyStart, index));
+    bodies.push(source.slice(bodyStart, index));
     cursor = index + 1;
   }
   return bodies;
 }
 
-function functionBody(name) {
-  const start = backendSource.indexOf(`def ${name}(`);
+function functionBody(source, name) {
+  const start = source.indexOf(`def ${name}(`);
   if (start < 0) throw new Error(`Missing backend function: ${name}`);
-  const end = backendSource.indexOf('\ndef ', start + 1);
-  return backendSource.slice(start, end < 0 ? backendSource.length : end);
+  const end = source.indexOf('\ndef ', start + 1);
+  return source.slice(start, end < 0 ? source.length : end);
 }
 
-function projectApiErrorCodes() {
-  const constructorCodes = callBodies('ProjectApiError')
-    .map((body) => body.match(/^\s*"([a-z0-9_]+)"/)?.[1])
+function extractProjectApiContract(source) {
+  const constructorBodies = callBodies(source, 'ProjectApiError');
+  const constructorCodes = constructorBodies
+    .map((body) => body.match(/^\s*(["'])([a-z0-9_]+)\1/)?.[2])
     .filter(Boolean);
-  const serializerCodes = [...functionBody('_project_api_error_response')
-    .matchAll(/code\s*=\s*"([a-z0-9_]+)"/g)]
-    .map((match) => match[1]);
-  return [...new Set([
+  const serializerBody = functionBody(source, '_project_api_error_response');
+  const serializerCodes = [...serializerBody
+    .matchAll(/code\s*=\s*(["'])([a-z0-9_]+)\1/g)]
+    .map((match) => match[2]);
+  const codes = [...new Set([
     ...constructorCodes,
-    ...quotedValues(mappingBlock('IMPORT_ERROR_STATUS')),
+    ...quotedValues(mappingBlock(source, 'IMPORT_ERROR_STATUS')),
     ...serializerCodes,
   ])].sort();
-}
-
-function projectApiRecoveryIds() {
-  const constructorLists = callBodies('ProjectApiError')
+  const constructorLists = constructorBodies
     .flatMap((body) => [...body.matchAll(/recovery\s*=\s*\[([^\]]*)\]/g)])
     .flatMap((match) => quotedValues(match[1]));
-  const serializerLists = [...functionBody('_project_api_error_response')
-    .matchAll(/recovery\s*=\s*\[([^\]]*)\]/g)]
+  const serializerLists = [...serializerBody.matchAll(/recovery\s*=\s*\[([^\]]*)\]/g)]
     .flatMap((match) => quotedValues(match[1]));
-  return [...new Set([
+  const recoveries = [...new Set([
     ...constructorLists,
     ...serializerLists,
-    ...mappingListValues('IMPORT_ERROR_RECOVERY'),
+    ...mappingListValues(source, 'IMPORT_ERROR_RECOVERY'),
   ])].sort();
+  return { codes, recoveries };
 }
+
+const backendContract = extractProjectApiContract(backendSource);
 
 test.each([
   ['en', en],
   ['zh-CN', zhCN],
 ])('%s maps every stable project API error and recovery identifier', (_language, catalog) => {
-  for (const code of projectApiErrorCodes()) {
+  for (const code of backendContract.codes) {
     expect(catalog[`projects.errors.${code}`], `error code ${code}`).toEqual(expect.any(String));
     expect(catalog[`projects.errors.${code}`].trim(), `error code ${code}`).not.toBe('');
   }
-  for (const recovery of projectApiRecoveryIds()) {
+  for (const recovery of backendContract.recoveries) {
     expect(
       catalog[`projects.recovery.${recovery}`],
       `recovery identifier ${recovery}`,
@@ -111,4 +112,48 @@ test.each([
       `recovery identifier ${recovery}`,
     ).not.toBe('');
   }
+});
+
+test('backend contract parser supports single and double quoted Python literals', () => {
+  const fixture = `
+IMPORT_ERROR_STATUS = {
+    'single_import_error': 400,
+    "double_import_error": 409,
+}
+IMPORT_ERROR_RECOVERY = {
+    'single_import_error': ['single_recovery', "double_recovery"],
+}
+
+def raise_errors():
+    raise ProjectApiError(
+        'single_error',
+        'message',
+        400,
+        recovery=['single_action', "double_action"],
+    )
+
+def _project_api_error_response(error):
+    code = 'internal_error'
+    recovery = ['retry', "report_request_id"]
+
+def next_function():
+    pass
+`;
+
+  expect(extractProjectApiContract(fixture)).toEqual({
+    codes: [
+      'double_import_error',
+      'internal_error',
+      'single_error',
+      'single_import_error',
+    ],
+    recoveries: [
+      'double_action',
+      'double_recovery',
+      'report_request_id',
+      'retry',
+      'single_action',
+      'single_recovery',
+    ],
+  });
 });

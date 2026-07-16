@@ -91,3 +91,32 @@ test('status badge requires visible text or an accessible label', () => {
   render(<StatusBadge aria-label="Ready" tone="complete" />);
   expect(screen.getByLabelText('Ready')).toHaveAttribute('data-tone', 'complete');
 });
+
+test.each([
+  ['false', false],
+  ['an empty array', []],
+  ['an array containing only null and false', [null, false]],
+  ['an empty Fragment', <></>],
+  ['nested empty Fragments', <><></></>],
+  ['nested whitespace', <><span>   </span></>],
+])('status badge rejects %s without an accessible label', (_case, children) => {
+  expect(() => render(<StatusBadge>{children}</StatusBadge>)).toThrow(/accessible label/i);
+});
+
+test('status badge recursively accepts nested visible text and number zero', () => {
+  const { rerender } = render(
+    <StatusBadge><><span><>Ready</></span></></StatusBadge>,
+  );
+  expect(screen.getByText('Ready')).toBeVisible();
+
+  rerender(<StatusBadge>{0}</StatusBadge>);
+  expect(screen.getByText('0')).toBeVisible();
+});
+
+test('icon-only status badge requires and accepts an accessible label', () => {
+  const icon = <span aria-hidden="true" />;
+  expect(() => render(<StatusBadge>{icon}</StatusBadge>)).toThrow(/accessible label/i);
+
+  render(<StatusBadge aria-label="Ready">{icon}</StatusBadge>);
+  expect(screen.getByLabelText('Ready')).toBeVisible();
+});
