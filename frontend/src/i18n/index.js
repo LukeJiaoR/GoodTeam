@@ -13,6 +13,55 @@ const LOCALES = {
   [LANGUAGE_ZH_CN]: zhCN,
 };
 
+function isCatalogBranch(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function flattenTranslationCatalog(catalog, prefix = '') {
+  const flattened = {};
+  for (const [key, value] of Object.entries(catalog || {})) {
+    const leafKey = prefix ? `${prefix}.${key}` : key;
+    if (isCatalogBranch(value)) {
+      Object.assign(flattened, flattenTranslationCatalog(value, leafKey));
+    } else {
+      flattened[leafKey] = value;
+    }
+  }
+  return flattened;
+}
+
+function isProductKey(key, prefixes) {
+  return prefixes.some((prefix) => key.startsWith(prefix));
+}
+
+export function catalogIntegrityIssues(
+  requiredCatalog,
+  localeCatalog,
+  prefixes = PRODUCT_I18N_PREFIXES,
+) {
+  const required = flattenTranslationCatalog(requiredCatalog);
+  const locale = flattenTranslationCatalog(localeCatalog);
+  const issues = [];
+
+  for (const key of Object.keys(required).filter((item) => isProductKey(item, prefixes))) {
+    if (!Object.prototype.hasOwnProperty.call(locale, key)) {
+      issues.push({ type: 'missing', key });
+    } else if (typeof locale[key] !== 'string' || locale[key].trim() === '') {
+      issues.push({ type: 'empty', key });
+    }
+  }
+  for (const key of Object.keys(locale).filter((item) => isProductKey(item, prefixes))) {
+    if (!Object.prototype.hasOwnProperty.call(required, key)) {
+      issues.push({ type: 'extra', key });
+    }
+  }
+
+  const typeOrder = { missing: 0, empty: 1, extra: 2 };
+  return issues.sort((first, second) => (
+    typeOrder[first.type] - typeOrder[second.type] || first.key.localeCompare(second.key)
+  ));
+}
+
 export function normalizeLanguagePreference(value) {
   return SUPPORTED_LANGUAGE_PREFERENCES.includes(value) ? value : LANGUAGE_PREFERENCE_AUTO;
 }
@@ -50,10 +99,7 @@ export function translate(language, key, params = {}) {
   return interpolate(template, params);
 }
 
-export function missingTranslationKeys(language) {
-  const locale = LOCALES[language] || {};
-  return Object.keys(en)
-    .filter((key) => PRODUCT_I18N_PREFIXES.some((prefix) => key.startsWith(prefix)))
-    .filter((key) => !Object.prototype.hasOwnProperty.call(locale, key))
-    .sort();
+export function missingTranslationKeys(language, locales = LOCALES, requiredCatalog = en) {
+  return catalogIntegrityIssues(requiredCatalog, locales[language] || {})
+    .map(({ type, key }) => `${type}:${key}`);
 }

@@ -41,8 +41,8 @@
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease,
-    transform 120ms ease;
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease,
+    transform 180ms ease;
 }
 
 .product-shell .product-button--primary {
@@ -70,6 +70,11 @@
   color: var(--product-on-accent);
   background: var(--product-danger);
   border-color: var(--product-danger);
+}
+
+.product-shell .product-button--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--product-danger) 84%, var(--product-text));
+  border-color: color-mix(in srgb, var(--product-danger) 84%, var(--product-text));
 }
 
 .product-shell .product-button:active:not(:disabled) {
@@ -177,7 +182,7 @@
   width: fit-content;
   padding: 0.2rem 0.48rem;
   color: var(--product-text-muted);
-  background: var(--product-surface-muted);
+  background: var(--product-surface);
   border: 1px solid var(--product-border);
   border-radius: var(--product-radius);
   font-size: 0.8rem;

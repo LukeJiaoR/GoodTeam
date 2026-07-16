@@ -10,7 +10,7 @@ export default defineConfig({
   ],
   test: {
     environment: 'jsdom',
-    setupFiles: './src/test/setup.js',
+    setupFiles: './src/vitest/setup.js',
     css: true,
     include: ['src/**/*.test.jsx', 'src/**/*.vitest.js'],
   },

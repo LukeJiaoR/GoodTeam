@@ -5,6 +5,20 @@ import InlineNotice from './InlineNotice';
 import PageState from './PageState';
 import StatusBadge from './StatusBadge';
 
+test.each(['primary', 'secondary', 'danger'])('button exposes the %s variant', (variant) => {
+  render(<Button variant={variant}>{variant}</Button>);
+
+  expect(screen.getByRole('button', { name: variant })).toHaveAttribute('data-variant', variant);
+});
+
+test('button defaults to type button and respects explicit disabled state', () => {
+  render(<Button disabled>Do not submit</Button>);
+
+  expect(screen.getByRole('button', { name: 'Do not submit' })).toHaveAttribute('type', 'button');
+  expect(screen.getByRole('button', { name: 'Do not submit' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Do not submit' })).not.toHaveAttribute('aria-busy');
+});
+
 test('button exposes disabled and busy state accessibly', () => {
   render(<Button busy>Load project</Button>);
 
@@ -39,6 +53,19 @@ test('loading page state announces that its region is busy', () => {
   expect(screen.getByRole('heading', { name: 'Reading project' })).toBeVisible();
 });
 
+test.each([
+  ['loading', 'status'],
+  ['empty', 'region'],
+  ['error', 'alert'],
+  ['needs_input', 'region'],
+  ['complete', 'region'],
+])('%s page state is named by its heading', (kind, role) => {
+  const title = `${kind} project state`;
+  render(<PageState kind={kind} title={title} />);
+
+  expect(screen.getByRole(role, { name: title })).toHaveAttribute('data-kind', kind);
+});
+
 test('inline danger notice is announced as an alert', () => {
   render(<InlineNotice tone="danger" title="Cannot read project">Check directory permissions.</InlineNotice>);
 
@@ -46,8 +73,21 @@ test('inline danger notice is announced as an alert', () => {
   expect(screen.getByRole('alert')).toHaveTextContent('Check directory permissions.');
 });
 
+test('inline info notice is announced as non-urgent status', () => {
+  render(<InlineNotice title="Project saved">You can continue.</InlineNotice>);
+
+  expect(screen.getByRole('status')).toHaveTextContent('Project saved');
+});
+
 test('status badge keeps its semantic label visible', () => {
   render(<StatusBadge tone="complete">Ready</StatusBadge>);
 
   expect(screen.getByText('Ready')).toHaveAttribute('data-tone', 'complete');
+});
+
+test('status badge requires visible text or an accessible label', () => {
+  expect(() => render(<StatusBadge />)).toThrow(/accessible label/i);
+
+  render(<StatusBadge aria-label="Ready" tone="complete" />);
+  expect(screen.getByLabelText('Ready')).toHaveAttribute('data-tone', 'complete');
 });
