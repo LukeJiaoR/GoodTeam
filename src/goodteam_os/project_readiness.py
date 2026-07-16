@@ -307,6 +307,7 @@ class ProjectReadinessStore:
         project_fd = descriptors[-1]
         temporary_name = f".readiness.json.{secrets.token_hex(8)}.tmp"
         temporary_created = False
+        published_identity: FileIdentity | None = None
         backup_name: str | None = None
         backup_identity: FileIdentity | None = None
         transaction: AnchoredWrite | None = None
@@ -335,12 +336,16 @@ class ProjectReadinessStore:
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(temporary_name, flags, 0o600, dir_fd=project_fd)
             temporary_created = True
+            try:
+                published_identity = _descriptor_identity(descriptor)
+            except BaseException:
+                os.close(descriptor)
+                raise
             with os.fdopen(descriptor, "w", encoding="utf-8") as temporary:
                 json.dump(readiness, temporary, indent=2, sort_keys=True)
                 temporary.write("\n")
                 temporary.flush()
                 os.fsync(temporary.fileno())
-                published_identity = _descriptor_identity(temporary.fileno())
             self._verify_current_chain(key, descriptors)
             if _entry_identity_or_none(project_fd, "readiness.json") != current_identity:
                 raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
@@ -357,6 +362,8 @@ class ProjectReadinessStore:
                 backup_name=backup_name,
                 backup_identity=backup_identity,
             )
+            if _entry_identity_or_none(project_fd, temporary_name) != published_identity:
+                raise OSError(errno.ENOTDIR, f"Readiness temporary file changed: {key}")
             os.replace(
                 temporary_name,
                 "readiness.json",
@@ -383,9 +390,13 @@ class ProjectReadinessStore:
                     pass
             raise
         finally:
-            if temporary_created:
+            if temporary_created and published_identity is not None:
                 try:
-                    os.unlink(temporary_name, dir_fd=project_fd)
+                    _unlink_if_identity(
+                        project_fd,
+                        temporary_name,
+                        published_identity,
+                    )
                 except OSError:
                     pass
             if owns_descriptors:

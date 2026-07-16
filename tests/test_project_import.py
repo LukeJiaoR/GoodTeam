@@ -238,6 +238,60 @@ def test_confirm_project_mode_rollback_preserves_external_replacement(
     assert [path.name for path in readiness_path.parent.iterdir()] == ["readiness.json"]
 
 
+def test_confirm_project_mode_rejects_external_temp_replacement_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    state_dir = readiness_path.parent
+    before_readiness = readiness_path.read_bytes()
+    before_target = snapshot_target(root)
+    external_temp = b'{"owner":"external-temp-replacement"}\n'
+    original_verify = ProjectReadinessStore._verify_current_chain
+    verify_calls = 0
+
+    def verify_then_replace_temp(store, project_key, pinned):
+        nonlocal verify_calls
+        result = original_verify(store, project_key, pinned)
+        verify_calls += 1
+        if verify_calls == 4:
+            temporary_paths = list(state_dir.glob("*.tmp"))
+            assert len(temporary_paths) == 1
+            temporary_paths[0].unlink()
+            temporary_paths[0].write_bytes(external_temp)
+        return result
+
+    monkeypatch.setattr(
+        ProjectReadinessStore,
+        "_verify_current_chain",
+        verify_then_replace_temp,
+    )
+
+    with pytest.raises(ProjectImportError) as error:
+        project_import.confirm_project_mode(
+            workspace,
+            key,
+            root,
+            "existing_project",
+        )
+
+    remaining_temps = list(state_dir.glob("*.tmp"))
+    assert error.value.code == "project_workspace_not_isolated"
+    assert readiness_path.read_bytes() == before_readiness
+    assert len(remaining_temps) == 1
+    assert remaining_temps[0].read_bytes() == external_temp
+    assert not list(state_dir.glob("*.backup"))
+    assert snapshot_target(root) == before_target
+
+
 def test_confirm_project_mode_fails_closed_after_state_validation_swap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
