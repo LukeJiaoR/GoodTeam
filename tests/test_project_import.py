@@ -356,6 +356,64 @@ def test_import_rollback_does_not_delete_replacement_config(
     assert config_path.read_text(encoding="utf-8") == replacement
 
 
+def test_import_does_not_claim_replacement_between_link_and_identity_check(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    config_path = workspace / "projects" / "project.local.yaml"
+    replacement = "name: External\nkey: EXTERNAL\n"
+    before = snapshot_target(root)
+    original_link = os.link
+    owned_identities: list[tuple[int, int]] = []
+
+    def link_then_replace(source, target, *args, **kwargs):
+        result = original_link(source, target, *args, **kwargs)
+        source_stat = os.stat(
+            source,
+            dir_fd=kwargs["src_dir_fd"],
+            follow_symlinks=False,
+        )
+        owned_identities.append((source_stat.st_dev, source_stat.st_ino))
+        destination_fd = kwargs["dst_dir_fd"]
+        os.unlink(target, dir_fd=destination_fd)
+        descriptor = os.open(
+            target,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=destination_fd,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as replacement_file:
+            replacement_file.write(replacement)
+            replacement_file.flush()
+            os.fsync(replacement_file.fileno())
+        return result
+
+    def fail_readiness(*_args, **_kwargs):
+        raise RuntimeError("readiness failed")
+
+    monkeypatch.setattr(project_import.os, "link", link_then_replace)
+    monkeypatch.setattr(ProjectReadinessStore, "initialize", fail_readiness)
+    with pytest.raises(ProjectImportError) as error:
+        import_project(workspace, str(root))
+
+    assert error.value.code == "project_workspace_not_isolated"
+    assert config_path.read_text(encoding="utf-8") == replacement
+    assert list(workspace.rglob("*.tmp")) == []
+    remaining_identities = {
+        (path.stat().st_dev, path.stat().st_ino)
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+    assert owned_identities[0] not in remaining_identities
+    assert snapshot_target(root) == before
+
+
 def test_import_fails_closed_when_open_projects_directory_is_replaced(
     tmp_path: Path,
     monkeypatch,

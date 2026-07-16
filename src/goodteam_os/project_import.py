@@ -336,6 +336,7 @@ def _publish_config_exclusively(
         directory_fd = os.open(destination.parent, flags)
     temporary_name = f".{destination.name}.{secrets.token_hex(8)}.tmp"
     temporary_created = False
+    owned_identity: FileIdentity | None = None
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
@@ -344,14 +345,37 @@ def _publish_config_exclusively(
             temporary.write(content)
             temporary.flush()
             os.fsync(temporary.fileno())
-        os.link(
-            temporary_name,
-            destination.name,
-            src_dir_fd=directory_fd,
-            dst_dir_fd=directory_fd,
-            follow_symlinks=False,
-        )
-        published_identity = _entry_identity(directory_fd, destination.name)
+            owned_identity = _descriptor_identity(temporary.fileno())
+            os.link(
+                temporary_name,
+                destination.name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+            try:
+                final_identity = _entry_identity(directory_fd, destination.name)
+            except FileNotFoundError as exc:
+                raise OSError(
+                    errno.ENOTDIR,
+                    f"Published config disappeared: {destination.name}",
+                ) from exc
+            if final_identity != owned_identity:
+                raise OSError(
+                    errno.ENOTDIR,
+                    f"Published config changed during publication: {destination.name}",
+                )
+    except BaseException:
+        if owned_identity is not None:
+            try:
+                _unlink_if_identity(
+                    directory_fd,
+                    destination.name,
+                    owned_identity,
+                )
+            except OSError:
+                pass
+        raise
     finally:
         if temporary_created:
             try:
@@ -360,7 +384,8 @@ def _publish_config_exclusively(
                 pass
         if owned_directory_fd:
             os.close(directory_fd)
-    return published_identity
+    assert owned_identity is not None
+    return owned_identity
 
 
 def _verify_published_config(
