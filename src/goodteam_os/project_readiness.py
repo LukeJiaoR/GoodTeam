@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+
+from goodteam_os.state import normalize_project_key
 
 
 MANIFEST_NAMES = {
@@ -48,11 +51,12 @@ class ProjectReadinessStore:
         self.workspace = workspace
 
     def initialize(self, project_key: str, root: Path) -> dict[str, object]:
+        key = normalize_project_key(project_key)
         project_mode = classify_project_mode(root)
         mode_confirmed = project_mode != "unconfirmed"
         readiness: dict[str, object] = {
             "schema_version": 1,
-            "project_key": project_key,
+            "project_key": key,
             "canonical_root": str(root.resolve()),
             "project_mode": project_mode,
             "lifecycle": "preparing" if mode_confirmed else "attention_required",
@@ -72,11 +76,14 @@ class ProjectReadinessStore:
                 *readiness["steps"],
                 *_pending_steps(MODE_STEPS[project_mode]),
             ]
-        self._write(project_key, readiness)
+        self._write(key, readiness)
         return readiness
 
-    def read(self, project_key: str) -> dict[str, object]:
-        data = json.loads(self._path(project_key).read_text(encoding="utf-8"))
+    def read(self, project_key: str) -> dict[str, object] | None:
+        path = self._path(project_key)
+        if not path.is_file():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError(f"readiness for {project_key!r} must be a JSON object")
         return data
@@ -85,7 +92,10 @@ class ProjectReadinessStore:
         if mode not in MODE_STEPS:
             raise ValueError("mode must be new_project or existing_project")
 
-        readiness = self.read(project_key)
+        key = normalize_project_key(project_key)
+        readiness = self.read(key)
+        if readiness is None:
+            raise ValueError(f"No readiness found for project: {key}")
         mode_step_ids = {step_id for steps in MODE_STEPS.values() for step_id in steps}
         existing_steps = readiness.get("steps", [])
         base_steps = [
@@ -105,21 +115,34 @@ class ProjectReadinessStore:
                 "updated_at": _now(),
             }
         )
-        self._write(project_key, readiness)
+        self._write(key, readiness)
         return readiness
 
     def _path(self, project_key: str) -> Path:
-        return self.workspace / "state" / "projects" / project_key / "readiness.json"
+        key = normalize_project_key(project_key)
+        return self.workspace / "state" / "projects" / key / "readiness.json"
 
     def _write(self, project_key: str, readiness: dict[str, object]) -> None:
         path = self._path(project_key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.tmp")
-        temporary.write_text(
-            json.dumps(readiness, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(path)
+        temporary_path: Path | None = None
+        try:
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                json.dump(readiness, temporary, indent=2, sort_keys=True)
+                temporary.write("\n")
+                temporary.flush()
+            temporary_path.replace(path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
 
 def build_capabilities(readiness: dict[str, object]) -> dict[str, object]:
