@@ -1,4 +1,5 @@
 import json
+import errno
 import os
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
@@ -87,6 +88,154 @@ def test_confirm_project_mode_serializes_concurrent_read_modify_write(
     assert final["project_mode"] in {"new_project", "existing_project"}
     assert [step["id"] for step in final["steps"]].count("external_fact") == 1
     assert not list(readiness_path.parent.glob("*.tmp"))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong_key",
+        "wrong_root",
+        "missing_key",
+        "missing_root",
+        "nonstr_key",
+        "nonstr_root",
+    ],
+)
+def test_confirm_project_mode_rejects_mismatched_readiness_without_writing(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+    if mutation == "wrong_key":
+        readiness["project_key"] = "OTHER"
+    elif mutation == "wrong_root":
+        readiness["canonical_root"] = str(tmp_path / "sensitive-other-root")
+    elif mutation == "missing_key":
+        readiness.pop("project_key")
+    elif mutation == "missing_root":
+        readiness.pop("canonical_root")
+    elif mutation == "nonstr_key":
+        readiness["project_key"] = ["PROJECT"]
+    else:
+        readiness["canonical_root"] = {"path": str(root)}
+    readiness_path.write_text(json.dumps(readiness, indent=1) + "\n", encoding="utf-8")
+    before = readiness_path.read_bytes()
+
+    with pytest.raises(ProjectImportError) as error:
+        project_import.confirm_project_mode(
+            workspace,
+            key,
+            root,
+            "existing_project",
+        )
+
+    assert error.value.code == "project_readiness_mismatch"
+    assert error.value.details == {"project_key": key}
+    assert "sensitive-other-root" not in str(error.value)
+    assert readiness_path.read_bytes() == before
+    assert [path.name for path in readiness_path.parent.iterdir()] == ["readiness.json"]
+
+
+@pytest.mark.parametrize("failure_point", ["post_replace", "post_publish_verify"])
+def test_confirm_project_mode_restores_exact_readiness_after_anchored_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    before_readiness = readiness_path.read_bytes()
+    before_target = snapshot_target(root)
+
+    if failure_point == "post_replace":
+        original_replace = project_readiness.os.replace
+        failed = False
+
+        def replace_then_fail(source, target, *args, **kwargs):
+            nonlocal failed
+            result = original_replace(source, target, *args, **kwargs)
+            if not failed and str(source).endswith(".tmp"):
+                failed = True
+                raise OSError(errno.ENOTDIR, "injected post-replace verification failure")
+            return result
+
+        monkeypatch.setattr(project_readiness.os, "replace", replace_then_fail)
+    else:
+        def fail_published_verify(_store, _project_key):
+            raise OSError(errno.ENOTDIR, "injected directory identity failure")
+
+        monkeypatch.setattr(
+            ProjectReadinessStore,
+            "_verify_anchored_write",
+            fail_published_verify,
+        )
+
+    with pytest.raises(ProjectImportError) as error:
+        project_import.confirm_project_mode(
+            workspace,
+            key,
+            root,
+            "existing_project",
+        )
+
+    assert error.value.code == "project_workspace_not_isolated"
+    assert readiness_path.read_bytes() == before_readiness
+    assert [path.name for path in readiness_path.parent.iterdir()] == ["readiness.json"]
+    assert snapshot_target(root) == before_target
+
+
+def test_confirm_project_mode_rollback_preserves_external_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    replacement = b'{"owner":"external-replacement"}\n'
+
+    def replace_then_fail_verify(_store, _project_key):
+        readiness_path.unlink()
+        readiness_path.write_bytes(replacement)
+        raise OSError(errno.ENOTDIR, "injected external replacement")
+
+    monkeypatch.setattr(
+        ProjectReadinessStore,
+        "_verify_anchored_write",
+        replace_then_fail_verify,
+    )
+
+    with pytest.raises(ProjectImportError):
+        project_import.confirm_project_mode(
+            workspace,
+            key,
+            root,
+            "existing_project",
+        )
+
+    assert readiness_path.read_bytes() == replacement
+    assert [path.name for path in readiness_path.parent.iterdir()] == ["readiness.json"]
 
 
 def test_confirm_project_mode_fails_closed_after_state_validation_swap(

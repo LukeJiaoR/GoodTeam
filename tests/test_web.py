@@ -1,3 +1,4 @@
+import errno
 import json
 import inspect
 import queue
@@ -111,7 +112,11 @@ def _write_reviewer_dispatch_project(
 
 def _post_web_json(workspace: Path, route: str, payload: dict[str, object], *, origin: str | None = None):
     server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(workspace))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.01},
+        daemon=True,
+    )
     thread.start()
     try:
         url = f"http://127.0.0.1:{server.server_port}{route}"
@@ -129,7 +134,8 @@ def _post_web_json(workspace: Path, route: str, payload: dict[str, object], *, o
             with urllib.request.urlopen(request, timeout=5) as response:
                 return response.status, json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read().decode("utf-8"))
+            with exc:
+                return exc.code, json.loads(exc.read().decode("utf-8"))
     finally:
         server.shutdown()
         server.server_close()
@@ -144,7 +150,11 @@ def _post_web_raw(
     content_type: str = "application/json",
 ):
     server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(workspace))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.01},
+        daemon=True,
+    )
     thread.start()
     try:
         request = urllib.request.Request(
@@ -160,7 +170,8 @@ def _post_web_raw(
             with urllib.request.urlopen(request, timeout=5) as response:
                 return response.status, json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read().decode("utf-8"))
+            with exc:
+                return exc.code, json.loads(exc.read().decode("utf-8"))
     finally:
         server.shutdown()
         server.server_close()
@@ -169,7 +180,11 @@ def _post_web_raw(
 
 def _get_web_json(workspace: Path, route: str):
     server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(workspace))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.01},
+        daemon=True,
+    )
     thread.start()
     try:
         try:
@@ -179,7 +194,8 @@ def _get_web_json(workspace: Path, route: str):
             ) as response:
                 return response.status, json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read().decode("utf-8"))
+            with exc:
+                return exc.code, json.loads(exc.read().decode("utf-8"))
     finally:
         server.shutdown()
         server.server_close()
@@ -575,6 +591,92 @@ def test_project_mode_validation_swap_has_stable_http_isolation_error(
     assert after == before
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong_key",
+        "wrong_root",
+        "missing_key",
+        "missing_root",
+        "nonstr_key",
+        "nonstr_root",
+    ],
+)
+def test_project_mode_readiness_mismatch_has_stable_http_contract(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    _post_web_json(workspace, "/api/projects/import", {"root": str(root)})
+    readiness_path = workspace / "state" / "projects" / "PROJECT" / "readiness.json"
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+    if mutation == "wrong_key":
+        readiness["project_key"] = "OTHER"
+    elif mutation == "wrong_root":
+        readiness["canonical_root"] = str(tmp_path / "sensitive-other-root")
+    elif mutation == "missing_key":
+        readiness.pop("project_key")
+    elif mutation == "missing_root":
+        readiness.pop("canonical_root")
+    elif mutation == "nonstr_key":
+        readiness["project_key"] = ["PROJECT"]
+    else:
+        readiness["canonical_root"] = {"path": str(root)}
+    readiness_path.write_text(json.dumps(readiness, indent=1) + "\n", encoding="utf-8")
+    before = readiness_path.read_bytes()
+
+    status, payload = _post_web_json(
+        workspace,
+        "/api/projects/PROJECT/mode",
+        {"mode": "existing_project"},
+    )
+
+    assert status == 409
+    assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
+    assert payload["code"] == "project_readiness_mismatch"
+    assert payload["details"] == {"project_key": "PROJECT"}
+    assert payload["recovery"] == ["reload_project", "return_to_projects"]
+    assert "sensitive-other-root" not in json.dumps(payload)
+    assert readiness_path.read_bytes() == before
+    assert [path.name for path in readiness_path.parent.iterdir()] == ["readiness.json"]
+
+
+def test_project_mode_anchored_verify_failure_restores_old_http_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    _post_web_json(workspace, "/api/projects/import", {"root": str(root)})
+    readiness_path = workspace / "state" / "projects" / "PROJECT" / "readiness.json"
+    before = readiness_path.read_bytes()
+
+    def fail_published_verify(_store, _project_key):
+        raise OSError(errno.ENOTDIR, "injected directory identity failure")
+
+    monkeypatch.setattr(
+        web.ProjectReadinessStore,
+        "_verify_anchored_write",
+        fail_published_verify,
+    )
+
+    status, payload = _post_web_json(
+        workspace,
+        "/api/projects/PROJECT/mode",
+        {"mode": "existing_project"},
+    )
+
+    assert status == 400
+    assert payload["code"] == "project_workspace_not_isolated"
+    assert readiness_path.read_bytes() == before
+    assert [path.name for path in readiness_path.parent.iterdir()] == ["readiness.json"]
+
+
 def test_full_handler_project_routes_use_shared_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -626,7 +728,8 @@ def test_full_handler_project_routes_use_shared_contract(
         )
         with pytest.raises(urllib.error.HTTPError) as malformed_error:
             urllib.request.urlopen(malformed, timeout=5)
-        malformed_payload = json.loads(malformed_error.value.read().decode("utf-8"))
+        with malformed_error.value:
+            malformed_payload = json.loads(malformed_error.value.read().decode("utf-8"))
 
         non_object = urllib.request.Request(
             f"{base_url}/api/projects/import",
@@ -636,7 +739,8 @@ def test_full_handler_project_routes_use_shared_contract(
         )
         with pytest.raises(urllib.error.HTTPError) as non_object_error:
             urllib.request.urlopen(non_object, timeout=5)
-        non_object_payload = json.loads(non_object_error.value.read().decode("utf-8"))
+        with non_object_error.value:
+            non_object_payload = json.loads(non_object_error.value.read().decode("utf-8"))
 
         cross_origin = urllib.request.Request(
             f"{base_url}/api/projects/PROJECT/mode",
@@ -646,7 +750,8 @@ def test_full_handler_project_routes_use_shared_contract(
         )
         with pytest.raises(urllib.error.HTTPError) as cross_origin_error:
             urllib.request.urlopen(cross_origin, timeout=5)
-        cross_origin_payload = json.loads(cross_origin_error.value.read().decode("utf-8"))
+        with cross_origin_error.value:
+            cross_origin_payload = json.loads(cross_origin_error.value.read().decode("utf-8"))
     finally:
         server.shutdown()
         server.server_close()

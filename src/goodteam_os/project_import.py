@@ -77,7 +77,15 @@ def confirm_project_mode(
                 workspace_fd=workspace_fd,
             )
             try:
-                readiness = readiness_store.confirm_mode(key, mode)
+                readiness = readiness_store.confirm_mode(
+                    key,
+                    mode,
+                    readiness_validator=lambda stored: _validate_project_readiness_binding(
+                        stored,
+                        project_key=key,
+                        root=root,
+                    ),
+                )
                 readiness_store._verify_anchored_write(key)
                 readiness_store._commit_anchored_write(key)
                 return readiness
@@ -91,6 +99,28 @@ def confirm_project_mode(
         if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
             raise
         raise _workspace_not_isolated_error(workspace, root) from exc
+
+
+def _validate_project_readiness_binding(
+    readiness: dict[str, object],
+    *,
+    project_key: str,
+    root: Path,
+) -> None:
+    stored_key = readiness.get("project_key")
+    stored_root = readiness.get("canonical_root")
+    root_matches = False
+    if isinstance(stored_root, str) and stored_root:
+        try:
+            root_matches = Path(stored_root).expanduser().resolve() == root.resolve()
+        except (OSError, ValueError):
+            root_matches = False
+    if not isinstance(stored_key, str) or stored_key != project_key or not root_matches:
+        raise ProjectImportError(
+            "project_readiness_mismatch",
+            "Project readiness does not match the requested project.",
+            details={"project_key": project_key},
+        )
 
 
 def _import_project_locked(

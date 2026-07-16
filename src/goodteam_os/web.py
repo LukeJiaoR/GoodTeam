@@ -146,12 +146,14 @@ IMPORT_ERROR_STATUS = {
     "project_root_not_directory": 400,
     "project_root_not_readable": 403,
     "project_workspace_not_isolated": 400,
+    "project_readiness_mismatch": 409,
 }
 IMPORT_ERROR_RECOVERY = {
     "project_root_not_found": ["choose_another_directory"],
     "project_root_not_directory": ["choose_another_directory"],
     "project_root_not_readable": ["fix_permissions", "choose_another_directory"],
     "project_workspace_not_isolated": ["choose_another_directory"],
+    "project_readiness_mismatch": ["reload_project", "return_to_projects"],
 }
 
 
