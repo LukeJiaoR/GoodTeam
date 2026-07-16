@@ -213,11 +213,22 @@ def test_confirm_project_mode_rollback_preserves_external_replacement(
     imported = import_project(workspace, str(root))
     key = imported["project"]["project_key"]
     readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    state_dir = readiness_path.parent
+    before_readiness = readiness_path.read_bytes()
     replacement = b'{"owner":"external-replacement"}\n'
+    collision = b'{"owner":"external-temp-collision"}\n'
+    replacement_identity: tuple[int, int] | None = None
+    collision_path: Path | None = None
 
-    def replace_then_fail_verify(_store, _project_key):
+    def replace_then_fail_verify(store, project_key):
+        nonlocal replacement_identity, collision_path
+        transaction = store._anchored_writes[project_key]
+        collision_path = state_dir / transaction.temporary_name
+        collision_path.write_bytes(collision)
         readiness_path.unlink()
         readiness_path.write_bytes(replacement)
+        replacement_stat = readiness_path.stat()
+        replacement_identity = (replacement_stat.st_dev, replacement_stat.st_ino)
         raise OSError(errno.ENOTDIR, "injected external replacement")
 
     monkeypatch.setattr(
@@ -234,8 +245,101 @@ def test_confirm_project_mode_rollback_preserves_external_replacement(
             "existing_project",
         )
 
-    assert readiness_path.read_bytes() == replacement
-    assert [path.name for path in readiness_path.parent.iterdir()] == ["readiness.json"]
+    assert readiness_path.read_bytes() == before_readiness
+    assert collision_path is not None
+    assert collision_path.read_bytes() == collision
+    quarantined = [
+        path
+        for path in state_dir.iterdir()
+        if path.is_file() and (path.stat().st_dev, path.stat().st_ino) == replacement_identity
+    ]
+    assert len(quarantined) == 1
+    assert quarantined[0] != readiness_path
+    assert quarantined[0] != collision_path
+    assert quarantined[0].read_bytes() == replacement
+    assert not list(state_dir.glob("*.backup"))
+
+
+def test_confirm_project_mode_quarantines_repeated_external_replacements(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    state_dir = readiness_path.parent
+    before_readiness = readiness_path.read_bytes()
+    replacements = [
+        b'{"owner":"first-external-replacement"}\n',
+        b'{"owner":"second-external-replacement"}\n',
+    ]
+    replacement_identities: list[tuple[int, int]] = []
+
+    def replace_then_fail_verify(_store, _project_key):
+        readiness_path.unlink()
+        readiness_path.write_bytes(replacements[0])
+        replacement_stat = readiness_path.stat()
+        replacement_identities.append(
+            (replacement_stat.st_dev, replacement_stat.st_ino)
+        )
+        raise OSError(errno.ENOTDIR, "injected external replacement")
+
+    original_link = project_readiness.os.link
+    replaced_after_quarantine = False
+
+    def link_then_replace_again(source, target, *args, **kwargs):
+        nonlocal replaced_after_quarantine
+        result = original_link(source, target, *args, **kwargs)
+        if (
+            not replaced_after_quarantine
+            and source == "readiness.json"
+            and target != "readiness.json"
+            and not str(target).endswith(".backup")
+        ):
+            replaced_after_quarantine = True
+            readiness_path.unlink()
+            readiness_path.write_bytes(replacements[1])
+            replacement_stat = readiness_path.stat()
+            replacement_identities.append(
+                (replacement_stat.st_dev, replacement_stat.st_ino)
+            )
+        return result
+
+    monkeypatch.setattr(
+        ProjectReadinessStore,
+        "_verify_anchored_write",
+        replace_then_fail_verify,
+    )
+    monkeypatch.setattr(project_readiness.os, "link", link_then_replace_again)
+
+    with pytest.raises(ProjectImportError) as error:
+        project_import.confirm_project_mode(
+            workspace,
+            key,
+            root,
+            "existing_project",
+        )
+
+    quarantined = {
+        (path.stat().st_dev, path.stat().st_ino): path
+        for path in state_dir.iterdir()
+        if path.is_file() and path != readiness_path
+    }
+    assert error.value.code == "project_workspace_not_isolated"
+    assert replaced_after_quarantine
+    assert len(replacement_identities) == 2
+    assert readiness_path.read_bytes() == before_readiness
+    assert set(replacement_identities) <= quarantined.keys()
+    assert {quarantined[identity].read_bytes() for identity in replacement_identities} == set(
+        replacements
+    )
+    assert not list(state_dir.glob("*.backup"))
 
 
 def test_confirm_project_mode_rejects_external_temp_replacement_before_publish(
@@ -289,6 +393,127 @@ def test_confirm_project_mode_rejects_external_temp_replacement_before_publish(
     assert len(remaining_temps) == 1
     assert remaining_temps[0].read_bytes() == external_temp
     assert not list(state_dir.glob("*.backup"))
+    assert snapshot_target(root) == before_target
+
+
+def test_confirm_project_mode_recovers_after_final_check_temp_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    state_dir = readiness_path.parent
+    before_readiness = readiness_path.read_bytes()
+    before_target = snapshot_target(root)
+    external = b'{"owner":"after-final-check"}\n'
+    external_identity: tuple[int, int] | None = None
+    original_replace = project_readiness.os.replace
+    swapped = False
+
+    def swap_temp_then_replace(source, target, *args, **kwargs):
+        nonlocal external_identity, swapped
+        source_dir_fd = kwargs.get("src_dir_fd")
+        if not swapped and str(source).endswith(".tmp") and target == "readiness.json":
+            swapped = True
+            os.unlink(source, dir_fd=source_dir_fd)
+            descriptor = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=source_dir_fd,
+            )
+            with os.fdopen(descriptor, "wb") as external_file:
+                external_file.write(external)
+                external_file.flush()
+                os.fsync(external_file.fileno())
+                stat_result = os.fstat(external_file.fileno())
+                external_identity = (stat_result.st_dev, stat_result.st_ino)
+        return original_replace(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(project_readiness.os, "replace", swap_temp_then_replace)
+
+    with pytest.raises(ProjectImportError) as error:
+        project_import.confirm_project_mode(
+            workspace,
+            key,
+            root,
+            "existing_project",
+        )
+
+    quarantined = [
+        path
+        for path in state_dir.iterdir()
+        if path.is_file() and (path.stat().st_dev, path.stat().st_ino) == external_identity
+    ]
+    assert error.value.code == "project_workspace_not_isolated"
+    assert readiness_path.read_bytes() == before_readiness
+    assert len(quarantined) == 1
+    assert quarantined[0] != readiness_path
+    assert quarantined[0].read_bytes() == external
+    assert not list(state_dir.glob("*.backup"))
+    assert snapshot_target(root) == before_target
+
+
+def test_import_quarantines_external_final_inode_after_temp_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.project_import import ProjectImportError
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "README.md").write_text("# Project\n", encoding="utf-8")
+    before_target = snapshot_target(root)
+    state_dir = workspace / "state" / "projects" / "PROJECT"
+    external = b'{"owner":"create-after-final-check"}\n'
+    external_identity: tuple[int, int] | None = None
+    original_replace = project_readiness.os.replace
+    swapped = False
+
+    def swap_temp_then_replace(source, target, *args, **kwargs):
+        nonlocal external_identity, swapped
+        source_dir_fd = kwargs.get("src_dir_fd")
+        if not swapped and str(source).endswith(".tmp") and target == "readiness.json":
+            swapped = True
+            os.unlink(source, dir_fd=source_dir_fd)
+            descriptor = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=source_dir_fd,
+            )
+            with os.fdopen(descriptor, "wb") as external_file:
+                external_file.write(external)
+                external_file.flush()
+                os.fsync(external_file.fileno())
+                stat_result = os.fstat(external_file.fileno())
+                external_identity = (stat_result.st_dev, stat_result.st_ino)
+        return original_replace(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(project_readiness.os, "replace", swap_temp_then_replace)
+
+    with pytest.raises(ProjectImportError) as error:
+        import_project(workspace, str(root))
+
+    quarantined = [
+        path
+        for path in state_dir.iterdir()
+        if path.is_file() and (path.stat().st_dev, path.stat().st_ino) == external_identity
+    ]
+    assert error.value.code == "project_workspace_not_isolated"
+    assert not (state_dir / "readiness.json").exists()
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == external
+    assert not list(state_dir.glob("*.backup"))
+    assert not list((workspace / "projects").glob("*.local.yaml"))
     assert snapshot_target(root) == before_target
 
 

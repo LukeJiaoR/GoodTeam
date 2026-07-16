@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import json
+import logging
 import os
 import secrets
 from collections.abc import Callable
@@ -42,6 +43,7 @@ _EXPECTED_IDENTITY_UNSET = object()
 class AnchoredWrite:
     descriptors: tuple[int, ...]
     readiness_identity: FileIdentity
+    temporary_name: str
     backup_name: str | None
     backup_identity: FileIdentity | None
 
@@ -359,6 +361,7 @@ class ProjectReadinessStore:
             transaction = AnchoredWrite(
                 descriptors=tuple(pinned),
                 readiness_identity=published_identity,
+                temporary_name=temporary_name,
                 backup_name=backup_name,
                 backup_identity=backup_identity,
             )
@@ -412,29 +415,96 @@ class ProjectReadinessStore:
         )
 
     def _rollback_anchored_transaction(self, anchored: AnchoredWrite) -> None:
-        project_fd = anchored.descriptors[-1]
+        recovered = False
         try:
+            self._recover_previous_readiness(anchored)
+            recovered = True
+        finally:
+            try:
+                if recovered:
+                    self._remove_anchored_backup(anchored)
+            finally:
+                _close_descriptors(list(anchored.descriptors))
+
+    def _recover_previous_readiness(self, anchored: AnchoredWrite) -> None:
+        project_fd = anchored.descriptors[-1]
+        has_backup = (
+            anchored.backup_name is not None and anchored.backup_identity is not None
+        )
+        if has_backup and (
+            _entry_identity_or_none(project_fd, anchored.backup_name)
+            != anchored.backup_identity
+        ):
+            raise OSError(errno.ENOTDIR, "Readiness backup changed during rollback")
+        for _attempt in range(256):
             current_identity = _entry_identity_or_none(project_fd, "readiness.json")
-            if current_identity == anchored.readiness_identity:
-                if anchored.backup_name is None or anchored.backup_identity is None:
-                    _unlink_if_identity(
-                        project_fd,
-                        "readiness.json",
-                        anchored.readiness_identity,
-                    )
-                elif (
-                    _entry_identity_or_none(project_fd, anchored.backup_name)
-                    == anchored.backup_identity
-                ):
-                    os.replace(
+            if current_identity is None:
+                if not has_backup:
+                    return
+                try:
+                    os.link(
                         anchored.backup_name,
                         "readiness.json",
                         src_dir_fd=project_fd,
                         dst_dir_fd=project_fd,
+                        follow_symlinks=False,
                     )
-            self._remove_anchored_backup(anchored)
-        finally:
-            _close_descriptors(list(anchored.descriptors))
+                except FileExistsError:
+                    continue
+                if (
+                    _entry_identity_or_none(project_fd, "readiness.json")
+                    != anchored.backup_identity
+                ):
+                    raise OSError(
+                        errno.ENOTDIR,
+                        "Restored readiness identity changed during rollback",
+                    )
+                return
+            if has_backup and current_identity == anchored.backup_identity:
+                return
+            if current_identity == anchored.readiness_identity:
+                _unlink_if_identity(
+                    project_fd,
+                    "readiness.json",
+                    current_identity,
+                )
+                continue
+            quarantine_name, quarantined_identity = self._quarantine_external_readiness(
+                anchored,
+            )
+            logging.getLogger(__name__).warning(
+                "Quarantined external readiness inode as %s",
+                quarantine_name,
+            )
+            _unlink_if_identity(
+                project_fd,
+                "readiness.json",
+                quarantined_identity,
+            )
+        raise OSError(errno.EBUSY, "Readiness changed repeatedly during rollback")
+
+    def _quarantine_external_readiness(
+        self,
+        anchored: AnchoredWrite,
+    ) -> tuple[str, FileIdentity]:
+        project_fd = anchored.descriptors[-1]
+        candidate = anchored.temporary_name
+        for _attempt in range(128):
+            try:
+                os.link(
+                    "readiness.json",
+                    candidate,
+                    src_dir_fd=project_fd,
+                    dst_dir_fd=project_fd,
+                    follow_symlinks=False,
+                )
+                break
+            except FileExistsError:
+                candidate = f".readiness.json.{secrets.token_hex(8)}.quarantine"
+        else:
+            raise OSError(errno.EEXIST, "Could not allocate readiness quarantine name")
+        quarantined_identity = _entry_identity(project_fd, candidate)
+        return candidate, quarantined_identity
 
     def _open_project_directory_chain(
         self,
