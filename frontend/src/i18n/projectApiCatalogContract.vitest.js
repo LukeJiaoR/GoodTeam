@@ -8,6 +8,10 @@ const backendSource = fs.readFileSync(
   path.resolve(globalThis.process.cwd(), '../src/goodteam_os/web.py'),
   'utf8',
 );
+const readinessExecutorSource = fs.readFileSync(
+  path.resolve(globalThis.process.cwd(), '../src/goodteam_os/project_readiness_executor.py'),
+  'utf8',
+);
 
 function quotedValues(source) {
   return [...source.matchAll(/(["'])([a-z][a-z0-9_]*)\1/g)].map((match) => match[2]);
@@ -94,6 +98,24 @@ function extractProjectApiContract(source) {
 
 const backendContract = extractProjectApiContract(backendSource);
 
+function extractReadinessExecutorContract(source) {
+  const constructorBodies = callBodies(source, 'ReadinessExecutionError');
+  const codes = constructorBodies
+    .map((body) => body.match(/^\s*(["'])([a-z0-9_]+)\1/)?.[2])
+    .filter(Boolean);
+  const stepCodes = [...source.matchAll(/["']code["']\s*:\s*(["'])([a-z0-9_]+)\1/g)]
+    .map((match) => match[2]);
+  const recoveries = constructorBodies
+    .flatMap((body) => [...body.matchAll(/recovery\s*=\s*\[([^\]]*)\]/g)])
+    .flatMap((match) => quotedValues(match[1]));
+  return {
+    codes: [...new Set([...codes, ...stepCodes])].sort(),
+    recoveries: [...new Set(recoveries)].sort(),
+  };
+}
+
+const readinessExecutorContract = extractReadinessExecutorContract(readinessExecutorSource);
+
 test.each([
   ['en', en],
   ['zh-CN', zhCN],
@@ -111,6 +133,14 @@ test.each([
       catalog[`projects.recovery.${recovery}`].trim(),
       `recovery identifier ${recovery}`,
     ).not.toBe('');
+  }
+  for (const code of readinessExecutorContract.codes) {
+    expect(catalog[`projects.errors.${code}`], `readiness error code ${code}`).toEqual(expect.any(String));
+    expect(catalog[`projects.errors.${code}`].trim(), `readiness error code ${code}`).not.toBe('');
+  }
+  for (const recovery of readinessExecutorContract.recoveries) {
+    expect(catalog[`projects.recovery.${recovery}`], `readiness recovery ${recovery}`).toEqual(expect.any(String));
+    expect(catalog[`projects.recovery.${recovery}`].trim(), `readiness recovery ${recovery}`).not.toBe('');
   }
 });
 
