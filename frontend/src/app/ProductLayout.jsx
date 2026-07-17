@@ -53,11 +53,12 @@ export default function ProductLayout() {
               type="button"
               className="product-appearance-control"
               onClick={() => setDarkMode(!darkMode)}
-              aria-label={t('product.appearance.label')}
+              aria-label={`${t('product.appearance.label')}: ${t(darkMode ? 'product.appearance.dark' : 'product.appearance.light')}`}
+              aria-pressed={darkMode}
               title={t('product.appearance.label')}
             >
-              {darkMode ? <Sun aria-hidden="true" size={16} /> : <Moon aria-hidden="true" size={16} />}
-              <span>{t(darkMode ? 'product.appearance.light' : 'product.appearance.dark')}</span>
+              {darkMode ? <Moon aria-hidden="true" size={16} /> : <Sun aria-hidden="true" size={16} />}
+              <span>{t(darkMode ? 'product.appearance.dark' : 'product.appearance.light')}</span>
             </button>
           </div>
         </div>

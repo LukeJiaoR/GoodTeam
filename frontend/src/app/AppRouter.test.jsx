@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter, Link, RouterProvider } from 'react-router-dom';
-import { expect, test } from 'vitest';
+import { createBrowserRouter, createMemoryRouter, Link, RouterProvider } from 'react-router-dom';
+import { expect, test, vi } from 'vitest';
 import { createProductRoutes } from './AppRouter';
 
 function ProjectsStub() {
@@ -28,10 +28,25 @@ test('new project route renders the redesigned portfolio', async () => {
 });
 
 test('legacy root still renders the current application', async () => {
-  const router = createMemoryRouter(createProductRoutes(), { initialEntries: ['/?project=DEMO'] });
-  render(<RouterProvider router={router} />);
+  window.history.replaceState({}, '', '/?project=DEMO');
+  const fetchMock = vi.fn(async (url) => new Response(JSON.stringify(
+    url === '/api/state?project=DEMO'
+      ? { type: 'project', project: { project_key: 'DEMO' }, state: { project_key: 'DEMO' } }
+      : {},
+  ), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  vi.stubGlobal('fetch', fetchMock);
+  const router = createBrowserRouter(createProductRoutes());
 
-  expect(await screen.findByTestId('legacy-app-root')).toBeInTheDocument();
+  try {
+    render(<RouterProvider router={router} />);
+
+    expect(await screen.findByTestId('legacy-app-root')).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/state?project=DEMO'));
+  } finally {
+    router.dispose();
+    vi.unstubAllGlobals();
+    window.history.replaceState({}, '', '/');
+  }
 });
 
 test('browser back returns from project Home to Projects', async () => {
