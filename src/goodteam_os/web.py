@@ -13,7 +13,7 @@ from datetime import datetime, UTC
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote_to_bytes, urlparse
+from urllib.parse import parse_qs, quote, unquote_to_bytes, urlparse
 from urllib.request import urlopen
 from uuid import uuid4
 
@@ -57,8 +57,13 @@ from goodteam_os.project_import import (
     ProjectImportError,
     confirm_project_mode,
     import_project,
+    read_bound_project_readiness,
 )
-from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
+from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities  # noqa: F401
+from goodteam_os.project_readiness_executor import (
+    ProjectReadinessExecutor,
+    ReadinessExecutionError,
+)
 from goodteam_os.reviewer_evidence_snapshot import build_reviewer_evidence_snapshot
 from goodteam_os.reviewer_dispatch import (
     artifact_version_for_path,
@@ -156,6 +161,26 @@ IMPORT_ERROR_RECOVERY = {
     "project_root_not_readable": ["fix_permissions", "choose_another_directory"],
     "project_workspace_not_isolated": ["choose_another_directory"],
     "project_readiness_mismatch": ["reload_project", "return_to_projects"],
+}
+
+READINESS_ERROR_STATUS = {
+    "project_mode_unconfirmed": 409,
+    "project_root_identity_missing": 409,
+    "project_root_changed": 409,
+    "project_entry_changed": 409,
+    "readiness_artifact_mismatch": 409,
+    "readiness_artifact_not_found": 404,
+    "readiness_idempotency_conflict": 409,
+    "readiness_input_conflict": 409,
+    "readiness_input_invalid": 400,
+    "readiness_input_not_expected": 409,
+    "readiness_input_not_supported": 400,
+    "readiness_not_ready": 409,
+    "readiness_not_started": 409,
+    "readiness_retry_required": 409,
+    "readiness_step_binding_mismatch": 409,
+    "readiness_step_not_found": 404,
+    "readiness_step_not_retryable": 409,
 }
 
 
@@ -4266,7 +4291,15 @@ def _project_target_and_root(
             recovery=["return_to_projects"],
         ) from exc
     target = load_project_target(config)
-    key = normalize_project_key(str(target.get("key", key)))
+    loaded_key = normalize_project_key(str(target.get("key", key)))
+    if loaded_key != key:
+        raise ProjectApiError(
+            "project_config_changed",
+            "The project configuration changed while it was being read.",
+            409,
+            details={"project_key": key},
+            recovery=["reload_project", "return_to_projects"],
+        )
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if root is None:
         raise ProjectApiError(
@@ -4288,15 +4321,18 @@ def build_project_home(
     key, target, root = _project_target_and_root(workspace, project_key)
     readiness = readiness_override
     if readiness is None:
-        readiness = ProjectReadinessStore(workspace).read(key)
-    if readiness is None:
-        raise ProjectApiError(
-            "project_readiness_missing",
-            f"Project readiness is missing: {key}",
-            409,
-            details={"project_key": key},
-            recovery=["return_to_projects", "reload_project"],
-        )
+        try:
+            readiness = ProjectReadinessExecutor(workspace).status(key, root)
+        except ValueError as exc:
+            if not str(exc).startswith("No readiness found for project:"):
+                raise
+            raise ProjectApiError(
+                "project_readiness_missing",
+                f"Project readiness is missing: {key}",
+                409,
+                details={"project_key": key},
+                recovery=["return_to_projects", "reload_project"],
+            ) from exc
     state = StateStore(workspace).read_project_current(key)
     active_run = (
         {"run_id": state.run_id, "next_node": state.next_node}
@@ -4323,7 +4359,14 @@ def build_project_home(
             "active_run": active_run,
         },
         "readiness": readiness,
-        "capabilities": build_capabilities(readiness),
+        "capabilities": {
+            **build_capabilities(readiness),
+            "workflow_entry_url": (
+                f"/?project={quote(key, safe='')}"
+                if build_capabilities(readiness)["start_workflow"]
+                else ""
+            ),
+        },
         "next_action": pending
         or {"id": "shared_readiness_complete", "status": "complete"},
     }
@@ -4332,12 +4375,17 @@ def build_project_home(
 def build_project_list(workspace: Path) -> dict[str, object]:
     projects: list[dict[str, object]] = []
     state_store = StateStore(workspace)
-    readiness_store = ProjectReadinessStore(workspace)
     for config_path in discover_project_configs(workspace):
         target = load_project_target(config_path)
         key = normalize_project_key(str(target.get("key", config_path.stem)))
         root = resolve_project_runtime_root(dict(target.get("repos", {})))
-        readiness = readiness_store.read(key)
+        readiness = None
+        if root is not None:
+            try:
+                readiness = read_bound_project_readiness(workspace, key, root)
+            except ValueError as exc:
+                if not str(exc).startswith("No readiness found for project:"):
+                    raise
         if readiness is None:
             readiness = {
                 "schema_version": 1,
@@ -4382,9 +4430,46 @@ def handle_project_api_get(
 ) -> tuple[int, dict[str, object]] | None:
     if path == "/api/projects":
         return 200, build_project_list(workspace)
+    home_match = re.fullmatch(r"/api/projects/([^/]+)/home", path)
+    if home_match:
+        encoded_key = home_match.group(1)
+        return 200, build_project_home(workspace, _decode_project_api_key(encoded_key))
     if path.startswith("/api/projects/") and path.endswith("/home"):
         encoded_key = path.removeprefix("/api/projects/").removesuffix("/home")
-        return 200, build_project_home(workspace, _decode_project_api_key(encoded_key))
+        _decode_project_api_key(encoded_key)
+    artifact_match = re.fullmatch(
+        r"/api/projects/([^/]+)/readiness/steps/([^/]+)/artifact",
+        path,
+    )
+    if artifact_match:
+        key = _decode_project_api_key(artifact_match.group(1))
+        step_id = _decode_readiness_step_id(artifact_match.group(2))
+        key, _target, root = _project_target_and_root(workspace, key)
+        readiness = ProjectReadinessExecutor(workspace).status(key, root)
+        step = next(
+            (
+                value
+                for value in readiness.get("steps", [])
+                if isinstance(value, dict) and value.get("id") == step_id
+            ),
+            None,
+        )
+        if step is None:
+            raise ReadinessExecutionError(
+                "readiness_step_not_found",
+                f"Unknown readiness step: {step_id}",
+                details={"step_id": step_id},
+                recovery=["reload_project"],
+            )
+        refs = list(step.get("artifact_refs", []) or [])
+        if not refs:
+            raise ReadinessExecutionError(
+                "readiness_artifact_not_found",
+                "This readiness step has no artifact.",
+                details={"step_id": step_id},
+                recovery=["reload_project", "retry_readiness"],
+            )
+        return 200, ProjectReadinessExecutor(workspace).artifact(key, root, str(refs[-1]))
     return None
 
 
@@ -4408,38 +4493,112 @@ def handle_project_api_post(
             display_name=str(request.get("display_name", "")),
             requested_key=str(request.get("project_key", "")),
         )
+        imported_project = dict(result.get("project", {}) or {})
+        imported_key = normalize_project_key(str(imported_project.get("project_key", "")))
+        imported_root = Path(str(imported_project.get("root", "")))
+        readiness = ProjectReadinessExecutor(workspace).status(imported_key, imported_root)
+        result["readiness"] = readiness
+        result["capabilities"] = build_capabilities(readiness)
         return (201 if result["created"] else 200), result
-    if not path.startswith("/api/projects/") or not path.endswith("/mode"):
-        return None
-    encoded_key = path.removeprefix("/api/projects/").removesuffix("/mode")
-    key = _decode_project_api_key(encoded_key)
-    mode = str(request.get("mode", ""))
-    if mode not in {"new_project", "existing_project"}:
-        raise ProjectApiError(
-            "invalid_project_mode",
-            "Project mode must be new_project or existing_project.",
-            400,
-            details={"mode": mode},
-            recovery=["choose_project_mode"],
+    mode_match = re.fullmatch(r"/api/projects/([^/]+)/mode", path)
+    if mode_match:
+        key = _decode_project_api_key(mode_match.group(1))
+        mode = str(request.get("mode", ""))
+        if mode not in {"new_project", "existing_project"}:
+            raise ProjectApiError(
+                "invalid_project_mode",
+                "Project mode must be new_project or existing_project.",
+                400,
+                details={"mode": mode},
+                recovery=["choose_project_mode"],
+            )
+        key, _target, root = _project_target_and_root(workspace, key)
+        try:
+            readiness = confirm_project_mode(workspace, key, root, mode)
+        except ValueError as exc:
+            if not str(exc).startswith("No readiness found for project:"):
+                raise
+            raise ProjectApiError(
+                "project_readiness_missing",
+                f"Project readiness is missing: {key}",
+                409,
+                details={"project_key": key},
+                recovery=["return_to_projects", "reload_project"],
+            ) from exc
+        return 200, build_project_home(
+            workspace,
+            key,
+            readiness_override=readiness,
         )
-    key, _target, root = _project_target_and_root(workspace, key)
-    try:
-        readiness = confirm_project_mode(workspace, key, root, mode)
-    except ValueError as exc:
-        if not str(exc).startswith("No readiness found for project:"):
-            raise
-        raise ProjectApiError(
-            "project_readiness_missing",
-            f"Project readiness is missing: {key}",
-            409,
-            details={"project_key": key},
-            recovery=["return_to_projects", "reload_project"],
-        ) from exc
-    return 200, build_project_home(
-        workspace,
-        key,
-        readiness_override=readiness,
+
+    readiness_match = re.fullmatch(
+        r"/api/projects/([^/]+)/readiness/(start|input|retry|cancel)",
+        path,
     )
+    workflow_match = re.fullmatch(r"/api/projects/([^/]+)/workflow", path)
+    if readiness_match:
+        key = _decode_project_api_key(readiness_match.group(1))
+        action = readiness_match.group(2)
+        key, _target, root = _project_target_and_root(workspace, key)
+        executor = ProjectReadinessExecutor(workspace)
+        if action == "start":
+            raw_inputs = request.get("inputs", {})
+            if not isinstance(raw_inputs, dict):
+                raise ProjectApiError(
+                    "invalid_request",
+                    "Readiness inputs must be a JSON object.",
+                    400,
+                    recovery=["retry_request"],
+                )
+            executor.start(
+                key,
+                root,
+                raw_inputs,
+                idempotency_key=str(request.get("idempotency_key", "")),
+            )
+            return 202, build_project_home(workspace, key)
+        if action == "input":
+            raw_values = request.get("values", {})
+            if not isinstance(raw_values, dict):
+                raise ProjectApiError(
+                    "invalid_request",
+                    "Readiness input values must be a JSON object.",
+                    400,
+                    recovery=["retry_request"],
+                )
+            executor.submit_input(
+                key,
+                root,
+                str(request.get("step_id", "")),
+                raw_values,
+            )
+            return 202, build_project_home(workspace, key)
+        if action == "retry":
+            executor.retry(key, root, str(request.get("step_id", "")))
+            return 202, build_project_home(workspace, key)
+        return 200, build_project_home(
+            workspace,
+            key,
+            readiness_override=executor.cancel(key, root),
+        )
+    if workflow_match:
+        key = _decode_project_api_key(workflow_match.group(1))
+        key, _target, root = _project_target_and_root(workspace, key)
+        readiness = ProjectReadinessExecutor(workspace).status(key, root)
+        capabilities = build_capabilities(readiness)
+        if not capabilities["start_workflow"]:
+            raise ReadinessExecutionError(
+                "readiness_not_ready",
+                "Complete project readiness before starting a workflow.",
+                details={"project_key": key},
+                recovery=["continue_readiness", "reload_project"],
+            )
+        return 200, {
+            "project_key": key,
+            "workflow_url": f"/?project={quote(key, safe='')}",
+            "bridge": "legacy_project_workflow",
+        }
+    return None
 
 
 def _decode_project_api_key(encoded_key: str) -> str:
@@ -4460,10 +4619,35 @@ def _decode_project_api_key(encoded_key: str) -> str:
         ) from exc
 
 
+def _decode_readiness_step_id(encoded_step_id: str) -> str:
+    try:
+        if re.search(r"%(?![0-9A-Fa-f]{2})", encoded_step_id):
+            raise ValueError("malformed percent escape")
+        decoded = unquote_to_bytes(encoded_step_id).decode("utf-8", errors="strict")
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ProjectApiError(
+            "invalid_readiness_step_id",
+            "Readiness step ID must be one valid URL segment.",
+            400,
+            recovery=["reload_project"],
+        ) from exc
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", decoded):
+        raise ProjectApiError(
+            "invalid_readiness_step_id",
+            "Readiness step ID must be one valid URL segment.",
+            400,
+            recovery=["reload_project"],
+        )
+    return decoded
+
+
 def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path == "/api/projects/import"
-        or (path.startswith("/api/projects/") and path.endswith("/mode"))
+        or re.fullmatch(
+            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel))",
+            path,
+        )
     )
 
 
@@ -4503,6 +4687,12 @@ def _project_api_error_response(
         message = str(error)
         details = error.details
         recovery = IMPORT_ERROR_RECOVERY.get(error.code, [])
+    elif isinstance(error, ReadinessExecutionError):
+        status = READINESS_ERROR_STATUS.get(error.code, 400)
+        code = error.code
+        message = str(error)
+        details = error.details
+        recovery = error.recovery
     else:
         logging.getLogger(__name__).exception(
             "Unexpected project API error (request_id=%s)",
