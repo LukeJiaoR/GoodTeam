@@ -13,7 +13,12 @@ test('loads once, restores Home, confirms mode, and switches language', async ({
   let expectingUnreadableResponse = false;
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
-    if (expectingUnreadableResponse && message.text().includes('403 (Forbidden)')) return;
+    const sourceUrl = message.location().url;
+    const isExpectedUnreadableLog = expectingUnreadableResponse
+      && message.text().includes('403 (Forbidden)')
+      && sourceUrl
+      && new URL(sourceUrl).pathname === '/api/projects/import';
+    if (isExpectedUnreadableLog) return;
     consoleErrors.push(message.text());
   });
   page.on('response', (response) => {
@@ -88,7 +93,12 @@ test('loads once, restores Home, confirms mode, and switches language', async ({
 
   expect(fs.existsSync(`${existingRoot}/docs`)).toBe(false);
   expect(fs.existsSync(`${existingRoot}/.git`)).toBe(false);
+  expect(fs.readdirSync(existingRoot)).toEqual(['package.json']);
+  expect(fs.readFileSync(`${existingRoot}/package.json`, 'utf8')).toBe(
+    JSON.stringify({ name: 'existing' }, null, 2),
+  );
   expect(fs.readdirSync(emptyRoot)).toEqual([]);
+  expect(fs.readdirSync(ambiguousRoot)).toEqual(['blob.bin']);
   expect(fs.readFileSync(`${ambiguousRoot}/blob.bin`, 'utf8')).toBe('asset');
   expect(unreadableResponses).toEqual([403]);
   expect(consoleErrors).toEqual([]);
