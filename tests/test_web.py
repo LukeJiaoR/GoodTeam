@@ -3824,7 +3824,7 @@ def test_directory_picker_modal_is_extracted_from_app_shell():
     assert "export default function DirectoryPickerModal" in picker_source
     assert "/api/fs/list" in picker_source
     assert "/api/fs/mkdir" in picker_source
-    assert "Directory Browser" in picker_source
+    assert "Directory browser" in picker_source
     assert "Select this folder" in picker_source
     assert "const directoryPickerOverlay" not in app
     assert "fetchDirectory" not in app
