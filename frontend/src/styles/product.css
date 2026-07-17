@@ -481,6 +481,208 @@
   outline-offset: 3px;
 }
 
+.product-shell .project-home-page {
+  width: min(100% - 2rem, 1180px);
+  margin-inline: auto;
+  padding: clamp(2rem, 5vw, 4.5rem) 0 4rem;
+}
+
+.product-shell .project-home-header {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: clamp(2rem, 4vw, 3.5rem);
+  padding-bottom: 1.35rem;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .project-home-eyebrow {
+  margin: 0 0 0.45rem;
+  color: var(--product-accent-strong);
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.product-shell .project-home-header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  font-weight: 660;
+  letter-spacing: -0.052em;
+  line-height: 1;
+}
+
+.product-shell .project-home-root {
+  display: block;
+  max-width: min(72vw, 48rem);
+  margin-top: 0.75rem;
+  overflow: hidden;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-shell .project-home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(16rem, 0.75fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: start;
+}
+
+.product-shell .project-next-action,
+.product-shell .project-home-section {
+  min-width: 0;
+}
+
+.product-shell .project-next-action {
+  display: grid;
+  gap: 1.2rem;
+  padding-top: 0.25rem;
+}
+
+.product-shell .mode-decision-panel {
+  padding: clamp(1rem, 3vw, 1.45rem);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .mode-decision-panel h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.product-shell .mode-decision-panel p,
+.product-shell .workflow-start-panel p {
+  margin: 0.45rem 0 0;
+  color: var(--product-text-muted);
+}
+
+.product-shell .mode-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.product-shell .workflow-start-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  padding-top: 0.25rem;
+}
+
+.product-shell .project-home-error {
+  margin-top: 0.25rem;
+}
+
+.product-shell .project-fact-list {
+  display: grid;
+  gap: 0;
+  margin: 1rem 0 0;
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .project-fact {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.45fr) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .project-fact dt {
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+}
+
+.product-shell .project-fact dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--product-text);
+}
+
+.product-shell .project-fact dd code {
+  display: block;
+  overflow: hidden;
+  color: var(--product-text-muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-shell .project-fact-run {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.product-shell .readiness-center {
+  grid-column: 1;
+}
+
+.product-shell .readiness-step-list {
+  display: grid;
+  gap: 0;
+  margin: 1rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--product-border);
+  list-style: none;
+}
+
+.product-shell .readiness-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .readiness-step-copy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.product-shell .readiness-step-name {
+  font-weight: 620;
+}
+
+.product-shell .readiness-step-required {
+  color: var(--product-text-muted);
+  font-size: 0.78rem;
+}
+
+.product-shell .project-capabilities ul {
+  display: grid;
+  gap: 0.55rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  color: var(--product-text-muted);
+  list-style: none;
+}
+
+.product-shell .project-capabilities li::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.55rem;
+  background: var(--product-accent);
+  border-radius: 999px;
+  transform: translateY(-0.08rem);
+}
+
 .dark .product-shell {
   --product-bg: #191816;
   --product-surface: #23211e;
@@ -529,6 +731,26 @@
 
   .product-shell .projects-open-project {
     width: fit-content;
+  }
+
+  .product-shell .project-home-page {
+    width: min(100% - 2rem, 42rem);
+    padding: 2rem 0 3rem;
+  }
+
+  .product-shell .project-home-header,
+  .product-shell .project-home-grid,
+  .product-shell .project-fact,
+  .product-shell .readiness-step {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-shell .project-home-header {
+    gap: 0.85rem;
+  }
+
+  .product-shell .readiness-center {
+    grid-column: auto;
   }
 
   .product-shell .project-row--skeleton {

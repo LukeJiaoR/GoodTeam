@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ApiError, requestJson } from '../../lib/api/client';
 import ProjectsPage from './ProjectsPage';
-import { importProject } from './projectApi';
+import { confirmProjectMode, getProjectHome, importProject } from './projectApi';
 import { normalizeProjectsPayload } from './projectList';
 import {
   projectErrorMessageKey,
@@ -213,6 +213,38 @@ test('project import posts only the selected root', async () => {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root: '/work/demo' }),
+  });
+});
+
+test('project home API reads the encoded project home endpoint', async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    project: { project_key: 'DEMO SPACE' },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  await getProjectHome('DEMO SPACE');
+
+  expect(fetchMock).toHaveBeenCalledWith('/api/projects/DEMO%20SPACE/home', { signal: undefined });
+});
+
+test('project mode API posts the confirmed mode', async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    readiness: { project_mode: 'existing_project' },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  await confirmProjectMode('DEMO', 'existing_project');
+
+  expect(fetchMock).toHaveBeenCalledWith('/api/projects/DEMO/mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'existing_project' }),
   });
 });
 
