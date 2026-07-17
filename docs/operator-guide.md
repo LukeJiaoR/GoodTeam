@@ -93,9 +93,36 @@ http://localhost:8788/
 http://localhost:8788/?project=MYAPP
 ```
 
+Additive project-loading preview URLs:
+
+```text
+http://localhost:8788/projects
+http://localhost:8788/projects/MYAPP/home
+```
+
+Use `/projects` to register a readable absolute project directory and enter its
+Home in one flow. Registration changes only the GoodTeam data workspace; it
+does not initialize Git, create documentation, or otherwise write into the
+selected project root. Repeating an import is idempotent and returns the same
+project. Readiness facts, detected or confirmed project mode, and pending steps
+are persisted in the workspace and restored after a browser reload or GoodTeam
+server restart.
+
+The preview distinguishes a successfully loaded project from a project that is
+ready to start work. If the project type is ambiguous, choose new project,
+existing codebase, or decide later. Mode-specific Init and repository-
+understanding execution are not part of this slice; GoodTeam displays their real
+pending steps and keeps workflow start disabled with a reason. Continue using
+`/` and `/?project=MYAPP` for legacy dashboard operations not yet exposed by the
+preview.
+
 Operator checks:
 
 - Confirm the project key shown in the dashboard matches the intended project.
+- Confirm the absolute root shown on project Home matches the directory you
+  selected.
+- Treat `Loaded` and `Ready` as separate states; do not infer that Init or code
+  understanding has run merely because Home is available.
 - Confirm the current run and gate are the ones you intend to operate on.
 - If multiple projects are active, avoid approving a gate from the wrong project
   context.
@@ -184,6 +211,46 @@ Quick rule:
 | browser/adapter/live path | Tier 4: tests + isolated live smoke |
 
 For live behavior, use [`live-smoke-playbook.md`](live-smoke-playbook.md).
+
+### Project-loading preview verification evidence
+
+This change is Tier 4 because it covers browser-visible routing, project-root
+resolution, persisted readiness, and an intentionally read-only import path.
+The isolated browser workspace is
+`/private/tmp/goodteam-project-load-e2e`; it contains synthetic empty,
+existing-codebase, ambiguous, and unreadable targets only.
+
+Verification recorded for this slice:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest \
+  tests/test_project_readiness.py tests/test_project_import.py tests/test_web.py \
+  -q -k "project or readiness or product_spa_path"
+# 167 passed, 175 deselected
+
+PYTHONPATH=src .venv/bin/python -m pytest tests -q
+# 1393 passed
+
+.venv/bin/ruff check src/goodteam_os/ tests/
+# All checks passed
+
+npm test --prefix frontend
+# 6 Node tests and 111 Vitest tests passed
+
+npm run lint --prefix frontend
+npm run build --prefix frontend
+npm run test:e2e --prefix frontend -- --update-snapshots
+npm run test:e2e --prefix frontend
+# 1 isolated browser acceptance passed in both Playwright runs
+```
+
+The Playwright acceptance opens `/projects` directly, verifies idempotent import,
+reload recovery, unreadable-root recovery, ambiguous-mode confirmation,
+Simplified Chinese and English, mobile/light and desktop/dark rendering, and no
+unexpected console errors. It also asserts that import did not create `docs` or
+`.git` in the existing target, left the empty target empty, and preserved the
+ambiguous fixture file. The expected 403 from the deliberate unreadable-root
+request is asserted separately from unexpected console failures.
 
 ## 6. Review Approval Gates
 

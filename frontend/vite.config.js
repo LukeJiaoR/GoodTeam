@@ -8,6 +8,12 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/vitest/setup.js',
+    css: true,
+    include: ['src/**/*.test.jsx', 'src/**/*.vitest.js'],
+  },
   server: {
     host: '127.0.0.1',
     port: 8790,

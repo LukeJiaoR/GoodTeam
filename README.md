@@ -116,6 +116,29 @@ The root dashboard is a multi-project overview. Open a project detail page with:
 http://localhost:8788/?project=<PROJECT_KEY>
 ```
 
+### Redesigned project loading preview
+
+The additive project-loading experience is available at:
+
+```text
+http://localhost:8788/projects
+http://localhost:8788/projects/<PROJECT_KEY>/home
+```
+
+`/projects` accepts an absolute local directory, records it once, and opens a
+recoverable project Home. Import is read-only with respect to the selected
+directory: registration and readiness state are stored in the GoodTeam
+workspace, and importing the same root again returns the same project instead
+of creating a duplicate. New-project, existing-codebase, and unconfirmed modes
+share the same persisted readiness model, so the Home state and a manual mode
+decision survive browser reloads and server restarts.
+
+These routes are an additive preview. `/` and `/?project=<PROJECT_KEY>` continue
+to serve the current dashboard. The preview shows real pending Init or
+repository-understanding steps and blocks workflow start with an explicit
+reason; executing those mode-specific steps belongs to the next implementation
+slice.
+
 ### Frontend-Backend Separation & Local Development
 
 GoodTeam OS operates under a clean frontend-backend separated architecture.

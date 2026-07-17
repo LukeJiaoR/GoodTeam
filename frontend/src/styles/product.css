@@ -1,0 +1,941 @@
+.product-shell {
+  --product-bg: #f3f0e9;
+  --product-surface: #fffdf8;
+  --product-surface-muted: #ece8df;
+  --product-border: #d8d2c8;
+  --product-text: #292723;
+  --product-text-muted: #716b60;
+  --product-accent: #9d5d42;
+  --product-accent-strong: #7f4933;
+  --product-success: #41735a;
+  --product-warning: #8a6b25;
+  --product-danger: #984f49;
+  --product-on-accent: #fffdf8;
+  --product-focus: #7f4933;
+  --product-radius: 8px;
+  min-height: 100dvh;
+  color: var(--product-text);
+  background: var(--product-bg);
+  font-family: "Geist Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.product-shell code,
+.product-shell pre,
+.product-shell [data-monospace] {
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+}
+
+.product-shell .product-chrome {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  background: color-mix(in srgb, var(--product-bg) 92%, transparent);
+  border-bottom: 1px solid var(--product-border);
+  backdrop-filter: blur(14px);
+}
+
+.product-shell .product-chrome__inner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 2rem;
+  align-items: center;
+  width: min(100% - 3rem, 76rem);
+  min-height: 64px;
+  margin: 0 auto;
+}
+
+.product-shell .product-brand {
+  display: inline-flex;
+  gap: 0.65rem;
+  align-items: center;
+  color: var(--product-text);
+  font-weight: 680;
+  letter-spacing: -0.015em;
+  text-decoration: none;
+}
+
+.product-shell .product-brand__mark {
+  display: inline-grid;
+  width: 1.8rem;
+  height: 1.8rem;
+  place-items: center;
+  color: var(--product-on-accent);
+  background: var(--product-accent-strong);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 760;
+}
+
+.product-shell .product-navigation {
+  display: flex;
+  align-self: stretch;
+  align-items: stretch;
+}
+
+.product-shell .product-navigation__link {
+  display: inline-flex;
+  position: relative;
+  align-items: center;
+  padding: 0 0.15rem;
+  color: var(--product-text-muted);
+  font-size: 0.9rem;
+  font-weight: 580;
+  text-decoration: none;
+}
+
+.product-shell .product-navigation__link::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: transparent;
+  content: "";
+}
+
+.product-shell .product-navigation__link:hover,
+.product-shell .product-navigation__link.is-active {
+  color: var(--product-text);
+}
+
+.product-shell .product-navigation__link.is-active::after {
+  background: var(--product-accent-strong);
+}
+
+.product-shell .product-preferences {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.product-shell .product-language-control select,
+.product-shell .product-appearance-control {
+  min-height: 36px;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.product-shell .product-language-control select {
+  padding: 0 1.9rem 0 0.65rem;
+  cursor: pointer;
+}
+
+.product-shell .product-appearance-control {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0 0.7rem;
+  cursor: pointer;
+}
+
+.product-shell .product-language-control select:hover,
+.product-shell .product-appearance-control:hover {
+  background: var(--product-surface-muted);
+}
+
+.product-shell .product-language-control select:focus-visible,
+.product-shell .product-appearance-control:focus-visible,
+.product-shell .product-brand:focus-visible,
+.product-shell .product-navigation__link:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .product-not-found {
+  display: grid;
+  width: min(100% - 2rem, 38rem);
+  min-height: 80dvh;
+  align-content: center;
+  justify-items: start;
+  margin: 0 auto;
+}
+
+.product-shell .product-not-found__code {
+  margin: 0 0 0.8rem;
+  color: var(--product-accent-strong);
+  font-family: "Geist Mono Variable", ui-monospace, monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.product-shell .product-not-found h1 {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 4rem);
+  letter-spacing: -0.055em;
+  line-height: 1;
+}
+
+.product-shell .product-not-found p:not(.product-not-found__code) {
+  max-width: 34rem;
+  margin: 1rem 0 1.5rem;
+  color: var(--product-text-muted);
+}
+
+.product-shell .product-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid transparent;
+  border-radius: var(--product-radius);
+  font: inherit;
+  font-size: 0.933rem;
+  font-weight: 620;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease,
+    transform 180ms ease;
+}
+
+.product-shell .product-button--primary {
+  color: var(--product-on-accent);
+  background: var(--product-accent-strong);
+  border-color: var(--product-accent-strong);
+}
+
+.product-shell .product-button--primary:hover:not(:disabled) {
+  background: var(--product-accent);
+  border-color: var(--product-accent);
+}
+
+.product-shell .product-button--secondary {
+  color: var(--product-text);
+  background: var(--product-surface);
+  border-color: var(--product-border);
+}
+
+.product-shell .product-button--secondary:hover:not(:disabled) {
+  background: var(--product-surface-muted);
+}
+
+.product-shell .product-button--danger {
+  color: var(--product-on-accent);
+  background: var(--product-danger);
+  border-color: var(--product-danger);
+}
+
+.product-shell .product-button--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--product-danger) 84%, var(--product-text));
+  border-color: color-mix(in srgb, var(--product-danger) 84%, var(--product-text));
+}
+
+.product-shell .product-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.product-shell .product-button:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .product-button:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.product-shell .product-inline-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-inline-start: 3px solid var(--product-accent);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .product-inline-notice[data-tone="success"] {
+  border-inline-start-color: var(--product-success);
+}
+
+.product-shell .product-inline-notice[data-tone="warning"] {
+  border-inline-start-color: var(--product-warning);
+}
+
+.product-shell .product-inline-notice[data-tone="danger"],
+.product-shell .product-inline-notice[data-tone="error"] {
+  border-inline-start-color: var(--product-danger);
+}
+
+.product-shell .product-inline-notice__title {
+  display: block;
+  font-weight: 650;
+}
+
+.product-shell .product-inline-notice__description {
+  margin-top: 0.18rem;
+  color: var(--product-text-muted);
+}
+
+.product-shell .product-inline-notice__action {
+  flex: none;
+}
+
+.product-shell .product-page-state {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1.25rem;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .product-page-state__marker {
+  min-height: 2.5rem;
+  background: var(--product-accent);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .product-page-state[data-kind="complete"] .product-page-state__marker {
+  background: var(--product-success);
+}
+
+.product-shell .product-page-state[data-kind="needs_input"] .product-page-state__marker {
+  background: var(--product-warning);
+}
+
+.product-shell .product-page-state[data-kind="error"] .product-page-state__marker {
+  background: var(--product-danger);
+}
+
+.product-shell .product-page-state__title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 660;
+  line-height: 1.35;
+}
+
+.product-shell .product-page-state__description {
+  margin-top: 0.35rem;
+  color: var(--product-text-muted);
+}
+
+.product-shell .product-page-state__action {
+  margin-top: 0.9rem;
+}
+
+.product-shell .product-status-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.2rem 0.48rem;
+  color: var(--product-text-muted);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+  font-size: 0.8rem;
+  font-weight: 620;
+  line-height: 1.3;
+}
+
+.product-shell .product-status-badge[data-tone="active"],
+.product-shell .product-status-badge[data-tone="accent"] {
+  color: var(--product-accent-strong);
+  border-color: var(--product-accent);
+}
+
+.product-shell .product-status-badge[data-tone="complete"],
+.product-shell .product-status-badge[data-tone="success"] {
+  color: var(--product-success);
+  border-color: var(--product-success);
+}
+
+.product-shell .product-status-badge[data-tone="pending"],
+.product-shell .product-status-badge[data-tone="needs_input"],
+.product-shell .product-status-badge[data-tone="warning"] {
+  color: var(--product-warning);
+  border-color: var(--product-warning);
+}
+
+.product-shell .product-status-badge[data-tone="error"],
+.product-shell .product-status-badge[data-tone="danger"] {
+  color: var(--product-danger);
+  border-color: var(--product-danger);
+}
+
+.product-shell .projects-page {
+  width: min(100% - 2rem, 1180px);
+  margin-inline: auto;
+  padding: clamp(2rem, 5vw, 4.5rem) 0 4rem;
+}
+
+.product-shell .projects-page-header {
+  max-width: 44rem;
+  margin-bottom: clamp(2.25rem, 5vw, 4.5rem);
+}
+
+.product-shell .projects-page-header h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 4.35rem);
+  font-weight: 660;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.product-shell .projects-page-header p,
+.product-shell .projects-section-heading p {
+  max-width: 56ch;
+  margin: 0.8rem 0 0;
+  color: var(--product-text-muted);
+}
+
+.product-shell .projects-page-grid {
+  display: grid;
+  grid-template-columns: minmax(16rem, 0.78fr) minmax(0, 1.55fr);
+  gap: clamp(2.5rem, 7vw, 6.5rem);
+  align-items: start;
+}
+
+.product-shell .projects-load-panel,
+.product-shell .projects-portfolio {
+  min-width: 0;
+}
+
+.product-shell .projects-load-panel {
+  position: sticky;
+  top: 2rem;
+}
+
+.product-shell .projects-section-heading h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+}
+
+.product-shell .projects-load-form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.product-shell .projects-path-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.product-shell .projects-path-field label {
+  font-weight: 640;
+}
+
+.product-shell .projects-path-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+}
+
+.product-shell .projects-path-controls input {
+  min-width: 0;
+  min-height: 40px;
+  padding: 0.55rem 0.7rem;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+  font: inherit;
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.84rem;
+}
+
+.product-shell .projects-path-controls input::placeholder {
+  color: var(--product-text-muted);
+  opacity: 1;
+}
+
+.product-shell .projects-path-controls input:hover {
+  border-color: var(--product-text-muted);
+}
+
+.product-shell .projects-path-controls input:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .projects-path-controls input[aria-invalid="true"] {
+  border-color: var(--product-danger);
+}
+
+.product-shell .projects-field-help {
+  color: var(--product-text-muted);
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.73rem;
+}
+
+.product-shell .projects-recovery-guidance {
+  display: block;
+}
+
+.product-shell .projects-request-id {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+}
+
+.product-shell .projects-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.product-shell [role="dialog"] :focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .projects-list-state,
+.product-shell .project-groups {
+  margin-top: 1.5rem;
+}
+
+.product-shell .projects-list-skeleton {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .project-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1.5rem;
+  align-items: center;
+  padding: 1.2rem 0;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .project-row--skeleton {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 7.5rem;
+}
+
+.product-shell .project-skeleton-line {
+  display: block;
+  background: var(--product-surface-muted);
+  border-radius: calc(var(--product-radius) / 2);
+}
+
+.product-shell .project-skeleton-line--title {
+  width: min(44%, 12rem);
+  height: 1.15rem;
+  align-self: end;
+}
+
+.product-shell .project-skeleton-line--path {
+  grid-column: 1;
+  width: min(72%, 20rem);
+  height: 0.72rem;
+  align-self: start;
+}
+
+.product-shell .project-skeleton-line--action {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 7.5rem;
+  height: 2.5rem;
+}
+
+.product-shell .project-groups {
+  display: grid;
+  gap: 2.35rem;
+}
+
+.product-shell .project-group {
+  min-width: 0;
+}
+
+.product-shell .project-group h3 {
+  margin: 0 0 0.35rem;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.product-shell .project-group-rows {
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .project-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.product-shell .project-row-title h4 {
+  margin: 0;
+  font-size: 1.08rem;
+  font-weight: 650;
+  letter-spacing: -0.018em;
+}
+
+.product-shell .project-row-path {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.32rem;
+  overflow: hidden;
+  color: var(--product-text-muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-shell .project-row-context {
+  margin: 0.45rem 0 0;
+  color: var(--product-text-muted);
+  font-size: 0.84rem;
+}
+
+.product-shell .projects-open-project,
+.product-shell .projects-inline-action {
+  padding: 0;
+  color: var(--product-accent-strong);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  border-radius: 0;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 640;
+  line-height: 1.45;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.product-shell .projects-open-project:hover,
+.product-shell .projects-inline-action:hover {
+  color: var(--product-accent);
+}
+
+.product-shell .projects-open-project:active,
+.product-shell .projects-inline-action:active {
+  transform: translateY(1px);
+}
+
+.product-shell .projects-open-project:focus-visible,
+.product-shell .projects-inline-action:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 3px;
+}
+
+.product-shell .project-home-page {
+  width: min(100% - 2rem, 1180px);
+  margin-inline: auto;
+  padding: clamp(2rem, 5vw, 4.5rem) 0 4rem;
+}
+
+.product-shell .project-home-header {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: clamp(2rem, 4vw, 3.5rem);
+  padding-bottom: 1.35rem;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .project-home-eyebrow {
+  margin: 0 0 0.45rem;
+  color: var(--product-accent-strong);
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.product-shell .project-home-header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  font-weight: 660;
+  letter-spacing: -0.052em;
+  line-height: 1;
+}
+
+.product-shell .project-home-root {
+  display: block;
+  max-width: min(72vw, 48rem);
+  margin-top: 0.75rem;
+  overflow: hidden;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-shell .project-home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(16rem, 0.75fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: start;
+}
+
+.product-shell .project-next-action,
+.product-shell .project-home-section {
+  min-width: 0;
+}
+
+.product-shell .project-next-action {
+  display: grid;
+  gap: 1.2rem;
+  padding-top: 0.25rem;
+}
+
+.product-shell .mode-decision-panel {
+  padding: clamp(1rem, 3vw, 1.45rem);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .mode-decision-panel h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.product-shell .mode-decision-panel p,
+.product-shell .workflow-start-panel p {
+  margin: 0.45rem 0 0;
+  color: var(--product-text-muted);
+}
+
+.product-shell .mode-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.product-shell .workflow-start-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  padding-top: 0.25rem;
+}
+
+.product-shell .project-home-error {
+  margin-top: 0.25rem;
+}
+
+.product-shell .project-fact-list {
+  display: grid;
+  gap: 0;
+  margin: 1rem 0 0;
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .project-fact {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.45fr) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .project-fact dt {
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+}
+
+.product-shell .project-fact dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--product-text);
+}
+
+.product-shell .project-fact dd code {
+  display: block;
+  overflow: hidden;
+  color: var(--product-text-muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-shell .project-fact-run {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.product-shell .readiness-center {
+  grid-column: 1;
+}
+
+.product-shell .readiness-step-list {
+  display: grid;
+  gap: 0;
+  margin: 1rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--product-border);
+  list-style: none;
+}
+
+.product-shell .readiness-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .readiness-step-copy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.product-shell .readiness-step-name {
+  font-weight: 620;
+}
+
+.product-shell .readiness-step-required {
+  color: var(--product-text-muted);
+  font-size: 0.78rem;
+}
+
+.product-shell .project-capabilities ul {
+  display: grid;
+  gap: 0.55rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  color: var(--product-text-muted);
+  list-style: none;
+}
+
+.product-shell .project-capabilities li::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.55rem;
+  background: var(--product-accent);
+  border-radius: 999px;
+  transform: translateY(-0.08rem);
+}
+
+.dark .product-shell {
+  --product-bg: #191816;
+  --product-surface: #23211e;
+  --product-surface-muted: #151412;
+  --product-border: #3b3832;
+  --product-text: #eee9df;
+  --product-text-muted: #aaa398;
+  --product-accent: #c07859;
+  --product-accent-strong: #d18b6c;
+  --product-success: #78a98c;
+  --product-warning: #d0ad61;
+  --product-danger: #d3827b;
+  --product-on-accent: #191816;
+  --product-focus: #d18b6c;
+}
+
+@media (max-width: 640px) {
+  .product-shell .product-inline-notice {
+    flex-direction: column;
+  }
+
+  .product-shell .product-chrome__inner {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.75rem;
+    width: min(100% - 2rem, 42rem);
+    padding: 0.7rem 0;
+  }
+
+  .product-shell .product-navigation {
+    justify-self: end;
+  }
+
+  .product-shell .product-preferences {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .product-shell .product-appearance-control span {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .product-shell .projects-page {
+    width: min(100% - 2rem, 42rem);
+    padding: 2rem 0 3rem;
+  }
+
+  .product-shell .projects-page-header {
+    margin-bottom: 2.5rem;
+  }
+
+  .product-shell .projects-page-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3rem;
+  }
+
+  .product-shell .projects-load-panel {
+    position: static;
+  }
+
+  .product-shell .project-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.85rem;
+  }
+
+  .product-shell .projects-open-project {
+    width: fit-content;
+  }
+
+  .product-shell .project-home-page {
+    width: min(100% - 2rem, 42rem);
+    padding: 2rem 0 3rem;
+  }
+
+  .product-shell .project-home-header,
+  .product-shell .project-home-grid,
+  .product-shell .project-fact,
+  .product-shell .readiness-step {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-shell .project-home-header {
+    gap: 0.85rem;
+  }
+
+  .product-shell .readiness-center {
+    grid-column: auto;
+  }
+
+  .product-shell .project-row--skeleton {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-shell *,
+  .product-shell *::before,
+  .product-shell *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
