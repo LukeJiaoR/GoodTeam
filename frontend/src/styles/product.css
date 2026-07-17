@@ -27,6 +27,157 @@
   font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
 }
 
+.product-shell .product-chrome {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  background: color-mix(in srgb, var(--product-bg) 92%, transparent);
+  border-bottom: 1px solid var(--product-border);
+  backdrop-filter: blur(14px);
+}
+
+.product-shell .product-chrome__inner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 2rem;
+  align-items: center;
+  width: min(100% - 3rem, 76rem);
+  min-height: 64px;
+  margin: 0 auto;
+}
+
+.product-shell .product-brand {
+  display: inline-flex;
+  gap: 0.65rem;
+  align-items: center;
+  color: var(--product-text);
+  font-weight: 680;
+  letter-spacing: -0.015em;
+  text-decoration: none;
+}
+
+.product-shell .product-brand__mark {
+  display: inline-grid;
+  width: 1.8rem;
+  height: 1.8rem;
+  place-items: center;
+  color: var(--product-on-accent);
+  background: var(--product-accent-strong);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 760;
+}
+
+.product-shell .product-navigation {
+  display: flex;
+  align-self: stretch;
+  align-items: stretch;
+}
+
+.product-shell .product-navigation__link {
+  display: inline-flex;
+  position: relative;
+  align-items: center;
+  padding: 0 0.15rem;
+  color: var(--product-text-muted);
+  font-size: 0.9rem;
+  font-weight: 580;
+  text-decoration: none;
+}
+
+.product-shell .product-navigation__link::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: transparent;
+  content: "";
+}
+
+.product-shell .product-navigation__link:hover,
+.product-shell .product-navigation__link.is-active {
+  color: var(--product-text);
+}
+
+.product-shell .product-navigation__link.is-active::after {
+  background: var(--product-accent-strong);
+}
+
+.product-shell .product-preferences {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.product-shell .product-language-control select,
+.product-shell .product-appearance-control {
+  min-height: 36px;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.product-shell .product-language-control select {
+  padding: 0 1.9rem 0 0.65rem;
+  cursor: pointer;
+}
+
+.product-shell .product-appearance-control {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0 0.7rem;
+  cursor: pointer;
+}
+
+.product-shell .product-language-control select:hover,
+.product-shell .product-appearance-control:hover {
+  background: var(--product-surface-muted);
+}
+
+.product-shell .product-language-control select:focus-visible,
+.product-shell .product-appearance-control:focus-visible,
+.product-shell .product-brand:focus-visible,
+.product-shell .product-navigation__link:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .product-not-found {
+  display: grid;
+  width: min(100% - 2rem, 38rem);
+  min-height: 80dvh;
+  align-content: center;
+  justify-items: start;
+  margin: 0 auto;
+}
+
+.product-shell .product-not-found__code {
+  margin: 0 0 0.8rem;
+  color: var(--product-accent-strong);
+  font-family: "Geist Mono Variable", ui-monospace, monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.product-shell .product-not-found h1 {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 4rem);
+  letter-spacing: -0.055em;
+  line-height: 1;
+}
+
+.product-shell .product-not-found p:not(.product-not-found__code) {
+  max-width: 34rem;
+  margin: 1rem 0 1.5rem;
+  color: var(--product-text-muted);
+}
+
 .product-shell .product-button {
   display: inline-flex;
   min-height: 40px;
@@ -702,6 +853,26 @@
 @media (max-width: 640px) {
   .product-shell .product-inline-notice {
     flex-direction: column;
+  }
+
+  .product-shell .product-chrome__inner {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.75rem;
+    width: min(100% - 2rem, 42rem);
+    padding: 0.7rem 0;
+  }
+
+  .product-shell .product-navigation {
+    justify-self: end;
+  }
+
+  .product-shell .product-preferences {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .product-shell .product-appearance-control span {
+    display: none;
   }
 }
 
