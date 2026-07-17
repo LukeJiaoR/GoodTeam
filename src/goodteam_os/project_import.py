@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import logging
 import os
 import secrets
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
@@ -31,6 +33,18 @@ class ProjectImportError(ValueError):
         super().__init__(message)
         self.code = code
         self.details = details or {}
+
+
+@dataclass(frozen=True)
+class _PublishedConfig:
+    descriptor: int
+
+    @property
+    def identity(self) -> FileIdentity:
+        return _descriptor_identity(self.descriptor)
+
+    def close(self) -> None:
+        os.close(self.descriptor)
 
 
 def import_project(
@@ -177,7 +191,7 @@ def _import_project_locked(
                 assert projects_fd is not None
             _verify_directory_identity_at(workspace_fd, "projects", projects_fd)
             try:
-                published_identity = _publish_config_exclusively(
+                published_config = _publish_config_exclusively(
                     config_path,
                     build_registered_project_config(key, name, root),
                     directory_fd=projects_fd,
@@ -211,7 +225,7 @@ def _import_project_locked(
                     workspace_fd,
                     projects_fd,
                     config_path.name,
-                    published_identity,
+                    published_config,
                 )
                 readiness = readiness_store.initialize(key, root)
                 readiness_store._verify_anchored_write(key)
@@ -219,7 +233,7 @@ def _import_project_locked(
                     workspace_fd,
                     projects_fd,
                     config_path.name,
-                    published_identity,
+                    published_config,
                 )
                 result = _result(
                     created=True,
@@ -237,14 +251,16 @@ def _import_project_locked(
                 except OSError:
                     pass
                 try:
-                    _unlink_if_identity(
+                    _unlink_if_descriptor(
                         projects_fd,
                         config_path.name,
-                        published_identity,
+                        published_config.descriptor,
                     )
                 except OSError:
                     pass
                 raise
+            finally:
+                published_config.close()
     finally:
         if projects_fd is not None:
             os.close(projects_fd)
@@ -401,23 +417,30 @@ def _publish_config_exclusively(
     content: str,
     *,
     directory_fd: int | None = None,
-) -> FileIdentity:
+) -> _PublishedConfig:
     owned_directory_fd = directory_fd is None
     if directory_fd is None:
         flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
         directory_fd = os.open(destination.parent, flags)
     temporary_name = f".{destination.name}.{secrets.token_hex(8)}.tmp"
     temporary_created = False
-    owned_identity: FileIdentity | None = None
+    owned_descriptor: int | None = None
+    destination_linked = False
+    published = False
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
+        owned_descriptor = os.open(
+            temporary_name,
+            flags,
+            0o600,
+            dir_fd=directory_fd,
+        )
         temporary_created = True
-        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary:
+        with os.fdopen(os.dup(owned_descriptor), "w", encoding="utf-8") as temporary:
             temporary.write(content)
             temporary.flush()
             os.fsync(temporary.fileno())
-            owned_identity = _descriptor_identity(temporary.fileno())
+            owned_identity = _descriptor_identity(owned_descriptor)
             os.link(
                 temporary_name,
                 destination.name,
@@ -425,6 +448,7 @@ def _publish_config_exclusively(
                 dst_dir_fd=directory_fd,
                 follow_symlinks=False,
             )
+            destination_linked = True
             try:
                 final_identity = _entry_identity(directory_fd, destination.name)
             except FileNotFoundError as exc:
@@ -437,13 +461,15 @@ def _publish_config_exclusively(
                     errno.ENOTDIR,
                     f"Published config changed during publication: {destination.name}",
                 )
+        published = True
+        return _PublishedConfig(descriptor=owned_descriptor)
     except BaseException:
-        if owned_identity is not None:
+        if owned_descriptor is not None and destination_linked:
             try:
-                _unlink_if_identity(
+                _unlink_if_descriptor(
                     directory_fd,
                     destination.name,
-                    owned_identity,
+                    owned_descriptor,
                 )
             except OSError:
                 pass
@@ -451,27 +477,34 @@ def _publish_config_exclusively(
     finally:
         if temporary_created:
             try:
-                os.unlink(temporary_name, dir_fd=directory_fd)
-            except FileNotFoundError:
+                if owned_descriptor is None:
+                    os.unlink(temporary_name, dir_fd=directory_fd)
+                else:
+                    _unlink_if_descriptor(
+                        directory_fd,
+                        temporary_name,
+                        owned_descriptor,
+                    )
+            except OSError:
                 pass
+        if owned_descriptor is not None and not published:
+            os.close(owned_descriptor)
         if owned_directory_fd:
             os.close(directory_fd)
-    assert owned_identity is not None
-    return owned_identity
 
 
 def _verify_published_config(
     workspace_fd: int,
     projects_fd: int,
     name: str,
-    expected_identity: FileIdentity,
+    published_config: _PublishedConfig,
 ) -> None:
     _verify_directory_identity_at(workspace_fd, "projects", projects_fd)
     try:
         current_identity = _entry_identity(projects_fd, name)
     except FileNotFoundError as exc:
         raise OSError(errno.ENOTDIR, f"Published config disappeared: {name}") from exc
-    if current_identity != expected_identity:
+    if current_identity != published_config.identity:
         raise OSError(errno.ENOTDIR, f"Published config changed during import: {name}")
 
 
@@ -496,21 +529,50 @@ def _entry_identity(directory_fd: int, name: str) -> FileIdentity:
     return stat_result.st_dev, stat_result.st_ino
 
 
-def _unlink_if_identity(
+def _unlink_if_descriptor(
     directory_fd: int,
     name: str,
-    expected_identity: FileIdentity,
+    expected_descriptor: int,
 ) -> None:
+    quarantine_name = f".{name}.{secrets.token_hex(16)}.quarantine"
     try:
-        current_identity = _entry_identity(directory_fd, name)
+        os.rename(
+            name,
+            quarantine_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
     except FileNotFoundError:
         return
-    if current_identity != expected_identity:
+    try:
+        quarantined_identity = _entry_identity(directory_fd, quarantine_name)
+    except FileNotFoundError as exc:
+        raise OSError(
+            errno.ENOTDIR,
+            f"Quarantined entry disappeared: {name}",
+        ) from exc
+    if quarantined_identity == _descriptor_identity(expected_descriptor):
+        try:
+            os.unlink(quarantine_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
         return
     try:
-        os.unlink(name, dir_fd=directory_fd)
-    except FileNotFoundError:
+        os.link(
+            quarantine_name,
+            name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+    except FileExistsError:
         pass
+    except OSError:
+        pass
+    logging.getLogger(__name__).warning(
+        "Preserved foreign replacement as %s",
+        quarantine_name,
+    )
 
 
 def _load_registered_projects(

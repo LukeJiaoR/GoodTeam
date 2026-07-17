@@ -225,11 +225,11 @@ Verification recorded for this slice:
 ```bash
 PYTHONPATH=src .venv/bin/python -m pytest \
   tests/test_project_readiness.py tests/test_project_import.py tests/test_web.py \
-  -q -k "project or product_spa_path"
-# 151 passed, 178 deselected
+  -q -k "project or readiness or product_spa_path"
+# 167 passed, 175 deselected
 
 PYTHONPATH=src .venv/bin/python -m pytest tests -q
-# 1380 passed
+# 1393 passed
 
 .venv/bin/ruff check src/goodteam_os/ tests/
 # All checks passed

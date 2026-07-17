@@ -36,16 +36,16 @@ MODE_STEPS = {
     ],
 }
 FileIdentity = tuple[int, int]
-_EXPECTED_IDENTITY_UNSET = object()
+_EXPECTED_DESCRIPTOR_UNSET = object()
 
 
 @dataclass(frozen=True)
 class AnchoredWrite:
     descriptors: tuple[int, ...]
-    readiness_identity: FileIdentity
+    readiness_descriptor: int
     temporary_name: str
     backup_name: str | None
-    backup_identity: FileIdentity | None
+    backup_descriptor: int | None
 
 
 def classify_project_mode(root: Path) -> str:
@@ -150,8 +150,9 @@ class ProjectReadinessStore:
         descriptors = self._open_project_directory_chain(key, create=False)
         if descriptors is None:
             raise ValueError(f"No readiness found for project: {key}")
+        readiness_descriptor: int | None = None
         try:
-            readiness, readiness_identity = self._read_anchored_from_descriptors(
+            readiness, readiness_descriptor = self._read_anchored_from_descriptors(
                 key,
                 descriptors,
             )
@@ -162,10 +163,12 @@ class ProjectReadinessStore:
                 key,
                 confirmed,
                 descriptors=descriptors,
-                expected_identity=readiness_identity,
+                expected_descriptor=readiness_descriptor,
             )
             return confirmed
         finally:
+            if readiness_descriptor is not None:
+                os.close(readiness_descriptor)
             _close_descriptors(descriptors)
 
     def _verify_anchored_write(self, project_key: str) -> None:
@@ -188,7 +191,9 @@ class ProjectReadinessStore:
                 readiness_identity = _entry_identity(descriptors[-1], "readiness.json")
             except FileNotFoundError as exc:
                 raise OSError(errno.ENOTDIR, f"Readiness file disappeared: {key}") from exc
-            if readiness_identity != expected.readiness_identity:
+            if readiness_identity != _descriptor_identity(
+                expected.readiness_descriptor
+            ):
                 raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
         finally:
             _close_descriptors(descriptors)
@@ -200,7 +205,7 @@ class ProjectReadinessStore:
             return
         self._remove_anchored_backup(anchored)
         self._anchored_writes.pop(key, None)
-        _close_descriptors(list(anchored.descriptors))
+        _close_anchored_descriptors(anchored)
 
     def _rollback_anchored_write(self, project_key: str) -> None:
         key = normalize_project_key(project_key)
@@ -253,9 +258,10 @@ class ProjectReadinessStore:
         descriptors = self._open_project_directory_chain(key, create=False)
         if descriptors is None:
             return None
+        readiness_descriptor: int | None = None
         try:
             try:
-                readiness, _identity = self._read_anchored_from_descriptors(
+                readiness, readiness_descriptor = self._read_anchored_from_descriptors(
                     key,
                     descriptors,
                 )
@@ -263,13 +269,15 @@ class ProjectReadinessStore:
                 return None
             return readiness
         finally:
+            if readiness_descriptor is not None:
+                os.close(readiness_descriptor)
             _close_descriptors(descriptors)
 
     def _read_anchored_from_descriptors(
         self,
         key: str,
         descriptors: list[int],
-    ) -> tuple[dict[str, object], FileIdentity]:
+    ) -> tuple[dict[str, object], int]:
         project_fd = descriptors[-1]
         self._verify_current_chain(key, descriptors)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -278,19 +286,25 @@ class ProjectReadinessStore:
         except FileNotFoundError:
             self._verify_current_chain(key, descriptors)
             raise
-        with os.fdopen(descriptor, encoding="utf-8") as readiness_file:
-            readiness_identity = _descriptor_identity(readiness_file.fileno())
-            readiness = json.load(readiness_file)
-        self._verify_current_chain(key, descriptors)
         try:
-            current_identity = _entry_identity(project_fd, "readiness.json")
-        except FileNotFoundError as exc:
-            raise OSError(errno.ENOTDIR, f"Readiness file disappeared: {key}") from exc
-        if current_identity != readiness_identity:
-            raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
-        if not isinstance(readiness, dict):
-            raise ValueError(f"readiness for {key!r} must be a JSON object")
-        return readiness, readiness_identity
+            with os.fdopen(os.dup(descriptor), encoding="utf-8") as readiness_file:
+                readiness = json.load(readiness_file)
+            self._verify_current_chain(key, descriptors)
+            try:
+                current_identity = _entry_identity(project_fd, "readiness.json")
+            except FileNotFoundError as exc:
+                raise OSError(
+                    errno.ENOTDIR,
+                    f"Readiness file disappeared: {key}",
+                ) from exc
+            if current_identity != _descriptor_identity(descriptor):
+                raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
+            if not isinstance(readiness, dict):
+                raise ValueError(f"readiness for {key!r} must be a JSON object")
+            return readiness, descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
 
     def _write_anchored(
         self,
@@ -298,7 +312,7 @@ class ProjectReadinessStore:
         readiness: dict[str, object],
         *,
         descriptors: list[int] | None = None,
-        expected_identity: FileIdentity | object = _EXPECTED_IDENTITY_UNSET,
+        expected_descriptor: int | object = _EXPECTED_DESCRIPTOR_UNSET,
     ) -> None:
         key = normalize_project_key(project_key)
         self._rollback_anchored_write(key)
@@ -309,21 +323,36 @@ class ProjectReadinessStore:
         project_fd = descriptors[-1]
         temporary_name = f".readiness.json.{secrets.token_hex(8)}.tmp"
         temporary_created = False
-        published_identity: FileIdentity | None = None
+        current_descriptor: int | None = None
+        published_descriptor: int | None = None
         backup_name: str | None = None
-        backup_identity: FileIdentity | None = None
         transaction: AnchoredWrite | None = None
         try:
             self._verify_current_chain(key, descriptors)
-            current_identity = _entry_identity_or_none(project_fd, "readiness.json")
+            if expected_descriptor is _EXPECTED_DESCRIPTOR_UNSET:
+                current_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                try:
+                    current_descriptor = os.open(
+                        "readiness.json",
+                        current_flags,
+                        dir_fd=project_fd,
+                    )
+                except FileNotFoundError:
+                    current_descriptor = None
+            else:
+                current_descriptor = os.dup(expected_descriptor)
+            current_identity = (
+                _descriptor_identity(current_descriptor)
+                if current_descriptor is not None
+                else None
+            )
             if (
-                expected_identity is not _EXPECTED_IDENTITY_UNSET
-                and current_identity != expected_identity
+                _entry_identity_or_none(project_fd, "readiness.json")
+                != current_identity
             ):
                 raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
             if current_identity is not None:
                 backup_name = f".readiness.json.{secrets.token_hex(8)}.backup"
-                backup_identity = current_identity
                 os.link(
                     "readiness.json",
                     backup_name,
@@ -331,23 +360,28 @@ class ProjectReadinessStore:
                     dst_dir_fd=project_fd,
                     follow_symlinks=False,
                 )
-                if _entry_identity(project_fd, backup_name) != backup_identity:
+                if _entry_identity(project_fd, backup_name) != current_identity:
                     raise OSError(errno.ENOTDIR, f"Readiness backup changed: {key}")
                 if _entry_identity_or_none(project_fd, "readiness.json") != current_identity:
                     raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(temporary_name, flags, 0o600, dir_fd=project_fd)
+            published_descriptor = os.open(
+                temporary_name,
+                flags,
+                0o600,
+                dir_fd=project_fd,
+            )
             temporary_created = True
-            try:
-                published_identity = _descriptor_identity(descriptor)
-            except BaseException:
-                os.close(descriptor)
-                raise
-            with os.fdopen(descriptor, "w", encoding="utf-8") as temporary:
+            with os.fdopen(
+                os.dup(published_descriptor),
+                "w",
+                encoding="utf-8",
+            ) as temporary:
                 json.dump(readiness, temporary, indent=2, sort_keys=True)
                 temporary.write("\n")
                 temporary.flush()
                 os.fsync(temporary.fileno())
+            published_identity = _descriptor_identity(published_descriptor)
             self._verify_current_chain(key, descriptors)
             if _entry_identity_or_none(project_fd, "readiness.json") != current_identity:
                 raise OSError(errno.ENOTDIR, f"Readiness file changed: {key}")
@@ -360,11 +394,13 @@ class ProjectReadinessStore:
                 raise
             transaction = AnchoredWrite(
                 descriptors=tuple(pinned),
-                readiness_identity=published_identity,
+                readiness_descriptor=published_descriptor,
                 temporary_name=temporary_name,
                 backup_name=backup_name,
-                backup_identity=backup_identity,
+                backup_descriptor=current_descriptor,
             )
+            published_descriptor = None
+            current_descriptor = None
             if _entry_identity_or_none(project_fd, temporary_name) != published_identity:
                 raise OSError(errno.ENOTDIR, f"Readiness temporary file changed: {key}")
             os.replace(
@@ -386,32 +422,41 @@ class ProjectReadinessStore:
                 except OSError:
                     pass
                 transaction = None
-            elif backup_name is not None and backup_identity is not None:
+            elif backup_name is not None and current_descriptor is not None:
                 try:
-                    _unlink_if_identity(project_fd, backup_name, backup_identity)
+                    _unlink_if_descriptor(
+                        project_fd,
+                        backup_name,
+                        current_descriptor,
+                        restore_foreign=False,
+                    )
                 except OSError:
                     pass
             raise
         finally:
-            if temporary_created and published_identity is not None:
+            if temporary_created and published_descriptor is not None:
                 try:
-                    _unlink_if_identity(
+                    _unlink_if_descriptor(
                         project_fd,
                         temporary_name,
-                        published_identity,
+                        published_descriptor,
                     )
                 except OSError:
                     pass
+            if published_descriptor is not None:
+                os.close(published_descriptor)
+            if current_descriptor is not None:
+                os.close(current_descriptor)
             if owns_descriptors:
                 _close_descriptors(descriptors)
 
     def _remove_anchored_backup(self, anchored: AnchoredWrite) -> None:
-        if anchored.backup_name is None or anchored.backup_identity is None:
+        if anchored.backup_name is None or anchored.backup_descriptor is None:
             return
-        _unlink_if_identity(
+        _unlink_if_descriptor(
             anchored.descriptors[-1],
             anchored.backup_name,
-            anchored.backup_identity,
+            anchored.backup_descriptor,
         )
 
     def _rollback_anchored_transaction(self, anchored: AnchoredWrite) -> None:
@@ -424,18 +469,36 @@ class ProjectReadinessStore:
                 if recovered:
                     self._remove_anchored_backup(anchored)
             finally:
-                _close_descriptors(list(anchored.descriptors))
+                try:
+                    project_fd = anchored.descriptors[-1]
+                    if _entry_identity_or_none(
+                        project_fd,
+                        anchored.temporary_name,
+                    ) == _descriptor_identity(anchored.readiness_descriptor):
+                        _unlink_if_descriptor(
+                            project_fd,
+                            anchored.temporary_name,
+                            anchored.readiness_descriptor,
+                        )
+                finally:
+                    _close_anchored_descriptors(anchored)
 
     def _recover_previous_readiness(self, anchored: AnchoredWrite) -> None:
         project_fd = anchored.descriptors[-1]
         has_backup = (
-            anchored.backup_name is not None and anchored.backup_identity is not None
+            anchored.backup_name is not None and anchored.backup_descriptor is not None
+        )
+        backup_identity = (
+            _descriptor_identity(anchored.backup_descriptor)
+            if anchored.backup_descriptor is not None
+            else None
         )
         if has_backup and (
             _entry_identity_or_none(project_fd, anchored.backup_name)
-            != anchored.backup_identity
+            != backup_identity
         ):
             raise OSError(errno.ENOTDIR, "Readiness backup changed during rollback")
+        readiness_identity = _descriptor_identity(anchored.readiness_descriptor)
         for _attempt in range(256):
             current_identity = _entry_identity_or_none(project_fd, "readiness.json")
             if current_identity is None:
@@ -453,40 +516,43 @@ class ProjectReadinessStore:
                     continue
                 if (
                     _entry_identity_or_none(project_fd, "readiness.json")
-                    != anchored.backup_identity
+                    != backup_identity
                 ):
                     raise OSError(
                         errno.ENOTDIR,
                         "Restored readiness identity changed during rollback",
                     )
                 return
-            if has_backup and current_identity == anchored.backup_identity:
+            if has_backup and current_identity == backup_identity:
                 return
-            if current_identity == anchored.readiness_identity:
-                _unlink_if_identity(
+            if current_identity == readiness_identity:
+                _unlink_if_descriptor(
                     project_fd,
                     "readiness.json",
-                    current_identity,
+                    anchored.readiness_descriptor,
                 )
                 continue
-            quarantine_name, quarantined_identity = self._quarantine_external_readiness(
+            quarantine_name, quarantined_descriptor = self._quarantine_external_readiness(
                 anchored,
             )
             logging.getLogger(__name__).warning(
                 "Quarantined external readiness inode as %s",
                 quarantine_name,
             )
-            _unlink_if_identity(
-                project_fd,
-                "readiness.json",
-                quarantined_identity,
-            )
+            try:
+                _unlink_if_descriptor(
+                    project_fd,
+                    "readiness.json",
+                    quarantined_descriptor,
+                )
+            finally:
+                os.close(quarantined_descriptor)
         raise OSError(errno.EBUSY, "Readiness changed repeatedly during rollback")
 
     def _quarantine_external_readiness(
         self,
         anchored: AnchoredWrite,
-    ) -> tuple[str, FileIdentity]:
+    ) -> tuple[str, int]:
         project_fd = anchored.descriptors[-1]
         candidate = anchored.temporary_name
         for _attempt in range(128):
@@ -503,8 +569,12 @@ class ProjectReadinessStore:
                 candidate = f".readiness.json.{secrets.token_hex(8)}.quarantine"
         else:
             raise OSError(errno.EEXIST, "Could not allocate readiness quarantine name")
-        quarantined_identity = _entry_identity(project_fd, candidate)
-        return candidate, quarantined_identity
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(candidate, flags, dir_fd=project_fd)
+        if _entry_identity(project_fd, candidate) != _descriptor_identity(descriptor):
+            os.close(descriptor)
+            raise OSError(errno.ENOTDIR, "Readiness quarantine changed")
+        return candidate, descriptor
 
     def _open_project_directory_chain(
         self,
@@ -629,21 +699,63 @@ def _entry_identity_or_none(directory_fd: int, name: str) -> FileIdentity | None
         return None
 
 
-def _unlink_if_identity(
+def _unlink_if_descriptor(
     directory_fd: int,
     name: str,
-    expected_identity: FileIdentity,
+    expected_descriptor: int,
+    *,
+    restore_foreign: bool = True,
 ) -> None:
+    quarantine_name = f".{name}.{secrets.token_hex(16)}.quarantine"
     try:
-        current_identity = _entry_identity(directory_fd, name)
+        os.rename(
+            name,
+            quarantine_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
     except FileNotFoundError:
         return
-    if current_identity != expected_identity:
-        return
     try:
-        os.unlink(name, dir_fd=directory_fd)
-    except FileNotFoundError:
-        pass
+        quarantined_identity = _entry_identity(directory_fd, quarantine_name)
+    except FileNotFoundError as exc:
+        raise OSError(
+            errno.ENOTDIR,
+            f"Quarantined entry disappeared: {name}",
+        ) from exc
+    if quarantined_identity == _descriptor_identity(expected_descriptor):
+        try:
+            os.unlink(quarantine_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        return
+    if restore_foreign:
+        try:
+            os.link(
+                quarantine_name,
+                name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError:
+            pass
+        except OSError:
+            pass
+    logging.getLogger(__name__).warning(
+        "Preserved foreign replacement as %s",
+        quarantine_name,
+    )
+
+
+def _close_anchored_descriptors(anchored: AnchoredWrite) -> None:
+    descriptors = [
+        *anchored.descriptors,
+        anchored.readiness_descriptor,
+    ]
+    if anchored.backup_descriptor is not None:
+        descriptors.append(anchored.backup_descriptor)
+    _close_descriptors(descriptors)
 
 
 def _close_descriptors(descriptors: list[int]) -> None:

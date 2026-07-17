@@ -90,6 +90,156 @@ def test_confirm_project_mode_serializes_concurrent_read_modify_write(
     assert not list(readiness_path.parent.glob("*.tmp"))
 
 
+def test_confirm_project_mode_closes_pinned_transaction_descriptors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    captured: list[int] = []
+    original_commit = ProjectReadinessStore._commit_anchored_write
+
+    def capture_then_commit(store, project_key):
+        transaction = store._anchored_writes[project_key]
+        captured.extend(transaction.descriptors)
+        captured.append(transaction.readiness_descriptor)
+        assert transaction.backup_descriptor is not None
+        captured.append(transaction.backup_descriptor)
+        return original_commit(store, project_key)
+
+    monkeypatch.setattr(
+        ProjectReadinessStore,
+        "_commit_anchored_write",
+        capture_then_commit,
+    )
+
+    project_import.confirm_project_mode(
+        workspace,
+        key,
+        root,
+        "existing_project",
+    )
+
+    assert captured
+    for descriptor in captured:
+        with pytest.raises(OSError) as error:
+            os.fstat(descriptor)
+        assert error.value.errno == errno.EBADF
+
+
+def test_initialize_pins_existing_readiness_before_backup_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    replacement = b'{"owner":"external-before-backup"}\n'
+    original_link = os.link
+    swapped = False
+
+    def replace_before_backup(source, target, *args, **kwargs):
+        nonlocal swapped
+        if (
+            not swapped
+            and source == "readiness.json"
+            and str(target).endswith(".backup")
+        ):
+            swapped = True
+            project_fd = kwargs["src_dir_fd"]
+            os.unlink(source, dir_fd=project_fd)
+            replacement_fd = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=project_fd,
+            )
+            with os.fdopen(replacement_fd, "wb") as replacement_file:
+                replacement_file.write(replacement)
+                replacement_file.flush()
+                os.fsync(replacement_file.fileno())
+        return original_link(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(project_readiness.os, "link", replace_before_backup)
+    with project_import._workspace_import_lock(workspace) as workspace_fd:
+        store = ProjectReadinessStore(workspace, workspace_fd=workspace_fd)
+        with pytest.raises(OSError) as error:
+            store.initialize(key, root)
+
+    assert error.value.errno == errno.ENOTDIR
+    assert swapped
+    assert readiness_path.read_bytes() == replacement
+    assert not list(readiness_path.parent.glob("*.backup"))
+    quarantined = list(readiness_path.parent.glob("*.backup.*.quarantine"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == replacement
+
+
+def test_readiness_replace_failure_removes_owned_temporary_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "blob.bin").write_bytes(b"asset")
+    imported = import_project(workspace, str(root))
+    key = imported["project"]["project_key"]
+    readiness_path = workspace / "state" / "projects" / key / "readiness.json"
+    before = readiness_path.read_bytes()
+    original_replace = os.replace
+
+    def fail_readiness_replace(source, target, *args, **kwargs):
+        if str(source).endswith(".tmp") and target == "readiness.json":
+            raise OSError(errno.EIO, "injected replace failure")
+        return original_replace(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(project_readiness.os, "replace", fail_readiness_replace)
+
+    with pytest.raises(OSError) as error:
+        project_import.confirm_project_mode(
+            workspace,
+            key,
+            root,
+            "existing_project",
+        )
+
+    assert error.value.errno == errno.EIO
+    assert readiness_path.read_bytes() == before
+    assert not list(readiness_path.parent.glob("*.tmp"))
+    assert not list(readiness_path.parent.glob("*.backup"))
+
+
+def test_readiness_dup_failure_removes_owned_temporary_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+
+    with project_import._workspace_import_lock(workspace) as workspace_fd:
+        store = ProjectReadinessStore(workspace, workspace_fd=workspace_fd)
+
+        def fail_dup(_descriptor):
+            raise OSError(errno.EMFILE, "injected dup failure")
+
+        monkeypatch.setattr(project_readiness.os, "dup", fail_dup)
+        with pytest.raises(OSError) as error:
+            store.initialize("PROJECT", root)
+
+    assert error.value.errno == errno.EMFILE
+    assert not list(workspace.rglob("*.tmp"))
+    assert not list(workspace.rglob("readiness.json"))
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -219,10 +369,15 @@ def test_confirm_project_mode_rollback_preserves_external_replacement(
     collision = b'{"owner":"external-temp-collision"}\n'
     replacement_identity: tuple[int, int] | None = None
     collision_path: Path | None = None
+    captured_descriptors: list[int] = []
 
     def replace_then_fail_verify(store, project_key):
         nonlocal replacement_identity, collision_path
         transaction = store._anchored_writes[project_key]
+        captured_descriptors.extend(transaction.descriptors)
+        captured_descriptors.append(transaction.readiness_descriptor)
+        assert transaction.backup_descriptor is not None
+        captured_descriptors.append(transaction.backup_descriptor)
         collision_path = state_dir / transaction.temporary_name
         collision_path.write_bytes(collision)
         readiness_path.unlink()
@@ -258,6 +413,10 @@ def test_confirm_project_mode_rollback_preserves_external_replacement(
     assert quarantined[0] != collision_path
     assert quarantined[0].read_bytes() == replacement
     assert not list(state_dir.glob("*.backup"))
+    for descriptor in captured_descriptors:
+        with pytest.raises(OSError) as error:
+            os.fstat(descriptor)
+        assert error.value.errno == errno.EBADF
 
 
 def test_confirm_project_mode_quarantines_repeated_external_replacements(
@@ -879,6 +1038,13 @@ def test_import_rollback_does_not_delete_replacement_config(
     workspace = tmp_path / "workspace"
     config_path = workspace / "projects" / "project.local.yaml"
     replacement = "name: External\nkey: EXTERNAL\n"
+    captured: list[int] = []
+    original_publish = project_import._publish_config_exclusively
+
+    def capture_publish(*args, **kwargs):
+        published_config = original_publish(*args, **kwargs)
+        captured.append(published_config.descriptor)
+        return published_config
 
     def replace_config_then_fail(*_args, **_kwargs):
         config_path.unlink()
@@ -890,10 +1056,19 @@ def test_import_rollback_does_not_delete_replacement_config(
         "initialize",
         replace_config_then_fail,
     )
+    monkeypatch.setattr(
+        project_import,
+        "_publish_config_exclusively",
+        capture_publish,
+    )
     with pytest.raises(RuntimeError, match="readiness failed"):
         import_project(workspace, str(root))
 
     assert config_path.read_text(encoding="utf-8") == replacement
+    assert len(captured) == 1
+    with pytest.raises(OSError) as error:
+        os.fstat(captured[0])
+    assert error.value.errno == errno.EBADF
 
 
 def test_import_does_not_claim_replacement_between_link_and_identity_check(
@@ -1142,10 +1317,228 @@ def test_config_publish_does_not_expose_partial_content(
             assert list(projects_dir.glob("*.local.yaml")) == []
         finally:
             allow_publish.set()
-        future.result(timeout=5)
+        published_config = future.result(timeout=5)
+        published_config.close()
 
     assert destination.read_text(encoding="utf-8") == content
     assert list(projects_dir.glob("*.tmp")) == []
+
+
+def test_config_publish_file_exists_preserves_foreign_directory(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    destination = projects_dir / "sample.local.yaml"
+    destination.mkdir()
+    (destination / "external.txt").write_text("external", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        project_import._publish_config_exclusively(
+            destination,
+            "name: Sample\nkey: SAMPLE\n",
+        )
+
+    assert destination.is_dir()
+    assert (destination / "external.txt").read_text(encoding="utf-8") == "external"
+    assert not list(projects_dir.glob("*.quarantine"))
+    assert not list(projects_dir.glob("*.tmp"))
+
+
+def test_published_config_pins_owner_inode_until_closed(tmp_path: Path) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    destination = projects_dir / "sample.local.yaml"
+    published_config = project_import._publish_config_exclusively(
+        destination,
+        "name: Sample\nkey: SAMPLE\n",
+    )
+    owned_identity = published_config.identity
+
+    destination.unlink()
+    destination.write_text("name: External\nkey: EXTERNAL\n", encoding="utf-8")
+    replacement_stat = destination.stat()
+
+    assert (replacement_stat.st_dev, replacement_stat.st_ino) != owned_identity
+    assert project_import._descriptor_identity(
+        published_config.descriptor
+    ) == owned_identity
+    published_config.close()
+    with pytest.raises(OSError) as error:
+        os.fstat(published_config.descriptor)
+    assert error.value.errno == errno.EBADF
+
+
+def test_import_closes_published_config_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "project"
+    root.mkdir()
+    captured: list[int] = []
+    original_publish = project_import._publish_config_exclusively
+
+    def capture_publish(*args, **kwargs):
+        published_config = original_publish(*args, **kwargs)
+        captured.append(published_config.descriptor)
+        return published_config
+
+    monkeypatch.setattr(
+        project_import,
+        "_publish_config_exclusively",
+        capture_publish,
+    )
+
+    import_project(workspace, str(root))
+
+    assert len(captured) == 1
+    with pytest.raises(OSError) as error:
+        os.fstat(captured[0])
+    assert error.value.errno == errno.EBADF
+
+
+@pytest.mark.parametrize(
+    "unlink_helper",
+    [
+        pytest.param(project_import._unlink_if_descriptor, id="project-config"),
+        pytest.param(project_readiness._unlink_if_descriptor, id="readiness"),
+    ],
+)
+def test_descriptor_cleanup_preserves_replacement_at_atomic_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unlink_helper,
+) -> None:
+    directory = tmp_path / "state"
+    directory.mkdir()
+    owned_path = directory / "owned.json"
+    owned_path.write_bytes(b"owned")
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    owned_descriptor = os.open(owned_path, os.O_RDONLY)
+    original_rename = os.rename
+    swapped = False
+
+    def replace_before_atomic_rename(source, target, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and source == owned_path.name:
+            swapped = True
+            source_fd = kwargs["src_dir_fd"]
+            os.unlink(source, dir_fd=source_fd)
+            replacement_fd = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=source_fd,
+            )
+            with os.fdopen(replacement_fd, "wb") as replacement_file:
+                replacement_file.write(b"external")
+                replacement_file.flush()
+                os.fsync(replacement_file.fileno())
+        return original_rename(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", replace_before_atomic_rename)
+    try:
+        unlink_helper(directory_fd, owned_path.name, owned_descriptor)
+    finally:
+        os.close(owned_descriptor)
+        os.close(directory_fd)
+
+    quarantined = list(directory.glob(".owned.json.*.quarantine"))
+    assert swapped
+    assert owned_path.read_bytes() == b"external"
+    assert quarantined
+    assert all(path.read_bytes() == b"external" for path in quarantined)
+
+
+@pytest.mark.parametrize(
+    "unlink_helper",
+    [
+        pytest.param(project_import._unlink_if_descriptor, id="project-config"),
+        pytest.param(project_readiness._unlink_if_descriptor, id="readiness"),
+    ],
+)
+def test_descriptor_cleanup_quarantines_foreign_directory_without_overwrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unlink_helper,
+) -> None:
+    directory = tmp_path / "state"
+    directory.mkdir()
+    owned_path = directory / "owned.json"
+    owned_path.write_bytes(b"owned")
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    owned_descriptor = os.open(owned_path, os.O_RDONLY)
+    original_rename = os.rename
+    swapped = False
+
+    def replace_with_directory_before_rename(source, target, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and source == owned_path.name:
+            swapped = True
+            source_fd = kwargs["src_dir_fd"]
+            os.unlink(source, dir_fd=source_fd)
+            os.mkdir(source, dir_fd=source_fd)
+        return original_rename(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", replace_with_directory_before_rename)
+    try:
+        unlink_helper(directory_fd, owned_path.name, owned_descriptor)
+    finally:
+        os.close(owned_descriptor)
+        os.close(directory_fd)
+
+    assert swapped
+    assert not owned_path.exists()
+    quarantined = list(directory.glob(".owned.json.*.quarantine"))
+    assert len(quarantined) == 1
+    assert quarantined[0].is_dir()
+
+
+@pytest.mark.parametrize(
+    "unlink_helper",
+    [
+        pytest.param(project_import._unlink_if_descriptor, id="project-config"),
+        pytest.param(project_readiness._unlink_if_descriptor, id="readiness"),
+    ],
+)
+def test_descriptor_cleanup_never_overwrites_new_public_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unlink_helper,
+) -> None:
+    directory = tmp_path / "state"
+    directory.mkdir()
+    owned_path = directory / "owned.json"
+    owned_path.write_bytes(b"owned")
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    owned_descriptor = os.open(owned_path, os.O_RDONLY)
+    owned_path.unlink()
+    owned_path.write_bytes(b"foreign-before")
+
+    def create_public_then_fail_link(_source, target, *args, **kwargs):
+        target_fd = kwargs["dst_dir_fd"]
+        replacement_fd = os.open(
+            target,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=target_fd,
+        )
+        with os.fdopen(replacement_fd, "wb") as replacement_file:
+            replacement_file.write(b"foreign-after")
+            replacement_file.flush()
+            os.fsync(replacement_file.fileno())
+        raise PermissionError(errno.EPERM, "injected hardlink failure")
+
+    monkeypatch.setattr(os, "link", create_public_then_fail_link)
+    try:
+        unlink_helper(directory_fd, owned_path.name, owned_descriptor)
+    finally:
+        os.close(owned_descriptor)
+        os.close(directory_fd)
+
+    quarantined = list(directory.glob(".owned.json.*.quarantine"))
+    assert owned_path.read_bytes() == b"foreign-after"
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == b"foreign-before"
 
 
 def _assert_workspace_not_isolated(root: Path, workspace: Path) -> None:
