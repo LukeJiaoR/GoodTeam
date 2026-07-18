@@ -1,10 +1,12 @@
 from goodteam_os.state import AgileDevState, StateStore
 from goodteam_os.workflow_table import (
+    FIX_PROFILE,
     GREENFIELD_PROFILE,
     _GATE_TRANSITIONS,
     _WORKFLOW_NODES,
     gate_transition,
     resolve_profile,
+    topological_workflow_nodes,
     workflow_execution_plan,
 )
 
@@ -38,6 +40,14 @@ def test_greenfield_execution_plan_matches_module_function():
     assert [level.to_dict() for level in profile_plan.levels] == [
         level.to_dict() for level in module_plan.levels
     ]
+
+
+def test_profile_dag_helpers_use_the_selected_profiles_tables():
+    GREENFIELD_PROFILE.validate_dag()
+    FIX_PROFILE.validate_dag()
+
+    assert GREENFIELD_PROFILE.topological_nodes() == topological_workflow_nodes()
+    assert FIX_PROFILE.topological_nodes() == list(FIX_PROFILE.execution_plan().order)
 
 
 def test_state_defaults_load_profile_greenfield():

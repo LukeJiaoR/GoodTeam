@@ -772,26 +772,6 @@ def build_approval_recommendation(
     return recommendation
 
 
-def _derive_smoke_status(workspace: Path) -> str:
-    """Aggregate recent smoke report verdicts; failure-safe, defaults to "unknown"."""
-    try:
-        latest = _latest_smoke_report(workspace)
-        if latest is None:
-            return "unknown"
-        _, report, wrapper = latest
-        statuses = [str(report.get("status", wrapper.get("status", "")) or "").lower()]
-        for run in report.get("runs", []):
-            if isinstance(run, dict):
-                statuses.append(str(run.get("status", "") or "").lower())
-        if any(status == "failed" for status in statuses):
-            return "failed"
-        if any(status == "passed" for status in statuses):
-            return "passed"
-        return "unknown"
-    except Exception:
-        return "unknown"
-
-
 def _latest_smoke_report(workspace: Path) -> tuple[Path, dict[str, object], dict[str, object]] | None:
     root = workspace / "state" / "smoke-runs"
     if not root.is_dir():

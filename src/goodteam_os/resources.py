@@ -195,6 +195,13 @@ def register_runtime_resource(
     title: str = "",
     consumer: str = "",
 ) -> ResourceDescriptor:
+    """Register a typed project-runtime extension resource.
+
+    Concrete helpers such as ``register_task_ledger`` encode product-specific
+    defaults. This generic entry point remains the supported seam for runtime
+    kinds added during the resource-registry migration without bypassing the
+    typed descriptor and legacy projection rules.
+    """
     return _store_resource(
         state,
         _descriptor(
@@ -218,6 +225,11 @@ def register_external_reference(
     title: str,
     capabilities: list[ResourceCapability] | None = None,
 ) -> ResourceDescriptor:
+    """Register a typed URL-only resource without adding an artifact path.
+
+    External integrations use this boundary to declare capabilities while
+    keeping URL references out of the local-file compatibility projection.
+    """
     return _store_resource(
         state,
         _descriptor(

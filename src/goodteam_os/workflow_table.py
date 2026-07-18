@@ -184,6 +184,10 @@ class LoadProfile:
     test monkeypatches of those tables — is byte-identical to the historical
     module functions. Future profiles (fix/increment) plug in via the registry
     with their own ``nodes`` / ``gate_transitions`` and resolve against those.
+
+    The topology helpers are part of this abstraction: callers inspecting a
+    non-greenfield profile must validate and order against that profile's gate
+    table rather than the module-level greenfield defaults.
     """
 
     name: str
@@ -233,7 +237,10 @@ class LoadProfile:
         )
 
     def topological_nodes(self) -> list[str]:
-        return _topological_workflow_nodes(self._node_table)
+        return _topological_workflow_nodes(
+            self._node_table,
+            gate_transitions=self._transition_table,
+        )
 
     def validate_dag(self, *, valid_advisors: Iterable[str] | None = None) -> None:
         validate_workflow_dag(
@@ -397,8 +404,12 @@ def topological_workflow_nodes(nodes: Mapping[str, WorkflowNode] | None = None) 
     return _topological_workflow_nodes(nodes if nodes is not None else GREENFIELD_PROFILE.nodes)
 
 
-def _topological_workflow_nodes(node_table: Mapping[str, WorkflowNode]) -> list[str]:
-    validate_workflow_dag(node_table)
+def _topological_workflow_nodes(
+    node_table: Mapping[str, WorkflowNode],
+    *,
+    gate_transitions: Mapping[str, GateTransition] | None = None,
+) -> list[str]:
+    validate_workflow_dag(node_table, gate_transitions=gate_transitions)
     ordered: list[str] = []
     seen: set[str] = set()
 

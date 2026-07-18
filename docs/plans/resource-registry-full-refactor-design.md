@@ -4,6 +4,12 @@ Status: **draft 2026-06-17**. Triggered by the `task_ledger` dashboard bug: a pr
 file was registered in `state.artifacts`, rendered by the Artifacts tab, and sent through the
 markdown artifact resolver, which rejected it because it was outside `artifacts/runs/<run_id>/`.
 
+Implementation note (2026-07-18): the typed registry is active. The generic
+`register_runtime_resource` and `register_external_reference` functions remain intentional public
+extension seams for new runtime kinds and URL-only integrations; product-specific resources should
+still prefer concrete helpers such as `register_task_ledger` when one exists. Contract tests cover
+their scope, capability, and legacy-projection behavior.
+
 ## Problem
 GoodTeam currently uses `AgileDevState.artifacts: dict[str, str]` as a catch-all registry for paths.
 That dictionary now carries at least two different concepts:

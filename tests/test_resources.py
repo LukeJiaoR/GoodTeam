@@ -7,7 +7,9 @@ from goodteam_os.resources import (
     ResourceScope,
     derive_resources_from_legacy_artifacts,
     legacy_artifacts_view,
+    register_external_reference,
     register_markdown_artifact,
+    register_runtime_resource,
     register_task_ledger,
     resource_to_dict,
 )
@@ -47,6 +49,56 @@ def test_register_task_ledger_declares_board_source_without_edit(tmp_path):
     assert ResourceCapability.EDIT not in descriptor.capabilities
     assert state.resources["task_ledger"] == descriptor
     assert state.artifacts["task_ledger"] == str(ledger)
+
+
+def test_register_runtime_resource_keeps_typed_extension_metadata(tmp_path):
+    state = create_initial_state("run-1", "GTO", "Build")
+    report = tmp_path / "target" / ".goodteam" / "smoke" / "latest.json"
+
+    descriptor = register_runtime_resource(
+        state,
+        "smoke_report",
+        report,
+        kind=ResourceKind.SMOKE_REPORT,
+        mime="application/json",
+        capabilities=[ResourceCapability.READ, ResourceCapability.PROVENANCE_SOURCE],
+        title="Latest Smoke Report",
+        consumer="system_tab",
+    )
+
+    assert descriptor.kind == ResourceKind.SMOKE_REPORT
+    assert descriptor.scope == ResourceScope.PROJECT_RUNTIME
+    assert descriptor.path == str(report)
+    assert descriptor.mime == "application/json"
+    assert descriptor.title == "Latest Smoke Report"
+    assert descriptor.consumer == "system_tab"
+    assert descriptor.capabilities == [
+        ResourceCapability.READ,
+        ResourceCapability.PROVENANCE_SOURCE,
+    ]
+    assert state.resources["smoke_report"] == descriptor
+    assert state.artifacts["smoke_report"] == str(report)
+
+
+def test_register_external_reference_stays_out_of_legacy_artifacts():
+    state = create_initial_state("run-1", "GTO", "Build")
+
+    descriptor = register_external_reference(
+        state,
+        "release_pr",
+        "https://github.com/example/project/pull/42",
+        title="Release PR",
+        capabilities=[ResourceCapability.READ, ResourceCapability.PREVIEW],
+    )
+
+    assert descriptor.kind == ResourceKind.EXTERNAL_REFERENCE
+    assert descriptor.scope == ResourceScope.EXTERNAL
+    assert descriptor.url == "https://github.com/example/project/pull/42"
+    assert descriptor.path == ""
+    assert descriptor.capabilities == [ResourceCapability.READ, ResourceCapability.PREVIEW]
+    assert descriptor.legacy_artifact is False
+    assert state.resources["release_pr"] == descriptor
+    assert "release_pr" not in state.artifacts
 
 
 def test_derive_resources_from_legacy_artifacts_classifies_known_keys(tmp_path):
