@@ -97,7 +97,7 @@ export default function ProjectsPage({
   };
 
   return (
-    <main className="projects-page">
+    <main id="main-content" className="projects-page">
       <header className="projects-page-header">
         <h1>{t('projects.title')}</h1>
         <p>{t('projects.description')}</p>

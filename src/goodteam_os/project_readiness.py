@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import errno
 import json
 import logging
@@ -73,10 +74,15 @@ class ProjectReadinessStore:
         key = normalize_project_key(project_key)
         project_mode = classify_project_mode(root)
         mode_confirmed = project_mode != "unconfirmed"
+        root_stat = root.stat()
         readiness: dict[str, object] = {
             "schema_version": 1,
             "project_key": key,
             "canonical_root": str(root.resolve()),
+            "root_identity": {
+                "device": root_stat.st_dev,
+                "inode": root_stat.st_ino,
+            },
             "project_mode": project_mode,
             "lifecycle": "preparing" if mode_confirmed else "attention_required",
             "steps": [
@@ -139,6 +145,73 @@ class ProjectReadinessStore:
         readiness = _confirmed_mode_readiness(readiness, mode)
         self._write(key, readiness)
         return readiness
+
+    def mutate(
+        self,
+        project_key: str,
+        transform: Callable[[dict[str, object]], dict[str, object]],
+        *,
+        readiness_validator: Callable[[dict[str, object]], None] | None = None,
+    ) -> dict[str, object]:
+        """Atomically transform a persisted readiness document.
+
+        Descriptor-anchored callers keep the exact source inode pinned from read
+        through publication.  This is the public mutation primitive used by
+        readiness executors so they inherit the import foundation's symlink,
+        replacement, and rollback protections instead of implementing a weaker
+        parallel write path.
+        """
+
+        key = normalize_project_key(project_key)
+        if self.workspace_fd is not None:
+            return self._mutate_anchored(
+                key,
+                transform,
+                readiness_validator=readiness_validator,
+            )
+        readiness = self.read(key)
+        if readiness is None:
+            raise ValueError(f"No readiness found for project: {key}")
+        if readiness_validator is not None:
+            readiness_validator(readiness)
+        updated = transform(copy.deepcopy(readiness))
+        if not isinstance(updated, dict):
+            raise ValueError("readiness transform must return a JSON object")
+        self._write(key, updated)
+        return updated
+
+    def _mutate_anchored(
+        self,
+        key: str,
+        transform: Callable[[dict[str, object]], dict[str, object]],
+        *,
+        readiness_validator: Callable[[dict[str, object]], None] | None,
+    ) -> dict[str, object]:
+        descriptors = self._open_project_directory_chain(key, create=False)
+        if descriptors is None:
+            raise ValueError(f"No readiness found for project: {key}")
+        readiness_descriptor: int | None = None
+        try:
+            readiness, readiness_descriptor = self._read_anchored_from_descriptors(
+                key,
+                descriptors,
+            )
+            if readiness_validator is not None:
+                readiness_validator(readiness)
+            updated = transform(copy.deepcopy(readiness))
+            if not isinstance(updated, dict):
+                raise ValueError("readiness transform must return a JSON object")
+            self._write_anchored(
+                key,
+                updated,
+                descriptors=descriptors,
+                expected_descriptor=readiness_descriptor,
+            )
+            return updated
+        finally:
+            if readiness_descriptor is not None:
+                os.close(readiness_descriptor)
+            _close_descriptors(descriptors)
 
     def _confirm_mode_anchored(
         self,
@@ -620,15 +693,153 @@ class ProjectReadinessStore:
 
 
 def build_capabilities(readiness: dict[str, object]) -> dict[str, object]:
+    mode = readiness.get("project_mode")
+    project_key = readiness.get("project_key")
+    canonical_root = readiness.get("canonical_root")
+    expected_step_ids = (
+        {"project_record", "safe_preflight", "project_mode", *MODE_STEPS[mode]}
+        if isinstance(mode, str) and mode in MODE_STEPS
+        else set()
+    )
+    steps = readiness.get("steps")
+    artifacts = readiness.get("artifacts")
+    execution = readiness.get("execution")
+
+    def execution_pair(value: object) -> tuple[str, int] | None:
+        if not isinstance(value, dict):
+            return None
+        execution_id = value.get("execution_id", value.get("id"))
+        attempt = value.get("attempt")
+        if (
+            not isinstance(execution_id, str)
+            or not execution_id
+            or not isinstance(attempt, int)
+            or isinstance(attempt, bool)
+            or attempt < 1
+        ):
+            return None
+        return execution_id, attempt
+
+    step_contract_valid = False
+    if (
+        readiness.get("schema_version") == 2
+        and isinstance(project_key, str)
+        and bool(project_key)
+        and isinstance(canonical_root, str)
+        and bool(canonical_root)
+        and isinstance(steps, list)
+        and isinstance(artifacts, dict)
+        and all(isinstance(step, dict) for step in steps)
+    ):
+        typed_steps = [step for step in steps if isinstance(step, dict)]
+        all_ids = [step.get("id") for step in typed_steps]
+        steps_by_id = {str(step.get("id", "")): step for step in typed_steps}
+        artifact_step_ids = {
+            "repository_understanding",
+            "new_project_init",
+            "project_brief",
+            "worker_preflight",
+        }
+
+        def step_artifacts_valid(step: dict[str, object]) -> bool:
+            raw_refs = step.get("artifact_refs", [])
+            if not isinstance(raw_refs, list) or any(not isinstance(ref, str) for ref in raw_refs):
+                return False
+            refs = list(raw_refs)
+            step_id = str(step.get("id", ""))
+            if (step_id in artifact_step_ids) != bool(refs):
+                return False
+            if len(refs) != len(set(refs)):
+                return False
+            pair = execution_pair(step)
+            return pair is not None and all(
+                isinstance(artifacts.get(ref), dict)
+                and artifacts[ref].get("id") == ref
+                and ref == f"readiness://{pair[0]}/{pair[1]}/{step_id}"
+                and artifacts[ref].get("project_key") == project_key
+                and artifacts[ref].get("canonical_root") == canonical_root
+                and artifacts[ref].get("step_id") == step_id
+                and execution_pair(artifacts[ref]) == pair
+                for ref in refs
+            )
+
+        all_steps_valid = (
+            len(all_ids) == len(set(all_ids))
+            and set(all_ids) == expected_step_ids
+            and len(typed_steps) == len(expected_step_ids)
+            and all(
+                step.get("required") is True
+                and step.get("status") == "complete"
+                and step.get("project_key") == project_key
+                and step.get("canonical_root") == canonical_root
+                and execution_pair(step) is not None
+                and bool(step.get("started_at"))
+                and bool(step.get("completed_at"))
+                and step_artifacts_valid(step)
+                for step in typed_steps
+            )
+        )
+        current_pair = execution_pair(execution)
+        foundation_pairs = {
+            execution_pair(steps_by_id[step_id])
+            for step_id in {"project_record", "safe_preflight", "project_mode"}
+            if step_id in steps_by_id
+        }
+        if mode == "existing_project" and all_steps_valid:
+            repository_pair = execution_pair(steps_by_id["repository_understanding"])
+            provenance_valid = (
+                repository_pair is not None
+                and execution_pair(steps_by_id["command_verification"])
+                == repository_pair
+                and execution_pair(steps_by_id["constraints_confirmation"])
+                == repository_pair
+                and execution_pair(steps_by_id["worker_preflight"])
+                == current_pair
+            )
+        elif mode == "new_project" and all_steps_valid:
+            provenance_valid = (
+                execution_pair(steps_by_id["new_project_init"])
+                == execution_pair(steps_by_id["project_brief"])
+                and execution_pair(steps_by_id["worker_preflight"])
+                == current_pair
+            )
+        else:
+            provenance_valid = False
+        step_contract_valid = (
+            all_steps_valid
+            and len(foundation_pairs) == 1
+            and next(iter(foundation_pairs), ("", 0))[0].startswith("foundation:")
+            and provenance_valid
+        )
+    execution_contract_valid = (
+        isinstance(execution, dict)
+        and execution.get("status") == "complete"
+        and execution.get("project_key") == project_key
+        and execution.get("canonical_root") == canonical_root
+        and not execution.get("current_step_id")
+        and execution_pair(execution) is not None
+        and bool(execution.get("started_at"))
+        and bool(execution.get("completed_at"))
+    )
+    ready = bool(
+        expected_step_ids
+        and step_contract_valid
+        and execution_contract_valid
+        and readiness.get("lifecycle") == "ready"
+    )
     return {
         "inspect_project_facts": True,
         "edit_project_settings": True,
         "run_readiness_steps": True,
-        "start_workflow": False,
+        "start_workflow": ready,
         "start_workflow_reason": (
-            "project_mode_unconfirmed"
-            if readiness["project_mode"] == "unconfirmed"
-            else "mode_specific_readiness_pending"
+            ""
+            if ready
+            else (
+                "project_mode_unconfirmed"
+                if mode == "unconfirmed"
+                else "mode_specific_readiness_pending"
+            )
         ),
     }
 

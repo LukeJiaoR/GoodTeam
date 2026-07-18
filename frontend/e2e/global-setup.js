@@ -14,9 +14,27 @@ export default async function globalSetup() {
   fs.mkdirSync(path.join(root, 'targets', 'existing'), { recursive: true });
   fs.mkdirSync(path.join(root, 'targets', 'ambiguous'), { recursive: true });
   fs.mkdirSync(path.join(root, 'targets', 'blocked'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'targets', 'existing', 'src'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'targets', 'existing', 'package.json'),
-    JSON.stringify({ name: 'existing' }, null, 2),
+    JSON.stringify({
+      name: 'existing',
+      scripts: {
+        start: 'vite',
+        test: 'vitest run',
+        lint: 'eslint .',
+        build: 'vite build',
+      },
+      dependencies: { react: '^19.0.0' },
+    }, null, 2),
+  );
+  fs.writeFileSync(
+    path.join(root, 'targets', 'existing', 'README.md'),
+    '# Existing fixture\n\nA read-only fixture for GoodTeam readiness E2E.\n',
+  );
+  fs.writeFileSync(
+    path.join(root, 'targets', 'existing', 'src', 'main.jsx'),
+    "export default function App() { return 'fixture'; }\n",
   );
   fs.writeFileSync(path.join(root, 'targets', 'ambiguous', 'blob.bin'), 'asset');
   fs.chmodSync(path.join(root, 'targets', 'blocked'), 0o000);

@@ -87,6 +87,127 @@ def test_initialize_known_mode_persists_versioned_shape_and_pending_steps(
     assert (workspace / "state" / "projects" / "DEMO" / "readiness.json").is_file()
 
 
+def test_start_workflow_capability_requires_complete_v2_bound_contract() -> None:
+    root = "/tmp/demo"
+    key = "DEMO"
+    required_ids = {
+        "project_record",
+        "safe_preflight",
+        "project_mode",
+        "repository_understanding",
+        "command_verification",
+        "constraints_confirmation",
+        "worker_preflight",
+    }
+    foundation_ids = {"project_record", "safe_preflight", "project_mode"}
+    artifact_ids = {"repository_understanding", "worker_preflight"}
+    readiness = {
+        "schema_version": 2,
+        "project_key": key,
+        "canonical_root": root,
+        "project_mode": "existing_project",
+        "lifecycle": "ready",
+        "steps": [
+            {
+                "id": step_id,
+                "status": "complete",
+                "required": True,
+                "project_key": key,
+                "canonical_root": root,
+                "execution_id": (
+                    "foundation:DEMO:1:2" if step_id in foundation_ids else "execution-1"
+                ),
+                "attempt": 1,
+                "started_at": "2026-07-17T00:00:00Z",
+                "completed_at": "2026-07-17T00:00:01Z",
+                "artifact_refs": (
+                    [f"readiness://execution-1/1/{step_id}"]
+                    if step_id in artifact_ids
+                    else []
+                ),
+            }
+            for step_id in sorted(required_ids)
+        ],
+        "execution": {
+            "id": "execution-1",
+            "status": "complete",
+            "project_key": key,
+            "canonical_root": root,
+            "current_step_id": "",
+            "attempt": 1,
+            "started_at": "2026-07-17T00:00:00Z",
+            "completed_at": "2026-07-17T00:00:01Z",
+        },
+        "artifacts": {
+            f"readiness://execution-1/1/{step_id}": {
+                "id": f"readiness://execution-1/1/{step_id}",
+                "project_key": key,
+                "canonical_root": root,
+                "step_id": step_id,
+                "execution_id": "execution-1",
+                "attempt": 1,
+            }
+            for step_id in artifact_ids
+        },
+    }
+
+    assert build_capabilities(readiness)["start_workflow"] is True
+
+    malformed_variants = []
+    for field, value in (
+        ("schema_version", 1),
+        ("lifecycle", "preparing"),
+    ):
+        variant = json.loads(json.dumps(readiness))
+        variant[field] = value
+        malformed_variants.append(variant)
+    missing_step = json.loads(json.dumps(readiness))
+    missing_step["steps"] = missing_step["steps"][:-1]
+    malformed_variants.append(missing_step)
+    wrong_step_binding = json.loads(json.dumps(readiness))
+    wrong_step_binding["steps"][0]["project_key"] = "OTHER"
+    malformed_variants.append(wrong_step_binding)
+    wrong_execution_binding = json.loads(json.dumps(readiness))
+    wrong_execution_binding["execution"]["canonical_root"] = "/tmp/other"
+    malformed_variants.append(wrong_execution_binding)
+    active_execution = json.loads(json.dumps(readiness))
+    active_execution["execution"]["status"] = "running"
+    active_execution["execution"]["current_step_id"] = "worker_preflight"
+    malformed_variants.append(active_execution)
+    duplicate_optional_step = json.loads(json.dumps(readiness))
+    duplicate_optional_step["steps"].append(
+        {"id": "worker_preflight", "required": False, "status": "failed"}
+    )
+    malformed_variants.append(duplicate_optional_step)
+    non_object_step = json.loads(json.dumps(readiness))
+    non_object_step["steps"].append("worker_preflight")
+    malformed_variants.append(non_object_step)
+    forged_unreferenced_artifact = json.loads(json.dumps(readiness))
+    for step in forged_unreferenced_artifact["steps"]:
+        if step["id"] in {
+            "repository_understanding",
+            "command_verification",
+            "constraints_confirmation",
+            "worker_preflight",
+        }:
+            step["execution_id"] = "forged"
+            step["attempt"] = 9
+    forged_unreferenced_artifact["artifacts"]["readiness://forged/9/unrelated"] = {
+        "id": "readiness://forged/9/unrelated",
+        "project_key": key,
+        "canonical_root": root,
+        "step_id": "unrelated",
+        "execution_id": "forged",
+        "attempt": 9,
+    }
+    malformed_variants.append(forged_unreferenced_artifact)
+
+    assert all(
+        build_capabilities(variant)["start_workflow"] is False
+        for variant in malformed_variants
+    )
+
+
 def test_confirm_mode_rejects_invalid_mode_without_changing_persisted_state(
     tmp_path: Path,
 ) -> None:

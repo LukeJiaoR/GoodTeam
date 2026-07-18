@@ -9,6 +9,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable
 from typing import Iterator
 
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
@@ -117,6 +118,134 @@ def confirm_project_mode(
                 except OSError:
                     pass
                 raise
+    except OSError as exc:
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise
+        raise _workspace_not_isolated_error(workspace, root) from exc
+
+
+def mutate_project_readiness(
+    workspace: Path,
+    project_key: str,
+    root: Path,
+    transform: Callable[[dict[str, object]], dict[str, object]],
+) -> dict[str, object]:
+    """Mutate readiness under the import foundation's binding and inode guards."""
+
+    root = Path(root).expanduser().resolve()
+    _validate_root(root)
+    workspace = _validate_workspace_isolation(workspace, root)
+    key = normalize_project_key(project_key)
+    _validate_project_state_destination(workspace, root, key)
+    try:
+        with _workspace_import_lock(workspace) as workspace_fd:
+            readiness_store = ProjectReadinessStore(workspace, workspace_fd=workspace_fd)
+            try:
+                readiness = readiness_store.mutate(
+                    key,
+                    transform,
+                    readiness_validator=lambda stored: _validate_project_readiness_binding(
+                        stored,
+                        project_key=key,
+                        root=root,
+                    ),
+                )
+                readiness_store._verify_anchored_write(key)
+                readiness_store._commit_anchored_write(key)
+                return readiness
+            except BaseException:
+                try:
+                    readiness_store._rollback_anchored_write(key)
+                except OSError:
+                    pass
+                raise
+    except OSError as exc:
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise
+        raise _workspace_not_isolated_error(workspace, root) from exc
+
+
+def mutate_project_readiness_root_failure(
+    workspace: Path,
+    project_key: str,
+    canonical_root: Path,
+    transform: Callable[[dict[str, object]], dict[str, object]],
+) -> dict[str, object]:
+    """Persist a root-identity failure without touching or trusting the target root.
+
+    This deliberately narrower mutation path is only for recording a failure after
+    the imported path can no longer be opened as the imported directory.  It keeps
+    the readiness file descriptor-anchored inside GoodTeam's workspace and requires
+    an exact stored project-key/canonical-root binding, but never resolves or writes
+    through the potentially replaced target path.
+    """
+
+    root = Path(canonical_root).expanduser()
+    if not root.is_absolute():
+        raise ProjectImportError(
+            "project_root_not_absolute",
+            "Stored project root must be an absolute path.",
+            details={"root": str(root)},
+        )
+    workspace = Path(workspace).expanduser().resolve(strict=False)
+    key = normalize_project_key(project_key)
+    _validate_project_state_destination(workspace, root, key)
+
+    def validate_failure_binding(stored: dict[str, object]) -> None:
+        if stored.get("project_key") != key or stored.get("canonical_root") != str(root):
+            raise ProjectImportError(
+                "project_readiness_mismatch",
+                "Project readiness does not match the requested project.",
+                details={"project_key": key},
+            )
+
+    try:
+        with _workspace_import_lock(workspace) as workspace_fd:
+            readiness_store = ProjectReadinessStore(workspace, workspace_fd=workspace_fd)
+            try:
+                readiness = readiness_store.mutate(
+                    key,
+                    transform,
+                    readiness_validator=validate_failure_binding,
+                )
+                readiness_store._verify_anchored_write(key)
+                readiness_store._commit_anchored_write(key)
+                return readiness
+            except BaseException:
+                try:
+                    readiness_store._rollback_anchored_write(key)
+                except OSError:
+                    pass
+                raise
+    except OSError as exc:
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise
+        raise _workspace_not_isolated_error(workspace, root) from exc
+
+
+def read_bound_project_readiness(
+    workspace: Path,
+    project_key: str,
+    root: Path,
+) -> dict[str, object]:
+    """Read readiness only after proving its project-key/root binding."""
+
+    root = Path(root).expanduser().resolve()
+    _validate_root(root)
+    workspace = _validate_workspace_isolation(workspace, root)
+    key = normalize_project_key(project_key)
+    _validate_project_state_destination(workspace, root, key)
+    try:
+        with _workspace_import_lock(workspace) as workspace_fd:
+            readiness = ProjectReadinessStore(workspace, workspace_fd=workspace_fd).read(key)
+            if readiness is None:
+                raise ValueError(f"No readiness found for project: {key}")
+            _validate_project_readiness_binding(
+                readiness,
+                project_key=key,
+                root=root,
+            )
+            return readiness
     except OSError as exc:
         if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
             raise

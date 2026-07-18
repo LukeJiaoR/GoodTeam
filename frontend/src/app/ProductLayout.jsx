@@ -20,6 +20,7 @@ export default function ProductLayout() {
 
   return (
     <div className="product-shell">
+      <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
       <header className="product-chrome">
         <div className="product-chrome__inner">
           <NavLink className="product-brand" to="/projects" aria-label={t('product.brand')}>

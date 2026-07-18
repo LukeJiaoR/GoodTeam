@@ -27,6 +27,27 @@
   font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
 }
 
+.product-shell .product-skip-link {
+  position: fixed;
+  z-index: 40;
+  top: 0.65rem;
+  left: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  color: var(--product-on-accent);
+  background: var(--product-accent-strong);
+  border-radius: var(--product-radius);
+  font-weight: 650;
+  text-decoration: none;
+  transform: translateY(calc(-100% - 1rem));
+  transition: transform 160ms ease;
+}
+
+.product-shell .product-skip-link:focus {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+  transform: translateY(0);
+}
+
 .product-shell .product-chrome {
   position: sticky;
   z-index: 20;
@@ -194,6 +215,7 @@
   cursor: pointer;
   transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease,
     transform 180ms ease;
+  text-decoration: none;
 }
 
 .product-shell .product-button--primary {
@@ -729,6 +751,138 @@
   padding-top: 0.25rem;
 }
 
+.product-shell .readiness-start-panel,
+.product-shell .readiness-init-form,
+.product-shell .readiness-input-panel {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1rem, 3vw, 1.45rem);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .readiness-start-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.product-shell .readiness-start-panel h3,
+.product-shell .readiness-input-panel h3,
+.product-shell .readiness-init-form h3 {
+  margin: 0;
+  font-size: 1.18rem;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.product-shell .readiness-start-panel p,
+.product-shell .readiness-input-panel p {
+  max-width: 62ch;
+  margin: 0.4rem 0 0;
+  color: var(--product-text-muted);
+}
+
+.product-shell .readiness-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.product-shell .readiness-form-field {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.product-shell .readiness-form-field--brief,
+.product-shell .readiness-form-field--prohibited_operations {
+  grid-column: 1 / -1;
+}
+
+.product-shell .readiness-form-field input,
+.product-shell .readiness-form-field textarea {
+  width: 100%;
+  padding: 0.7rem 0.75rem;
+  color: var(--product-text);
+  background: var(--product-bg);
+  border: 1px solid var(--product-border);
+  border-radius: calc(var(--product-radius) - 1px);
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.product-shell .readiness-form-field input:focus-visible,
+.product-shell .readiness-form-field textarea:focus-visible,
+.product-shell .readiness-choice input:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: 2px;
+}
+
+.product-shell .readiness-form-boundary {
+  max-width: 70ch;
+  margin: 0;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+}
+
+.product-shell .readiness-input-eyebrow {
+  margin: 0 0 0.35rem !important;
+  color: var(--product-accent-strong) !important;
+  font-family: "Geist Mono Variable", ui-monospace, monospace;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.product-shell .readiness-choice-list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.product-shell .readiness-choice-list legend {
+  margin-bottom: 0.55rem;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  font-weight: 620;
+}
+
+.product-shell .readiness-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--product-border);
+  cursor: pointer;
+}
+
+.product-shell .readiness-choice input {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.18rem;
+  accent-color: var(--product-accent-strong);
+}
+
+.product-shell .readiness-choice code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.product-shell .readiness-input-hint {
+  margin: 0;
+  color: var(--product-warning);
+  font-size: 0.82rem;
+}
+
 .product-shell .project-home-error {
   margin-top: 0.25rem;
 }
@@ -779,6 +933,18 @@
   grid-column: 1;
 }
 
+.product-shell .readiness-live-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  margin-top: 1rem;
+  padding: 0.7rem 0.8rem;
+  color: var(--product-text-muted);
+  background: var(--product-surface-muted);
+  border-radius: calc(var(--product-radius) - 1px);
+  font-size: 0.82rem;
+}
+
 .product-shell .readiness-step-list {
   display: grid;
   gap: 0;
@@ -797,6 +963,34 @@
   border-bottom: 1px solid var(--product-border);
 }
 
+.product-shell .readiness-step[aria-current="step"] {
+  position: relative;
+}
+
+.product-shell .readiness-step[aria-current="step"]::before {
+  position: absolute;
+  top: 0.8rem;
+  bottom: 0.8rem;
+  left: -0.85rem;
+  width: 3px;
+  background: var(--product-accent-strong);
+  border-radius: 3px;
+  content: "";
+}
+
+.product-shell .readiness-step-main {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.product-shell .readiness-step-heading {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .product-shell .readiness-step-copy {
   display: flex;
   flex-wrap: wrap;
@@ -812,6 +1006,160 @@
 .product-shell .readiness-step-required {
   color: var(--product-text-muted);
   font-size: 0.78rem;
+}
+
+.product-shell .readiness-step-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0;
+  color: var(--product-text-muted);
+  font-size: 0.76rem;
+}
+
+.product-shell .readiness-step-meta div {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.product-shell .readiness-step-meta dt {
+  font-weight: 620;
+}
+
+.product-shell .readiness-step-meta dd {
+  margin: 0;
+}
+
+.product-shell .readiness-step-summary {
+  max-width: 66ch;
+  margin: 0;
+  color: var(--product-text-muted);
+  font-size: 0.86rem;
+}
+
+.product-shell .readiness-step-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  color: var(--product-text-muted);
+  font-size: 0.78rem;
+}
+
+.product-shell .readiness-step-artifacts .product-button {
+  min-height: 32px;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+.product-shell .readiness-step-error {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: start;
+  padding: 0.8rem;
+  color: var(--product-danger);
+  background: color-mix(in srgb, var(--product-danger) 8%, var(--product-surface));
+  border-left: 3px solid var(--product-danger);
+  font-size: 0.82rem;
+}
+
+.product-shell .readiness-step-error code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.product-shell .repository-overview {
+  grid-column: 1 / -1;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .readiness-artifact-preview {
+  grid-column: 1 / -1;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .readiness-artifact-preview pre {
+  max-width: 100%;
+  margin: 1rem 0 0;
+  padding: 0.9rem;
+  overflow-x: auto;
+  background: var(--product-surface-muted);
+  border-radius: var(--product-radius);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.product-shell .repository-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.8rem clamp(1.5rem, 4vw, 3.5rem);
+  margin-top: 1.25rem;
+}
+
+.product-shell .repository-overview-group h3,
+.product-shell .repository-command-group h4 {
+  margin: 0;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.product-shell .repository-overview-group ul {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-shell .repository-overview-group li {
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--product-border);
+  overflow-wrap: anywhere;
+}
+
+.product-shell .repository-overview-commands {
+  grid-column: 1 / -1;
+}
+
+.product-shell .repository-command-group {
+  display: grid;
+  grid-template-columns: minmax(6rem, 0.25fr) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .repository-command-group ul {
+  margin: 0;
+}
+
+.product-shell .repository-command-group li {
+  border: 0;
+}
+
+.product-shell .repository-command-group code,
+.product-shell .repository-overview-raw {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  color: var(--product-text);
+  background: var(--product-surface-muted);
+  border-radius: calc(var(--product-radius) - 2px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.product-shell .repository-command-group code {
+  padding: 0.42rem 0.55rem;
+}
+
+.product-shell .repository-overview-raw {
+  margin-top: 1rem;
+  padding: 0.9rem;
 }
 
 .product-shell .project-capabilities ul {
@@ -918,10 +1266,30 @@
 
   .product-shell .project-home-header {
     gap: 0.85rem;
+    flex-direction: column;
   }
 
   .product-shell .readiness-center {
     grid-column: auto;
+  }
+
+  .product-shell .readiness-start-panel,
+  .product-shell .readiness-form-grid,
+  .product-shell .repository-overview-grid,
+  .product-shell .repository-command-group {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-shell .readiness-form-field--brief,
+  .product-shell .readiness-form-field--prohibited_operations,
+  .product-shell .repository-overview-commands {
+    grid-column: auto;
+  }
+
+  .product-shell .mode-decision-actions .product-button,
+  .product-shell .readiness-start-panel .product-button,
+  .product-shell .workflow-start-panel .product-button {
+    width: 100%;
   }
 
   .product-shell .project-row--skeleton {
