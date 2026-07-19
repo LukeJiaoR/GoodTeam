@@ -117,6 +117,24 @@ class StateStore:
         (self.project_state_dir(key) / "current.json").unlink()
         return path
 
+    def list_project_archived(self, project_key: str) -> list[tuple[Path, AgileDevState]]:
+        archive_dir = self.project_state_dir(project_key) / "archived"
+        if not archive_dir.is_dir():
+            return []
+        archived: list[tuple[Path, AgileDevState]] = []
+        for path in sorted(
+            archive_dir.glob("*.json"),
+            key=lambda candidate: candidate.stat().st_mtime,
+            reverse=True,
+        ):
+            try:
+                state = self._read(path)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if state is not None:
+                archived.append((path, state))
+        return archived
+
     def _read(self, path: Path) -> AgileDevState | None:
         if not path.exists():
             return None

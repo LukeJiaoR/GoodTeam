@@ -6,7 +6,10 @@ export const LANGUAGE_PREFERENCE_AUTO = 'auto';
 export const LANGUAGE_EN = 'en';
 export const LANGUAGE_ZH_CN = 'zh-CN';
 export const SUPPORTED_LANGUAGE_PREFERENCES = ['auto', 'en', 'zh-CN'];
-export const PRODUCT_I18N_PREFIXES = ['product.', 'projects.', 'readiness.'];
+export const PRODUCT_I18N_PREFIXES = [
+  'product.', 'projects.', 'readiness.', 'work.', 'review.', 'knowledge.',
+  'inbox.', 'activity.', 'settings.',
+];
 
 const LOCALES = {
   [LANGUAGE_EN]: en,

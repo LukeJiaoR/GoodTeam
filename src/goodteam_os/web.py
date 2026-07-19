@@ -3104,6 +3104,107 @@ def _latest_archived_run_summary(workspace: Path, project_key: str) -> dict[str,
     return {}
 
 
+def _run_projection(
+    state: AgileDevState,
+    *,
+    status: str,
+    updated_at: str,
+    reason: str = "",
+) -> dict[str, object]:
+    return {
+        "run_id": state.run_id,
+        "project_key": state.project_key,
+        "idea": state.idea,
+        "source_type": state.source_type,
+        "status": status,
+        "current_node": state.current_node,
+        "next_node": state.next_node,
+        "updated_at": updated_at,
+        "reason": reason,
+    }
+
+
+def build_project_run_history(workspace: Path, project_key: str) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    store = StateStore(workspace)
+    runs: list[dict[str, object]] = []
+    current = store.read_project_current(key)
+    current_path = store.project_state_dir(key) / "current.json"
+    if current is not None:
+        runs.append(
+            _run_projection(
+                current,
+                status="active" if is_active_run(current) else "complete",
+                updated_at=datetime.fromtimestamp(
+                    current_path.stat().st_mtime,
+                    tz=UTC,
+                ).isoformat(),
+            )
+        )
+    for path, state in store.list_project_archived(key):
+        reason = path.stem.removeprefix(f"{state.run_id}-")
+        runs.append(
+            _run_projection(
+                state,
+                status="archived",
+                updated_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+                reason=reason,
+            )
+        )
+    return {"project_key": key, "runs": runs}
+
+
+def build_project_run_detail(
+    workspace: Path,
+    project_key: str,
+    run_id: str,
+) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    store = StateStore(workspace)
+    current = store.read_project_current(key)
+    if current is not None and current.run_id == run_id:
+        current_path = store.project_state_dir(key) / "current.json"
+        status = "active" if is_active_run(current) else "complete"
+        state = current
+        summary = _run_projection(
+            state,
+            status=status,
+            updated_at=datetime.fromtimestamp(current_path.stat().st_mtime, tz=UTC).isoformat(),
+        )
+    else:
+        archived = next(
+            (
+                (path, candidate)
+                for path, candidate in store.list_project_archived(key)
+                if candidate.run_id == run_id
+            ),
+            None,
+        )
+        if archived is None:
+            raise ProjectApiError(
+                "run_not_found",
+                f"Run not found for project {key}: {run_id}",
+                404,
+                details={"project_key": key, "run_id": run_id},
+                recovery=["return_to_project_work", "choose_another_run"],
+            )
+        path, state = archived
+        summary = _run_projection(
+            state,
+            status="archived",
+            updated_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+            reason=path.stem.removeprefix(f"{state.run_id}-"),
+        )
+    return {
+        "project_key": key,
+        "run": summary,
+        "state": asdict(state),
+        "resources": build_resource_items(state),
+        "workflow_steps": build_workflow_steps(state),
+        "agile_board": build_agile_board(state),
+    }
+
+
 def _dashboard_stepper_node_sequence(steps: list[dict[str, str]]) -> dict[str, int]:
     sequence: dict[str, int] = {}
     for index, step in enumerate(steps, start=1):
@@ -3127,6 +3228,22 @@ def _normalize_start_delivery_standards(value: list[str] | str) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [line.strip() for line in str(value).splitlines() if line.strip()]
+
+
+def resolve_runtime_model_config(model_config: Path) -> Path:
+    """Resolve the default model catalog independently of the server cwd."""
+    candidate = model_config.expanduser()
+    if candidate.is_file():
+        return candidate.resolve()
+    if str(model_config) not in {"models.yaml", "./models.yaml"}:
+        return candidate
+    configured = os.getenv("GOODTEAM_MODEL_CONFIG", "").strip()
+    if configured:
+        configured_path = Path(configured).expanduser()
+        if configured_path.is_file():
+            return configured_path.resolve()
+    repository_default = Path(__file__).resolve().parents[2] / "models.yaml"
+    return repository_default.resolve() if repository_default.is_file() else candidate
 
 
 def start_workflow(
@@ -3160,8 +3277,19 @@ def start_workflow(
         if project_config.is_file():
             project_config = project_config.resolve()
     target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
+    if not dry_run and project_config is not None and project_config.is_file():
+        project_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        if project_root is not None:
+            try:
+                readiness = read_bound_project_readiness(workspace, key, project_root)
+            except ValueError as exc:
+                if not str(exc).startswith("No readiness found for project:"):
+                    raise
+            else:
+                if not build_capabilities(readiness)["start_workflow"]:
+                    raise ValueError("Project readiness must be complete before starting a workflow.")
     resolved_profile, role_models = resolve_project_model_profile(
-        model_config,
+        resolve_runtime_model_config(model_config),
         target,
         explicit_profile=model_profile,
         role_overrides=role_model_overrides or [],
@@ -4145,7 +4273,8 @@ def build_start_console_context(
     project_base: Path | None = None,
 ) -> dict[str, object]:
     project_base = Path.home() if project_base is None else project_base
-    profiles = list_model_profiles(model_config) if model_config.is_file() else ["balanced"]
+    resolved_model_config = resolve_runtime_model_config(model_config)
+    profiles = list_model_profiles(resolved_model_config) if resolved_model_config.is_file() else ["balanced"]
     project_report: dict[str, object] = {}
     if project_config is not None and project_config.is_file():
         project_report = check_project_target(load_project_target(project_config))
@@ -4175,6 +4304,112 @@ def build_start_console_context(
         "project_base": str(directory_base),
         "candidate_dirs": discover_project_directories(directory_base),
     }
+
+
+def _workspace_product_settings_path(workspace: Path) -> Path:
+    return workspace / ".goodteam" / "product-settings.json"
+
+
+def _workspace_model_profiles(model_config: Path = Path("models.yaml")) -> list[str]:
+    model_config = resolve_runtime_model_config(model_config)
+    if not model_config.is_file():
+        return ["balanced"]
+    profiles = list_model_profiles(model_config)
+    return profiles or ["balanced"]
+
+
+def read_workspace_product_settings(workspace: Path) -> dict[str, str]:
+    defaults = {
+        "worker_backend": "codex",
+        "model_profile": "balanced",
+    }
+    path = _workspace_product_settings_path(workspace)
+    if not path.is_file():
+        return defaults
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProjectApiError(
+            "workspace_settings_invalid",
+            "GoodTeam could not read the workspace product settings.",
+            500,
+            recovery=["repair_workspace_settings", "retry_request"],
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ProjectApiError(
+            "workspace_settings_invalid",
+            "Workspace product settings must be a JSON object.",
+            500,
+            recovery=["repair_workspace_settings", "retry_request"],
+        )
+    return {
+        "worker_backend": str(payload.get("worker_backend", defaults["worker_backend"])),
+        "model_profile": str(payload.get("model_profile", defaults["model_profile"])),
+    }
+
+
+def build_workspace_product_settings(workspace: Path) -> dict[str, object]:
+    defaults = read_workspace_product_settings(workspace)
+    overview = build_project_overview_items(workspace)
+    return {
+        "defaults": defaults,
+        "options": {
+            "worker_backends": WORKER_BACKEND_OPTIONS,
+            "model_profiles": _workspace_model_profiles(),
+        },
+        "diagnostics": {
+            "workspace": str(workspace.expanduser().resolve()),
+            "settings_path": str(_workspace_product_settings_path(workspace)),
+            "project_count": len(overview),
+            "active_run_count": sum(1 for item in overview if item.get("status") == "active"),
+            "server_actions_enabled": os.getenv("GOODTEAM_SERVER_ACTIONS", "0") == "1",
+        },
+    }
+
+
+def save_workspace_product_settings(
+    workspace: Path,
+    request: dict[str, object],
+) -> dict[str, object]:
+    worker_backend = str(request.get("worker_backend", "")).strip()
+    model_profile = str(request.get("model_profile", "")).strip()
+    if worker_backend not in WORKER_BACKEND_OPTIONS:
+        raise ProjectApiError(
+            "invalid_worker_backend",
+            "Choose a configured GoodTeam worker backend.",
+            400,
+            details={"worker_backend": worker_backend},
+            recovery=["choose_worker_backend"],
+        )
+    model_profiles = _workspace_model_profiles()
+    if model_profile not in model_profiles:
+        raise ProjectApiError(
+            "invalid_model_profile",
+            "Choose an available GoodTeam model profile.",
+            400,
+            details={"model_profile": model_profile},
+            recovery=["choose_model_profile"],
+        )
+    path = _workspace_product_settings_path(workspace)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(
+                {
+                    "worker_backend": worker_backend,
+                    "model_profile": model_profile,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return build_workspace_product_settings(workspace)
 
 
 def discover_project_configs(workspace: Path) -> list[Path]:
@@ -4314,8 +4549,15 @@ def build_project_home(
                 recovery=["return_to_projects", "reload_project"],
             ) from exc
     state = StateStore(workspace).read_project_current(key)
+    worker_preflight = check_project_target(target).get("worker_backend_preflight", {})
+    worker_preflight = dict(worker_preflight) if isinstance(worker_preflight, Mapping) else {}
     active_run = (
-        {"run_id": state.run_id, "next_node": state.next_node}
+        {
+            "run_id": state.run_id,
+            "idea": state.idea,
+            "current_node": state.current_node,
+            "next_node": state.next_node,
+        }
         if is_active_run(state)
         else None
     )
@@ -4327,6 +4569,48 @@ def build_project_home(
         ),
         None,
     )
+    readiness_inputs = readiness.get("inputs", {})
+    readiness_inputs = dict(readiness_inputs) if isinstance(readiness_inputs, Mapping) else {}
+    command_confirmation = readiness_inputs.get("command_verification", {})
+    command_confirmation = dict(command_confirmation) if isinstance(command_confirmation, Mapping) else {}
+    command_values = command_confirmation.get("values", {})
+    command_values = dict(command_values) if isinstance(command_values, Mapping) else {}
+    confirmed_command_ids = {
+        str(value)
+        for value in command_values.get("confirmed_command_ids", [])
+        if str(value)
+    }
+    constraints_confirmation = readiness_inputs.get("constraints_confirmation", {})
+    constraints_confirmation = dict(constraints_confirmation) if isinstance(constraints_confirmation, Mapping) else {}
+    constraint_values = constraints_confirmation.get("values", {})
+    constraint_values = dict(constraint_values) if isinstance(constraint_values, Mapping) else {}
+    confirmed_commands: list[str] = []
+    constraints: list[str] = []
+    artifacts = readiness.get("artifacts", {})
+    for artifact in artifacts.values() if isinstance(artifacts, Mapping) else []:
+        if not isinstance(artifact, Mapping):
+            continue
+        content = artifact.get("content", {})
+        if not isinstance(content, Mapping):
+            continue
+        commands = content.get("commands", [])
+        for command in commands if isinstance(commands, list) else []:
+            if not isinstance(command, Mapping) or str(command.get("id", "")) not in confirmed_command_ids:
+                continue
+            value = str(command.get("command", "") or command.get("value", "")).strip()
+            if value and value not in confirmed_commands:
+                confirmed_commands.append(value)
+        raw_constraints = content.get("constraints", [])
+        values = raw_constraints if isinstance(raw_constraints, list) else [raw_constraints]
+        for value in values:
+            normalized = str(value).strip()
+            if normalized and normalized not in constraints:
+                constraints.append(normalized)
+    for value in (readiness_inputs.get("constraints", ""), constraint_values.get("note", "")):
+        for line in str(value).splitlines():
+            normalized = line.strip()
+            if normalized and normalized not in constraints:
+                constraints.append(normalized)
     return {
         "project": {
             "project_key": key,
@@ -4337,12 +4621,21 @@ def build_project_home(
             "root": str(root),
             "detected_mode": readiness["project_mode"],
             "active_run": active_run,
+            "project_goal": state.idea if state is not None else str(readiness.get("inputs", {}).get("goal", "")),
+            "blockers": list(state.blockers) if state is not None else [],
+            "constraints": constraints,
+            "constraints_confirmed": constraint_values.get("confirmed") is True,
+            "confirmed_commands": confirmed_commands,
+            "prohibited_operations": str(readiness_inputs.get("prohibited_operations", "")),
+            "worker_status": "ready" if worker_preflight.get("ready") is True else "unavailable",
+            "worker_backend": str(worker_preflight.get("mode", "")),
+            "worker_hint": str(worker_preflight.get("hint", "")),
         },
         "readiness": readiness,
         "capabilities": {
             **build_capabilities(readiness),
             "workflow_entry_url": (
-                f"/?project={quote(key, safe='')}"
+                f"/projects/{quote(key, safe='')}/work"
                 if build_capabilities(readiness)["start_workflow"]
                 else ""
             ),
@@ -4410,10 +4703,23 @@ def handle_project_api_get(
 ) -> tuple[int, dict[str, object]] | None:
     if path == "/api/projects":
         return 200, build_project_list(workspace)
+    if path == "/api/settings":
+        return 200, build_workspace_product_settings(workspace)
     home_match = re.fullmatch(r"/api/projects/([^/]+)/home", path)
     if home_match:
         encoded_key = home_match.group(1)
         return 200, build_project_home(workspace, _decode_project_api_key(encoded_key))
+    runs_match = re.fullmatch(r"/api/projects/([^/]+)/runs", path)
+    if runs_match:
+        key = _decode_project_api_key(runs_match.group(1))
+        _project_config_for_key(workspace, key)
+        return 200, build_project_run_history(workspace, key)
+    run_match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)", path)
+    if run_match:
+        key = _decode_project_api_key(run_match.group(1))
+        _project_config_for_key(workspace, key)
+        run_id = _decode_project_run_id(run_match.group(2))
+        return 200, build_project_run_detail(workspace, key, run_id)
     if path.startswith("/api/projects/") and path.endswith("/home"):
         encoded_key = path.removeprefix("/api/projects/").removesuffix("/home")
         _decode_project_api_key(encoded_key)
@@ -4458,6 +4764,8 @@ def handle_project_api_post(
     path: str,
     request: dict[str, object],
 ) -> tuple[int, dict[str, object]] | None:
+    if path == "/api/settings":
+        return 200, save_workspace_product_settings(workspace, request)
     if path == "/api/projects/import":
         root = str(request.get("root", "")).strip()
         if not root:
@@ -4467,11 +4775,14 @@ def handle_project_api_post(
                 400,
                 recovery=["choose_another_directory"],
             )
+        defaults = read_workspace_product_settings(workspace)
         result = import_project(
             workspace,
             root,
             display_name=str(request.get("display_name", "")),
             requested_key=str(request.get("project_key", "")),
+            default_model_profile=defaults["model_profile"],
+            default_worker_mode=defaults["worker_backend"],
         )
         imported_project = dict(result.get("project", {}) or {})
         imported_key = normalize_project_key(str(imported_project.get("project_key", "")))
@@ -4575,8 +4886,8 @@ def handle_project_api_post(
             )
         return 200, {
             "project_key": key,
-            "workflow_url": f"/?project={quote(key, safe='')}",
-            "bridge": "legacy_project_workflow",
+            "workflow_url": f"/projects/{quote(key, safe='')}/work",
+            "bridge": "product_project_workflow",
         }
     return None
 
@@ -4621,9 +4932,32 @@ def _decode_readiness_step_id(encoded_step_id: str) -> str:
     return decoded
 
 
+def _decode_project_run_id(encoded_run_id: str) -> str:
+    try:
+        if re.search(r"%(?![0-9A-Fa-f]{2})", encoded_run_id):
+            raise ValueError("malformed percent escape")
+        decoded = unquote_to_bytes(encoded_run_id).decode("utf-8", errors="strict")
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ProjectApiError(
+            "invalid_run_id",
+            "Run ID must be one valid URL segment.",
+            400,
+            recovery=["return_to_project_work", "choose_another_run"],
+        ) from exc
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", decoded):
+        raise ProjectApiError(
+            "invalid_run_id",
+            "Run ID must be one valid URL segment.",
+            400,
+            details={"run_id": decoded},
+            recovery=["return_to_project_work", "choose_another_run"],
+        )
+    return decoded
+
+
 def _is_project_api_post_path(path: str) -> bool:
     return bool(
-        path == "/api/projects/import"
+        path in {"/api/projects/import", "/api/settings"}
         or re.fullmatch(
             r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel))",
             path,
@@ -4673,6 +5007,30 @@ def _project_api_error_response(
         message = str(error)
         details = error.details
         recovery = error.recovery
+    elif isinstance(error, (PermissionError, FsListPermissionError)):
+        status = 403
+        code = "permission_denied"
+        message = str(error) or "Permission denied."
+        details = {}
+        recovery = ["fix_permissions", "retry_request"]
+    elif isinstance(error, FsListNotFoundError):
+        status = 404
+        code = "path_not_found"
+        message = str(error)
+        details = {}
+        recovery = ["choose_another_directory"]
+    elif isinstance(error, FsMkdirConflictError):
+        status = 409
+        code = "path_conflict"
+        message = str(error)
+        details = {}
+        recovery = ["choose_another_directory"]
+    elif isinstance(error, (ValueError, FsListBadRequestError)):
+        status = 400
+        code = "invalid_request"
+        message = str(error)
+        details = {}
+        recovery = ["retry_request"]
     else:
         logging.getLogger(__name__).exception(
             "Unexpected project API error (request_id=%s)",
@@ -4694,8 +5052,11 @@ def _project_api_error_response(
 
 def is_product_spa_path(path: str) -> bool:
     return bool(
-        path == "/projects"
-        or re.fullmatch(r"/projects/[^/]+/home", path)
+        path in {"/", "/legacy", "/projects", "/inbox", "/activity", "/settings"}
+        or re.fullmatch(
+            r"/projects/[^/]+/(?:home|work|work/runs/[^/]+|review|review/[^/]+|knowledge|settings/[^/]+)",
+            path,
+        )
     )
 
 
@@ -4930,17 +5291,14 @@ def build_dashboard_handler(workspace: Path):
                 origin=str(self.headers.get("Origin", "")),
                 host=str(self.headers.get("Host", "")),
             ):
-                if is_project_path:
-                    self._send_api_error(
-                        ProjectApiError(
-                            "same_origin_required",
-                            "Cross-origin POST requests are not allowed.",
-                            403,
-                            recovery=["retry_from_goodteam_origin"],
-                        )
+                self._send_api_error(
+                    ProjectApiError(
+                        "same_origin_required",
+                        "Cross-origin POST requests are not allowed.",
+                        403,
+                        recovery=["retry_from_goodteam_origin"],
                     )
-                else:
-                    self._send_json(403, {"error": "cross-origin POST requests are not allowed"})
+                )
                 return
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
@@ -4996,12 +5354,7 @@ def build_dashboard_handler(workspace: Path):
                     )
                 self._send_json(200, result)
             except Exception as exc:
-                if is_project_path:
-                    self._send_api_error(exc)
-                elif isinstance(exc, ValueError):
-                    self._send_json(400, {"error": str(exc)})
-                else:
-                    raise
+                self._send_api_error(exc)
 
         def _send_api_error(self, error: Exception) -> None:
             status, payload = _project_api_error_response(error)
@@ -5009,13 +5362,16 @@ def build_dashboard_handler(workspace: Path):
 
         def _send_json(self, status: int, payload: dict[str, object]) -> None:
             body = json.dumps(payload, indent=2).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            _send_cors_headers(self, host="127.0.0.1", port=int(self.server.server_port))
-            self.end_headers()
-            self.wfile.write(body)
-            self.wfile.flush()
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                _send_cors_headers(self, host="127.0.0.1", port=int(self.server.server_port))
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
 
         def log_message(self, format: str, *args: object) -> None:
             return
@@ -6020,14 +6376,14 @@ def serve(
                     artifact_key = query.get("key", [""])[0]
                     self._send_json(200, read_artifact(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/open-questions":
                 try:
                     artifact_key = query.get("artifact", [""])[0]
                     self._send_json(200, read_open_questions(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/state":
                 try:
@@ -6061,7 +6417,7 @@ def serve(
                         }
                     self._send_json(200, res_data)
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/resources":
                 try:
@@ -6075,13 +6431,13 @@ def serve(
                         },
                     )
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/workflow/graph":
                 try:
                     self._send_json(200, build_workflow_graph(workspace, project_key=project_key))
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/devloop":
                 project_root = None
@@ -6129,11 +6485,11 @@ def serve(
                 try:
                     self._send_json(200, list_directory_for_picker(query.get("path", [""])[0]))
                 except FsListBadRequestError as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 except FsListNotFoundError as exc:
-                    self._send_json(404, {"error": str(exc)})
+                    self._send_api_error(exc)
                 except FsListPermissionError as exc:
-                    self._send_json(403, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/memory":
                 try:
@@ -6145,7 +6501,7 @@ def serve(
                     project_root = resolve_project_runtime_root(repos)
                     self._send_json(200, build_memory_overview(project_root, project_key))
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/memory/events":
                 try:
@@ -6171,7 +6527,7 @@ def serve(
                         ),
                     )
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/memory/event":
                 try:
@@ -6183,15 +6539,17 @@ def serve(
                     project_root = resolve_project_runtime_root(repos)
                     event_detail = build_memory_event_detail(project_root, event_id)
                     if event_detail is None:
-                        self._send_json(404, {"error": f"event not found: {event_id}"})
+                        raise ProjectApiError(
+                            "memory_event_not_found",
+                            f"Memory event not found: {event_id}",
+                            404,
+                            details={"event_id": event_id},
+                            recovery=["return_to_project_knowledge"],
+                        )
                     else:
                         self._send_json(200, event_detail)
                 except Exception as exc:
-                    message = str(exc)
-                    if message.startswith("event not found: "):
-                        self._send_json(404, {"error": message})
-                    else:
-                        self._send_json(400, {"error": message})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/memory/cross":
                 try:
@@ -6217,13 +6575,13 @@ def serve(
                     )
                     self._send_json(200, {"results": results})
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/agents":
                 try:
                     self._send_json(200, {"agents": discover_installed_agents()})
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
             if parsed.path == "/api/messages":
                 try:
@@ -6243,15 +6601,9 @@ def serve(
                         },
                     )
                 except Exception as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_api_error(exc)
                 return
 
-            if parsed.path in {"/", "/index.html"} and project_key:
-                try:
-                    _project_config_for_key(workspace, project_key)
-                except Exception as exc:
-                    self._send_html(400, render_unknown_project_error(project_key, str(exc)))
-                    return
             if not parsed.path.startswith("/api/") and dist_dir is not None:
                 rel_path = parsed.path.lstrip("/")
                 if not rel_path or rel_path == "index.html":
@@ -6308,30 +6660,41 @@ def serve(
                 origin=str(self.headers.get("Origin", "")),
                 host=str(self.headers.get("Host", "")),
             ):
-                if is_project_path:
-                    self._send_api_error(
-                        ProjectApiError(
-                            "same_origin_required",
-                            "Cross-origin POST requests are not allowed.",
-                            403,
-                            recovery=["retry_from_goodteam_origin"],
-                        )
+                self._send_api_error(
+                    ProjectApiError(
+                        "same_origin_required",
+                        "Cross-origin POST requests are not allowed.",
+                        403,
+                        recovery=["retry_from_goodteam_origin"],
                     )
-                else:
-                    self._send_json(403, {"error": "cross-origin POST requests are not allowed"})
+                )
                 return
             if normalized_path == "/fs/choose" and not _native_picker_request_targets_local_server(
                 request_host=str(self.headers.get("Host", "")),
                 port=port,
             ):
-                self._send_json(403, {"error": "native picker requires the local GoodTeam origin"})
+                self._send_api_error(
+                    ProjectApiError(
+                        "same_origin_required",
+                        "Native picker requires the local GoodTeam origin.",
+                        403,
+                        recovery=["retry_from_goodteam_origin"],
+                    )
+                )
                 return
             if normalized_path == "/fs/choose" and not _native_picker_origin_is_trusted(
                 origin=str(self.headers.get("Origin", "")),
                 request_host=str(self.headers.get("Host", "")),
                 port=port,
             ):
-                self._send_json(403, {"error": "native picker requires the local GoodTeam origin"})
+                self._send_api_error(
+                    ProjectApiError(
+                        "same_origin_required",
+                        "Native picker requires the local GoodTeam origin.",
+                        403,
+                        recovery=["retry_from_goodteam_origin"],
+                    )
+                )
                 return
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
@@ -6374,13 +6737,13 @@ def serve(
                             name_value=request.get("name", ""),
                         )
                     except FsMkdirConflictError as exc:
-                        self._send_json(409, {"error": str(exc)})
+                        self._send_api_error(exc)
                         return
                     except FsListNotFoundError as exc:
-                        self._send_json(404, {"error": str(exc)})
+                        self._send_api_error(exc)
                         return
                     except FsListBadRequestError as exc:
-                        self._send_json(400, {"error": str(exc)})
+                        self._send_api_error(exc)
                         return
                 elif normalized_path == "/start":
                     result = start_workflow(
@@ -6588,15 +6951,9 @@ def serve(
                     )
                 self._send_json(200, result)
             except PermissionError as exc:
-                if is_project_path:
-                    self._send_api_error(exc)
-                else:
-                    self._send_json(403, {"error": str(exc)})
+                self._send_api_error(exc)
             except Exception as exc:
-                if is_project_path:
-                    self._send_api_error(exc)
-                else:
-                    self._send_json(400, {"error": str(exc)})
+                self._send_api_error(exc)
 
         def do_OPTIONS(self) -> None:
             self.send_response(204)
@@ -6607,13 +6964,16 @@ def serve(
 
         def _send_json(self, status: int, payload: dict[str, object]) -> None:
             body = json.dumps(payload, indent=2).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            _send_cors_headers(self, host=host, port=port)
-            self.end_headers()
-            self.wfile.write(body)
-            self.wfile.flush()
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                _send_cors_headers(self, host=host, port=port)
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
 
         def _send_api_error(self, error: Exception) -> None:
             status, payload = _project_api_error_response(error)

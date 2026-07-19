@@ -39,7 +39,17 @@ async function readJson(response) {
 }
 
 export async function requestJson(path, options = {}) {
-  const response = await fetch(path, options);
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    throw new ApiError({
+      code: 'offline',
+      message: 'GoodTeam is unreachable from this browser.',
+      recovery: ['check_service', 'retry_request'],
+    });
+  }
   const payload = await readJson(response);
   if (!response.ok) throw new ApiError(payload, response.status);
   return payload;

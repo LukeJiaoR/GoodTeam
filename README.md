@@ -104,21 +104,21 @@ See [`projects/example.yaml`](projects/example.yaml) for the full project-config
 
 Other backends: `fake` is the fastest no-creds path to the PRD gate; `codex` is the recommended real implementation/QA backend for the full demo; `anthropic` (Claude CLI) remains supported when you prefer that stack.
 
-Open the dashboard at:
+Open the redesigned project portfolio at:
 
 ```text
 http://localhost:8788/
 ```
 
-The root dashboard is a multi-project overview. Open a project detail page with:
+The root URL redirects to `/projects`. Open a project's Work space with:
 
 ```text
-http://localhost:8788/?project=<PROJECT_KEY>
+http://localhost:8788/projects/<PROJECT_KEY>/work
 ```
 
-### Redesigned project loading preview
+### Redesigned project loading
 
-The additive project-loading experience is available at:
+The default project-loading experience is available at:
 
 ```text
 http://localhost:8788/projects
@@ -133,11 +133,11 @@ of creating a duplicate. New-project, existing-codebase, and unconfirmed modes
 share the same persisted readiness model, so the Home state and a manual mode
 decision survive browser reloads and server restarts.
 
-These routes are an additive preview. `/` and `/?project=<PROJECT_KEY>` continue
-to serve the current dashboard. The preview shows real pending Init or
-repository-understanding steps and blocks workflow start with an explicit
-reason; executing those mode-specific steps belongs to the next implementation
-slice.
+The root route redirects to `/projects`. Workflow operations are available at
+`/projects/<PROJECT_KEY>/work`; old `/legacy` bookmarks redirect to the
+corresponding product route. Project Home shows real readiness execution and
+blocks workflow start with an explicit reason until the backend reports that the
+project is ready.
 
 ### Frontend-Backend Separation & Local Development
 

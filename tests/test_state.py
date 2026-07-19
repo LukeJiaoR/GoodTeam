@@ -122,3 +122,22 @@ def test_state_store_archives_and_clears_project_current(tmp_path):
     assert archive == tmp_path / "state" / "projects" / "CONTENTOPS" / "archived" / "run-1-cancelled.json"
     assert archive.exists()
     assert store.read_project_current("CONTENTOPS") is None
+
+
+def test_state_store_lists_every_valid_project_archive_newest_first(tmp_path):
+    store = StateStore(tmp_path)
+    first = create_initial_state("run-first", "CONTENTOPS", "First goal")
+    store.write_project_current(first)
+    first_path = store.archive_project_current("CONTENTOPS", reason="cancelled")
+    second = create_initial_state("run-second", "CONTENTOPS", "Second goal")
+    store.write_project_current(second)
+    second_path = store.archive_project_current("CONTENTOPS", reason="complete")
+    invalid_path = second_path.parent / "invalid.json"
+    invalid_path.write_text("not-json", encoding="utf-8")
+    first_path.touch()
+    second_path.touch()
+
+    archived = store.list_project_archived("CONTENTOPS")
+
+    assert {state.run_id for _, state in archived} == {"run-first", "run-second"}
+    assert all(path != invalid_path for path, _ in archived)

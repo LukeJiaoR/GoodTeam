@@ -877,6 +877,38 @@
   white-space: normal;
 }
 
+.product-shell .readiness-command-choice {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.product-shell .readiness-command-choice small {
+  overflow: hidden;
+  color: var(--product-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-shell .readiness-advanced-commands {
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .readiness-advanced-commands summary {
+  padding: 0.72rem 0;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  font-weight: 620;
+  cursor: pointer;
+}
+
+.product-shell .readiness-advanced-commands[open] summary {
+  margin-bottom: 0.15rem;
+  color: var(--product-text);
+}
+
 .product-shell .readiness-input-hint {
   margin: 0;
   color: var(--product-warning);
@@ -1182,6 +1214,17 @@
   transform: translateY(-0.08rem);
 }
 
+.product-shell .project-home-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .project-home-shortcuts a { color: var(--product-accent-strong); font-weight: 620; }
+
 .dark .product-shell {
   --product-bg: #191816;
   --product-surface: #23211e;
@@ -1306,4 +1349,399 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+.product-shell .product-project-navigation {
+  overflow-x: auto;
+  background: var(--product-surface);
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .product-project-navigation > div {
+  display: flex;
+  gap: 1.25rem;
+  align-items: stretch;
+  width: min(100% - 3rem, 76rem);
+  min-height: 46px;
+  margin: 0 auto;
+}
+
+.product-shell .product-project-navigation__identity {
+  display: inline-flex;
+  align-items: center;
+  padding-right: 1rem;
+  color: var(--product-text-muted);
+  border-right: 1px solid var(--product-border);
+  font-family: "Geist Mono Variable", ui-monospace, monospace;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.product-shell .product-page {
+  width: min(100% - 2rem, 1180px);
+  margin-inline: auto;
+  padding: clamp(2rem, 5vw, 4.25rem) 0 4rem;
+}
+
+.product-shell .product-page-header {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: clamp(1.75rem, 4vw, 3rem);
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .product-page-header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  font-weight: 660;
+  letter-spacing: -0.052em;
+  line-height: 1;
+}
+
+.product-shell .product-page-header p:not(.product-eyebrow) {
+  max-width: 62ch;
+  margin: 0.65rem 0 0;
+  color: var(--product-text-muted);
+}
+
+.product-shell .product-page-header a {
+  color: var(--product-accent-strong);
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+.product-shell .product-eyebrow {
+  margin: 0 0 0.4rem;
+  color: var(--product-accent-strong);
+  font-family: "Geist Mono Variable", ui-monospace, monospace;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+}
+
+.product-shell .product-page-header__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.product-shell .product-subnav {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1.75rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--product-border);
+}
+
+.product-shell .product-subnav button {
+  padding: 0.7rem 0.9rem;
+  color: var(--product-text-muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.product-shell .product-subnav button:hover,
+.product-shell .product-subnav button.is-active {
+  color: var(--product-text);
+  border-bottom-color: var(--product-accent-strong);
+}
+
+.product-shell .product-subnav button:focus-visible,
+.product-shell .product-project-navigation a:focus-visible,
+.product-shell .review-queue a:focus-visible,
+.product-shell .knowledge-artifacts button:focus-visible,
+.product-shell .knowledge-memory button:focus-visible,
+.product-shell .project-settings-layout a:focus-visible {
+  outline: 3px solid var(--product-focus);
+  outline-offset: -2px;
+}
+
+.product-shell .product-error-state,
+.product-shell .product-empty-state {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin: 1rem 0;
+  padding: 1rem;
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-left: 3px solid var(--product-danger);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .product-empty-state { border-left-color: var(--product-accent); }
+.product-shell .product-error-state p,
+.product-shell .product-empty-state p { margin: 0.3rem 0; color: var(--product-text-muted); }
+.product-shell .product-error-state code { display: block; font-size: 0.76rem; overflow-wrap: anywhere; }
+.product-shell .product-partial-state {
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+  border-inline-start: 3px solid var(--product-warning);
+  background: color-mix(in srgb, var(--product-warning) 8%, var(--product-surface));
+}
+.product-shell .product-partial-state p { margin: 0.35rem 0 0; color: var(--product-text-muted); }
+.product-shell .product-empty-copy { padding: 2.5rem 0; color: var(--product-text-muted); }
+.product-shell .product-boundary-note { color: var(--product-text-muted); font-size: 0.82rem; }
+
+.product-shell .product-workspace-skeleton {
+  display: grid;
+  grid-template-columns: 0.7fr 1.5fr 0.85fr;
+  gap: 1rem;
+  min-height: 24rem;
+}
+
+.product-shell .product-workspace-skeleton span {
+  background: var(--product-surface-muted);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .work-start-panel,
+.product-shell .product-inline-form {
+  display: grid;
+  gap: 1rem;
+  max-width: 46rem;
+  padding: clamp(1rem, 3vw, 1.5rem);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+}
+
+.product-shell .work-start-panel h2,
+.product-shell .work-section-header h2,
+.product-shell .review-workspace h2,
+.product-shell .knowledge-overview h2 { margin: 0; font-size: 1.25rem; letter-spacing: -0.025em; }
+.product-shell .work-start-panel p { margin: 0.4rem 0 0; color: var(--product-text-muted); }
+.product-shell .work-start-panel label,
+.product-shell .product-inline-form label,
+.product-shell .review-decision-panel label,
+.product-shell .settings-field,
+.product-shell .activity-filters label,
+.product-shell .settings-controls label,
+.product-shell .knowledge-memory label { display: grid; gap: 0.4rem; color: var(--product-text-muted); font-size: 0.82rem; font-weight: 600; }
+
+.product-shell textarea,
+.product-shell input,
+.product-shell select {
+  color: var(--product-text);
+  background: var(--product-bg);
+  border: 1px solid var(--product-border);
+  border-radius: 7px;
+  font: inherit;
+}
+
+.product-shell textarea,
+.product-shell input { padding: 0.65rem 0.72rem; }
+.product-shell select { min-height: 40px; padding: 0 2rem 0 0.65rem; }
+.product-shell textarea:focus-visible,
+.product-shell input:focus-visible,
+.product-shell select:focus-visible { outline: 3px solid var(--product-focus); outline-offset: 2px; }
+
+.product-shell .work-primary-view {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.8fr) minmax(0, 1.4fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+}
+
+.product-shell .work-actions-panel { grid-column: 1 / -1; padding-top: 1.5rem; border-top: 1px solid var(--product-border); }
+.product-shell .work-actions-panel ol { margin: 0; padding: 0; list-style: none; }
+.product-shell .work-actions-panel li { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: 0.7rem 0; border-bottom: 1px solid var(--product-border); }
+.product-shell .work-actions-panel li div { display: grid; gap: 0.2rem; }
+.product-shell .work-actions-panel small,
+.product-shell .work-actions-panel time { color: var(--product-text-muted); font-size: 0.75rem; }
+
+.product-shell .work-focus-panel { position: sticky; top: 8.5rem; align-self: start; padding: 1.4rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .work-focus-panel h2 { margin: 0; font-size: clamp(1.55rem, 3vw, 2.35rem); letter-spacing: -0.04em; line-height: 1.05; }
+.product-shell .work-focus-panel > p:not(.product-eyebrow) { color: var(--product-text-muted); }
+.product-shell .work-feedback { padding-top: 0.8rem; border-top: 1px solid var(--product-border); }
+.product-shell .work-run-controls { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--product-border); }
+.product-shell .work-run-controls summary { font-weight: 620; cursor: pointer; }
+.product-shell .work-run-controls p { color: var(--product-text-muted); font-size: 0.82rem; }
+.product-shell .work-run-selector select { max-width: 16rem; font-family: "Geist Mono Variable", monospace; font-size: 0.75rem; }
+.product-shell .work-historical-view { max-width: 48rem; padding: 1.4rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .work-historical-view > h2 { margin: 0; font-family: "Geist Mono Variable", monospace; font-size: 1.35rem; }
+.product-shell .work-historical-view > p:not(.product-eyebrow) { color: var(--product-text-muted); }
+.product-shell .work-historical-view > a { color: var(--product-accent-strong); font-weight: 620; }
+
+.product-shell .work-stage-rail { margin: 0; padding: 0; border-top: 1px solid var(--product-border); list-style: none; }
+.product-shell .work-stage-rail li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 0.8rem; padding: 0.9rem 0; border-bottom: 1px solid var(--product-border); }
+.product-shell .work-stage-number { color: var(--product-text-muted); font-family: "Geist Mono Variable", monospace; font-size: 0.78rem; }
+.product-shell .work-stage-rail li div { display: flex; gap: 1rem; justify-content: space-between; }
+.product-shell .work-stage-rail small { color: var(--product-text-muted); }
+.product-shell .work-stage-rail li[data-status="active"] { color: var(--product-accent-strong); }
+
+.product-shell .work-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+.product-shell .work-board section { min-width: 0; }
+.product-shell .work-board h2 { display: flex; justify-content: space-between; margin: 0; padding-bottom: 0.6rem; border-bottom: 1px solid var(--product-border); font-size: 0.95rem; }
+.product-shell .work-board ul,
+.product-shell .work-item-list,
+.product-shell .work-message-list { margin: 0; padding: 0; list-style: none; }
+.product-shell .work-board li { margin-top: 0.7rem; padding: 0.8rem; background: var(--product-surface); border-radius: 7px; }
+.product-shell .work-board li p { color: var(--product-text-muted); font-size: 0.82rem; }
+
+.product-shell .work-section-stack { display: grid; gap: 1.5rem; }
+.product-shell .work-section-header { display: flex; gap: 1rem; align-items: start; justify-content: space-between; }
+.product-shell .work-section-header p { margin: 0.35rem 0 0; color: var(--product-text-muted); }
+.product-shell .work-item-list li { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: 0.9rem 0; border-bottom: 1px solid var(--product-border); }
+.product-shell .work-item-list li div { display: grid; gap: 0.25rem; }
+.product-shell .work-item-list code { color: var(--product-text-muted); font-size: 0.76rem; }
+.product-shell .work-message-list li { max-width: 48rem; padding: 1rem 0; border-bottom: 1px solid var(--product-border); }
+.product-shell .work-message-list p { color: var(--product-text-muted); white-space: pre-wrap; }
+.product-shell .work-delivery-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+.product-shell .work-delivery-grid section { min-width: 0; padding: 1rem; background: var(--product-surface); border-radius: var(--product-radius); }
+.product-shell pre { max-width: 100%; overflow: auto; padding: 0.8rem; background: var(--product-surface-muted); border-radius: 6px; font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.product-shell .review-workspace { display: grid; grid-template-columns: minmax(14rem, 0.68fr) minmax(20rem, 1.45fr) minmax(17rem, 0.85fr); gap: 1.25rem; align-items: start; }
+.product-shell .review-queue { position: sticky; top: 8.5rem; }
+.product-shell .review-queue > h2 { margin-bottom: 0.8rem; }
+.product-shell .review-queue ol { margin: 0; padding: 0; border-top: 1px solid var(--product-border); list-style: none; }
+.product-shell .review-queue a { display: flex; gap: 0.6rem; align-items: center; justify-content: space-between; padding: 0.75rem 0.45rem; color: var(--product-text); border-bottom: 1px solid var(--product-border); text-decoration: none; }
+.product-shell .review-queue a.is-active { background: var(--product-surface-muted); }
+.product-shell .review-queue a > span { display: grid; min-width: 0; }
+.product-shell .review-queue small { overflow: hidden; color: var(--product-text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.product-shell .review-artifact { min-width: 0; }
+.product-shell .review-artifact header { display: flex; gap: 1rem; align-items: end; justify-content: space-between; margin-bottom: 0.8rem; }
+.product-shell .review-view-switcher { display: flex; }
+.product-shell .review-view-switcher button { padding: 0.45rem 0.7rem; color: var(--product-text-muted); background: transparent; border: 1px solid var(--product-border); cursor: pointer; }
+.product-shell .review-view-switcher button.is-active { color: var(--product-text); background: var(--product-surface-muted); }
+.product-shell .review-diff { min-height: 60dvh; overflow: auto; color: var(--product-text); background: var(--product-surface-muted); font-size: 0.8rem; line-height: 1.55; white-space: pre-wrap; }
+.product-shell .review-editor textarea { width: 100%; min-height: 60dvh; padding: 1rem; font-family: "Geist Mono Variable", monospace; font-size: 0.84rem; line-height: 1.6; resize: vertical; }
+.product-shell .review-inspector { display: grid; gap: 1rem; }
+.product-shell .review-inspector > section,
+.product-shell .review-inspector > details,
+.product-shell .review-decision-panel { padding: 0.9rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .review-inspector summary { font-weight: 650; cursor: pointer; }
+.product-shell .review-verdict { color: var(--product-accent-strong); font-size: 1.15rem; font-weight: 650; }
+.product-shell .review-editor-actions { display: flex; gap: 0.5rem; }
+.product-shell .review-decision-panel { display: grid; gap: 0.6rem; }
+.product-shell .review-decision-panel textarea { width: 100%; }
+.product-shell .review-question-list { display: grid; gap: 0.8rem; margin-top: 0.8rem; }
+.product-shell .review-question-list label { display: grid; gap: 0.35rem; color: var(--product-text-muted); font-size: 0.82rem; }
+.product-shell .review-question-list textarea { width: 100%; }
+
+.product-shell .knowledge-intro dl,
+.product-shell .settings-data-list { display: grid; margin: 1rem 0 2rem; border-top: 1px solid var(--product-border); }
+.product-shell .knowledge-intro dl div,
+.product-shell .settings-data-list div { display: grid; grid-template-columns: minmax(8rem, 0.35fr) minmax(0, 1fr); gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--product-border); }
+.product-shell .knowledge-intro dt,
+.product-shell .settings-data-list dt { color: var(--product-text-muted); }
+.product-shell .knowledge-intro dd,
+.product-shell .settings-data-list dd { margin: 0; }
+.product-shell .knowledge-confirmed-facts { margin: 2rem 0; padding: 1.2rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .knowledge-confirmed-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
+.product-shell .knowledge-confirmed-grid ul { margin: 0; padding-left: 1.25rem; }
+.product-shell .knowledge-confirmed-grid code { overflow-wrap: anywhere; }
+.product-shell .knowledge-artifacts,
+.product-shell .knowledge-memory,
+.product-shell .project-settings-layout { display: grid; grid-template-columns: minmax(14rem, 0.55fr) minmax(0, 1.45fr); gap: clamp(1.5rem, 4vw, 3.5rem); }
+.product-shell .knowledge-artifacts aside ol { margin: 0; padding: 0; list-style: none; }
+.product-shell .knowledge-artifacts aside button,
+.product-shell .knowledge-memory aside button { display: grid; width: 100%; padding: 0.7rem; color: var(--product-text); background: transparent; border: 0; border-bottom: 1px solid var(--product-border); text-align: left; cursor: pointer; }
+.product-shell .knowledge-artifacts aside button.is-active,
+.product-shell .knowledge-memory aside button.is-active { background: var(--product-surface-muted); }
+.product-shell .knowledge-artifacts small,
+.product-shell .knowledge-memory small { overflow: hidden; color: var(--product-text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.product-shell .knowledge-artifacts article pre { min-height: 50dvh; font-size: 0.84rem; line-height: 1.6; }
+.product-shell .knowledge-memory section > label { margin-bottom: 1rem; }
+.product-shell .knowledge-memory section ol { margin: 0; padding: 0; list-style: none; }
+.product-shell .knowledge-memory section li { border-bottom: 1px solid var(--product-border); }
+.product-shell .knowledge-memory section li > button { display: grid; gap: 0.3rem; width: 100%; padding: 0.8rem; color: var(--product-text); background: transparent; border: 0; text-align: left; cursor: pointer; }
+.product-shell .knowledge-memory section li > button.is-active { background: var(--product-surface-muted); }
+.product-shell .knowledge-memory section li code { overflow: hidden; color: var(--product-text-muted); font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
+.product-shell .knowledge-memory-inspector,
+.product-shell .knowledge-cross-memory { margin-top: 1.5rem; padding: 1rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .knowledge-memory-inspector pre { max-height: 28rem; overflow: auto; font-size: 0.76rem; }
+.product-shell .knowledge-cross-memory { display: grid; gap: 0.85rem; }
+.product-shell .knowledge-cross-memory h2,
+.product-shell .knowledge-cross-memory p { margin: 0; }
+.product-shell .knowledge-cross-memory fieldset { display: flex; flex-wrap: wrap; gap: 0.65rem 1rem; padding: 0.8rem; border: 1px solid var(--product-border); }
+.product-shell .knowledge-cross-memory fieldset label { display: flex; grid-template-columns: auto 1fr; gap: 0.4rem; align-items: center; }
+.product-shell .knowledge-cross-memory ol { border-top: 1px solid var(--product-border); }
+.product-shell .knowledge-cross-memory li { padding: 0.8rem 0; }
+
+.product-shell .inbox-list,
+.product-shell .activity-timeline { margin: 0; padding: 0; list-style: none; }
+.product-shell .inbox-list > li { border-top: 1px solid var(--product-border); }
+.product-shell .inbox-list > li:last-child { border-bottom: 1px solid var(--product-border); }
+.product-shell .inbox-list a { display: flex; gap: 1.5rem; align-items: center; justify-content: space-between; padding: 1.1rem 0; color: var(--product-text); text-decoration: none; }
+.product-shell .inbox-list h2 { margin: 0; font-size: 1.1rem; }
+.product-shell .inbox-list p { margin: 0.3rem 0 0; color: var(--product-text-muted); }
+.product-shell .activity-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+.product-shell .activity-timeline li { display: grid; grid-template-columns: minmax(9rem, 0.3fr) minmax(0, 1fr); gap: 1.5rem; padding: 1rem 0; border-top: 1px solid var(--product-border); }
+.product-shell .activity-timeline time { color: var(--product-text-muted); font-size: 0.8rem; }
+.product-shell .activity-timeline h2 { margin: 0; font-size: 1rem; }
+.product-shell .activity-timeline p { color: var(--product-text-muted); }
+.product-shell .activity-timeline a { color: var(--product-accent-strong); }
+
+.product-shell .settings-section-list { display: grid; gap: 0; }
+.product-shell .settings-section-list > section { display: grid; grid-template-columns: minmax(15rem, 0.65fr) minmax(0, 1.35fr); gap: 2rem; padding: 1.5rem 0; border-top: 1px solid var(--product-border); }
+.product-shell .settings-section-list header h2 { margin: 0; font-size: 1.15rem; }
+.product-shell .settings-section-list header p { color: var(--product-text-muted); }
+.product-shell .settings-controls { display: grid; gap: 1rem; }
+.product-shell .settings-check { grid-template-columns: auto 1fr; align-items: center; }
+.product-shell .settings-health { display: flex; gap: 1rem; align-items: center; }
+.product-shell .settings-agent-list,
+.product-shell .settings-boundaries { margin: 0; padding: 0; list-style: none; }
+.product-shell .settings-agent-list li { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: 0.7rem 0; border-bottom: 1px solid var(--product-border); }
+.product-shell .settings-agent-list li div { display: grid; }
+.product-shell .settings-agent-list code { color: var(--product-text-muted); font-size: 0.75rem; }
+.product-shell .settings-boundaries li { padding: 0.7rem 0; border-bottom: 1px solid var(--product-border); }
+.product-shell .project-settings-layout > nav { display: grid; align-content: start; }
+.product-shell .project-settings-layout > nav a { padding: 0.65rem; color: var(--product-text-muted); border-bottom: 1px solid var(--product-border); text-decoration: none; }
+.product-shell .project-settings-layout > nav a.is-active { color: var(--product-text); background: var(--product-surface-muted); }
+.product-shell .project-settings-layout > section { min-width: 0; }
+.product-shell .project-settings-layout > section h2 { margin-top: 0; }
+.product-shell .settings-field { max-width: 28rem; margin-bottom: 1rem; }
+
+@media (max-width: 1000px) {
+  .product-shell .review-workspace { grid-template-columns: minmax(13rem, 0.65fr) minmax(0, 1.35fr); }
+  .product-shell .review-inspector { grid-column: 2; }
+  .product-shell .work-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 767px) {
+  .product-shell .product-navigation { gap: 0.8rem; overflow-x: auto; }
+  .product-shell .product-chrome__inner { grid-template-columns: auto minmax(0, 1fr); }
+  .product-shell .product-project-navigation > div { width: max-content; min-width: calc(100% - 2rem); margin-inline: 1rem; }
+  .product-shell .product-page { width: min(100% - 2rem, 42rem); padding: 2rem 0 3rem; }
+  .product-shell .product-page-header,
+  .product-shell .work-section-header { flex-direction: column; }
+  .product-shell .product-page-header__meta { justify-content: flex-start; }
+  .product-shell .product-workspace-skeleton,
+  .product-shell .work-primary-view,
+  .product-shell .work-delivery-grid,
+  .product-shell .review-workspace,
+  .product-shell .knowledge-artifacts,
+  .product-shell .knowledge-memory,
+  .product-shell .knowledge-confirmed-grid,
+  .product-shell .project-settings-layout,
+  .product-shell .settings-section-list > section,
+  .product-shell .activity-timeline li { grid-template-columns: minmax(0, 1fr); }
+  .product-shell .work-focus-panel,
+  .product-shell .review-queue { position: static; }
+  .product-shell .review-inspector { grid-column: auto; }
+  .product-shell .review-editor textarea { min-height: 48dvh; }
+  .product-shell .activity-filters { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 480px) {
+  .product-shell .product-chrome__inner { width: calc(100% - 1.25rem); }
+  .product-shell .product-brand > span:last-child { display: none; }
+  .product-shell .product-navigation { justify-self: stretch; }
+  .product-shell .product-navigation__link { font-size: 0.8rem; }
+  .product-shell .work-board { grid-template-columns: minmax(0, 1fr); }
+  .product-shell .review-editor-actions,
+  .product-shell .review-decision-panel .product-button,
+  .product-shell .work-start-panel .product-button { width: 100%; }
+  .product-shell .review-editor-actions { flex-direction: column; }
 }

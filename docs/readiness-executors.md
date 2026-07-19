@@ -50,9 +50,9 @@ Errors use the stable project API envelope: `code`, `message`, `details`,
 
 `start_workflow` is computed only by the backend. It requires schema version 2,
 the exact mode-specific required-step set, complete project/root-bound steps, a
-complete bound execution, and lifecycle `ready`. Until Run Workspace is available,
-the workflow endpoint safely bridges to the existing `/?project=PROJECT_KEY`
-workflow screen after rechecking that capability.
+complete bound execution, and lifecycle `ready`. The workflow endpoint enters
+the product Work route at `/projects/PROJECT_KEY/work` after rechecking that
+capability.
 
 ## Local preview and isolated E2E
 

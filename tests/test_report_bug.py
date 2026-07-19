@@ -213,7 +213,8 @@ def test_report_bug_route_400_on_missing_description(tmp_path, monkeypatch):
     handler = simulate_post("/api/report-bug", {"project_key": "BUGPROJ"})
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "error" in payload
+    assert payload["code"] == "invalid_request"
+    assert payload["request_id"]
 
 
 def test_report_bug_route_403_on_cross_origin(tmp_path, monkeypatch):

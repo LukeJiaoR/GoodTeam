@@ -316,6 +316,79 @@ def test_project_home_restores_from_disk_after_handler_restart(tmp_path: Path) -
     assert restored["project"]["root"] == str(root.resolve())
 
 
+def test_project_home_projects_confirmed_commands_and_constraints(tmp_path: Path) -> None:
+    root = tmp_path / "target"
+    root.mkdir()
+    _write_context_project(tmp_path, root, key="FACTS")
+    readiness = {
+        "project_mode": "existing_project",
+        "steps": [],
+        "inputs": {
+            "command_verification": {
+                "values": {"confirmed_command_ids": ["test-command"]},
+            },
+            "constraints_confirmation": {
+                "values": {"confirmed": True, "note": "Keep changes scoped"},
+            },
+        },
+        "artifacts": {
+            "repository": {
+                "content": {
+                    "commands": [
+                        {"id": "test-command", "command": "npm test"},
+                        {"id": "lint-command", "command": "npm run lint"},
+                    ],
+                    "constraints": ["No network writes"],
+                },
+            },
+        },
+    }
+
+    home = web.build_project_home(tmp_path, "FACTS", readiness_override=readiness)
+
+    assert home["facts"]["confirmed_commands"] == ["npm test"]
+    assert home["facts"]["constraints"] == ["No network writes", "Keep changes scoped"]
+    assert home["facts"]["constraints_confirmed"] is True
+    assert home["facts"]["worker_status"] == "ready"
+    assert home["facts"]["worker_backend"] == "fake"
+
+
+def test_start_workflow_resolves_default_model_catalog_outside_repo_cwd(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = start_workflow(
+        workspace=tmp_path / "workspace",
+        idea="Verify cwd-independent startup",
+        project_key="CWD",
+        model_config=Path("models.yaml"),
+        model_profile="balanced",
+        dry_run=True,
+    )
+
+    assert result["model_profile"] == "balanced"
+
+
+def test_start_workflow_rejects_incomplete_persisted_readiness(tmp_path: Path) -> None:
+    root = tmp_path / "target"
+    root.mkdir()
+    (root / "package.json").write_text('{"name":"target"}', encoding="utf-8")
+    imported = project_import.import_project(tmp_path, str(root))
+
+    with pytest.raises(ValueError, match="readiness must be complete"):
+        start_workflow(
+            workspace=tmp_path,
+            idea="Do not bypass readiness",
+            project_key=imported["project"]["project_key"],
+            model_config=Path("models.yaml"),
+            model_profile="balanced",
+            source_type="existing_project",
+            project_config=Path(imported["project"]["config_path"]),
+        )
+
+
 def test_project_list_projects_attention_and_active_run_fields(tmp_path: Path) -> None:
     root = tmp_path / "ambiguous"
     root.mkdir()
@@ -399,12 +472,126 @@ def test_project_import_hides_unexpected_exception_text(
 
 
 def test_product_spa_path_contract() -> None:
+    assert web.is_product_spa_path("/") is True
+    assert web.is_product_spa_path("/legacy") is True
     assert web.is_product_spa_path("/projects") is True
+    assert web.is_product_spa_path("/inbox") is True
+    assert web.is_product_spa_path("/activity") is True
+    assert web.is_product_spa_path("/settings") is True
     assert web.is_product_spa_path("/projects/DEMO/home") is True
-    assert web.is_product_spa_path("/inbox") is False
+    assert web.is_product_spa_path("/projects/DEMO/work") is True
+    assert web.is_product_spa_path("/projects/DEMO/work/runs/run-1") is True
+    assert web.is_product_spa_path("/projects/DEMO/review") is True
+    assert web.is_product_spa_path("/projects/DEMO/review/prd") is True
+    assert web.is_product_spa_path("/projects/DEMO/knowledge") is True
+    assert web.is_product_spa_path("/projects/DEMO/settings/general") is True
     assert web.is_product_spa_path("/api/projects") is False
     assert web.is_product_spa_path("/review-workbench/run-1") is False
     assert web.is_product_spa_path("/assets/index.js") is False
+
+
+def test_project_run_history_and_detail_are_server_authoritative(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="RUNS")
+    store = StateStore(tmp_path)
+
+    archived = create_initial_state("run-archived", "RUNS", "Archived goal")
+    archived.current_node = "prd_review_gate"
+    archived.next_node = "await_prd_approval"
+    store.write_project_current(archived)
+    store.archive_project_current("RUNS", reason="cancelled")
+
+    active = create_initial_state("run-active", "RUNS", "Active goal")
+    active.current_node = "takeover_review_gate"
+    active.next_node = "await_takeover_approval"
+    store.write_project_current(active)
+
+    status, history = web.handle_project_api_get(tmp_path, "/api/projects/RUNS/runs")
+    assert status == 200
+    assert [run["run_id"] for run in history["runs"]] == ["run-active", "run-archived"]
+    assert [run["status"] for run in history["runs"]] == ["active", "archived"]
+
+    detail_status, detail = web.handle_project_api_get(
+        tmp_path,
+        "/api/projects/RUNS/runs/run-archived",
+    )
+    assert detail_status == 200
+    assert detail["run"]["reason"] == "cancelled"
+    assert detail["state"]["idea"] == "Archived goal"
+    assert detail["workflow_steps"]
+
+    with pytest.raises(web.ProjectApiError) as missing:
+        web.handle_project_api_get(tmp_path, "/api/projects/RUNS/runs/run-missing")
+    assert missing.value.code == "run_not_found"
+    assert missing.value.status == 404
+
+
+def test_project_run_detail_rejects_encoded_path_segments(tmp_path):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="RUNS")
+
+    with pytest.raises(web.ProjectApiError) as error:
+        web.handle_project_api_get(tmp_path, "/api/projects/RUNS/runs/run%2Fother")
+
+    assert error.value.code == "invalid_run_id"
+    assert error.value.status == 400
+
+
+def test_workspace_settings_persist_and_apply_to_future_project_imports(tmp_path):
+    status, defaults = web.handle_project_api_get(tmp_path, "/api/settings")
+    assert status == 200
+    assert defaults["defaults"] == {
+        "worker_backend": "codex",
+        "model_profile": "balanced",
+    }
+
+    save_status, saved = web.handle_project_api_post(
+        tmp_path,
+        "/api/settings",
+        {"worker_backend": "fake", "model_profile": "balanced"},
+    )
+    assert save_status == 200
+    assert saved["defaults"]["worker_backend"] == "fake"
+    settings_path = tmp_path / ".goodteam" / "product-settings.json"
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {
+        "model_profile": "balanced",
+        "worker_backend": "fake",
+    }
+
+    project_root = tmp_path / "future-project"
+    project_root.mkdir()
+    import_status, imported = web.handle_project_api_post(
+        tmp_path,
+        "/api/projects/import",
+        {"root": str(project_root)},
+    )
+    assert import_status == 201
+    config = Path(imported["project"]["config_path"])
+    target = web.load_project_target(config)
+    assert target["worker_backend"]["mode"] == "fake"
+    assert target["model_profile"] == "balanced"
+
+
+def test_workspace_settings_reject_unknown_defaults(tmp_path):
+    with pytest.raises(web.ProjectApiError) as worker_error:
+        web.handle_project_api_post(
+            tmp_path,
+            "/api/settings",
+            {"worker_backend": "unknown", "model_profile": "balanced"},
+        )
+    assert worker_error.value.code == "invalid_worker_backend"
+    assert worker_error.value.status == 400
+
+    with pytest.raises(web.ProjectApiError) as model_error:
+        web.handle_project_api_post(
+            tmp_path,
+            "/api/settings",
+            {"worker_backend": "codex", "model_profile": "unknown"},
+        )
+    assert model_error.value.code == "invalid_model_profile"
+    assert model_error.value.status == 400
 
 
 def test_focused_and_full_handlers_share_project_api_dispatch() -> None:
@@ -3005,2467 +3192,50 @@ def test_render_delivery_mode_options_uses_full_delivery_mode_catalog():
     assert "Custom" in html
 
 
-def test_frontend_contract_reads_project_report_repos_from_top_level():
+
+def test_product_frontend_replaces_legacy_dashboard_contracts():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    overview_tab = root / "frontend" / "src" / "components" / "tabs" / "OverviewTab.jsx"
-    frontend_source = app + (overview_tab.read_text(encoding="utf-8") if overview_tab.exists() else "")
+    frontend = root / "frontend" / "src"
 
-    assert "startContext.project_report?.repos?.docs?.path" in frontend_source
-    assert "startContext.project_report?.repos?.backend?.path" in frontend_source
-    assert "startContext.project_report?.repos?.frontend?.path" in frontend_source
-    assert "startContext.project_report?.project?.repos" not in frontend_source
+    assert not (frontend / "App.jsx").exists()
+    assert not (frontend / "components" / "ProjectTabRouter.jsx").exists()
 
-
-def test_frontend_contract_keeps_agy_model_selectable_and_aliases_deduped():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    workers_constants = (root / "frontend" / "src" / "constants" / "workers.js").read_text(encoding="utf-8")
-    worker_hook = (root / "frontend" / "src" / "hooks" / "useWorkerBackendSettings.js").read_text(encoding="utf-8")
-
-    assert 'MODEL_UNAVAILABLE_BACKENDS = ["fake", "noop", "human"]' in workers_constants
-    assert "Model is not applicable for Antigravity" not in app
-    assert "export function canonicalBackendForOption" in workers_constants
-    assert "import {" in worker_hook and "canonicalBackendForOption" in worker_hook
-
-
-def test_frontend_contract_exposes_open_questions_at_approval_gate():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    approval_utils = (root / "frontend" / "src" / "utils" / "approvals.js").read_text(encoding="utf-8")
-    approval_metrics = (root / "frontend" / "src" / "utils" / "approvalMetrics.js").read_text(encoding="utf-8")
-
-    assert "openQuestionsGateCount" in approval_metrics
-    assert "Questions" in router
-    assert "handleOpenQuestionsFromApproval" in app
-    assert "export function suggestedAnswersForQuestion" in approval_utils
-    assert "suggestedAnswersForQuestion={suggestedAnswersForQuestion}" in router
-
-
-def test_frontend_contract_has_simple_advanced_worker_routing_modes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    workers_constants = (root / "frontend" / "src" / "constants" / "workers.js").read_text(encoding="utf-8")
-    workers_tab = (root / "frontend" / "src" / "components" / "tabs" / "WorkersTab.jsx").read_text(
-        encoding="utf-8"
-    )
-
-    assert "workerRoutingMode" in app
-    assert "WORKER_ROUTING_BUCKETS" in workers_constants
-    assert "DEFAULT_BACKEND_OPTIONS" in workers_constants
-    assert "FALLBACK_AGENT_MODES" in workers_constants
-    assert "Apply Simple Routing" in workers_tab
-    assert "Advanced" in workers_tab
-
-
-def test_worker_constants_are_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    workers_constants = root / "frontend" / "src" / "constants" / "workers.js"
-
-    assert workers_constants.exists()
-    constants_source = workers_constants.read_text(encoding="utf-8")
-    for export_name in [
-        "DEFAULT_BACKEND_OPTIONS",
-        "DEFAULT_WORKER_ROLES",
-        "MODEL_UNAVAILABLE_BACKENDS",
-        "WORKER_ROUTING_BUCKETS",
-        "FALLBACK_AGENT_MODES",
+    router = (frontend / "app" / "AppRouter.jsx").read_text(encoding="utf-8")
+    for route in [
+        "/projects",
+        "/inbox",
+        "/activity",
+        "/settings",
+        "/projects/:projectKey/home",
+        "/projects/:projectKey/work",
+        "/projects/:projectKey/work/runs/:runId",
+        "/projects/:projectKey/review",
+        "/projects/:projectKey/review/:reviewId",
+        "/projects/:projectKey/knowledge",
+        "/projects/:projectKey/settings/:section",
     ]:
-        assert f"export const {export_name}" in constants_source
-        assert f"const {export_name}" not in app
+        assert route in router
 
-    assert "export function canonicalBackendForOption" in constants_source
-    assert "function canonicalBackendForOption" not in app
-    assert "import { FALLBACK_AGENT_MODES, WORKER_ROUTING_BUCKETS } from '../constants/workers';" in router
-    assert "const FALLBACK_AGENT_MODES" not in app
-
-
-def test_frontend_contract_exposes_release_readiness_without_execution_controls():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    release_card = (root / "frontend" / "src" / "components" / "ReleaseReadinessCard.jsx").read_text(
-        encoding="utf-8"
-    )
-    server_actions_card = (
-        root / "frontend" / "src" / "components" / "ServerActionsCard.jsx"
+    run_api = (frontend / "features" / "runs" / "runApi.js").read_text(encoding="utf-8")
+    review_api = (frontend / "features" / "reviews" / "reviewApi.js").read_text(encoding="utf-8")
+    knowledge_api = (
+        frontend / "features" / "knowledge" / "knowledgeApi.js"
     ).read_text(encoding="utf-8")
-
-    assert "<DevLoopTab" in router
-    assert "copyLandCommand={copyCommand}" in router
-    assert "devLoopData.release_readiness" in dev_loop_tab
-    assert "devLoopData.server_actions" in dev_loop_tab
-    assert "Release Readiness" in release_card
-    assert "Server Action Capabilities" in server_actions_card
-    assert "Destructive actions stay human-command-only" in server_actions_card
-    assert "release_up_command" in release_card
-    assert "graduate_command" in release_card
-    assert "Copy release-up command" in release_card
-    assert "Copy graduate command" in release_card
-    assert "copyLandCommand(command)" in release_card
-    assert "devLoopData.release_readiness?.available === true" in dev_loop_tab
-    assert "Release Readiness unavailable" not in dev_loop_tab + release_card
-    assert "Run release-up" not in dev_loop_tab + release_card
-    assert "Run graduate" not in dev_loop_tab + release_card
-    assert "Run land" not in dev_loop_tab
-    assert "Run tag" not in dev_loop_tab
-
-
-def test_server_actions_card_is_extracted_from_dev_loop_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    server_actions_card = root / "frontend" / "src" / "components" / "ServerActionsCard.jsx"
-
-    assert server_actions_card.exists()
-    card_source = server_actions_card.read_text(encoding="utf-8")
-    assert "export default function ServerActionsCard" in card_source
-    assert "Server Action Capabilities" in card_source
-    assert "Read-only capability report. Destructive actions stay human-command-only." in card_source
-    assert "serverActions?.actions" in card_source
-    assert "name.replaceAll('_', ' ')" in card_source
-    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5 space-y-4" in card_source
-    assert "bg-status-success-bg text-status-success-text border-status-success/30" in card_source
-    assert "bg-surface-raised text-text-muted border-border-subtle" in card_source
-    assert "function ServerActionsCard" not in dev_loop_tab
-    assert "import ServerActionsCard from '../ServerActionsCard';" in dev_loop_tab
-    assert "<ServerActionsCard serverActions={devLoopData.server_actions} />" in dev_loop_tab
-
-
-def test_dev_loop_warnings_panel_is_extracted_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    warnings_panel = root / "frontend" / "src" / "components" / "DevLoopWarningsPanel.jsx"
-
-    assert warnings_panel.exists()
-    panel_source = warnings_panel.read_text(encoding="utf-8")
-    assert "export default function DevLoopWarningsPanel" in panel_source
-    assert "System Warnings" in panel_source
-    assert "Array.isArray(warnings)" in panel_source
-    assert "bg-status-warning-bg border-2 border-status-warning/30" in panel_source
-    assert "text-status-warning-text" in panel_source
-    assert "AlertTriangle" in panel_source
-    assert "function WarningsPanel" not in dev_loop_tab
-    assert "import DevLoopWarningsPanel from '../DevLoopWarningsPanel';" in dev_loop_tab
-    assert "<DevLoopWarningsPanel warnings={devLoopData.warnings} />" in dev_loop_tab
-
-
-def test_dev_loop_worktrees_panel_is_extracted_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    worktrees_panel = root / "frontend" / "src" / "components" / "DevLoopWorktreesPanel.jsx"
-
-    assert worktrees_panel.exists()
-    panel_source = worktrees_panel.read_text(encoding="utf-8")
-    assert "export default function DevLoopWorktreesPanel" in panel_source
-    assert "Active Worktrees" in panel_source
-    assert "Array.isArray(worktrees)" in panel_source
-    assert "No active git worktrees." in panel_source
-    assert "FilePath path={worktree?.path} segments={2}" in panel_source
-    assert "worktree.head.slice(0, 7)" in panel_source
-    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl overflow-hidden" in panel_source
-    assert "bg-surface-sunken border-b-2 border-border-subtle" in panel_source
-    assert "function WorktreesPanel" not in dev_loop_tab
-    assert "import DevLoopWorktreesPanel from '../DevLoopWorktreesPanel';" in dev_loop_tab
-    assert "<DevLoopWorktreesPanel worktrees={devLoopData.worktrees} FilePath={FilePath} />" in dev_loop_tab
-
-
-def test_dev_loop_pull_requests_panel_is_extracted_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    pull_requests_panel = root / "frontend" / "src" / "components" / "DevLoopPullRequestsPanel.jsx"
-
-    assert pull_requests_panel.exists()
-    panel_source = pull_requests_panel.read_text(encoding="utf-8")
-    assert "export default function DevLoopPullRequestsPanel" in panel_source
-    assert "function CommandCopyButton" in panel_source
-    assert "Open PRs & CI Status" in panel_source
-    assert "Array.isArray(devLoopData.pull_requests)" in panel_source
-    assert "Copy land command" in panel_source
-    assert "Ready to land" in panel_source
-    assert "pre-reviewed" in panel_source
-    assert "No open pull requests." in panel_source
-    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5" in panel_source
-    assert "bg-status-success-bg text-status-success-text border-status-success/30" in panel_source
-    assert "bg-status-info-bg text-status-info-text border-status-info/30" in panel_source
-    assert "function PullRequestsPanel" not in dev_loop_tab
-    assert "function CommandCopyButton" not in dev_loop_tab
-    assert "import DevLoopPullRequestsPanel from '../DevLoopPullRequestsPanel';" in dev_loop_tab
-    assert "<DevLoopPullRequestsPanel" in dev_loop_tab
-
-
-def test_dev_loop_dispatch_form_is_extracted_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    dispatch_form = root / "frontend" / "src" / "components" / "DevLoopDispatchForm.jsx"
-
-    assert dispatch_form.exists()
-    form_source = dispatch_form.read_text(encoding="utf-8")
-    assert "export default function DevLoopDispatchForm" in form_source
-    assert "Dispatch a Track" in form_source
-    assert "Track started asynchronously!" in form_source
-    assert "Track Name" in form_source
-    assert "Custom Role Name" in form_source
-    assert "Custom Adapter Name" in form_source
-    assert "Task Details" in form_source
-    assert "Verification Command (Optional)" in form_source
-    assert "Dispatching..." in form_source
-    assert "const textInputClass" in form_source
-    assert "const textAreaClass" in form_source
-    assert "visibleRoles" in form_source
-    assert "roleBackendOptions.map" in form_source
-    assert "bg-surface-raised border-2 border-border-subtle shadow-card p-5 rounded-2xl space-y-4" in form_source
-    assert "bg-status-success-bg border-2 border-status-success/30" in form_source
-    assert "bg-status-danger-bg border-2 border-status-danger/30" in form_source
-    assert "function DispatchForm" not in dev_loop_tab
-    assert "const textInputClass" not in dev_loop_tab
-    assert "const textAreaClass" not in dev_loop_tab
-    assert "import DevLoopDispatchForm from '../DevLoopDispatchForm';" in dev_loop_tab
-    assert "<DevLoopDispatchForm" in dev_loop_tab
-
-
-def test_dev_loop_git_init_panel_is_extracted_and_wired_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(encoding="utf-8")
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    git_init_hook = (root / "frontend" / "src" / "hooks" / "useGitInitAction.js").read_text(encoding="utf-8")
-    git_init_panel = root / "frontend" / "src" / "components" / "DevLoopGitInitPanel.jsx"
-
-    assert git_init_panel.exists()
-    panel_source = git_init_panel.read_text(encoding="utf-8")
-    assert "export default function DevLoopGitInitPanel" in panel_source
-    assert "Initialize Git repository" in panel_source
-    assert "Create GitHub repository & push" in panel_source
-    assert "Repository Visibility" in panel_source
-    assert "Warnings during Git Init" in panel_source
-    assert "GITHUB_TOKEN" in panel_source
-    assert "remotePrivate" in panel_source
-    assert "setRemotePrivate" in panel_source
-    assert "createRemote" in panel_source
-    assert "setCreateRemote" in panel_source
-    assert "onInitializeGit" in panel_source
-    assert "bg-surface-raised border-2 border-border-subtle shadow-card" in panel_source
-    assert "bg-status-warning-bg border-2 border-status-warning/30" in panel_source
-    assert "bg-accent border-2 border-accent-text shadow-button" in panel_source
-    assert "text-2xs" in panel_source
-
-    assert "import DevLoopGitInitPanel from '../DevLoopGitInitPanel';" in dev_loop_tab
-    assert "<DevLoopGitInitPanel" in dev_loop_tab
-    assert "devLoopData.is_git_repo === false" in dev_loop_tab
-    assert "gitInitWarnings={gitInitWarnings}" in dev_loop_tab
-    assert "onInitializeGit={handleGitInit}" in dev_loop_tab
-
-    for source in [app, dashboard, router]:
-        assert "handleGitInit" in source
-        assert "gitInitLoading" in source
-        assert "gitInitWarnings" in source
-        assert "devLoopCreateRemote" in source
-        assert "devLoopRemotePrivate" in source
-
-    assert "import { useGitInitAction } from './hooks/useGitInitAction';" in app
-    assert "useGitInitAction({" in app
-    assert "projectKey," in app
-    assert "fetchDevLoop," in app
-    assert "showToast," in app
-    assert "/api/git-init" in git_init_hook
-    assert "project_key: projectKey" in git_init_hook
-    assert "create_remote: devLoopCreateRemote" in git_init_hook
-    assert "remote_private: devLoopRemotePrivate" in git_init_hook
-    assert "fetchDevLoop(projectKey)" in git_init_hook
-    assert "showToast('Git repository initialized successfully!')" in git_init_hook
-
-    assert "This project isn't a Git repository yet" not in app
-    assert "Create GitHub repository & push" not in app
-
-
-def test_release_readiness_card_is_extracted_from_dev_loop_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    release_card = root / "frontend" / "src" / "components" / "ReleaseReadinessCard.jsx"
-
-    assert release_card.exists()
-    release_card_source = release_card.read_text(encoding="utf-8")
-    assert "export default function ReleaseReadinessCard" in release_card_source
-    assert "Release Readiness" in release_card_source
-    assert "release_up_command" in release_card_source
-    assert "graduate_command" in release_card_source
-    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5 space-y-4" in release_card_source
-    assert "bg-status-success-bg text-status-success-text border-status-success/30" in release_card_source
-    assert "bg-status-info-bg text-status-info-text border-status-info/30" in release_card_source
-    assert "function ReleaseReadinessCard" not in dev_loop_tab
-    assert "import ReleaseReadinessCard from '../ReleaseReadinessCard';" in dev_loop_tab
-    assert "releaseReadiness={devLoopData.release_readiness}" in dev_loop_tab
-
-
-def test_frontend_contract_exposes_server_action_audit_without_execution_controls():
-    root = Path(__file__).resolve().parents[1]
-    dev_loop_hook = (root / "frontend" / "src" / "hooks" / "useDevLoopData.js").read_text(encoding="utf-8")
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    audit_card = (root / "frontend" / "src" / "components" / "ServerActionAuditCard.jsx").read_text(
-        encoding="utf-8"
-    )
-
-    assert "/api/server-actions/audit" in dev_loop_hook
-    assert "server_action_audit" in dev_loop_hook
-    assert "server_action_audit" in dev_loop_tab
-    assert "Server Action Audit" in audit_card
-    assert "audit.records" in audit_card
-    assert "audit.warnings" in audit_card
-    assert "returncode" in audit_card
-    assert "stdout_tail" in audit_card
-    assert "Run audit" not in dev_loop_tab + audit_card
-    assert "Retry audit" not in dev_loop_tab + audit_card
-    assert "POST /api/server-actions/audit" not in dev_loop_hook
-
-
-def test_server_action_audit_card_is_extracted_from_dev_loop_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    dev_loop_tab = (root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx").read_text(
-        encoding="utf-8"
-    )
-    audit_card = root / "frontend" / "src" / "components" / "ServerActionAuditCard.jsx"
-
-    assert audit_card.exists()
-    audit_card_source = audit_card.read_text(encoding="utf-8")
-    assert "export default function ServerActionAuditCard" in audit_card_source
-    assert "Server Action Audit" in audit_card_source
-    assert "audit.records" in audit_card_source
-    assert "audit.warnings" in audit_card_source
-    assert "bg-surface-raised border-2 border-border-subtle shadow-card rounded-2xl p-5 space-y-4" in audit_card_source
-    assert "bg-status-danger-bg text-status-danger-text border-status-danger/30" in audit_card_source
-    assert "bg-status-success-bg text-status-success-text border-status-success/30" in audit_card_source
-    assert "function ServerActionAuditCard" not in dev_loop_tab
-    assert "import ServerActionAuditCard from '../ServerActionAuditCard';" in dev_loop_tab
-    assert "<ServerActionAuditCard audit={devLoopData.server_action_audit} />" in dev_loop_tab
-
-
-def test_frontend_contract_uses_theme_tokens_for_common_palette_and_small_type():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    shell_sources = "\n".join(
-        [
-            app,
-            (root / "frontend" / "src" / "components" / "ApprovalBanner.jsx").read_text(encoding="utf-8"),
-            (root / "frontend" / "src" / "components" / "GlobalToast.jsx").read_text(encoding="utf-8"),
-            (root / "frontend" / "src" / "components" / "GitCreationNotice.jsx").read_text(encoding="utf-8"),
-            (root / "frontend" / "src" / "components" / "MemoryEventDetailModal.jsx").read_text(encoding="utf-8"),
-            (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8"),
-            (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(encoding="utf-8"),
-            (root / "frontend" / "src" / "components" / "ProjectMainPanel.jsx").read_text(encoding="utf-8"),
-            (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8"),
-            (root / "frontend" / "src" / "components" / "ProjectSidebar.jsx").read_text(encoding="utf-8"),
-        ]
-    )
-
-    disallowed_palette_tokens = [
-        "#E5E5E5",
-        "#AFAFAF",
-        "#58CC02",
-        "#D1D1D1",
-        "#3D8B00",
-        "#1a1a1a",
-        "#F1F1F1",
-        "#FF4B4B",
-        "#1CB0F6",
-        "#E8F9D9",
-        "#FF9600",
-    ]
-    assert {token: shell_sources.count(token) for token in disallowed_palette_tokens if token in shell_sources} == {}
-    assert "text-[10px]" not in shell_sources
-    assert "text-[9px]" not in shell_sources
-    assert "text-[8px]" not in shell_sources
-
-    for semantic_class in [
-        "border-border-subtle",
-        "text-text-muted",
-        "bg-surface-sunken",
-        "text-accent-text",
-        "bg-status-danger-bg",
-        "text-2xs",
-    ]:
-        assert semantic_class in shell_sources
-
-
-def test_file_path_component_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    file_path_component = root / "frontend" / "src" / "components" / "FilePath.jsx"
-
-    assert file_path_component.exists()
-    component_source = file_path_component.read_text(encoding="utf-8")
-    assert "export default function FilePath" in component_source
-    assert "segments = 1" in component_source
-    assert "not available" in component_source
-    assert "bottom-full" in component_source
-    assert "function FilePath" not in app
-    assert "import FilePath from './FilePath';" in router
-
-
-def test_spinner_component_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    spinner_component = root / "frontend" / "src" / "components" / "Spinner.jsx"
-
-    assert spinner_component.exists()
-    component_source = spinner_component.read_text(encoding="utf-8")
-    assert "export default function Spinner" in component_source
-    assert "Loading..." in component_source
-    assert "RefreshCw" in component_source
-    assert "sr-only" in component_source
-    assert "function Spinner" not in app
-    assert "import Spinner from './Spinner';" in router
-
-
-def test_frontend_contract_approvals_tab_audit_and_evidence():
-    root = Path(__file__).resolve().parents[1]
-    approvals_tab = (root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(encoding="utf-8")
-
-    # Assert ApprovalsTab is mounted in ProjectTabRouter with actionItems prop
-    assert "actionItems={actionItems}" in router
-
-    # Assert ApprovalsTab filters actionItems for approval_decided
-    assert "action === 'approval_decided'" in approvals_tab or 'action === "approval_decided"' in approvals_tab
-
-    # Assert ApprovalsTab renders audit panel and origin badges
-    assert "Approval Audit Trail" in approvals_tab
-    assert "getOriginBadgeStyle" in approvals_tab
-
-    # Assert ApprovalsTab renders evidence matrix and missing-evidence callouts
-    assert "Evidence Matrix" in approvals_tab
-    assert "MISSING-EVIDENCE" in approvals_tab
-
-    # Assert Submit Request is disabled on empty note
-    assert "changesRequestedNote.trim() === ''" in approvals_tab
-
-
-def test_frontend_contract_approvals_tab_recommendation_and_provenance():
-    root = Path(__file__).resolve().parents[1]
-    approvals_tab = (root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx").read_text(encoding="utf-8")
-
-    # Assert Recommendation card and eyebrow are rendered when recommendation is present
-    assert "selectedReview.recommendation" in approvals_tab
-    assert "Recommendation · you decide" in approvals_tab
-
-    # Assert Recommendation card badge is styled appropriately based on verdict
-    assert "getVerdictBadgeStyle(selectedReview.recommendation.verdict)" in approvals_tab
-
-    # Assert confidence and blockers are rendered
-    assert "selectedReview.recommendation.confidence" in approvals_tab
-    assert "selectedReview.recommendation.blocking_count" in approvals_tab
-
-    # Assert reasons list is grouped by kind
-    assert "selectedReview.recommendation.reasons" in approvals_tab
-    assert "kindLabels" in approvals_tab
-    assert "blocker" in approvals_tab
-    assert "missing_evidence" in approvals_tab
-    assert "open_objection" in approvals_tab
-    assert "clean" in approvals_tab
-
-    # Assert Provenance section is rendered when provenance_refs are present
-    assert "provenanceRefs" in approvals_tab
-    assert "selectedReview.provenance_refs" in approvals_tab
-    assert "evidenceSnapshot?.provenance_refs" in approvals_tab
-    assert "uniquePaths" in approvals_tab
-    assert "<FilePath path={path}" in approvals_tab
-
-    # Assert reviewer evidence policy projection is visible but non-authoritative
-    assert "selectedReview.review_evidence_policy" in approvals_tab
-    assert "Review Evidence Policy" in approvals_tab
-    assert "getPolicyBadgeStyle(reviewEvidencePolicy.severity)" in approvals_tab
-    assert "Human operator decides" in approvals_tab
-    assert "does not automatically approve or reject" in approvals_tab
-
-    # Assert both degrade cleanly (sections omitted when missing)
-    assert "recommendation && (" in approvals_tab
-    assert "provenanceRefs.length === 0" in approvals_tab
-
-
-def test_frontend_contract_approvals_tab_multi_reviewer_projection():
-    root = Path(__file__).resolve().parents[1]
-    approvals_tab = (root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx").read_text(encoding="utf-8")
-
-    assert "selectedReview.multi_reviewer_projection" in approvals_tab
-    assert "Multi-reviewer evidence" in approvals_tab
-    assert "Aggregate severity" in approvals_tab
-    assert "State counts" in approvals_tab
-    assert "Reviewer evidence remains advisory" in approvals_tab
-    assert "Human operator decides" in approvals_tab
-    assert "Missing evidence" in approvals_tab
-    assert "Fallback evidence" in approvals_tab
-    assert "Failed invocation" in approvals_tab
-    assert "Provider-backed evidence" in approvals_tab
-    assert "multiReviewerProjection.reviewers.map" in approvals_tab
-    assert "getPolicyBadgeStyle(multiReviewerAggregate.severity)" in approvals_tab
-    assert "getPolicyBadgeStyle(reviewerPolicy.severity)" in approvals_tab
-    assert "multiReviewerProjection && (" in approvals_tab
-    assert "disabled={actionLoading}" in approvals_tab
-    assert approvals_tab.count("disabled={actionLoading || changesRequestedNote.trim() === ''}") == 2
-
-
-def test_status_helpers_are_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
-        encoding="utf-8"
-    )
-    status_utils = root / "frontend" / "src" / "utils" / "status.jsx"
-
-    assert status_utils.exists()
-    utils_source = status_utils.read_text(encoding="utf-8")
-    assert "export function getBadgeStyle" in utils_source
-    assert "export function getStatusLabel" in utils_source
-    assert "bg-status-success-bg" in utils_source
-    assert "chrome.noActiveRun" in utils_source
-    assert "function getBadgeStyle" not in app
-    assert "function getStatusLabel" not in app
-    assert "import { getBadgeStyle, getStatusLabel } from '../utils/status';" in dashboard
-
-
-def test_time_helpers_are_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    time_utils = root / "frontend" / "src" / "utils" / "time.js"
-
-    assert time_utils.exists()
-    utils_source = time_utils.read_text(encoding="utf-8")
-    assert "export function formatHumanTime" in utils_source
-    assert "May 27, 02:44" in utils_source
-    assert "padStart(2, '0')" in utils_source
-    assert "function formatHumanTime" not in app
-    assert "import { formatHumanTime } from '../utils/time';" in router
-
-
-def test_mission_summary_helper_is_extracted_from_app_shell_without_behavior_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    mission_utils = root / "frontend" / "src" / "utils" / "missionSummary.js"
-
-    assert mission_utils.exists()
-    utils_source = mission_utils.read_text(encoding="utf-8")
-    assert "export function getMissionSummary" in utils_source
-    assert "if (!text) return '';" in utils_source
-    assert "text.match(/[^.!?]+[.!?]+/g) || [text]" in utils_source
-    assert "sentences.length <= 2" in utils_source
-    assert "sentences.slice(0, 2).join(' ')" in utils_source
-    assert "import { getMissionSummary } from './utils/missionSummary';" in app
-    assert "const getMissionSummary = (text) =>" not in app
-
-
-def test_role_model_override_helpers_are_extracted_from_app_shell_without_behavior_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    override_utils = root / "frontend" / "src" / "utils" / "roleModelOverrides.js"
-
-    assert override_utils.exists()
-    utils_source = override_utils.read_text(encoding="utf-8")
-    assert "export function parseRoleModelOverridesMap" in utils_source
-    assert "export function parseRoleModelOverrideLines" in utils_source
-    assert "export function formatRoleModelOverridesText" in utils_source
-    assert ".split('\\n')" in utils_source
-    assert ".map((line) => line.trim())" in utils_source
-    assert ".filter(Boolean)" in utils_source
-    assert ".map((line) => line.split('=', 2))" in utils_source
-    assert ".filter((parts) => parts.length === 2 && parts[0] && parts[1])" in utils_source
-    assert "Object.entries(roleModelOverrides)" in utils_source
-    assert "`${role}=${model}`" in utils_source
-    assert "Object.fromEntries" in utils_source
-    assert "from './utils/roleModelOverrides';" in app
-    assert "formatRoleModelOverridesText" in app
-    assert "parseRoleModelOverrideLines" in app
-    assert "parseRoleModelOverridesMap" in app
-    assert "parseRoleModelOverridesMap(roleModelOverrides)" in app
-    assert "parseRoleModelOverrideLines(roleModelOverrides)" in app
-    assert "setRoleModelOverrides(formatRoleModelOverridesText(sc.role_model_overrides));" in app
-    assert "const parsedOverrides = Object.fromEntries" not in app
-    assert "const overrides = roleModelOverrides" not in app
-    assert "Object.entries(sc.role_model_overrides).map" not in app
-
-
-def test_frontend_contract_renders_init_backend_model_buckets():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = (root / "frontend" / "src" / "hooks" / "useNewProjectForm.js").read_text(encoding="utf-8")
-    modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
-    container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
-    helpers = (root / "frontend" / "src" / "utils" / "roleModelOverrides.js").read_text(encoding="utf-8")
-    workers = (root / "frontend" / "src" / "constants" / "workers.js").read_text(encoding="utf-8")
-
-    assert "INIT_WORKER_ROUTING_BUCKET_KEYS" in workers
-    assert "opencode" in workers
-    assert "initWorkerBucketSelections" in hook
-    assert "setInitWorkerBucketSelections({})" in hook
-    assert "expandInitBucketWorkerOverrides" in helpers
-    assert "expandInitBucketModelOverrides" in helpers
-    assert "selection.model === '__custom__'" in helpers
-    assert "initBucketWorkers" in app
-    assert "initBucketRoleModels" in app
-    assert "action: 'update_worker_backends'" in app
-    assert "fetchDiscoveredAgents();" in app
-    assert "initWorkerRoutingBuckets" in container
-    assert "initWorkerRoutingBuckets" in modal
-    assert "newProject.workerBuckets.title" in modal
-    assert "newProject.advanced.roleModelOverrides" in modal
-
-
-def test_custom_delivery_payload_helper_is_extracted_from_app_shell_without_behavior_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    delivery_utils = root / "frontend" / "src" / "utils" / "deliveryPayload.js"
-
-    assert delivery_utils.exists()
-    utils_source = delivery_utils.read_text(encoding="utf-8")
-    assert "export function buildCustomDeliveryPayload" in utils_source
-    assert "deliveryMode === 'custom'" in utils_source
-    assert "{ delivery_standards: deliveryStandards }" in utils_source
-    assert "return {};" in utils_source
-    assert "import { buildCustomDeliveryPayload } from './utils/deliveryPayload';" in app
-    assert "buildCustomDeliveryPayload(deliveryMode, deliveryStandards)" in app
-    assert "const customDeliveryPayload = deliveryMode === 'custom'" not in app
-
-
-def test_delivery_contract_formatters_are_extracted_from_app_shell_without_behavior_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    delivery_contract_utils = root / "frontend" / "src" / "utils" / "deliveryContract.js"
-
-    assert delivery_contract_utils.exists()
-    utils_source = delivery_contract_utils.read_text(encoding="utf-8")
-    assert "export function formatDeliveryContractFatalPatterns" in utils_source
-    assert "export function formatDeliveryContractAcceptance" in utils_source
-    assert "Object.values(fatalOutputPatterns).join('\\n')" in utils_source
-    assert "Object.entries(stagingAcceptance)" in utils_source
-    assert "`${id}|${item.type}|${item.command}`" in utils_source
-    assert ".join('\\n')" in utils_source
-    assert (
-        "import { formatDeliveryContractAcceptance, formatDeliveryContractFatalPatterns } "
-        "from './utils/deliveryContract';"
-    ) in app
-    assert (
-        "formatDeliveryContractFatalPatterns(sc.project_report?.project?.delivery_contract?.fatal_output_patterns || {})"
-        in app
-    )
-    assert (
-        "formatDeliveryContractAcceptance(sc.project_report?.project?.delivery_contract?.staging_acceptance || {})"
-        in app
-    )
-    assert "Object.values(fp).join('\\n')" not in app
-    assert "Object.entries(sa).map" not in app
-
-
-def test_project_root_resolver_is_extracted_from_app_shell_without_behavior_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    project_utils = root / "frontend" / "src" / "utils" / "projectRoot.js"
-
-    assert project_utils.exists()
-    utils_source = project_utils.read_text(encoding="utf-8")
-    assert "export function resolveProjectRootFromRepos" in utils_source
-    assert "repos.root?.path" in utils_source
-    assert "repos.docs?.path" in utils_source
-    assert "repos.backend?.path" in utils_source
-    assert "repos.frontend?.path" in utils_source
-    assert "Object.values(repos)[0]?.path" in utils_source
-    assert "|| ''" in utils_source
-    assert "import { resolveProjectRootFromRepos } from './utils/projectRoot';" in app
-    assert "setProjectRoot(resolveProjectRootFromRepos(repos));" in app
-    assert (
-        "setProjectRoot(repos.root?.path || repos.docs?.path || "
-        "repos.backend?.path || repos.frontend?.path || Object.values(repos)[0]?.path || '');"
-    ) not in app
-
-
-def test_approval_helpers_are_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    approval_utils = root / "frontend" / "src" / "utils" / "approvals.js"
-
-    assert approval_utils.exists()
-    utils_source = approval_utils.read_text(encoding="utf-8")
-    assert "export function suggestedAnswersForQuestion" in utils_source
-    assert "export function computeLineDiff" in utils_source
-    assert "optionPattern" in utils_source
-    assert "new Int32Array" in utils_source
-    assert "function suggestedAnswersForQuestion" not in app
-    assert "function computeLineDiff" not in app
-    assert "import { computeLineDiff, suggestedAnswersForQuestion } from '../utils/approvals';" in router
-
-
-def test_approval_metrics_are_extracted_from_app_shell_without_behavior_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
-        encoding="utf-8"
-    )
-    approval_utils = root / "frontend" / "src" / "utils" / "approvalMetrics.js"
-
-    assert approval_utils.exists()
-    metrics_source = approval_utils.read_text(encoding="utf-8")
-    assert "export function buildApprovalMetrics" in metrics_source
-    assert "approvalReviews.filter(r => r.decision === 'approved').length" in metrics_source
-    assert "approvalReviews.filter(r => r.is_actionable).length" in metrics_source
-    assert "openQuestions.length" in metrics_source
-    assert "approvalReviews.length || 6" in metrics_source
-    assert "Math.min(100, Math.round((approvedCount / totalApprovalsCount) * 100))" in metrics_source
-    assert "approvalBanner.questions" in metrics_source
-    assert "plural: openQuestionsGateCount === 1 ? '' : 's'" in metrics_source
-    assert "approvedCount" in metrics_source
-    assert "actionableCount" in metrics_source
-    assert "approvalProgressPercent" in metrics_source
-    assert "approvalBannerQuestions" in metrics_source
-    assert "import { buildApprovalMetrics } from '../utils/approvalMetrics';" in dashboard
-    assert "buildApprovalMetrics({ approvalReviews, openQuestions, t })" in dashboard
-    assert "const approvedCount = approvalReviews.filter" not in app
-    assert "const actionableCount = approvalReviews.filter" not in app
-    assert "approvalReviews.length || 6" not in app
-    assert "approvalBanner.questions" not in app
-
-
-def test_project_nav_groups_are_extracted_from_app_shell_without_chrome_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
-        encoding="utf-8"
-    )
-    navigation_utils = root / "frontend" / "src" / "utils" / "navigation.jsx"
-
-    assert navigation_utils.exists()
-    navigation_source = navigation_utils.read_text(encoding="utf-8")
-    assert "export function buildProjectNavGroups" in navigation_source
-    for icon_name in [
-        "LayoutDashboard",
-        "CheckCircle2",
-        "FileCode",
-        "Activity",
-        "Kanban",
-        "GitBranch",
-        "GitPullRequest",
-        "MessageSquare",
-        "Users",
-        "PlaySquare",
-        "Settings",
-    ]:
-        assert icon_name in navigation_source
-
-    for key in [
-        "nav.groups.work",
-        "nav.groups.observe",
-        "nav.groups.inspect",
-        "nav.groups.system",
-        "nav.tabs.overview",
-        "nav.tabs.approvals",
-        "nav.tabs.artifacts",
-        "nav.tabs.actions",
-        "nav.tabs.board",
-        "nav.tabs.workflow",
-        "nav.tabs.devloop",
-        "nav.tabs.messages",
-        "nav.tabs.agentsMemory",
-        "nav.tabs.smoke",
-        "nav.tabs.system",
-    ]:
-        assert key in navigation_source
-
-    assert "import { buildProjectNavGroups } from '../utils/navigation';" in dashboard
-    assert "const navGroups = buildProjectNavGroups(t);" in dashboard
-    assert "const navGroups = [" not in app
-    assert "LayoutDashboard" not in app
-    assert "nav.groups.work" not in app
-
-
-def test_directory_picker_modal_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    picker = root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx"
-    hook = root / "frontend" / "src" / "hooks" / "useDirectoryPicker.js"
-
-    assert picker.exists()
-    picker_source = picker.read_text(encoding="utf-8")
-    assert "export default function DirectoryPickerModal" in picker_source
-    assert "/api/fs/list" in picker_source
-    assert "/api/fs/mkdir" in picker_source
-    assert "Directory browser" in picker_source
-    assert "Select this folder" in picker_source
-    assert "const directoryPickerOverlay" not in app
-    assert "fetchDirectory" not in app
-    assert "handleCreateFolder" not in app
-    assert "pickerEntries.map" not in app
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "import DirectoryPickerModal from '../components/DirectoryPickerModal';" in hook_source
-    assert "createElement(DirectoryPickerModal" in hook_source
-
-
-def test_directory_picker_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useDirectoryPicker.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useDirectoryPicker" in hook_source
-    assert "import DirectoryPickerModal from '../components/DirectoryPickerModal';" in hook_source
-    assert "openDirectoryPicker" in hook_source
-    assert "chooseLocalPath" in hook_source
-    assert "directoryPickerModal" in hook_source
-    assert "import { useDirectoryPicker } from './hooks/useDirectoryPicker';" in app
-    assert "const { directoryPickerModal, openDirectoryPicker } = useDirectoryPicker(setProjectRoot);" not in app
-    assert "const { chooseLocalPath, directoryPickerModal } = useDirectoryPicker(" in app
-    assert "showToast(pickerError, true)" in app
-    assert "const [pickerOpen" not in app
-    assert "const [pickerInitialPath" not in app
-    assert "const openDirectoryPicker" not in app
-    assert "const directoryPickerModal" not in app
-    assert "import DirectoryPickerModal from './components/DirectoryPickerModal';" not in app
-
-
-def test_new_project_modal_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    modal = root / "frontend" / "src" / "components" / "NewProjectModal.jsx"
-    container = root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx"
-
-    assert modal.exists()
-    modal_source = modal.read_text(encoding="utf-8")
-    en_source = (root / "frontend" / "src" / "i18n" / "locales" / "en.js").read_text(encoding="utf-8")
-    assert "export default function NewProjectModal" in modal_source
-    assert "newProject.consoleEyebrow" in modal_source
-    assert "newProject.title" in modal_source
-    assert "newProject.projectLocation.title" in modal_source
-    assert "newProject.launchCheck.title" in modal_source
-    assert "Start Workflow Console" in en_source
-    assert "Create or Adopt Project" in en_source
-    assert "Project Location" in en_source
-    assert "Launch Check" in en_source
-    assert "DELIVERY_MODE_OPTIONS.map" in modal_source
-    assert "Start Workflow Console" not in app
-    assert "DELIVERY_MODE_OPTIONS.map" not in app
-    assert container.exists()
-    container_source = container.read_text(encoding="utf-8")
-    assert "export default function NewProjectModalContainer" in container_source
-    assert "import NewProjectModal from './NewProjectModal';" in container_source
-    assert "<NewProjectModal" in container_source
-    assert "newProjectModalOpen" in container_source
-    assert "onClose={closeNewProjectModal}" in container_source
-    assert "handleCreateConfig={handleCreateConfig}" in container_source
-    assert "handleStartWorkflow={handleStartWorkflow}" in container_source
-    assert "import NewProjectModalContainer from './components/NewProjectModalContainer';" in app
-    assert "<NewProjectModalContainer" in app
-    assert "import NewProjectModal from './components/NewProjectModal';" not in app
-    assert "<NewProjectModal\n" not in app
-    assert "<NewProjectModal " not in app
-    assert "const newProjectModal = newProjectModalOpen &&" not in app
-
-
-def test_new_project_form_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useNewProjectForm.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useNewProjectForm" in hook_source
-    assert "openNewProjectModal" in hook_source
-    assert "closeNewProjectModal" in hook_source
-    assert "setInitGit(true)" in hook_source
-    assert "setCreateRemote(false)" in hook_source
-    assert "setRemotePrivate(true)" in hook_source
-    assert "const isNewProjectMode = startMode === 'new_project' || startMode === 'new';" in hook_source
-    assert "import { useNewProjectForm } from './hooks/useNewProjectForm';" in app
-    assert "const newProjectForm = useNewProjectForm(setNewProjectModalOpen);" in app
-    for state_name in [
-        "projectName",
-        "startProjectKey",
-        "modelProfile",
-        "deliveryMode",
-        "projectRoot",
-        "taskSync",
-        "initGit",
-        "planeApiHost",
-        "stagingSshTarget",
-        "deliveryContractRequired",
-    ]:
-        assert f"const [{state_name}" not in app
-
-
-def test_dispatch_track_form_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useDispatchTrackForm.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useDispatchTrackForm" in hook_source
-    assert "resetDispatchForm" in hook_source
-    assert "setDispatchName('')" in hook_source
-    assert "setDispatchTask('')" in hook_source
-    assert "setDispatchConstraints('')" in hook_source
-    assert "setDispatchVerify('')" in hook_source
-    assert "import { useDispatchTrackForm } from './hooks/useDispatchTrackForm';" in app
-    assert "const dispatchTrackForm = useDispatchTrackForm();" in app
-    assert "resetDispatchForm();" in app
-    for state_name in [
-        "dispatchName",
-        "dispatchRole",
-        "dispatchCustomRole",
-        "dispatchAdapter",
-        "dispatchCustomAdapter",
-        "dispatchTask",
-        "dispatchConstraints",
-        "dispatchVerify",
-        "dispatchLoading",
-        "dispatchError",
-        "dispatchSuccess",
-    ]:
-        assert f"const [{state_name}" not in app
-
-
-def test_frontend_prefills_restart_goal_from_latest_archived_run_without_overwriting_user_text():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-
-    assert "const archivedIdea = String(sc.latest_archived_run?.idea || '').trim();" in app
-    assert "const archivedSourceType = String(sc.latest_archived_run?.source_type || '').trim();" in app
-    assert "if (!payload.active_run && archivedIdea) {" in app
-    assert "return previous.trim() ? previous : archivedIdea;" in app
-    assert "setStartMode(archivedSourceType === 'existing_project' ? 'existing_project' : 'new_project');" in app
-
-
-def test_clipboard_feedback_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useClipboardFeedback.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useClipboardFeedback" in hook_source
-    assert "copyCommand" in hook_source
-    assert "navigator.clipboard" in hook_source
-    assert "document.execCommand('copy')" in hook_source
-    assert "setTimeout" in hook_source
-    assert "import { useClipboardFeedback } from './hooks/useClipboardFeedback';" in app
-    assert "const { copiedText, copyFailedText, copyCommand } = useClipboardFeedback();" in app
-    assert "const [copiedText" not in app
-    assert "const [copyFailedText" not in app
-    assert "const markLandCommandCopied" not in app
-    assert "const markLandCommandCopyFailed" not in app
-    assert "navigator.clipboard" not in app
-    assert "document.execCommand('copy')" not in app
-
-
-def test_workflow_graph_data_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useWorkflowGraphData.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useWorkflowGraphData" in hook_source
-    assert "graphRequestSeq" in hook_source
-    assert "/api/workflow/graph" in hook_source
-    assert "fetchWorkflowGraph" in hook_source
-    assert "import { useWorkflowGraphData } from './hooks/useWorkflowGraphData';" in app
-    assert "const { graphData, loadingGraph, graphError, fetchWorkflowGraph } = useWorkflowGraphData();" in app
-    assert "const [graphData" not in app
-    assert "const [loadingGraph" not in app
-    assert "const [graphError" not in app
-    assert "const graphRequestSeq" not in app
-    assert "const fetchWorkflowGraph = async" not in app
-    assert "/api/workflow/graph" not in app
-
-
-def test_dev_loop_data_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useDevLoopData.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useDevLoopData" in hook_source
-    assert "devLoopRequestSeq" in hook_source
-    assert "/api/devloop" in hook_source
-    assert "fetchDevLoop" in hook_source
-    assert "import { useDevLoopData } from './hooks/useDevLoopData';" in app
-    assert "const { devLoopData, loadingDevLoop, devLoopError, fetchDevLoop } = useDevLoopData();" in app
-    assert "const [devLoopData" not in app
-    assert "const [loadingDevLoop" not in app
-    assert "const [devLoopError" not in app
-    assert "const devLoopRequestSeq" not in app
-    assert "const fetchDevLoop = async" not in app
-    assert "/api/devloop" not in app
-
-
-def test_memory_data_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useMemoryData.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useMemoryData" in hook_source
-    assert "memoryBrowseTimers" in hook_source
-    assert "memoryBrowseRequestSeq" in hook_source
-    assert "/api/memory?project=" in hook_source
-    assert "/api/memory/event?" in hook_source
-    assert "/api/memory/events?" in hook_source
-    assert "fetchMemory" in hook_source
-    assert "handleOpenMemoryEvent" in hook_source
-    assert "handleToggleMemoryEvents" in hook_source
-    assert "handleMemoryEventSearchChange" in hook_source
-    assert "import { useMemoryData } from './hooks/useMemoryData';" in app
-    assert "const memory = useMemoryData(projectKey);" in app
-    for name in [
-        "memoryData",
-        "loadingMemory",
-        "memoryError",
-        "memoryEventDetail",
-        "memoryEventBrowsers",
-        "fetchMemory",
-        "handleOpenMemoryEvent",
-        "handleToggleMemoryEvents",
-        "handleMemoryEventSearchChange",
-    ]:
-        assert f"{name}," in app
-    assert "const [memoryData" not in app
-    assert "const [loadingMemory" not in app
-    assert "const [memoryError" not in app
-    assert "const [memoryEventDetail" not in app
-    assert "const [memoryEventBrowsers" not in app
-    assert "const memoryBrowseTimers" not in app
-    assert "const memoryBrowseRequestSeq" not in app
-    assert "const fetchMemory = async" not in app
-    assert "const handleOpenMemoryEvent = async" not in app
-    assert "const fetchMemoryEvents = async" not in app
-    assert "const handleToggleMemoryEvents" not in app
-    assert "const handleMemoryEventSearchChange" not in app
-    assert "/api/memory?project=" not in app
-    assert "/api/memory/event?" not in app
-    assert "/api/memory/events?" not in app
-
-
-def test_cross_project_memory_search_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useCrossProjectMemorySearch.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useCrossProjectMemorySearch" in hook_source
-    assert "crossSearchRequestSeq" in hook_source
-    assert "setAllProjectKeys" in hook_source
-    assert "/api/state" in hook_source
-    assert "/api/memory/cross" in hook_source
-    assert "handleCrossSearch" in hook_source
-    assert "import { useCrossProjectMemorySearch } from './hooks/useCrossProjectMemorySearch';" in app
-    assert "const crossMemorySearch = useCrossProjectMemorySearch(projectKey, activeTab, agentsMemorySubTab);" in app
-    for name in [
-        "crossRole",
-        "setCrossRole",
-        "crossQuery",
-        "setCrossQuery",
-        "crossScope",
-        "setCrossScope",
-        "crossLimit",
-        "setCrossLimit",
-        "crossLoading",
-        "crossError",
-        "crossResults",
-        "handleCrossSearch",
-    ]:
-        assert f"{name}," in app
-    for state_name in [
-        "crossRole",
-        "crossQuery",
-        "crossScope",
-        "crossLimit",
-        "crossLoading",
-        "crossError",
-        "crossResults",
-        "allProjectKeys",
-    ]:
-        assert f"const [{state_name}" not in app
-    assert "const crossSearchRequestSeq" not in app
-    assert "const handleCrossSearch = async" not in app
-    assert "setAllProjectKeys" not in app
-    assert "/api/memory/cross" not in app
-
-
-def test_approval_editor_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useApprovalEditor.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useApprovalEditor" in hook_source
-    for api_path in [
-        "/api/artifact?project=",
-        "/api/open-questions?",
-        "/api/answer-open-questions",
-        "/api/refine-artifact",
-        "/api/accept-refinement",
-        "/api/discard-refinement",
-    ]:
-        assert api_path in hook_source
-        assert api_path not in app
-    for hook_name in [
-        "handleEditArtifact",
-        "handleOpenQuestionsFromApproval",
-        "handleSaveArtifact",
-        "fetchOpenQuestions",
-        "handleApplyAnswers",
-        "handleRefineArtifact",
-        "handleAcceptRefinement",
-        "handleDiscardRefinement",
-    ]:
-        assert hook_name in hook_source
-    assert "import { useApprovalEditor } from './hooks/useApprovalEditor';" in app
-    assert "const approvalEditor = useApprovalEditor({" in app
-    for state_name in [
-        "editingArtifact",
-        "editorContent",
-        "refineLoading",
-        "proposedRevision",
-        "openQuestions",
-        "openQuestionsAnswers",
-        "fetchingOpenQuestions",
-        "answeringOpenQuestions",
-    ]:
-        assert f"const [{state_name}" not in app
-    assert "const handleEditArtifact = async" not in app
-    assert "const handleOpenQuestionsFromApproval = async" not in app
-    assert "const handleSaveArtifact = async" not in app
-    assert "const fetchOpenQuestions = async" not in app
-    assert "const handleApplyAnswers = async" not in app
-    assert "const handleRefineArtifact = async" not in app
-    assert "const handleAcceptRefinement = async" not in app
-    assert "const handleDiscardRefinement = async" not in app
-
-
-def test_worker_backend_settings_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useWorkerBackendSettings.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useWorkerBackendSettings" in hook_source
-    assert "seedWorkerBackendSettings" in hook_source
-    assert "safeDiscoveredAgents" in hook_source
-    assert "discoveredAgentByBackend" in hook_source
-    assert "/api/agents" in hook_source
-    assert "/api/project-config" in hook_source
-    assert "handleSaveWorkerBackends" in hook_source
-    assert "import { useWorkerBackendSettings } from './hooks/useWorkerBackendSettings';" in app
-    assert "const workerBackendSettings = useWorkerBackendSettings({" in app
-    assert "seedWorkerBackendSettings" in app
-    for state_name in [
-        "panelGlobalMode",
-        "panelRoleOverrides",
-        "panelRoleModels",
-        "workerRoutingMode",
-        "simpleRoutingBackends",
-        "customModelSelected",
-        "configuringRoles",
-        "backendsError",
-        "backendsSuccess",
-        "savingBackends",
-        "discoveredAgents",
-        "loadingDiscoveredAgents",
-    ]:
-        assert f"const [{state_name}" not in app
-    for handler_name in [
-        "handleAgentChange",
-        "handleApplySimpleRouting",
-        "handleModelDropdownChange",
-        "handleCustomModelChange",
-        "handleSaveWorkerBackends",
-        "fetchDiscoveredAgents",
-    ]:
-        assert f"const {handler_name}" not in app
-    assert "const safeDiscoveredAgents" not in app
-    assert "const discoveredAgentByBackend" not in app
-    assert "const getBackendOptionLabel" not in app
-    assert "const usedBackends" not in app
-    assert "/api/agents" not in app
-    assert "workers: workers" not in app
-    assert "role_models: role_models" not in app
-
-
-def test_message_feeds_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useMessageFeeds.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useMessageFeeds" in hook_source
-    assert "EMPTY_GATE_DEBATE" in hook_source
-    assert "EMPTY_MESSAGE_FEED" in hook_source
-    assert "/api/messages?" in hook_source
-    assert "/api/debate" in hook_source
-    assert "fetchGateDebate" in hook_source
-    assert "fetchMessageFeed" in hook_source
-    assert "handleRunDebate" in hook_source
-    assert "getResolvingDebateRef" in hook_source
-    assert "import { useMessageFeeds } from './hooks/useMessageFeeds';" in app
-    assert "const messageFeeds = useMessageFeeds({" in app
-    for state_name in [
-        "gateDebate",
-        "debateRun",
-        "messageFeed",
-    ]:
-        assert f"const [{state_name}" not in app
-    assert "const fetchGateDebate = async" not in app
-    assert "const fetchMessageFeed = async" not in app
-    assert "const handleRunDebate = async" not in app
-    assert "const getResolvingDebateRef" not in app
-    assert "EMPTY_GATE_DEBATE" not in app
-    assert "EMPTY_MESSAGE_FEED" not in app
-    assert "/api/messages?" not in app
-    assert "/api/debate" not in app
-
-
-def test_projects_home_page_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    page = root / "frontend" / "src" / "components" / "ProjectsHomePage.jsx"
-
-    assert page.exists()
-    page_source = page.read_text(encoding="utf-8")
-    assert "export default function ProjectsHomePage" in page_source
-    assert "Registered Projects" in page_source
-    assert "No Projects Configured" in page_source
-    assert "Legacy Active Run Detected" in page_source
-    assert "FilePath" in page_source
-    assert "getBadgeStyle" in page_source
-    assert "Registered Projects" not in app
-    assert "No Projects Configured" not in app
-    assert "projectItems.map" not in app
-    assert "import ProjectsHomePage from './components/ProjectsHomePage';" in app
-    assert "<ProjectsHomePage" in app
-
-
-def test_projects_home_page_does_not_render_empty_state_for_stale_project_data():
-    root = Path(__file__).resolve().parents[1]
-    page_source = (root / "frontend" / "src" / "components" / "ProjectsHomePage.jsx").read_text(encoding="utf-8")
-
-    assert "const isStaleOverviewData = data && data.type !== 'overview';" in page_source
-    assert "loading || isStaleOverviewData" in page_source
-
-
-def test_overview_terminate_refreshes_project_overview_not_project_detail():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-
-    assert "projectKey === key ? key : ''" in app
-
-
-def test_language_switcher_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    switcher = root / "frontend" / "src" / "components" / "LanguageSwitcher.jsx"
-
-    assert switcher.exists()
-    switcher_source = switcher.read_text(encoding="utf-8")
-    assert "export default function LanguageSwitcher" in switcher_source
-    assert "aria-label=\"Language\"" in switcher_source
-    assert "options.map" in switcher_source
-    assert "activeValue === option.value" in switcher_source
-    assert "const renderLanguageSwitcher" not in app
-    assert "languageOptions.map" not in app
-    assert "import LanguageSwitcher from './components/LanguageSwitcher';" in app
-    assert "<LanguageSwitcher" in app
-
-
-def test_project_sidebar_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
-        encoding="utf-8"
-    )
-    sidebar = root / "frontend" / "src" / "components" / "ProjectSidebar.jsx"
-
-    assert sidebar.exists()
-    sidebar_source = sidebar.read_text(encoding="utf-8")
-    assert "export default function ProjectSidebar" in sidebar_source
-    assert "GoodTeam OS" in sidebar_source
-    assert "lg:w-[220px]" in sidebar_source
-    assert "navGroups.map" in sidebar_source
-    assert "setAgentsMemorySubTab('roles')" in sidebar_source
-    assert "LanguageSwitcher" in sidebar_source
-    assert "theme === 'vivid'" in sidebar_source
-    assert "theme === 'minimal'" in sidebar_source
-    assert "import ProjectSidebar from './ProjectSidebar';" in dashboard
-    assert "<ProjectSidebar" in dashboard
-    assert "import ProjectSidebar from './components/ProjectSidebar';" not in app
-    assert "<ProjectSidebar" not in app
-    assert "GoodTeam OS" not in app
-    assert "navGroups.map" not in app
-    assert "lg:w-[220px]" not in app
-
-
-def test_project_header_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
-        encoding="utf-8"
-    )
-    header = root / "frontend" / "src" / "components" / "ProjectHeader.jsx"
-
-    assert header.exists()
-    header_source = header.read_text(encoding="utf-8")
-    assert "export default function ProjectHeader" in header_source
-    assert "lg:hidden h-[60px]" in header_source
-    assert "hidden lg:flex h-[60px]" in header_source
-    assert "GoodTeam" in header_source
-    assert "chrome.runId" in header_source
-    assert "status.complete" in header_source
-    assert "getStatusLabel(headerStatus, t)" in header_source
-    assert "mobileMenuOpen ? <X" in header_source
-    assert "import ProjectHeader from './ProjectHeader';" in dashboard
-    assert "<ProjectHeader" in dashboard
-    assert "import ProjectHeader from './components/ProjectHeader';" not in app
-    assert "<ProjectHeader" not in app
-    assert "lg:hidden h-[60px]" not in app
-    assert "hidden lg:flex h-[60px]" not in app
-
-
-def test_approval_banner_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
-    banner = root / "frontend" / "src" / "components" / "ApprovalBanner.jsx"
-
-    assert banner.exists()
-    banner_source = banner.read_text(encoding="utf-8")
-    assert "export default function ApprovalBanner" in banner_source
-    assert "bg-status-warning-bg border-b-2 border-status-warning/30" in banner_source
-    assert "approvalBanner.message" in banner_source
-    assert "approvalBanner.review" in banner_source
-    assert "setActiveTab('approvals')" in banner_source
-    assert "duo-button-physics text-2xs cursor-pointer" in banner_source
-    assert "import ApprovalBanner from './ApprovalBanner';" in content_shell
-    assert "<ApprovalBanner" in content_shell
-    assert "import ApprovalBanner from './components/ApprovalBanner';" not in app
-    assert "<ApprovalBanner" not in app
-    assert "Persistent Approvals Banner" not in app
-    assert "bg-status-warning-bg border-b-2 border-status-warning/30" not in app
-
-
-def test_git_creation_notice_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
-    notice = root / "frontend" / "src" / "components" / "GitCreationNotice.jsx"
-
-    assert notice.exists()
-    notice_source = notice.read_text(encoding="utf-8")
-    assert "export default function GitCreationNotice" in notice_source
-    assert "CheckCircle" in notice_source
-    assert "AlertTriangle" in notice_source
-    assert "Git Repository Initialized" in notice_source
-    assert "Git Warnings:" in notice_source
-    assert "gitWarnings.map" in notice_source
-    assert "setShowGitNotice(false)" in notice_source
-    assert "duo-button-physics cursor-pointer shrink-0" in notice_source
-    assert "import GitCreationNotice from './GitCreationNotice';" in content_shell
-    assert "<GitCreationNotice" in content_shell
-    assert "import GitCreationNotice from './components/GitCreationNotice';" not in app
-    assert "<GitCreationNotice" not in app
-    assert "Git Creation Notice" not in app
-    assert "Git Repository Initialized" not in app
-
-
-def test_global_toast_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
-    toast = root / "frontend" / "src" / "components" / "GlobalToast.jsx"
-
-    assert toast.exists()
-    toast_source = toast.read_text(encoding="utf-8")
-    assert "export default function GlobalToast" in toast_source
-    assert "fixed top-4 right-4 z-50" in toast_source
-    assert "animate-fade-in-down" in toast_source
-    assert "message.isError" in toast_source
-    assert "bg-status-danger-bg text-status-danger-text border-status-danger" in toast_source
-    assert "bg-status-success-bg text-accent-text border-accent" in toast_source
-    assert "AlertTriangle" in toast_source
-    assert "Check" in toast_source
-    assert "message.text" in toast_source
-    assert "import GlobalToast from './GlobalToast';" in content_shell
-    assert "<GlobalToast" in content_shell
-    assert "import GlobalToast from './components/GlobalToast';" not in app
-    assert "<GlobalToast" not in app
-    assert "Global Toast" not in app
-    assert "fixed top-4 right-4 z-50" not in app
-
-
-def test_memory_event_detail_modal_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
-    modal = root / "frontend" / "src" / "components" / "MemoryEventDetailModal.jsx"
-
-    assert modal.exists()
-    modal_source = modal.read_text(encoding="utf-8")
-    assert "export default function MemoryEventDetailModal" in modal_source
-    assert "memory-event-detail-title" in modal_source
-    assert "fixed inset-0 z-40 flex items-center justify-center" in modal_source
-    assert "Loading full memory event..." in modal_source
-    assert "memoryEventDetail.error" in modal_source
-    assert "memoryEventDetail.data.role" in modal_source
-    assert "hasMemorySupersedeInfo" in modal_source
-    assert "memorySupersededBy.map" in modal_source
-    assert "renderMemoryEventLink(memorySupersedes)" in modal_source
-    assert "setMemoryEventDetail(null)" in modal_source
-    assert "No event text recorded." in modal_source
-    assert "import MemoryEventDetailModal from './MemoryEventDetailModal';" in content_shell
-    assert "<MemoryEventDetailModal" in content_shell
-    assert "import MemoryEventDetailModal from './components/MemoryEventDetailModal';" not in app
-    assert "<MemoryEventDetailModal" not in app
-    assert "memory-event-detail-title" not in app
-    assert "fixed inset-0 z-40 flex items-center justify-center" not in app
-
-
-def test_project_main_panel_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    content_shell = (root / "frontend" / "src" / "components" / "ProjectContentShell.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
-        encoding="utf-8"
-    )
-    panel = root / "frontend" / "src" / "components" / "ProjectMainPanel.jsx"
-
-    assert panel.exists()
-    panel_source = panel.read_text(encoding="utf-8")
-    assert "export default function ProjectMainPanel" in panel_source
-    assert "flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6" in panel_source
-    assert "<Spinner label={loadingLabel} />" in panel_source
-    assert "bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl" in panel_source
-    assert "text-status-danger-text flex items-center space-x-3 shadow-xs" in panel_source
-    assert "AlertTriangle" in panel_source
-    assert "children" in panel_source
-    assert "import ProjectMainPanel from './ProjectMainPanel';" in content_shell
-    assert "<ProjectMainPanel" in content_shell
-    assert "import ProjectMainPanel from './components/ProjectMainPanel';" not in app
-    assert "<ProjectMainPanel" not in app
-    assert "loadingLabel={t('chrome.loading')}" in dashboard
-    assert "flex-grow p-8 overflow-y-auto max-w-7xl w-full mx-auto space-y-6" not in app
-    assert "bg-status-danger-bg border-2 border-status-danger p-6 rounded-2xl" not in app
-
-
-def test_project_content_shell_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
-        encoding="utf-8"
-    )
-    shell = root / "frontend" / "src" / "components" / "ProjectContentShell.jsx"
-
-    assert shell.exists()
-    shell_source = shell.read_text(encoding="utf-8")
-    assert "export default function ProjectContentShell" in shell_source
-    assert "flex-grow flex flex-col min-w-0 min-h-screen" in shell_source
-    assert "<ApprovalBanner" in shell_source
-    assert "<GitCreationNotice" in shell_source
-    assert "<GlobalToast" in shell_source
-    assert "<MemoryEventDetailModal" in shell_source
-    assert "<ProjectMainPanel" in shell_source
-    assert "newProjectModal" in shell_source
-    assert "directoryPickerModal" in shell_source
-    assert "mainPanelChildren" in shell_source
-    assert "import ProjectContentShell from './ProjectContentShell';" in dashboard
-    assert "<ProjectContentShell" in dashboard
-    assert "mainPanelChildren={" in dashboard
-    assert "import ProjectContentShell from './components/ProjectContentShell';" not in app
-    assert "<ProjectContentShell" not in app
-    assert "flex-grow flex flex-col min-w-0 min-h-screen" not in app
-    assert "<ApprovalBanner" not in app
-    assert "<GitCreationNotice" not in app
-    assert "<GlobalToast" not in app
-    assert "<MemoryEventDetailModal" not in app
-
-
-def test_project_dashboard_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = root / "frontend" / "src" / "components" / "ProjectDashboard.jsx"
-
-    assert dashboard.exists()
-    dashboard_source = dashboard.read_text(encoding="utf-8")
-    assert "export default function ProjectDashboard" in dashboard_source
-    assert "min-h-screen bg-surface-base text-text-primary transition-colors flex flex-col lg:flex-row font-sans antialiased" in dashboard_source
-    assert "<ProjectSidebar" in dashboard_source
-    assert "<ProjectHeader" in dashboard_source
-    assert "<ProjectContentShell" in dashboard_source
-    assert "<ProjectTabRouter" in dashboard_source
-    assert "buildApprovalMetrics({ approvalReviews, openQuestions, t })" in dashboard_source
-    assert "buildProjectNavGroups(t)" in dashboard_source
-    assert "renderMemoryEventLink" in dashboard_source
-    assert "import ProjectDashboard from './components/ProjectDashboard';" in app
-    assert "<ProjectDashboard" in app
-    assert "import ProjectSidebar from './components/ProjectSidebar';" not in app
-    assert "import ProjectHeader from './components/ProjectHeader';" not in app
-    assert "import ProjectContentShell from './components/ProjectContentShell';" not in app
-    assert "import ProjectTabRouter from './components/ProjectTabRouter';" not in app
-    assert "<ProjectSidebar" not in app
-    assert "<ProjectHeader" not in app
-    assert "<ProjectContentShell" not in app
-    assert "<ProjectTabRouter" not in app
-
-
-def test_project_tab_router_is_extracted_from_app_shell_without_theme_changes():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(
-        encoding="utf-8"
-    )
-    router = root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx"
-
-    assert router.exists()
-    router_source = router.read_text(encoding="utf-8")
-    assert "export default function ProjectTabRouter" in router_source
-    for tab_component in [
-        "WorkflowGraphTab",
-        "OverviewTab",
-        "AgentsMemoryTab",
-        "RolesTab",
-        "ArtifactsTab",
-        "ActionsTab",
-        "AgileBoardTab",
-        "SmokeRunsTab",
-        "WorkersTab",
-        "ApprovalsTab",
-        "MessagesTab",
-        "MemoryTab",
-        "DevLoopTab",
-        "SystemTab",
-    ]:
-        assert f"<{tab_component}" in router_source
-        assert f"import {tab_component}" in router_source
-        assert f"import {tab_component}" not in app
-
-    assert "import ProjectTabRouter from './ProjectTabRouter';" in dashboard
-    assert "<ProjectTabRouter" in dashboard
-    assert "import ProjectTabRouter from './components/ProjectTabRouter';" not in app
-    assert "<ProjectTabRouter" not in app
-    assert "<WorkflowGraphTab" not in app
-    assert "<ApprovalsTab" not in app
-    assert "<DevLoopTab" not in app
-    assert "mainPanelChildren={" in dashboard
-
-
-def test_project_url_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useProjectUrl.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useProjectUrl" in hook_source
-    assert "URLSearchParams" in hook_source
-    assert "popstate" in hook_source
-    assert "window.history.pushState" in hook_source
-    assert "import { useProjectUrl } from './hooks/useProjectUrl';" in app
-    assert "const { projectKey, updateUrl } = useProjectUrl();" in app
-    assert "const getUrlProject" not in app
-    assert "window.history.pushState" not in app
-    assert "addEventListener('popstate'" not in app
-    assert "removeEventListener('popstate'" not in app
-
-
-def test_appearance_preferences_hook_is_extracted_from_app_shell():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    hook = root / "frontend" / "src" / "hooks" / "useAppearancePreferences.js"
-
-    assert hook.is_file()
-    hook_source = hook.read_text(encoding="utf-8")
-    assert "export function useAppearancePreferences" in hook_source
-    assert "localStorage.getItem('color-scheme')" in hook_source
-    assert "localStorage.setItem('color-scheme'" in hook_source
-    assert "localStorage.getItem('gt-theme')" in hook_source
-    assert "document.documentElement.dataset.theme" in hook_source
-    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in hook_source
-    assert "resolveLanguage(languagePreference)" in hook_source
-    assert "translate(language" in hook_source
-    assert "import { useAppearancePreferences } from './hooks/useAppearancePreferences';" in app
-    assert "const appearance = useAppearancePreferences();" in app
-    assert "const [darkMode" not in app
-    assert "const [theme" not in app
-    assert "const [languagePreference" not in app
-    assert "localStorage.setItem('color-scheme'" not in app
-    assert "document.documentElement.dataset.theme" not in app
-    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" not in app
-
-
-def test_message_feed_uses_theme_tokens_and_small_type_floor():
-    message_feed = (
-        Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "MessageFeed.jsx"
+    settings_api = (
+        frontend / "features" / "settings" / "settingsApi.js"
     ).read_text(encoding="utf-8")
-
-    disallowed_palette_tokens = [
-        "#E5E5E5",
-        "#AFAFAF",
-        "#58CC02",
-        "#D1D1D1",
-        "#3D8B00",
-        "#1a1a1a",
-        "#F1F1F1",
-        "#FF4B4B",
-        "#EA2B2B",
-        "#FFE2E2",
-        "#1CB0F6",
-        "#0A7BAF",
-        "#D0F0FF",
-        "#E8F9D9",
-        "#FF9600",
-        "#B36B00",
-        "#FFF0D4",
-        "#777777",
-    ]
-    assert {token: message_feed.count(token) for token in disallowed_palette_tokens if token in message_feed} == {}
-    assert "text-[10px]" not in message_feed
-    assert "text-[9px]" not in message_feed
-    assert "text-[8px]" not in message_feed
-
-    for semantic_class in [
-        "border-border-subtle",
-        "text-text-muted",
-        "text-text-primary",
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "shadow-card",
-        "text-accent",
-        "bg-status-danger-bg",
-        "text-status-danger-text",
-        "border-l-status-warning",
-        "bg-status-warning-bg",
-        "text-status-warning-text",
-        "border-l-status-info",
-        "bg-status-info-bg",
-        "text-status-info-text",
-        "border-l-status-success",
-        "bg-status-success-bg",
-        "text-status-success-text",
-        "text-2xs",
+    for endpoint in [
+        "/api/start",
+        "/api/retry",
+        "/api/dispatch-track",
+        "/api/messages",
+        "/api/devloop",
     ]:
-        assert semantic_class in message_feed
-
-
-def test_memory_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Memory */}")
-    end = router.index("{/* Tab: Dev Loop */}", start)
-    memory_mount = router[start:end]
-
-    assert "<MemoryTab" in memory_mount
-    assert "memoryData.roles.map" not in memory_mount
-    assert "crossResults.map" not in memory_mount
-
-    memory_tab = root / "frontend" / "src" / "components" / "tabs" / "MemoryTab.jsx"
-    assert memory_tab.exists()
-    memory_panel = memory_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-[#FDFDFD]",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-        "bg-zinc-50",
-        "bg-zinc",
-        "dark:bg-zinc-900/30",
-        "dark:bg-zinc-900/20",
-        "dark:bg-zinc-900/10",
-        "dark:",
-        "border-zinc-200",
-        "border-zinc-250",
-        "border-zinc",
-        "text-zinc-750",
-        "dark:text-zinc-250",
-        "text-zinc-700",
-        "dark:text-zinc-300",
-        "text-zinc-500",
-        "text-zinc",
-    ]
-    assert {snippet: memory_panel.count(snippet) for snippet in disallowed_snippets if snippet in memory_panel} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "bg-status-info-bg",
-        "text-status-info-text",
-        "bg-status-warning-bg",
-        "text-status-warning-text",
-    ]:
-        assert semantic_class in memory_panel
-
-
-def test_workflow_graph_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Workflow Graph */}")
-    end = router.index("{/* Tab: Overview */}", start)
-    workflow_mount = router[start:end]
-
-    assert "<WorkflowGraphTab" in workflow_mount
-    assert "computeGraphLayout" not in router
-    assert "drawEdgePath" not in router
-
-    workflow_tab = root / "frontend" / "src" / "components" / "tabs" / "WorkflowGraphTab.jsx"
-    assert workflow_tab.exists()
-    workflow_graph = workflow_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: workflow_graph.count(snippet) for snippet in disallowed_snippets if snippet in workflow_graph} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "bg-status-success-bg",
-        "text-status-success-text",
-        "bg-status-warning-bg",
-        "text-status-warning-text",
-        "bg-status-danger-bg",
-        "text-status-danger-text",
-        "bg-status-info-bg",
-        "text-status-info-text",
-    ]:
-        assert semantic_class in workflow_graph
-
-
-def test_overview_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Overview */}")
-    end = router.index("{activeTab === 'agents_memory'", start)
-    overview_mount = router[start:end]
-
-    assert "<OverviewTab" in overview_mount
-    assert "Current Mission" not in overview_mount
-    assert "Run Environment Configuration" not in overview_mount
-    assert "Start another run for this project" not in overview_mount
-
-    overview_tab = root / "frontend" / "src" / "components" / "tabs" / "OverviewTab.jsx"
-    assert overview_tab.exists()
-    overview_panel = overview_tab.read_text(encoding="utf-8")
-
-    for required_text in [
-        "Current Mission",
-        "Run Environment Configuration",
-        "Start another run for this project",
-        "Retry Blocked Workers",
-    ]:
-        assert required_text in overview_panel
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: overview_panel.count(snippet) for snippet in disallowed_snippets if snippet in overview_panel} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "bg-status-danger-bg",
-        "text-status-danger-text",
-    ]:
-        assert semantic_class in overview_panel
-
-
-def test_agents_memory_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{activeTab === 'agents_memory'")
-    end = router.index("{/* Tab: Roles */}", start)
-    agents_memory_mount = router[start:end]
-
-    assert "<AgentsMemoryTab" in agents_memory_mount
-    assert "setAgentsMemorySubTab('roles')" not in agents_memory_mount
-    assert "setAgentsMemorySubTab('memory')" not in agents_memory_mount
-    assert "setAgentsMemorySubTab('workers')" not in agents_memory_mount
-
-    agents_memory_tab = root / "frontend" / "src" / "components" / "tabs" / "AgentsMemoryTab.jsx"
-    assert agents_memory_tab.exists()
-    agents_memory_panel = agents_memory_tab.read_text(encoding="utf-8")
-
-    for required_text in [
-        "Roles",
-        "Memory",
-        "Jobs",
-        "<RolesTab",
-        "<MemoryTab",
-        "<WorkersTab",
-    ]:
-        assert required_text in agents_memory_panel
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: agents_memory_panel.count(snippet) for snippet in disallowed_snippets if snippet in agents_memory_panel} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-accent-text",
-        "shadow-card",
-    ]:
-        assert semantic_class in agents_memory_panel
-
-
-def test_messages_page_is_extracted_and_uses_message_feed_component():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Messages */}")
-    end = router.index("{/* Tab: Memory */}", start)
-    messages_mount = router[start:end]
-
-    assert "<MessagesTab" in messages_mount
-    assert "<MessageFeed" not in messages_mount
-    assert "messageFeed.key === targetMessageFeedKey" not in messages_mount
-
-    messages_tab = root / "frontend" / "src" / "components" / "tabs" / "MessagesTab.jsx"
-    assert messages_tab.exists()
-    messages_panel = messages_tab.read_text(encoding="utf-8")
-
-    for required_text in [
-        "<MessageFeed",
-        "targetMessageFeedKey",
-        "messageFeedProjectKey",
-        "messageFeedRunId",
-    ]:
-        assert required_text in messages_panel
-
-
-def test_roles_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Roles */}")
-    end = router.index("{/* Tab: Artifacts */}", start)
-    roles_mount = router[start:end]
-
-    assert "<RolesTab" in roles_mount
-    assert "roleObservations.map" not in roles_mount
-
-    roles_tab = root / "frontend" / "src" / "components" / "tabs" / "RolesTab.jsx"
-    assert roles_tab.exists()
-    roles_page = roles_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: roles_page.count(snippet) for snippet in disallowed_snippets if snippet in roles_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "border-status-warning",
-        "border-accent",
-        "text-accent",
-    ]:
-        assert semantic_class in roles_page
-
-
-def test_artifacts_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Artifacts */}")
-    end = router.index("{/* Tab: Actions */}", start)
-    artifacts_mount = router[start:end]
-
-    assert "<ArtifactsTab" in artifacts_mount
-    assert "Object.entries(state.artifacts).map" not in artifacts_mount
-
-    artifacts_tab = root / "frontend" / "src" / "components" / "tabs" / "ArtifactsTab.jsx"
-    assert artifacts_tab.exists()
-    artifacts_page = artifacts_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: artifacts_page.count(snippet) for snippet in disallowed_snippets if snippet in artifacts_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "bg-status-info-bg",
-        "text-status-info-text",
-        "border-status-info",
-    ]:
-        assert semantic_class in artifacts_page
-
-
-def test_artifacts_page_filters_task_ledger_from_editable_artifacts():
-    root = Path(__file__).resolve().parents[1]
-    artifacts_page = (root / "frontend" / "src" / "components" / "tabs" / "ArtifactsTab.jsx").read_text(
-        encoding="utf-8"
-    )
-
-    assert "resources" in artifacts_page
-    assert "capabilities" in artifacts_page
-    assert "state.artifacts" not in artifacts_page
-
-
-def test_actions_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Actions */}")
-    end = router.index("{/* Tab: Agile Board */}", start)
-    actions_mount = router[start:end]
-
-    assert "<ActionsTab" in actions_mount
-    assert "actionItems.map" not in actions_mount
-
-    actions_tab = root / "frontend" / "src" / "components" / "tabs" / "ActionsTab.jsx"
-    assert actions_tab.exists()
-    actions_page = actions_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: actions_page.count(snippet) for snippet in disallowed_snippets if snippet in actions_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "bg-status-success-bg",
-        "text-status-success-text",
-        "bg-status-info-bg",
-        "text-status-info-text",
-        "bg-status-danger-bg",
-        "border-status-danger",
-    ]:
-        assert semantic_class in actions_page
-
-
-def test_agile_board_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Agile Board */}")
-    end = router.index("{/* Tab: Smoke Runs */}", start)
-    board_mount = router[start:end]
-
-    assert "<AgileBoardTab" in board_mount
-    assert "agileBoard.columns" not in board_mount
-
-    board_tab = root / "frontend" / "src" / "components" / "tabs" / "AgileBoardTab.jsx"
-    assert board_tab.exists()
-    board_page = board_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: board_page.count(snippet) for snippet in disallowed_snippets if snippet in board_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "bg-status-info-bg",
-        "text-status-info-text",
-        "bg-status-warning-bg",
-        "text-status-warning-text",
-        "bg-status-success-bg",
-        "text-status-success-text",
-        "bg-status-danger-bg",
-        "text-status-danger-text",
-    ]:
-        assert semantic_class in board_page
-
-
-def test_smoke_runs_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Smoke Runs */}")
-    end = router.index("{/* Tab: Workers */}", start)
-    smoke_mount = router[start:end]
-
-    assert "<SmokeRunsTab" in smoke_mount
-    assert "smokeRunItems.map" not in smoke_mount
-
-    smoke_tab = root / "frontend" / "src" / "components" / "tabs" / "SmokeRunsTab.jsx"
-    assert smoke_tab.exists()
-    smoke_page = smoke_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: smoke_page.count(snippet) for snippet in disallowed_snippets if snippet in smoke_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "bg-status-danger-bg",
-        "text-status-danger-text",
-        "border-status-danger",
-        "bg-status-info-bg",
-        "text-status-info-text",
-        "bg-status-success-bg",
-        "text-status-success-text",
-    ]:
-        assert semantic_class in smoke_page
-
-
-def test_workers_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Workers */}")
-    end = router.index("{/* Tab: Approvals */}", start)
-    workers_mount = router[start:end]
-
-    assert "<WorkersTab" in workers_mount
-    assert "workerJobs.map" not in workers_mount
-    assert "workerRoles.map" not in workers_mount
-
-    workers_tab = root / "frontend" / "src" / "components" / "tabs" / "WorkersTab.jsx"
-    assert workers_tab.exists()
-    workers_page = workers_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-    ]
-    assert {snippet: workers_page.count(snippet) for snippet in disallowed_snippets if snippet in workers_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "shadow-button",
-        "bg-status-success-bg",
-        "text-status-success-text",
-        "bg-status-warning-bg",
-        "text-status-warning-text",
-        "bg-status-danger-bg",
-        "text-status-danger-text",
-        "bg-status-info-bg",
-        "text-status-info-text",
-    ]:
-        assert semantic_class in workers_page
-
-
-def test_approvals_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Approvals */}")
-    end = router.index("{/* Tab: Messages */}", start)
-    approvals_mount = router[start:end]
-
-    assert "<ApprovalsTab" in approvals_mount
-    assert "approvalReviews.map" not in approvals_mount
-
-    approvals_tab = root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx"
-    assert approvals_tab.exists()
-    approvals_page = approvals_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-        "bg-[#",
-        "border-[#",
-    ]
-    assert {snippet: approvals_page.count(snippet) for snippet in disallowed_snippets if snippet in approvals_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "shadow-button",
-        "bg-status-success-bg",
-        "text-status-success-text",
-        "bg-status-warning-bg",
-        "text-status-warning-text",
-        "bg-status-danger-bg",
-        "text-status-danger-text",
-        "bg-status-info-bg",
-        "text-status-info-text",
-    ]:
-        assert semantic_class in approvals_page
-
-
-def test_frontend_i18n_localizes_approvals_tab_summary_slice():
-    root = Path(__file__).resolve().parents[1]
-    en = (root / "frontend" / "src" / "i18n" / "locales" / "en.js").read_text(encoding="utf-8")
-    zh = (root / "frontend" / "src" / "i18n" / "locales" / "zh-CN.js").read_text(encoding="utf-8")
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(encoding="utf-8")
-    approvals_tab = (root / "frontend" / "src" / "components" / "tabs" / "ApprovalsTab.jsx").read_text(encoding="utf-8")
-
-    keys = [
-        "approvals.title",
-        "approvals.subtitle",
-        "approvals.progress.title",
-        "approvals.progress.gates",
-        "approvals.card.review",
-        "approvals.card.artifact",
-        "approvals.card.filePath",
-        "approvals.card.actionRequired",
-        "approvals.actions.generating",
-        "approvals.actions.generatePrd",
-        "approvals.actions.edit",
-        "approvals.actions.questions",
-        "approvals.actions.approving",
-        "approvals.actions.approve",
-        "approvals.loadingHint",
-        "approvals.emptyList",
-        "approvals.emptyDetail",
-    ]
-    for key in keys:
-        assert key in en
-        assert key in zh
-        assert f"t('{key}" in approvals_tab
-
-    assert "t = (key) => key" in approvals_tab
-    assert "t={t}" in router
-
-
-def test_dev_loop_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: Dev Loop */}")
-    end = router.index("{/* Tab: System */}", start)
-    dev_loop_mount = router[start:end]
-
-    assert "<DevLoopTab" in dev_loop_mount
-    assert "devLoopData.pull_requests.map" not in dev_loop_mount
-    assert "devLoopData.worktrees.map" not in dev_loop_mount
-
-    dev_loop_files = [
-        root / "frontend" / "src" / "components" / "tabs" / "DevLoopTab.jsx",
-        root / "frontend" / "src" / "components" / "DevLoopDispatchForm.jsx",
-        root / "frontend" / "src" / "components" / "DevLoopGitInitPanel.jsx",
-        root / "frontend" / "src" / "components" / "DevLoopPullRequestsPanel.jsx",
-        root / "frontend" / "src" / "components" / "DevLoopWarningsPanel.jsx",
-        root / "frontend" / "src" / "components" / "DevLoopWorktreesPanel.jsx",
-        root / "frontend" / "src" / "components" / "ReleaseReadinessCard.jsx",
-        root / "frontend" / "src" / "components" / "ServerActionAuditCard.jsx",
-        root / "frontend" / "src" / "components" / "ServerActionsCard.jsx",
-    ]
-    for dev_loop_file in dev_loop_files:
-        assert dev_loop_file.exists()
-    dev_loop_page = "\n".join(dev_loop_file.read_text(encoding="utf-8") for dev_loop_file in dev_loop_files)
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-        "bg-[#",
-        "border-[#",
-    ]
-    assert {snippet: dev_loop_page.count(snippet) for snippet in disallowed_snippets if snippet in dev_loop_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-        "shadow-button",
-        "bg-status-success-bg",
-        "text-status-success-text",
-        "bg-status-warning-bg",
-        "text-status-warning-text",
-        "bg-status-danger-bg",
-        "text-status-danger-text",
-        "bg-status-info-bg",
-        "text-status-info-text",
-    ]:
-        assert semantic_class in dev_loop_page
-
-
-def test_system_page_is_extracted_and_uses_theme_tokens():
-    root = Path(__file__).resolve().parents[1]
-    router = (root / "frontend" / "src" / "components" / "ProjectTabRouter.jsx").read_text(
-        encoding="utf-8"
-    )
-    start = router.index("{/* Tab: System */}")
-    end = router.index("</>", start)
-    system_mount = router[start:end]
-
-    assert "<SystemTab" in system_mount
-    assert "startContext.task_backend?.sync?.join" not in system_mount
-
-    system_tab = root / "frontend" / "src" / "components" / "tabs" / "SystemTab.jsx"
-    assert system_tab.exists()
-    system_page = system_tab.read_text(encoding="utf-8")
-
-    disallowed_snippets = [
-        "bg-white",
-        "bg-zinc",
-        "border-zinc",
-        "text-zinc",
-        "dark:",
-        "text-[11px]",
-        "text-[10px]",
-        "text-[9px]",
-        "text-[8px]",
-        "shadow-[",
-        "bg-[#",
-        "border-[#",
-    ]
-    assert {snippet: system_page.count(snippet) for snippet in disallowed_snippets if snippet in system_page} == {}
-
-    for semantic_class in [
-        "bg-surface-raised",
-        "bg-surface-sunken",
-        "border-border-subtle",
-        "text-text-primary",
-        "text-text-secondary",
-        "text-text-muted",
-        "text-2xs",
-        "shadow-card",
-    ]:
-        assert semantic_class in system_page
-
-
-def test_frontend_contract_uses_i18n_for_dashboard_chrome():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    approval_banner = (root / "frontend" / "src" / "components" / "ApprovalBanner.jsx").read_text(encoding="utf-8")
-    dashboard = (root / "frontend" / "src" / "components" / "ProjectDashboard.jsx").read_text(encoding="utf-8")
-    project_header = (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(encoding="utf-8")
-    hook = (root / "frontend" / "src" / "hooks" / "useAppearancePreferences.js").read_text(encoding="utf-8")
-    navigation = (root / "frontend" / "src" / "utils" / "navigation.jsx").read_text(encoding="utf-8")
-
-    assert "LANGUAGE_STORAGE_KEY" in hook
-    assert "normalizeLanguagePreference" in hook
-    assert "resolveLanguage" in hook
-    assert "translate(language" in hook or "translate(resolvedLanguage" in hook
-    assert "languagePreference" in app
-    assert "setLanguagePreference" in app
-    assert "navGroups" in dashboard
-    assert "buildProjectNavGroups(t)" in dashboard
-    assert "t('nav.groups.work')" in navigation
-    assert "t('nav.tabs.overview')" in navigation
-    assert "t('chrome.dashboard')" in project_header
-    assert "t('chrome.runId')" in project_header
-    assert "t('approvalBanner.message'" in approval_banner
-    assert "t('approvalBanner.review')" in approval_banner
-    assert "t('chrome.loading')" in dashboard
-    assert "language.useAuto" in app
-    assert "localStorage.setItem(LANGUAGE_STORAGE_KEY" in hook
+        assert endpoint in run_api
+    assert "/api/approve" in review_api
+    assert "/api/artifact" in review_api
+    assert "/api/artifact" in knowledge_api
+    assert "/api/project-config" in settings_api
 
 
 def test_frontend_i18n_locale_files_exist_and_define_core_chrome_keys():
@@ -5494,88 +3264,6 @@ def test_frontend_i18n_locale_files_exist_and_define_core_chrome_keys():
         assert key in en_text
         assert key in zh_text
 
-
-def test_frontend_i18n_localizes_new_project_start_form_slice():
-    root = Path(__file__).resolve().parents[1]
-    en = (root / "frontend" / "src" / "i18n" / "locales" / "en.js").read_text(encoding="utf-8")
-    zh = (root / "frontend" / "src" / "i18n" / "locales" / "zh-CN.js").read_text(encoding="utf-8")
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
-    modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
-
-    keys = [
-        "newProject.consoleEyebrow",
-        "newProject.title",
-        "newProject.mode.adopt",
-        "newProject.mode.new",
-        "newProject.goal.label",
-        "newProject.projectName.label",
-        "newProject.projectKey.label",
-        "newProject.modelProfile.label",
-        "newProject.deliveryMode.label",
-        "newProject.projectLocation.title",
-        "newProject.projectRoot.label",
-        "newProject.projectRoot.browse",
-        "newProject.git.title",
-        "newProject.git.init",
-        "newProject.git.createRemote",
-        "newProject.git.visibility",
-        "newProject.git.private",
-        "newProject.git.public",
-        "newProject.workerBuckets.title",
-        "newProject.workerBuckets.loading",
-        "newProject.advanced.servicesBackend",
-        "newProject.advanced.taskSync",
-        "newProject.advanced.taskSyncLocal",
-        "newProject.advanced.taskSyncPlane",
-        "newProject.advanced.workerExecution",
-        "newProject.advanced.workerExecutionCodex",
-        "newProject.advanced.planeCredentials",
-        "newProject.advanced.planeApiHost",
-        "newProject.advanced.deploymentContract",
-        "newProject.advanced.deploymentBackend",
-        "newProject.advanced.deploymentNone",
-        "newProject.advanced.deploymentSshCompose",
-        "newProject.advanced.sshDeployConfig",
-        "newProject.advanced.stagingSshTarget",
-        "newProject.advanced.requireFunctionalEvidence",
-        "newProject.advanced.minimumEvidenceGate",
-        "newProject.advanced.evidenceInfrastructure",
-        "newProject.advanced.evidenceFunctional",
-        "newProject.advanced.fatalPatterns",
-        "newProject.advanced.acceptanceTests",
-        "newProject.advanced.roleModelOverrides",
-        "newProject.advanced.projectConfigPath",
-        "newProject.launchCheck.title",
-        "newProject.launchCheck.projectTarget",
-        "newProject.launchCheck.sourceMode",
-        "newProject.launchCheck.modelProfile",
-        "newProject.launchCheck.deliveryMode",
-        "newProject.launchCheck.workerBackend",
-        "newProject.dryRun",
-        "newProject.actions.createConfig",
-        "newProject.actions.starting",
-        "newProject.actions.preview",
-        "newProject.actions.startAdoption",
-        "newProject.actions.startNew",
-        "newProject.startingHint",
-    ]
-    for key in keys:
-        assert key in en
-        assert key in zh
-        assert f"t('{key}" in modal
-
-    assert "t={t}" in app
-    assert "t={t}" in container
-    assert "t = (key) => key" in modal
-    assert "aria-label={t('newProject.closeAria')}" in modal
-    assert "DELIVERY_MODE_OPTIONS.map" in modal
-    assert "const deliveryModeLabel = (option) =>" in modal
-    assert "t(key)" in modal
-    assert "label === key ? option.label : label" in modal
-    assert "{deliveryModeLabel(option)}" in modal
-    assert "newProject.deliveryModes.custom" in en
-    assert "newProject.deliveryModes.custom" in zh
 
 
 def test_frontend_i18n_resolves_auto_language_and_falls_back_to_english():
@@ -7363,43 +5051,6 @@ def test_tg_notify_gate_env_override_routes_correctly(monkeypatch):
     assert called == []
 
 
-def test_frontend_contract_wires_report_bug_fix_workflow():
-    """The dashboard must expose a Report Bug affordance that POSTs to
-    /api/report-bug and routes the user to the approvals gate for the new fix run."""
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    header = (root / "frontend" / "src" / "components" / "ProjectHeader.jsx").read_text(
-        encoding="utf-8"
-    )
-    modal_path = root / "frontend" / "src" / "components" / "ReportBugModal.jsx"
-    assert modal_path.exists()
-    modal = modal_path.read_text(encoding="utf-8")
-
-    # The header renders a Report Bug trigger button wired to a callback.
-    assert "onReportBug" in header
-    assert "Report Bug" in header
-
-    # App wires the POST to the backend contract endpoint with the expected payload.
-    assert "/api/report-bug" in app
-    assert "<ReportBugModal" in app
-    assert "project_key: projectKey" in app
-    assert "severity: reportBugSeverity" in app
-    # On success it refreshes state and routes to the approvals gate.
-    assert "setActiveTab('approvals')" in app
-
-    # The modal collects description (required) + severity and submits.
-    assert "description" in modal
-    assert "severity" in modal
-    assert "Report Bug" in modal
-    # Submit is gated on a non-empty description.
-    assert "description.trim().length > 0" in modal
-
-    # Theme tokens, not hardcoded hex/zinc colors.
-    for token in ["bg-surface-overlay", "border-border-subtle", "text-text-muted"]:
-        assert token in modal
-    for banned in ["bg-[#", "border-[#", "text-[#"]:
-        assert banned not in modal
-
 
 def test_frontend_dev_server_uses_goodteam_specific_default_port():
     root = Path(__file__).resolve().parents[1]
@@ -7504,7 +5155,9 @@ def test_context_generate_requires_confirmation(tmp_path):
     )
 
     assert status == 400
-    assert payload["error"] == "confirmation required"
+    assert payload["code"] == "invalid_request"
+    assert payload["message"] == "confirmation required"
+    assert payload["request_id"]
     assert not (project_root / ".goodteam" / "context" / "understanding.md").exists()
 
 
@@ -7550,7 +5203,9 @@ def test_context_estimate_rejects_cross_origin(tmp_path):
     )
 
     assert status == 403
-    assert payload["error"] == "cross-origin POST requests are not allowed"
+    assert payload["code"] == "same_origin_required"
+    assert payload["message"] == "Cross-origin POST requests are not allowed."
+    assert payload["request_id"]
 
 
 def test_context_estimate_enforces_url_size_cap(tmp_path, monkeypatch):
@@ -7576,70 +5231,6 @@ def test_context_estimate_enforces_url_size_cap(tmp_path, monkeypatch):
     )
 
     assert status == 400
-    assert payload["error"] == "URL source exceeds 1048576 byte cap: https://example.com/context.md"
-
-
-def test_frontend_contract_wires_context_sources_cost_preview():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
-    modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
-
-    assert "/api/context-estimate" in app
-    assert "/api/context-generate" in app
-    assert "contextSources" in app
-    assert "contextSources={contextSources}" in container
-    assert "setContextSources={setContextSources}" in container
-    assert "Project context" in modal
-    assert "Preview cost" in modal
-    assert "Generate context" in modal
-    assert "contextSources.map" in modal
-    assert "Trash2" in modal
-    for token in ["bg-surface-sunken", "border-border-subtle", "text-text-muted"]:
-        assert token in modal
-    for banned in ["bg-[#", "border-[#", "text-[#"]:
-        assert banned not in modal
-
-
-def test_frontend_contract_context_sources_can_browse_files_and_directories():
-    root = Path(__file__).resolve().parents[1]
-    app = (root / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    container = (root / "frontend" / "src" / "components" / "NewProjectModalContainer.jsx").read_text(encoding="utf-8")
-    modal = (root / "frontend" / "src" / "components" / "NewProjectModal.jsx").read_text(encoding="utf-8")
-    hook = (root / "frontend" / "src" / "hooks" / "useDirectoryPicker.js").read_text(encoding="utf-8")
-    helper = root / "frontend" / "src" / "utils" / "localPathPicker.js"
-
-    assert helper.is_file()
-    helper_source = helper.read_text(encoding="utf-8")
-    assert "/api/fs/choose" in helper_source
-    assert "initial_path: initialPath" in helper_source
-    assert "status === 'selected'" in helper_source
-    assert "status === 'cancelled'" in helper_source
-    assert "status === 'unsupported'" in helper_source
-    assert "handleProjectRootBrowse" in modal
-    assert "handleProjectRootNativePick" not in modal
-    assert "projectRootPickerRef" not in modal
-    assert "type=\"file\"" not in modal
-    assert "webkitdirectory" not in modal
-    assert "file?.path" not in modal
-    assert "chooseLocalPath({" in modal
-    assert "mode: 'directory'" in modal
-    assert "initialPath: projectRoot" in modal
-    assert "onSelected: setProjectRoot" in modal
-    assert "contextBrowseInitialPath" in modal
-    assert "initialPath: contextBrowseInitialPath(source)" in modal
-    assert "onSelected: (selectedPath) => updateContextSource(index, { value: selectedPath })" in modal
-    assert "mode: source.kind === 'file' ? 'file' : 'directory'" in modal
-    assert "entry.is_dir" in (root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx").read_text(encoding="utf-8")
-    assert "mode === 'file'" in (root / "frontend" / "src" / "components" / "DirectoryPickerModal.jsx").read_text(encoding="utf-8")
-    assert "handleContextSourceBrowse" in modal
-    assert "source.kind !== 'url'" in modal
-    assert "grid-cols-[96px_minmax(0,1fr)_36px]" not in modal
-    assert "grid-cols-[96px_minmax(0,1fr)_40px_36px]" in modal
-    assert "chooseLocalPath={chooseLocalPath}" in app
-    assert "chooseLocalPath={chooseLocalPath}" in container
-    assert "chooseLocalPath," in hook
-    assert "openDirectoryPicker," in hook
-    assert "directoryPickerModal," in hook
-    assert "Preview cost" in modal
-    assert "Generate context" in modal
+    assert payload["code"] == "invalid_request"
+    assert payload["message"] == "URL source exceeds 1048576 byte cap: https://example.com/context.md"
+    assert payload["request_id"]

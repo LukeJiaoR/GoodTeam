@@ -152,6 +152,71 @@ test('needs-input command confirmation posts only the backend step values contra
   });
 });
 
+test('duplicate discovered commands render once and confirm every source ID together', async () => {
+  const user = userEvent.setup();
+  const needsInput = homeWith({
+    execution: { id: 'exec-grouped', status: 'needs_input', current_step_id: 'command_verification' },
+    lifecycle: 'attention_required',
+    nextAction: { id: 'command_verification', status: 'needs_input' },
+    steps: [{
+      id: 'command_verification',
+      status: 'needs_input',
+      required: true,
+      input_requirements: {
+        kind: 'command_confirmation',
+        commands: [
+          { id: 'root-test', command: 'npm run test', source: 'package.json' },
+          { id: 'web-test', command: 'npm run test', source: 'apps/web/package.json' },
+          { id: 'lint', command: 'npm run lint', source: 'package.json' },
+        ],
+      },
+    }],
+  });
+  const api = apiFor(needsInput, { submitReadinessInput: vi.fn().mockResolvedValue(needsInput) });
+
+  render(<ProjectHomePage api={api} language="en" projectKey="DEMO" />);
+
+  expect(await screen.findAllByRole('checkbox')).toHaveLength(2);
+  await user.click(screen.getByRole('checkbox', { name: /npm run test/ }));
+  await user.click(screen.getByRole('button', { name: 'Confirm and continue' }));
+
+  expect(api.submitReadinessInput).toHaveBeenCalledWith('DEMO', {
+    step_id: 'command_verification',
+    values: { confirmed_command_ids: ['root-test', 'web-test'] },
+  });
+});
+
+test('command confirmation keeps dev and platform scripts behind advanced disclosure', async () => {
+  const user = userEvent.setup();
+  const needsInput = homeWith({
+    execution: { id: 'exec-tiered', status: 'needs_input', current_step_id: 'command_verification' },
+    lifecycle: 'attention_required',
+    nextAction: { id: 'command_verification', status: 'needs_input' },
+    steps: [{
+      id: 'command_verification',
+      status: 'needs_input',
+      required: true,
+      input_requirements: {
+        kind: 'command_confirmation',
+        commands: [
+          { id: 'test', kind: 'test', command: 'npm run test', source: 'package.json' },
+          { id: 'dev', kind: 'run', command: 'npm run dev', source: 'package.json' },
+          { id: 'h5', kind: 'build', command: 'npm run build:h5', source: 'apps/mini/package.json' },
+        ],
+      },
+    }],
+  });
+
+  render(<ProjectHomePage api={apiFor(needsInput)} language="en" projectKey="DEMO" />);
+
+  expect(await screen.findByRole('checkbox', { name: /npm run test/ })).toBeVisible();
+  expect(screen.getByRole('checkbox', { name: /npm run dev/ })).not.toBeVisible();
+  expect(screen.getByRole('checkbox', { name: /npm run build:h5/ })).not.toBeVisible();
+  await user.click(screen.getByText('Other advanced commands (2)'));
+  expect(screen.getByRole('checkbox', { name: /npm run dev/ })).toBeVisible();
+  expect(screen.getByRole('checkbox', { name: /npm run build:h5/ })).toBeVisible();
+});
+
 test('command confirmation prevents an empty submission and works from the keyboard', async () => {
   const user = userEvent.setup();
   const needsInput = homeWith({
@@ -297,7 +362,7 @@ test('complete readiness renders the structured overview and follows the real ba
   });
   const navigateWorkflow = vi.fn();
   const api = apiFor(complete, {
-    startProjectWorkflow: vi.fn().mockResolvedValue({ workflow_url: '/?project=DEMO' }),
+    startProjectWorkflow: vi.fn().mockResolvedValue({ workflow_url: '/projects/DEMO/work' }),
   });
 
   render(<ProjectHomePage api={api} language="en" navigateWorkflow={navigateWorkflow} projectKey="DEMO" />);
@@ -306,7 +371,7 @@ test('complete readiness renders the structured overview and follows the real ba
   expect(screen.getByText('npm test')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Start workflow' }));
   expect(api.startProjectWorkflow).toHaveBeenCalledWith('DEMO');
-  expect(navigateWorkflow).toHaveBeenCalledWith('/?project=DEMO');
+  expect(navigateWorkflow).toHaveBeenCalledWith('/projects/DEMO/work');
 });
 
 test('project readiness API helpers use the stable executor resource paths', async () => {
