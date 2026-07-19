@@ -131,11 +131,15 @@ describe('requestJson', () => {
     });
   });
 
-  test('preserves a fetch-level network failure', async () => {
+  test('normalizes a fetch-level network failure as an offline ApiError', async () => {
     const failure = new TypeError('offline');
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(failure));
 
-    await expect(requestJson('/api/projects')).rejects.toBe(failure);
+    await expect(requestJson('/api/projects')).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'offline',
+      recovery: ['check_service', 'retry_request'],
+    });
   });
 
   test('rejects array-shaped structured error details', async () => {

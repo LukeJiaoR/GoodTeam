@@ -40,17 +40,24 @@ def _yaml_scalar(value: object) -> str:
     return json.dumps(str(value), ensure_ascii=False)
 
 
-def build_registered_project_config(key: str, name: str, root: Path) -> str:
+def build_registered_project_config(
+    key: str,
+    name: str,
+    root: Path,
+    *,
+    model_profile: str = "balanced",
+    worker_mode: str = "codex",
+) -> str:
     return (
         f"name: {_yaml_scalar(name)}\n"
         f"key: {_yaml_scalar(key)}\n"
         "source_type: unconfirmed\n"
-        "model_profile: balanced\n"
+        f"model_profile: {_yaml_scalar(model_profile)}\n"
         "delivery_mode: init_project\n"
         "repos:\n"
         f"  root: {_yaml_scalar(root.resolve())}\n"
         "worker_backend:\n"
-        "  mode: codex\n"
+        f"  mode: {_yaml_scalar(worker_mode)}\n"
         "task_backend:\n"
         "  mode: local\n"
         "  sync: \n"

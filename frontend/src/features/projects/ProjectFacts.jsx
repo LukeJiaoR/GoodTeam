@@ -17,6 +17,7 @@ export default function ProjectFacts({
   const activeRun = facts.active_run || null;
   const workerStatus = facts.worker_status || readiness.worker_status || null;
   const detectedMode = facts.detected_mode || readiness.project_mode || 'unconfirmed';
+  const blockers = Array.isArray(facts.blockers) ? facts.blockers : [];
 
   return (
     <section className="project-home-section project-facts" aria-labelledby="project-facts-title">
@@ -33,20 +34,29 @@ export default function ProjectFacts({
           <dd>{t(`readiness.mode.${detectedMode}`)}</dd>
         </div>
         <div className="project-fact">
+          <dt>{t('readiness.facts.goal')}</dt>
+          <dd>{factValue(facts.project_goal, language)}</dd>
+        </div>
+        <div className="project-fact">
           <dt>{t('readiness.facts.activeRun')}</dt>
           <dd>
             {activeRun ? (
               <span className="project-fact-run">
                 <StatusBadge tone="active">{t('product.status.active')}</StatusBadge>
                 <code>{activeRun.run_id}</code>
+                {activeRun.current_node ? <span>{t('readiness.facts.currentNode')}: {activeRun.current_node}</span> : null}
                 {activeRun.next_node ? <span>{t('readiness.facts.nextNode')}: {activeRun.next_node}</span> : null}
               </span>
             ) : factValue(null, language)}
           </dd>
         </div>
         <div className="project-fact">
+          <dt>{t('readiness.facts.blockers')}</dt>
+          <dd>{blockers.length ? <ul>{blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul> : factValue(null, language)}</dd>
+        </div>
+        <div className="project-fact">
           <dt>{t('readiness.facts.workerStatus')}</dt>
-          <dd>{factValue(workerStatus, language)}</dd>
+          <dd>{workerStatus ? <span className="project-fact-run"><StatusBadge tone={workerStatus === 'ready' ? 'success' : 'danger'}>{t(`readiness.facts.worker.${workerStatus}`)}</StatusBadge>{facts.worker_backend ? <code>{facts.worker_backend}</code> : null}{facts.worker_hint ? <span>{facts.worker_hint}</span> : null}</span> : factValue(null, language)}</dd>
         </div>
       </dl>
     </section>

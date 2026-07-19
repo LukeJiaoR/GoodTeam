@@ -90,10 +90,11 @@ Dashboard URLs:
 
 ```text
 http://localhost:8788/
-http://localhost:8788/?project=MYAPP
+http://localhost:8788/projects
+http://localhost:8788/projects/MYAPP/work
 ```
 
-Additive project-loading preview URLs:
+Project-loading URLs:
 
 ```text
 http://localhost:8788/projects
@@ -108,13 +109,13 @@ project. Readiness facts, detected or confirmed project mode, and pending steps
 are persisted in the workspace and restored after a browser reload or GoodTeam
 server restart.
 
-The preview distinguishes a successfully loaded project from a project that is
+The product interface distinguishes a successfully loaded project from a project that is
 ready to start work. If the project type is ambiguous, choose new project,
 existing codebase, or decide later. Mode-specific Init and repository-
-understanding execution are not part of this slice; GoodTeam displays their real
-pending steps and keeps workflow start disabled with a reason. Continue using
-`/` and `/?project=MYAPP` for legacy dashboard operations not yet exposed by the
-preview.
+understanding execution are persisted and recoverable. GoodTeam displays their
+real state and keeps workflow start disabled with a reason until readiness is
+complete. Old `/legacy?project=MYAPP` bookmarks redirect into the product Work
+space, where workflow operations are available.
 
 Operator checks:
 

@@ -94,8 +94,8 @@ def test_existing_readiness_api_runs_confirms_and_unlocks_real_workflow_bridge(
     assert bridge_status == 200
     assert bridge == {
         "project_key": key,
-        "workflow_url": f"/?project={key}",
-        "bridge": "legacy_project_workflow",
+        "workflow_url": f"/projects/{key}/work",
+        "bridge": "product_project_workflow",
     }
 
 

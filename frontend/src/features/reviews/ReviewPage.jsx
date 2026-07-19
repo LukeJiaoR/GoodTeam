@@ -1,0 +1,194 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import Button from '../../components/ui/Button';
+import ProductError from '../../components/ui/ProductError';
+import StatusBadge from '../../components/ui/StatusBadge';
+import { routes } from '../../lib/routing/routes';
+import useProjectState from '../runs/useProjectState';
+import { reviewApi } from './reviewApi';
+
+function reviewTone(review) {
+  if (review.is_actionable) return 'warning';
+  if (review.decision === 'approved' || review.status === 'approved') return 'success';
+  if (review.decision === 'rejected') return 'danger';
+  return 'pending';
+}
+
+function asObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return { value }; }
+}
+
+function lineDiff(before, after) {
+  const original = String(before || '').split('\n');
+  const edited = String(after || '').split('\n');
+  const count = Math.max(original.length, edited.length);
+  const lines = [];
+  for (let index = 0; index < count; index += 1) {
+    if (original[index] === edited[index]) lines.push(`  ${original[index] ?? ''}`);
+    else {
+      if (original[index] !== undefined) lines.push(`- ${original[index]}`);
+      if (edited[index] !== undefined) lines.push(`+ ${edited[index]}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function ReviewList({ projectKey, reviews, selected, t }) {
+  return (
+    <aside className="review-queue" aria-label={t('review.queue.label')}>
+      <h2>{t('review.queue.title')}</h2>
+      {reviews.length ? <ol>{reviews.map((review) => (
+        <li key={review.approval}>
+          <Link className={selected === review.approval ? 'is-active' : ''} to={routes.projectReviewItem(projectKey, review.approval)}>
+            <span><strong>{review.title || review.approval.toUpperCase()}</strong><small>{review.artifact || t('review.queue.noArtifact')}</small></span>
+            <StatusBadge tone={reviewTone(review)}>{review.is_actionable ? t('review.queue.action') : (review.decision || review.status || t('review.queue.pending'))}</StatusBadge>
+          </Link>
+        </li>
+      ))}</ol> : <p className="product-empty-copy">{t('review.queue.empty')}</p>}
+    </aside>
+  );
+}
+
+function ArtifactPanel({ onChange, review, t, value }) {
+  const [view, setView] = useState('artifact');
+  const baseline = typeof review.content === 'string' ? review.content : '';
+  return (
+    <article className="review-artifact">
+      <header><div><p className="product-eyebrow">{review.artifact || review.approval}</p><h2>{review.title || review.approval.toUpperCase()}</h2></div><div className="review-view-switcher"><button className={view === 'artifact' ? 'is-active' : ''} onClick={() => setView('artifact')}>{t('review.artifact.view')}</button><button className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}>{t('review.artifact.diff')}</button></div></header>
+      {view === 'artifact' ? <label className="review-editor"><span className="sr-only">{t('review.artifact.content')}</span><textarea spellCheck="false" value={value} onChange={(event) => onChange(event.target.value)} /></label> : <pre className="review-diff" aria-label={t('review.artifact.diff')}>{lineDiff(baseline, value)}</pre>}
+    </article>
+  );
+}
+
+function Inspector({ busy, error, onAccept, onAnswer, onDecision, onDiscard, onRefine, onSave, proposed, questions, review, t }) {
+  const [note, setNote] = useState('');
+  const [answers, setAnswers] = useState({});
+  const evidence = asObject(review.evidence_snapshot);
+  const provenance = asObject(review.reviewer_provenance);
+  const recommendation = asObject(review.recommendation);
+  const dissent = recommendation.reasons?.filter?.((reason) => ['open_objection', 'dissent'].includes(reason.kind)) || [];
+  return (
+    <aside className="review-inspector">
+      <section><h2>{t('review.recommendation.title')}</h2>
+        <p className="review-verdict">{recommendation.verdict || t('review.recommendation.none')}</p>
+        {recommendation.reasons?.map?.((reason, index) => <p key={index}>{reason.text || reason}</p>)}
+      </section>
+      <details open><summary>{t('review.evidence.title')}</summary><pre>{JSON.stringify(evidence, null, 2)}</pre></details>
+      <details><summary>{t('review.provenance.title')}</summary><pre>{JSON.stringify(provenance, null, 2)}</pre></details>
+      <details><summary>{t('review.dissent.title')}</summary>{dissent.length ? dissent.map((reason, index) => <p key={index}>{reason.text || reason}</p>) : <p>{t('review.dissent.none')}</p>}{review.multi_reviewer_projection ? <pre>{JSON.stringify(review.multi_reviewer_projection, null, 2)}</pre> : null}</details>
+      {review.committee?.messages?.length ? <details><summary>{t('review.debate.title')}</summary><ol>{review.committee.messages.map((message) => <li key={message.id}><strong>{message.from_role}</strong><p>{message.body}</p></li>)}</ol></details> : null}
+      {questions.length ? <details open><summary>{t('review.questions.title')}</summary><div className="review-question-list">{questions.map((question) => {
+        const text = typeof question === 'string' ? question : question.question || question.text;
+        return <label key={text}><span>{text}</span><textarea rows="2" value={answers[text] || ''} onChange={(event) => setAnswers((current) => ({ ...current, [text]: event.target.value }))} /></label>;
+      })}<Button busy={busy === 'answer'} disabled={!Object.values(answers).some((value) => value.trim())} onClick={() => onAnswer(Object.entries(answers).filter(([, value]) => value.trim()).map(([question, answer]) => ({ question, answer })))}>{t('review.questions.apply')}</Button></div></details> : null}
+      {review.artifact_path ? <div className="review-editor-actions"><Button variant="secondary" busy={busy === 'save'} onClick={onSave}>{t('review.actions.save')}</Button><Button variant="secondary" busy={busy === 'refine'} onClick={onRefine}>{t('review.actions.refine')}</Button></div> : <p className="product-boundary-note">{t('review.artifact.notGenerated')}</p>}
+      {proposed ? <section className="review-proposal"><h3>{t('review.refinement.title')}</h3><pre>{proposed.content}</pre><div className="review-editor-actions"><Button busy={busy === 'accept'} onClick={onAccept}>{t('review.refinement.accept')}</Button><Button variant="secondary" busy={busy === 'discard'} onClick={onDiscard}>{t('review.refinement.discard')}</Button></div></section> : null}
+      {error ? <ProductError error={error} t={t} /> : null}
+      {review.is_actionable ? (
+        <form className="review-decision-panel" onSubmit={(event) => event.preventDefault()}>
+          <label><span>{t('review.decision.rationale')}</span><textarea rows="3" value={note} onChange={(event) => setNote(event.target.value)} /></label>
+          <Button busy={busy === 'approved'} onClick={() => onDecision('approved', note)}>{t('review.decision.approve')}</Button>
+          <Button variant="secondary" busy={busy === 'changes_requested'} disabled={!note.trim()} onClick={() => onDecision('changes_requested', note)}>{t('review.decision.changes')}</Button>
+          <Button variant="danger" busy={busy === 'rejected'} disabled={!note.trim()} onClick={() => onDecision('rejected', note)}>{t('review.decision.reject')}</Button>
+          <p>{t('review.decision.authority')}</p>
+        </form>
+      ) : <p className="product-boundary-note">{t('review.decision.notActionable')}</p>}
+    </aside>
+  );
+}
+
+export default function ReviewPage() {
+  const { projectKey = '', reviewId = '' } = useParams();
+  const { t } = useOutletContext();
+  const navigate = useNavigate();
+  const api = useMemo(() => ({ getProjectState: reviewApi.getReviewState }), []);
+  const { data, error, refresh, status } = useProjectState(projectKey, { api });
+  const reviews = data?.approval_reviews || [];
+  const selected = reviews.find((item) => item.approval === reviewId)
+    || reviews.find((item) => item.is_actionable)
+    || reviews[0];
+  const [content, setContent] = useState('');
+  const [busy, setBusy] = useState('');
+  const [mutationError, setMutationError] = useState(null);
+  const [proposed, setProposed] = useState(null);
+  const [questions, setQuestions] = useState([]);
+
+  useEffect(() => {
+    if (!reviewId && selected?.approval) navigate(routes.projectReviewItem(projectKey, selected.approval), { replace: true });
+  }, [navigate, projectKey, reviewId, selected?.approval]);
+
+  useEffect(() => {
+    if (!selected) { queueMicrotask(() => setContent('')); return undefined; }
+    if (typeof selected.content === 'string') { queueMicrotask(() => setContent(selected.content)); return undefined; }
+    if (!selected.artifact) return undefined;
+    const controller = new AbortController();
+    reviewApi.getArtifact(projectKey, selected.artifact, { signal: controller.signal })
+      .then((payload) => setContent(payload.content || ''))
+      .catch((caught) => { if (caught.name !== 'AbortError') setMutationError(caught); });
+    return () => controller.abort();
+  }, [projectKey, selected]);
+
+  useEffect(() => {
+    if (!selected?.artifact || !selected?.artifact_path) { queueMicrotask(() => setQuestions([])); return undefined; }
+    const controller = new AbortController();
+    reviewApi.getOpenQuestions(projectKey, selected.artifact, { signal: controller.signal })
+      .then((payload) => setQuestions(payload.questions || []))
+      .catch((caught) => { if (caught.name !== 'AbortError') setMutationError(caught); });
+    return () => controller.abort();
+  }, [projectKey, selected?.artifact, selected?.artifact_path]);
+
+  const mutate = async (name, operation) => {
+    setBusy(name); setMutationError(null);
+    try { const result = await operation(); await refresh(); return result; }
+    catch (caught) { setMutationError(caught); return null; }
+    finally { setBusy(''); }
+  };
+  const refine = async () => {
+    const result = await mutate('refine', () => reviewApi.refineArtifact(projectKey, selected.artifact, content));
+    if (result?.proposed_path) {
+      const artifact = await reviewApi.getArtifact(projectKey, result.proposed_path);
+      setProposed({ ...result, content: artifact.content || '' });
+    }
+  };
+  const loadProposal = async (result) => {
+    if (!result?.proposed_path) return;
+    const artifact = await reviewApi.getArtifact(projectKey, result.proposed_path);
+    setProposed({ ...result, content: artifact.content || '' });
+  };
+  const answer = async (answers) => {
+    const result = await mutate('answer', () => reviewApi.answerOpenQuestions(projectKey, selected.artifact, answers));
+    await loadProposal(result);
+  };
+  const accept = async () => {
+    const result = await mutate('accept', () => reviewApi.acceptRefinement(projectKey, selected.artifact));
+    if (result) { setContent(proposed.content); setProposed(null); }
+  };
+  const discard = async () => {
+    const result = await mutate('discard', () => reviewApi.discardRefinement(projectKey, selected.artifact));
+    if (result) setProposed(null);
+  };
+
+  if (status === 'loading') return <main id="main-content" className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></main>;
+  if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
+  return (
+    <main id="main-content" className="product-page product-review-page">
+      <header className="product-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('review.title')}</h1><p>{t('review.description')}</p></div><Link to={routes.projectWork(projectKey)}>{t('review.backWork')}</Link></header>
+      {!selected ? <p className="product-empty-copy">{t('review.empty')}</p> : (
+        <div className="review-workspace">
+          <ReviewList projectKey={projectKey} reviews={reviews} selected={selected.approval} t={t} />
+          <ArtifactPanel review={selected} value={content} onChange={setContent} t={t} />
+          <Inspector busy={busy} error={mutationError} proposed={proposed} questions={questions} review={selected} t={t}
+            onSave={() => mutate('save', () => reviewApi.saveArtifact(projectKey, selected.artifact, content))}
+            onRefine={refine}
+            onAnswer={answer}
+            onAccept={accept}
+            onDiscard={discard}
+            onDecision={(decision, note) => mutate(decision, () => reviewApi.decideReview(projectKey, selected.approval, decision, note))}
+          />
+        </div>
+      )}
+    </main>
+  );
+}

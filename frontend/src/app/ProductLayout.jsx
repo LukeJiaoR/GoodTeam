@@ -1,6 +1,7 @@
 import { Moon, Sun } from 'lucide-react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAppearancePreferences } from '../hooks/useAppearancePreferences';
+import { routes } from '../lib/routing/routes';
 
 const LANGUAGE_OPTIONS = [
   ['auto', 'product.language.auto'],
@@ -9,6 +10,7 @@ const LANGUAGE_OPTIONS = [
 ];
 
 export default function ProductLayout() {
+  const { pathname } = useLocation();
   const {
     darkMode,
     setDarkMode,
@@ -17,6 +19,11 @@ export default function ProductLayout() {
     setLanguagePreference,
     t,
   } = useAppearancePreferences();
+  const projectMatch = pathname.match(/^\/projects\/([^/]+)\/(?:home|work|review|knowledge|settings)/);
+  const projectKey = (() => {
+    try { return projectMatch ? decodeURIComponent(projectMatch[1]) : ''; } catch { return ''; }
+  })();
+  const navClass = ({ isActive }) => `product-navigation__link${isActive ? ' is-active' : ''}`;
 
   return (
     <div className="product-shell">
@@ -29,12 +36,10 @@ export default function ProductLayout() {
           </NavLink>
 
           <nav className="product-navigation" aria-label={t('product.navigation.label')}>
-            <NavLink
-              className={({ isActive }) => `product-navigation__link${isActive ? ' is-active' : ''}`}
-              to="/projects"
-            >
-              {t('product.navigation.projects')}
-            </NavLink>
+            <NavLink className={navClass} to={routes.projects()}>{t('product.navigation.projects')}</NavLink>
+            <NavLink className={navClass} to={routes.inbox()}>{t('product.navigation.inbox')}</NavLink>
+            <NavLink className={navClass} to={routes.activity()}>{t('product.navigation.activity')}</NavLink>
+            <NavLink className={navClass} to={routes.settings()}>{t('product.navigation.settings')}</NavLink>
           </nav>
 
           <div className="product-preferences">
@@ -64,6 +69,19 @@ export default function ProductLayout() {
           </div>
         </div>
       </header>
+
+      {projectKey ? (
+        <nav className="product-project-navigation" aria-label={t('product.navigation.projectLabel')}>
+          <div>
+            <span className="product-project-navigation__identity">{projectKey}</span>
+            <NavLink className={navClass} to={routes.projectHome(projectKey)}>{t('product.navigation.home')}</NavLink>
+            <NavLink className={navClass} to={routes.projectWork(projectKey)}>{t('product.navigation.work')}</NavLink>
+            <NavLink className={navClass} to={routes.projectReview(projectKey)}>{t('product.navigation.review')}</NavLink>
+            <NavLink className={navClass} to={routes.projectKnowledge(projectKey)}>{t('product.navigation.knowledge')}</NavLink>
+            <NavLink className={navClass} to={routes.projectSettings(projectKey, 'general')}>{t('product.navigation.projectSettings')}</NavLink>
+          </div>
+        </nav>
+      ) : null}
 
       <Outlet context={{ language, t }} />
     </div>

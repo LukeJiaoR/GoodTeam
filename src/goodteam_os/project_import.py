@@ -54,6 +54,8 @@ def import_project(
     display_name: str = "",
     requested_key: str = "",
     existing_configs: list[Path] | None = None,
+    default_model_profile: str = "balanced",
+    default_worker_mode: str = "codex",
 ) -> dict[str, object]:
     raw_root = str(root_value)
     unresolved_root = Path(raw_root)
@@ -75,6 +77,8 @@ def import_project(
                 display_name=display_name,
                 requested_key=requested_key,
                 existing_configs=existing_configs,
+                default_model_profile=default_model_profile,
+                default_worker_mode=default_worker_mode,
             )
     except OSError as exc:
         if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
@@ -282,6 +286,8 @@ def _import_project_locked(
     display_name: str,
     requested_key: str,
     existing_configs: list[Path] | None,
+    default_model_profile: str,
+    default_worker_mode: str,
 ) -> dict[str, object]:
     projects_dir = workspace / "projects"
     projects_fd = _open_directory_at(workspace_fd, "projects", create=False)
@@ -322,7 +328,13 @@ def _import_project_locked(
             try:
                 published_config = _publish_config_exclusively(
                     config_path,
-                    build_registered_project_config(key, name, root),
+                    build_registered_project_config(
+                        key,
+                        name,
+                        root,
+                        model_profile=default_model_profile,
+                        worker_mode=default_worker_mode,
+                    ),
                     directory_fd=projects_fd,
                 )
             except FileExistsError:

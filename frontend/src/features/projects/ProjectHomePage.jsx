@@ -4,6 +4,7 @@ import InlineNotice from '../../components/ui/InlineNotice';
 import PageState from '../../components/ui/PageState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { translate } from '../../i18n';
+import { routes } from '../../lib/routing/routes';
 import { projectApi } from './projectApi';
 import NewProjectReadinessForm from './NewProjectReadinessForm';
 import ProjectFacts from './ProjectFacts';
@@ -468,6 +469,12 @@ export default function ProjectHomePage({
             <h2 id="project-capabilities-title">{t('readiness.capabilities.title')}</h2>
           </div>
           <ul>{capabilityList.map(([key, labelKey]) => <li key={key}>{t(labelKey)}</li>)}</ul>
+          <nav className="project-home-shortcuts" aria-label={t('readiness.shortcuts.title')}>
+            <a href={routes.projectWork(projectKey)}>{t('product.navigation.work')}</a>
+            <a href={routes.projectReview(projectKey)}>{t('product.navigation.review')}</a>
+            <a href={routes.projectKnowledge(projectKey)}>{t('product.navigation.knowledge')}</a>
+            <a href={routes.projectSettings(projectKey, 'general')}>{t('product.navigation.projectSettings')}</a>
+          </nav>
         </section>
 
         <RepositoryOverview artifact={inlineOverview || overviewArtifact} language={language} />

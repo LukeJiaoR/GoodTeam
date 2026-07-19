@@ -205,7 +205,9 @@ def test_api_artifact_route_rejects_unregistered_absolute_path(tmp_path, monkeyp
 
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "Artifact is not registered" in payload["error"]
+    assert payload["code"] == "invalid_request"
+    assert "Artifact is not registered" in payload["message"]
+    assert payload["request_id"]
     assert "Do not expose this" not in handler.wfile.getvalue().decode("utf-8")
 
 
@@ -432,7 +434,10 @@ def test_api_server_action_run_rejects_until_env_nonce_and_confirmation_pass(tmp
     )
 
     assert 403 in disabled.responses
-    assert "disabled" in json.loads(disabled.wfile.getvalue().decode("utf-8"))["error"]
+    disabled_payload = json.loads(disabled.wfile.getvalue().decode("utf-8"))
+    assert disabled_payload["code"] == "permission_denied"
+    assert "disabled" in disabled_payload["message"]
+    assert disabled_payload["request_id"]
 
     monkeypatch.setenv("GOODTEAM_SERVER_ACTIONS", "1")
     monkeypatch.setenv("GOODTEAM_SERVER_ACTION_NONCE", "nonce-123")
@@ -442,7 +447,9 @@ def test_api_server_action_run_rejects_until_env_nonce_and_confirmation_pass(tmp
         headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
     )
     assert 403 in missing_nonce.responses
-    assert "nonce" in json.loads(missing_nonce.wfile.getvalue().decode("utf-8"))["error"]
+    missing_nonce_payload = json.loads(missing_nonce.wfile.getvalue().decode("utf-8"))
+    assert missing_nonce_payload["code"] == "permission_denied"
+    assert "nonce" in missing_nonce_payload["message"]
 
     wrong_confirmation = simulate_post(
         "/api/server-actions/run",
@@ -450,7 +457,9 @@ def test_api_server_action_run_rejects_until_env_nonce_and_confirmation_pass(tmp
         headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
     )
     assert 400 in wrong_confirmation.responses
-    assert "confirmation" in json.loads(wrong_confirmation.wfile.getvalue().decode("utf-8"))["error"]
+    wrong_confirmation_payload = json.loads(wrong_confirmation.wfile.getvalue().decode("utf-8"))
+    assert wrong_confirmation_payload["code"] == "invalid_request"
+    assert "confirmation" in wrong_confirmation_payload["message"]
 
     unsafe_action = simulate_post(
         "/api/server-actions/run",
@@ -458,7 +467,9 @@ def test_api_server_action_run_rejects_until_env_nonce_and_confirmation_pass(tmp
         headers={"Host": "127.0.0.1:8788", "Origin": "http://127.0.0.1:8788"},
     )
     assert 400 in unsafe_action.responses
-    assert "tag" in json.loads(unsafe_action.wfile.getvalue().decode("utf-8"))["error"]
+    unsafe_payload = json.loads(unsafe_action.wfile.getvalue().decode("utf-8"))
+    assert unsafe_payload["code"] == "invalid_request"
+    assert "tag" in unsafe_payload["message"]
 
 
 def test_api_server_action_run_tag_release_stays_report_only_without_subprocess_or_audit(tmp_path, monkeypatch):
@@ -485,7 +496,9 @@ def test_api_server_action_run_tag_release_stays_report_only_without_subprocess_
     )
 
     assert 400 in handler.responses
-    assert "report-only" in json.loads(handler.wfile.getvalue().decode("utf-8"))["error"]
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "invalid_request"
+    assert "report-only" in payload["message"]
     assert calls == []
     assert not list((tmp_path / ".goodteam" / "server-actions").glob("*.json"))
 
@@ -515,7 +528,9 @@ def test_api_server_action_run_rejects_unsafe_release_refs_before_subprocess(tmp
         )
 
         assert 400 in handler.responses
-        assert "ref" in json.loads(handler.wfile.getvalue().decode("utf-8"))["error"]
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        assert payload["code"] == "invalid_request"
+        assert "ref" in payload["message"]
 
     assert calls == []
 
@@ -882,7 +897,9 @@ def test_api_smoke_run_rejects_cross_origin_before_start(tmp_path, monkeypatch):
     )
 
     assert 403 in response.responses
-    assert json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "same_origin_required"
+    assert payload["request_id"]
 
 
 def test_smoke_run_items_include_async_status_report_runs(tmp_path):
@@ -966,7 +983,9 @@ def test_api_fs_list_route_status_codes(tmp_path, monkeypatch):
     assert 400 in bad_request.responses
     assert 404 in missing.responses
     assert 404 in not_directory.responses
-    assert json.loads(bad_request.wfile.getvalue().decode("utf-8"))["error"]
+    assert json.loads(bad_request.wfile.getvalue().decode("utf-8"))["code"] == "invalid_request"
+    assert json.loads(missing.wfile.getvalue().decode("utf-8"))["code"] == "path_not_found"
+    assert json.loads(not_directory.wfile.getvalue().decode("utf-8"))["code"] == "path_not_found"
 
 
 def test_api_fs_list_route_maps_permission_error_to_403(tmp_path, monkeypatch):
@@ -981,7 +1000,9 @@ def test_api_fs_list_route_maps_permission_error_to_403(tmp_path, monkeypatch):
 
     assert 403 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["error"] == f"blocked: {tmp_path}"
+    assert payload["code"] == "permission_denied"
+    assert payload["message"] == f"blocked: {tmp_path}"
+    assert payload["request_id"]
 
 
 def test_api_fs_mkdir_route_creates_child_directory(tmp_path, monkeypatch):
@@ -1054,7 +1075,9 @@ def test_api_fs_choose_rejects_unknown_mode_and_cross_origin_before_adapter(tmp_
     )
 
     assert 400 in unknown.responses
-    assert "mode" in json.loads(unknown.wfile.getvalue().decode("utf-8"))["error"]
+    unknown_payload = json.loads(unknown.wfile.getvalue().decode("utf-8"))
+    assert unknown_payload["code"] == "invalid_request"
+    assert "mode" in unknown_payload["message"]
     assert 403 in cross_origin.responses
     assert calls == []
 
@@ -1223,7 +1246,6 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     handler = simulate_get("/api/state", headers={"Origin": "http://127.0.0.1:8788"})
     assert 200 in handler.responses
     assert handler.response_headers.get("Access-Control-Allow-Origin") == "http://127.0.0.1:8788"
-
     handler = simulate_get("/api/state", headers={"Origin": "https://evil.example"})
     assert 200 in handler.responses
     assert handler.response_headers.get("Access-Control-Allow-Origin") is None
@@ -1241,15 +1263,16 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert handler.wfile.getvalue() == b"Hello React"
     assert b"Wrong workspace UI" not in handler.wfile.getvalue()
 
-    # 5. Test unknown project pages keep HTTP 400 semantics and render a product error surface.
+    # 5. Legacy root bookmarks reach React so the product router can migrate them.
     handler = simulate_get("/?project=UNKNOWN")
-    assert 400 in handler.responses
-    body = handler.wfile.getvalue().decode("utf-8")
-    assert handler.response_headers.get("Content-Type") == "text/html; charset=utf-8"
-    assert "<!doctype html>" in body
-    assert "Project not found" in body
-    assert "UNKNOWN" in body
-    assert "GoodTeam Projects" in body
+    assert 200 in handler.responses
+    assert handler.wfile.getvalue() == b"Hello React"
+
+    # The explicit compatibility route also reaches React; the router redirects
+    # it and the product destination renders a recoverable project error.
+    handler = simulate_get("/legacy?project=UNKNOWN")
+    assert 200 in handler.responses
+    assert handler.wfile.getvalue() == b"Hello React"
 
     # 6. The resolved application dist also serves hashed assets.
     handler = simulate_get("/")
@@ -1257,10 +1280,9 @@ def test_api_handler_do_get_and_do_options(tmp_path, monkeypatch):
     assert handler.wfile.getvalue() == b"Hello React"
     assert handler.response_headers.get("Content-Type") == "text/html"
 
-    handler = simulate_get("/?project=UNKNOWN")
-    assert 400 in handler.responses
-    assert b"Project not found" in handler.wfile.getvalue()
-    assert b"Hello React" not in handler.wfile.getvalue()
+    handler = simulate_get("/projects/UNKNOWN/work")
+    assert 200 in handler.responses
+    assert handler.wfile.getvalue() == b"Hello React"
 
     handler = simulate_get("/assets/style.css")
     assert 200 in handler.responses
@@ -1340,13 +1362,15 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
     handler = simulate_post("/api/start", {"project_key": "CONTENTOPS"})
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "error" in payload
+    assert payload["code"] == "invalid_request"
+    assert payload["request_id"]
 
     # 2. Test POST /start legacy path validation (should return 400 because idea is missing)
     handler = simulate_post("/start", {"project_key": "CONTENTOPS"})
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "error" in payload
+    assert payload["code"] == "invalid_request"
+    assert payload["request_id"]
 
     # 3. Test POST /generate-prd routes through generate_prd and returns payload
     monkeypatch.setattr(
@@ -1367,7 +1391,8 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
     handler = simulate_post("/generate-prd", {"project_key": "BAD"})
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "error" in payload
+    assert payload["code"] == "invalid_request"
+    assert payload["request_id"]
 
     # 5. Test POST /generate-rfc routes through generate_rfc and returns payload
     monkeypatch.setattr(
@@ -1388,7 +1413,8 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
     handler = simulate_post("/generate-rfc", {"project_key": "BAD"})
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "error" in payload
+    assert payload["code"] == "invalid_request"
+    assert payload["request_id"]
 
     monkeypatch.setattr(
         "goodteam_os.web.refine_artifact",
@@ -1507,7 +1533,9 @@ def test_api_post_same_origin_guard_rejects_cross_origin_and_allows_trusted_requ
         headers={"Host": "127.0.0.1:8788", "Origin": "http://evil.test"},
     )
     assert 403 in cross_origin.responses
-    assert json.loads(cross_origin.wfile.getvalue().decode("utf-8"))["error"]
+    cross_origin_payload = json.loads(cross_origin.wfile.getvalue().decode("utf-8"))
+    assert cross_origin_payload["code"] == "same_origin_required"
+    assert cross_origin_payload["request_id"]
 
     same_origin = simulate_post(
         "/api/generate-prd",
@@ -1578,13 +1606,6 @@ def test_api_approve_forwards_rejected_note(tmp_path, monkeypatch):
     assert 200 in handler_ok.responses
     assert captured["note"] == "Safety validation failed."
 
-
-def test_dashboard_rejected_decision_submits_note() -> None:
-    app_source = (Path(__file__).parents[1] / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
-    handler_source = app_source.split("const handleApproveDecision", 1)[1].split("const handleGeneratePrd", 1)[0]
-
-    assert "decision === 'changes_requested' || decision === 'rejected'" in handler_source
-    assert "body.note = note" in handler_source
 
 
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
@@ -1844,7 +1865,9 @@ def test_api_dispatch_track_rejects_cross_origin_before_dispatch(tmp_path, monke
     )
 
     assert 403 in response.responses
-    assert json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "same_origin_required"
+    assert payload["request_id"]
 
 
 def test_api_dispatch_track_legacy_path_rejects_cross_origin_before_dispatch(tmp_path, monkeypatch):
@@ -1866,7 +1889,9 @@ def test_api_dispatch_track_legacy_path_rejects_cross_origin_before_dispatch(tmp
     )
 
     assert 403 in response.responses
-    assert json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "same_origin_required"
+    assert payload["request_id"]
 
 
 def test_api_dispatch_track_rejects_bad_input(tmp_path, monkeypatch):
@@ -1879,7 +1904,9 @@ def test_api_dispatch_track_rejects_bad_input(tmp_path, monkeypatch):
     )
 
     assert 400 in response.responses
-    assert "name" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "invalid_request"
+    assert "name" in payload["message"]
 
 
 def test_api_dispatch_track_rejects_unsafe_target(tmp_path, monkeypatch):
@@ -1902,7 +1929,9 @@ def test_api_dispatch_track_rejects_unsafe_target(tmp_path, monkeypatch):
     )
 
     assert 400 in response.responses
-    assert "configured project repo" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "invalid_request"
+    assert "configured project repo" in payload["message"]
     assert not worktree.exists()
 
 
@@ -1926,7 +1955,9 @@ def test_api_dispatch_track_rejects_unsafe_target_without_creating_worktree(tmp_
     )
 
     assert 400 in response.responses
-    assert "configured project repo" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "invalid_request"
+    assert "configured project repo" in payload["message"]
     assert not worktree.exists()
 
 
@@ -1973,7 +2004,9 @@ def test_api_dispatch_track_safety_uses_served_workspace_projects_dir(tmp_path, 
     )
 
     assert 400 in response.responses
-    assert "configured project repo" in json.loads(response.wfile.getvalue().decode("utf-8"))["error"]
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "invalid_request"
+    assert "configured project repo" in payload["message"]
 
 
 def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatch):
@@ -2268,7 +2301,8 @@ workers:
 
     assert 400 in invalid.responses
     invalid_payload = json.loads(invalid.wfile.getvalue().decode("utf-8"))
-    assert "error" in invalid_payload
+    assert invalid_payload["code"] == "invalid_request"
+    assert invalid_payload["request_id"]
 
 
 def test_api_project_config_still_creates_local_project_config(tmp_path, monkeypatch):
@@ -2862,7 +2896,9 @@ def test_api_memory_event_returns_404_for_unknown_id(tmp_path, monkeypatch):
 
     assert 404 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "error" in payload
+    assert payload["code"] == "memory_event_not_found"
+    assert payload["details"] == {"event_id": "mem:missing"}
+    assert payload["request_id"]
 
 
 def test_api_memory_event_returns_400_for_missing_id(tmp_path, monkeypatch):
@@ -2877,7 +2913,8 @@ def test_api_memory_event_returns_400_for_missing_id(tmp_path, monkeypatch):
 
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "error" in payload
+    assert payload["code"] == "invalid_request"
+    assert payload["request_id"]
 
 
 def test_api_memory_returns_400_for_bad_project(tmp_path, monkeypatch):
@@ -2885,4 +2922,5 @@ def test_api_memory_returns_400_for_bad_project(tmp_path, monkeypatch):
 
     assert 400 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert "error" in payload
+    assert payload["code"] == "invalid_request"
+    assert payload["request_id"]
