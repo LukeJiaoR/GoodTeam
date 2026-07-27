@@ -15,6 +15,7 @@ projects/*.local.yaml
 .antigravitycli/
 .claude/
 .superpowers/
+.worktrees/
 dev-workspace/
 demo-workspace/
 
