@@ -50,6 +50,7 @@ def test_mixed_changes_take_highest_tier_and_union_stack_impact():
         ("frontend/src/App.jsx", 4, "focused", "full", True),
         ("frontend/src/index.css", 4, "focused", "full", True),
         ("src/goodteam_os/pi_rpc.py", 4, "full", "none", True),
+        ("src/goodteam_os/web.py", 4, "full", "none", True),
         (".github/workflows/ci.yml", 3, "full", "full", False),
         ("frontend/package-lock.json", 3, "none", "full", False),
         ("unowned/new-system.conf", 3, "full", "full", False),
@@ -226,3 +227,14 @@ def test_cli_full_mode_writes_outputs_and_summary(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["backend"] == "full"
     assert "backend=full" in output.read_text(encoding="utf-8")
     assert "manual full verification" in summary.read_text(encoding="utf-8")
+
+
+def test_cli_git_diff_failure_fails_closed(tmp_path, monkeypatch, capfd):
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["--base", "missing-base", "--head", "missing-head"])
+
+    assert exit_code == 0
+    payload = json.loads(capfd.readouterr().out)
+    assert (payload["tier"], payload["backend"], payload["frontend"]) == (3, "full", "full")
+    assert "git diff failed; fail closed" in payload["reasons"][0]

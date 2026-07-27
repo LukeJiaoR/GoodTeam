@@ -59,7 +59,6 @@ _TIER3_BACKEND_FILES = {
     "src/goodteam_os/staging.py",
     "src/goodteam_os/state.py",
     "src/goodteam_os/supervisor.py",
-    "src/goodteam_os/web.py",
     "src/goodteam_os/workers.py",
     "src/goodteam_os/workflow_table.py",
 }
@@ -74,6 +73,7 @@ _TIER4_BACKEND_FILES = {
     "src/goodteam_os/smoke.py",
     "src/goodteam_os/telegram.py",
     "src/goodteam_os/telegram_runtime_controls.py",
+    "src/goodteam_os/web.py",
 }
 
 _TIER3_TEST_PREFIXES = (
@@ -310,6 +310,7 @@ def changes_between(base: str, head: str) -> tuple[Change, ...]:
         ["git", "diff", "--name-status", "-z", f"{base}...{head}"],
         check=True,
         stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     return parse_name_status(result.stdout)
 
@@ -371,7 +372,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         if not args.head:
             parser.error("--head is required with --base")
-        plan = classify_changes(changes_between(args.base, args.head))
+        try:
+            plan = classify_changes(changes_between(args.base, args.head))
+        except (OSError, subprocess.CalledProcessError, UnicodeError, ValueError) as error:
+            plan = Plan(
+                3,
+                "full",
+                "full",
+                reasons=(f"git diff failed; fail closed ({type(error).__name__})",),
+            )
 
     print(json.dumps(plan.as_dict(), sort_keys=True))
     if args.github_output:
