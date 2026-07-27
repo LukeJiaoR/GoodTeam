@@ -1,15 +1,52 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.plan.outputs.tier }}
+      backend: ${{ steps.plan.outputs.backend }}
+      frontend: ${{ steps.plan.outputs.frontend }}
+      backend_test_targets: ${{ steps.plan.outputs.backend_test_targets }}
+      frontend_test_targets: ${{ steps.plan.outputs.frontend_test_targets }}
+      live_smoke_evidence_required: ${{ steps.plan.outputs.live_smoke_evidence_required }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: plan
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            python3 scripts/ci/classify_changes.py \
+              --full \
+              --github-output "$GITHUB_OUTPUT" \
+              --summary "$GITHUB_STEP_SUMMARY"
+          else
+            git diff --check \
+              "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+            python3 scripts/ci/classify_changes.py \
+              --base "${{ github.event.pull_request.base.sha }}" \
+              --head "${{ github.event.pull_request.head.sha }}" \
+              --github-output "$GITHUB_OUTPUT" \
+              --summary "$GITHUB_STEP_SUMMARY"
+          fi
+
   backend:
+    needs: classify
+    if: needs.classify.outputs.backend != 'none'
     runs-on: ubuntu-latest
 
     steps:
@@ -18,14 +55,32 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
 
       - run: pip install -e ".[dev]"
 
-      - run: PYTHONPATH=src python -m pytest tests -q
+      - name: Run focused backend tests
+        if: needs.classify.outputs.backend == 'focused'
+        env:
+          TEST_TARGETS: ${{ needs.classify.outputs.backend_test_targets }}
+        shell: bash
+        run: |
+          if [[ -z "$TEST_TARGETS" ]]; then
+            echo "Focused backend verification requires at least one fixed test target." >&2
+            exit 1
+          fi
+          read -r -a targets <<< "$TEST_TARGETS"
+          PYTHONPATH=src python -m pytest "${targets[@]}" -q
 
-      - run: ruff check src/goodteam_os/ tests/
+      - name: Run full backend tests
+        if: needs.classify.outputs.backend == 'full'
+        run: PYTHONPATH=src python -m pytest tests -q
+
+      - run: ruff check src/goodteam_os/ tests/ scripts/ci/
 
   frontend:
+    needs: classify
+    if: needs.classify.outputs.frontend != 'none'
     runs-on: ubuntu-latest
 
     defaults:
@@ -46,3 +101,60 @@ jobs:
       - run: npm run build
 
       - run: npm run lint
+
+  gate:
+    name: CI / gate
+    needs: [classify, backend, frontend]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      CLASSIFY_RESULT: ${{ needs.classify.result }}
+      BACKEND_MODE: ${{ needs.classify.outputs.backend }}
+      BACKEND_RESULT: ${{ needs.backend.result }}
+      FRONTEND_MODE: ${{ needs.classify.outputs.frontend }}
+      FRONTEND_RESULT: ${{ needs.frontend.result }}
+      TIER: ${{ needs.classify.outputs.tier }}
+      LIVE_SMOKE_REQUIRED: ${{ needs.classify.outputs.live_smoke_evidence_required }}
+
+    steps:
+      - name: Validate planned jobs
+        shell: bash
+        run: |
+          if [[ "$CLASSIFY_RESULT" != "success" ]]; then
+            echo "Change classification did not succeed: $CLASSIFY_RESULT" >&2
+            exit 1
+          fi
+
+          if [[ "$BACKEND_MODE" == "none" && "$BACKEND_RESULT" == "skipped" ]]; then
+            echo "Backend was intentionally skipped."
+          elif [[ "$BACKEND_MODE" != "none" && "$BACKEND_RESULT" == "success" ]]; then
+            echo "Backend $BACKEND_MODE verification succeeded."
+          else
+            echo "Backend result $BACKEND_RESULT does not match plan $BACKEND_MODE." >&2
+            exit 1
+          fi
+
+          if [[ "$FRONTEND_MODE" == "none" && "$FRONTEND_RESULT" == "skipped" ]]; then
+            echo "Frontend was intentionally skipped."
+          elif [[ "$FRONTEND_MODE" != "none" && "$FRONTEND_RESULT" == "success" ]]; then
+            echo "Frontend $FRONTEND_MODE verification succeeded."
+          else
+            echo "Frontend result $FRONTEND_RESULT does not match plan $FRONTEND_MODE." >&2
+            exit 1
+          fi
+
+      - name: Summarize gate
+        shell: bash
+        run: |
+          {
+            echo "## CI gate"
+            echo
+            echo "- Tier: **$TIER**"
+            echo "- Backend: \`$BACKEND_MODE\` ($BACKEND_RESULT)"
+            echo "- Frontend: \`$FRONTEND_MODE\` ($FRONTEND_RESULT)"
+            echo "- Live smoke evidence required: \`$LIVE_SMOKE_REQUIRED\`"
+            if [[ "$LIVE_SMOKE_REQUIRED" == "true" ]]; then
+              echo
+              echo "> Reviewer action: verify isolated live smoke evidence in the pull request."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
