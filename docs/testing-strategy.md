@@ -226,14 +226,35 @@ Reviewer feedback should cite the matrix rather than inventing ad hoc rules.
 
 ## CI Policy
 
-Keep GitHub Actions simple for now:
+Pull request CI derives a minimum Tier 0-4 risk classification from changed
+files. Authors cannot lower the tier with PR text, checkboxes, or labels. The
+classifier also computes backend and frontend impact separately, so a high-risk
+backend-only change does not run unrelated frontend checks.
 
-- Backend CI: full `pytest tests -q` and `ruff`.
-- Frontend CI: `npm run build` and `npm run lint`.
+The automated contract is:
 
-Do not introduce a complex CI matrix until there is evidence that full CI is too
-slow or flaky for normal PR flow. The immediate improvement is a standardized PR
-verification policy, not weaker CI.
+- Tier 0 documentation runs repository hygiene only.
+- Tier 1 bounded helpers and tests run fixed focused targets.
+- Tier 2 ordinary application contracts run maintained contract test groups.
+- Tier 3 control-plane, security, dependency, build, and CI-authority changes run
+  the applicable full backend and/or frontend checks.
+- Tier 4 live and browser-visible changes run the applicable Tier 3 automation
+  and require isolated live smoke evidence in the PR. GitHub-hosted runners do
+  not start a live GoodTeam environment.
+
+Unknown paths, empty diffs, unsafe test target names, and ambiguous ownership
+fail closed to Tier 3 full backend and frontend verification. Changes to the
+classifier or workflow also run both full stacks.
+
+`CI / gate` is the stable required status check. It succeeds only when
+classification passes, every planned job succeeds, and every skipped stack was
+explicitly classified as unaffected. A manual `workflow_dispatch` bypasses
+changed-file selection and always runs full backend and frontend verification.
+
+The workflow runs before merge on pull requests and does not rerun after merge
+to `main`. This is safe only while the repository ruleset requires pull requests
+for `main` and requires `CI / gate`; the workflow and required check must exist
+on the default branch before that ruleset is enabled.
 
 ## Cleanup Guidance
 

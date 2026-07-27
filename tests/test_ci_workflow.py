@@ -1,7 +1,9 @@
 from pathlib import Path
+import re
 
 
 WORKFLOW = Path(".github/workflows/ci.yml")
+TESTING_STRATEGY = Path("docs/testing-strategy.md")
 
 
 def _workflow_text() -> str:
@@ -56,3 +58,13 @@ def test_ci_has_stable_aggregation_gate_that_validates_skips():
     assert "FRONTEND_RESULT: ${{ needs.frontend.result }}" in workflow
     assert '[[ "$BACKEND_MODE" == "none" && "$BACKEND_RESULT" == "skipped" ]]' in workflow
     assert '[[ "$FRONTEND_MODE" == "none" && "$FRONTEND_RESULT" == "skipped" ]]' in workflow
+
+
+def test_testing_strategy_documents_risk_tiered_ci_gate():
+    policy = TESTING_STRATEGY.read_text(encoding="utf-8")
+
+    assert "`CI / gate`" in policy
+    assert "`workflow_dispatch`" in policy
+    assert "fail closed" in policy
+    assert re.search(r"does not rerun after merge\s+to `main`", policy)
+    assert re.search(r"requires pull requests\s+for `main`", policy)
