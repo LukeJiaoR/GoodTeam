@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -12,6 +14,7 @@ from goodteam_os.repository_snapshot import (
     SnapshotLimits,
     capture_repository_snapshot,
     compute_repository_snapshot_id,
+    snapshot_identity_payload,
     verify_repository_snapshot,
 )
 
@@ -239,6 +242,104 @@ def test_non_git_snapshot_is_deterministic(tmp_path: Path) -> None:
     assert first.snapshot_id == second.snapshot_id
     assert first.source_control["kind"] == "none"
     assert first.content_scope["eligible_files"] == 1
+
+
+def test_snapshot_identity_payload_includes_non_git_path_manifest_without_raw_contents(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    readme = root / "README.md"
+    readme.write_text("hello\n", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    payload = snapshot_identity_payload(snapshot)
+    manifest = payload["path_manifest"]
+
+    assert manifest["complete"] is True
+    assert manifest["entries"] == [
+        {
+            "path": "README.md",
+            "kind": "file",
+            "identity_kind": "worktree",
+            "size": 6,
+            "content_hash": "sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+            "metadata": {
+                "mode": readme.stat().st_mode,
+                "mtime_ns": readme.stat().st_mtime_ns,
+                "size": 6,
+            },
+        }
+    ]
+    assert "text" not in json.dumps(manifest, sort_keys=True)
+    assert "hello" not in json.dumps(manifest, sort_keys=True)
+
+
+def test_snapshot_identity_payload_includes_clean_git_index_entry_manifest(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    payload = snapshot_identity_payload(snapshot)
+    manifest = payload["path_manifest"]
+    head_blob = git(root, "rev-parse", "HEAD:README.md")
+
+    assert manifest["entries"] == [
+        {
+            "path": "README.md",
+            "kind": "file",
+            "identity_kind": "git_index",
+            "git": {
+                "mode": "100644",
+                "object_id": head_blob,
+                "stage": 0,
+            },
+        }
+    ]
+
+
+def test_snapshot_identity_payload_includes_dirty_git_content_manifest(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    tracked = root / "README.md"
+    tracked.write_text("dirty\n", encoding="utf-8")
+    extra = root / "extra.txt"
+    extra.write_text("extra\n", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    payload = snapshot_identity_payload(snapshot)
+    manifest = payload["path_manifest"]
+    entries = {entry["path"]: entry for entry in manifest["entries"]}
+    dirty_hash = "sha256:" + hashlib.sha256(b"dirty\n").hexdigest()
+    extra_hash = "sha256:" + hashlib.sha256(b"extra\n").hexdigest()
+
+    assert entries["README.md"]["identity_kind"] == "worktree"
+    assert entries["README.md"]["content_hash"] == dirty_hash
+    assert entries["extra.txt"]["identity_kind"] == "untracked"
+    assert entries["extra.txt"]["content_hash"] == extra_hash
+
+
+def test_snapshot_identity_payload_path_manifest_is_bounded_and_deterministic(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for index in range(3):
+        (root / f"file-{index}.txt").write_text(f"{index}\n", encoding="utf-8")
+    limits = SnapshotLimits(max_files=2, max_total_bytes=100, max_file_bytes=100)
+
+    first = snapshot_identity_payload(
+        capture_repository_snapshot(root, project_key="DEMO", limits=limits)
+    )["path_manifest"]
+    second = snapshot_identity_payload(
+        capture_repository_snapshot(root, project_key="DEMO", limits=limits)
+    )["path_manifest"]
+
+    assert first == second
+    assert first["complete"] is False
+    assert first["omitted_paths"] == ["file-2.txt"]
 
 
 def test_snapshot_records_generated_binary_and_symlink_exclusions(

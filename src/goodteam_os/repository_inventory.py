@@ -8,11 +8,13 @@ from pathlib import Path, PurePosixPath
 from goodteam_os.repository_access import (
     DEFAULT_IGNORED_DIRECTORIES,
     AnchoredRepository,
-    RepositoryAccessError,
     RepositoryEntry,
 )
 from goodteam_os.repository_snapshot import (
     RepositorySnapshot,
+    compile_snapshot_path_manifest,
+    validate_snapshot_path_entry,
+    validate_snapshot_text_content,
     verify_repository_snapshot,
 )
 
@@ -73,6 +75,7 @@ def build_repository_inventory(
     ) as repository:
         inventory = _scan_repository(
             repository,
+            snapshot=snapshot,
             max_entries=max_entries,
             max_depth=max_depth,
             max_read_bytes=max_read_bytes,
@@ -97,6 +100,7 @@ def compute_repository_inventory_digest(inventory: dict[str, object]) -> str:
 def _scan_repository(
     repository: AnchoredRepository,
     *,
+    snapshot: RepositorySnapshot,
     max_entries: int,
     max_depth: int,
     max_read_bytes: int,
@@ -110,23 +114,35 @@ def _scan_repository(
     entrypoints: list[str] = []
     extension_counts: dict[str, int] = {}
     entry_count = 0
-    truncated = False
+    path_manifest = compile_snapshot_path_manifest(snapshot)
+    truncated_by_entries = False
+    truncated_by_depth = False
 
     def visit(prefix: str, depth: int) -> None:
-        nonlocal entry_count, truncated
-        if entry_count >= max_entries or depth > max_depth:
-            truncated = True
+        nonlocal entry_count, truncated_by_depth, truncated_by_entries
+        if entry_count >= max_entries:
+            truncated_by_entries = True
+            return
+        if depth > max_depth:
+            truncated_by_depth = True
             return
         remaining = max_entries - entry_count
         listed = repository.list_directory(prefix, max_entries=remaining + 1)
         if len(listed) > remaining:
-            truncated = True
+            truncated_by_entries = True
             listed = listed[:remaining]
         for entry in listed:
             if entry_count >= max_entries:
-                truncated = True
+                truncated_by_entries = True
                 return
+            state = validate_snapshot_path_entry(path_manifest, entry)
             entry_count += 1
+            if state is None:
+                continue
+            if state.get("snapshot_state") != "represented":
+                if entry.kind == "symlink" or state.get("reason") == "symlink":
+                    symlinks.append(entry.path)
+                continue
             name = PurePosixPath(entry.path).name
             if entry.kind == "symlink":
                 symlinks.append(entry.path)
@@ -151,6 +167,8 @@ def _scan_repository(
                 documents.append(entry.path)
                 content = _read_inventory_text(
                     repository,
+                    snapshot,
+                    path_manifest,
                     entry,
                     max_read_bytes=max_read_bytes,
                 )
@@ -159,6 +177,8 @@ def _scan_repository(
             if name in MANIFEST_TECH or name in {"Makefile", "justfile"}:
                 content = _read_inventory_text(
                     repository,
+                    snapshot,
+                    path_manifest,
                     entry,
                     max_read_bytes=max_read_bytes,
                 )
@@ -188,9 +208,18 @@ def _scan_repository(
         risks.append(
             f"Skipped {len(symlinks)} symbolic link(s) during the read-only scan."
         )
-    if truncated:
+    truncation_reasons: list[str] = []
+    if truncated_by_entries:
+        truncation_reasons.append("max_entries")
+    if truncated_by_depth:
+        truncation_reasons.append("max_depth")
+    if truncated_by_entries:
         risks.append(
             "Repository scan reached the bounded entry limit; deeper indexing is recommended."
+        )
+    if truncated_by_depth:
+        risks.append(
+            "Repository scan reached the bounded depth limit; deeper indexing is recommended."
         )
     if not commands:
         risks.append(
@@ -217,6 +246,8 @@ def _scan_repository(
             "symlinks_skipped": symlinks[:80],
             "max_depth": max_depth,
             "max_entries": max_entries,
+            "truncated": bool(truncation_reasons),
+            "truncation_reasons": truncation_reasons,
             "read_only": True,
         },
     }
@@ -224,18 +255,23 @@ def _scan_repository(
 
 def _read_inventory_text(
     repository: AnchoredRepository,
+    snapshot: RepositorySnapshot,
+    path_manifest: dict[str, dict[str, dict[str, object]]],
     entry: RepositoryEntry,
     *,
     max_read_bytes: int,
 ) -> str | None:
     if entry.size > max_read_bytes:
         return None
-    try:
-        result = repository.read_text(entry.path, max_bytes=max_read_bytes)
-    except RepositoryAccessError as exc:
-        if exc.code in {"repository_binary_file", "repository_non_text_file"}:
-            return None
-        raise
+    result = validate_snapshot_text_content(
+        repository,
+        path_manifest,
+        snapshot.source_control,
+        entry,
+        max_bytes=max_read_bytes,
+    )
+    if result is None:
+        return None
     return None if result.truncated else result.text
 
 

@@ -16,6 +16,7 @@ from goodteam_os.repository_access import (
     AnchoredRepository,
     RepositoryAccessError,
     RepositoryEntry,
+    RepositoryText,
     canonical_relative_path,
 )
 
@@ -61,6 +62,7 @@ class RepositorySnapshot:
     root_identity: dict[str, int]
     source_control: dict[str, object]
     content_scope: dict[str, object]
+    path_manifest: dict[str, object]
     captured_at: str
 
     def as_dict(self) -> dict[str, object]:
@@ -109,6 +111,7 @@ def capture_repository_snapshot(
         root_identity=dict(second["root_identity"]),
         source_control=dict(second["source_control"]),
         content_scope=dict(second["content_scope"]),
+        path_manifest=dict(second["path_manifest"]),
         captured_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     )
 
@@ -151,6 +154,146 @@ def compute_repository_snapshot_id(
     return f"snap_{hashlib.sha256(_canonical_json(value)).hexdigest()}"
 
 
+def compile_snapshot_path_manifest(
+    snapshot: RepositorySnapshot,
+) -> dict[str, dict[str, dict[str, object]]]:
+    manifest = snapshot.path_manifest
+    return {
+        "entries": {
+            str(item["path"]): dict(item)
+            for item in manifest.get("entries", [])
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+        },
+        "excluded": {
+            str(item["path"]): dict(item)
+            for item in manifest.get("excluded", [])
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+        },
+        "omitted": {
+            str(item["path"]): dict(item)
+            for item in manifest.get("omitted", [])
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+        },
+    }
+
+
+def validate_snapshot_path_entry(
+    snapshot_manifest: dict[str, dict[str, dict[str, object]]],
+    entry: RepositoryEntry,
+) -> dict[str, object] | None:
+    represented = snapshot_manifest["entries"].get(entry.path)
+    if represented is not None:
+        result = dict(represented)
+        result["snapshot_state"] = "represented"
+        if str(represented.get("kind")) != entry.kind:
+            raise RepositorySnapshotError(
+                "repository_snapshot_changed",
+                "Repository content no longer matches the captured snapshot.",
+                details={"path": entry.path},
+            )
+        metadata = represented.get("metadata")
+        if isinstance(metadata, dict):
+            expected_size = metadata.get("size")
+            expected_mtime_ns = metadata.get("mtime_ns")
+            if (
+                isinstance(expected_size, int)
+                and entry.kind == "file"
+                and expected_size != entry.size
+            ) or (
+                isinstance(expected_mtime_ns, int)
+                and expected_mtime_ns != entry.mtime_ns
+            ):
+                raise RepositorySnapshotError(
+                    "repository_snapshot_changed",
+                    "Repository content no longer matches the captured snapshot.",
+                    details={"path": entry.path},
+                )
+        return result
+    excluded = snapshot_manifest["excluded"].get(entry.path)
+    if excluded is not None:
+        result = dict(excluded)
+        result["snapshot_state"] = "excluded"
+        return result
+    omitted = snapshot_manifest["omitted"].get(entry.path)
+    if omitted is not None:
+        result = dict(omitted)
+        result["snapshot_state"] = "omitted"
+        return result
+    raise RepositorySnapshotError(
+        "repository_snapshot_changed",
+        "Repository content no longer matches the captured snapshot.",
+        details={"path": entry.path},
+    )
+
+
+def validate_snapshot_text_content(
+    repository: AnchoredRepository,
+    snapshot_manifest: dict[str, dict[str, dict[str, object]]],
+    source_control: dict[str, object],
+    entry: RepositoryEntry,
+    *,
+    max_bytes: int,
+) -> RepositoryText | None:
+    state = validate_snapshot_path_entry(snapshot_manifest, entry)
+    if state is None or state.get("snapshot_state") != "represented":
+        return None
+    if entry.kind != "file":
+        raise RepositorySnapshotError(
+            "repository_snapshot_changed",
+            "Repository content no longer matches the captured snapshot.",
+            details={"path": entry.path},
+        )
+    try:
+        result = repository.read_text(entry.path, max_bytes=max_bytes)
+    except RepositoryAccessError as exc:
+        if exc.code in {"repository_binary_file", "repository_non_text_file"}:
+            if state.get("identity_kind") in {"worktree", "untracked"}:
+                raise RepositorySnapshotError(
+                    "repository_snapshot_changed",
+                    "Repository content no longer matches the captured snapshot.",
+                    details={"path": entry.path},
+                ) from exc
+            return None
+        raise
+    if result.truncated:
+        raise RepositorySnapshotError(
+            "repository_snapshot_changed",
+            "Repository content no longer matches the captured snapshot.",
+            details={"path": entry.path},
+        )
+    identity_kind = str(state.get("identity_kind"))
+    if identity_kind in {"worktree", "untracked"}:
+        if result.content_hash != state.get("content_hash"):
+            raise RepositorySnapshotError(
+                "repository_snapshot_changed",
+                "Repository content no longer matches the captured snapshot.",
+                details={"path": entry.path},
+            )
+    elif identity_kind == "git_index":
+        git_identity = state.get("git")
+        if not isinstance(git_identity, dict):
+            raise RepositorySnapshotError(
+                "repository_snapshot_changed",
+                "Repository content no longer matches the captured snapshot.",
+                details={"path": entry.path},
+            )
+        expected_oid = git_identity.get("object_id")
+        object_format = str(source_control.get("object_format") or "sha1")
+        if _git_object_oid(result.text.encode("utf-8"), object_format) != expected_oid:
+            raise RepositorySnapshotError(
+                "repository_snapshot_changed",
+                "Repository content no longer matches the captured snapshot.",
+                details={"path": entry.path},
+            )
+    else:
+        raise RepositorySnapshotError(
+            "repository_snapshot_changed",
+            "Repository content no longer matches the captured snapshot.",
+            details={"path": entry.path},
+        )
+    return result
+
+
 def _capture_once(
     root: Path,
     *,
@@ -160,19 +303,20 @@ def _capture_once(
 ) -> dict[str, object]:
     identity = _expected_root_identity(root, expected_identity)
     with AnchoredRepository(root, expected_identity=identity) as repository:
-        source_control, content_scope = _capture_git(repository, limits)
+        source_control, content_scope, path_manifest = _capture_git(repository, limits)
         if source_control is None:
             source_control = {
                 "kind": "none",
                 "head_sha": None,
                 "branch": None,
                 "dirty": False,
+                "object_format": None,
                 "index_digest": None,
                 "worktree_digest": None,
                 "untracked_digest": None,
                 "submodule_digest": None,
             }
-            content_scope = _capture_non_git(repository, limits)
+            content_scope, path_manifest = _capture_non_git(repository, limits)
         repository.verify_root()
     return {
         "project_key": project_key,
@@ -180,18 +324,19 @@ def _capture_once(
         "root_identity": identity,
         "source_control": source_control,
         "content_scope": content_scope,
+        "path_manifest": path_manifest,
     }
 
 
 def _capture_git(
     repository: AnchoredRepository,
     limits: SnapshotLimits,
-) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+) -> tuple[dict[str, object] | None, dict[str, object] | None, dict[str, object] | None]:
     repository.verify_root()
     probe = _run_git(repository.root, ["rev-parse", "--is-inside-work-tree"])
     if probe.returncode != 0:
         if b"not a git repository" in probe.stderr.lower():
-            return None, None
+            return None, None, None
         raise _git_failed(probe)
     if probe.stdout.strip() != b"true":
         raise RepositorySnapshotError(
@@ -222,6 +367,9 @@ def _capture_git(
         os.fsdecode(branch_result.stdout.strip())
         if branch_result.returncode == 0
         else None
+    )
+    object_format = os.fsdecode(
+        _require_git(repository.root, ["rev-parse", "--show-object-format"]).strip()
     )
     status = _require_git(
         repository.root,
@@ -309,6 +457,7 @@ def _capture_git(
             str(item["path"]) not in content_scope_state["excluded_paths"]
             for item in eligible_status
         ),
+        "object_format": object_format,
         "status_digest": _digest_json(canonical_status),
         "index_digest": _digest_json(canonical_index),
         "worktree_digest": _digest_json(worktree_records),
@@ -331,17 +480,29 @@ def _capture_git(
             }
         ),
     }
+    path_manifest = _git_path_manifest(
+        included_paths=included_paths,
+        omitted_paths=omitted_paths,
+        index_records=all_index_records,
+        policy_exclusions=policy_exclusions,
+        worktree_records=worktree_records,
+        untracked_records=untracked_records,
+        content_scope_state=content_scope_state,
+    )
     repository.verify_root()
-    return source_control, content_scope
+    return source_control, content_scope, path_manifest
 
 
 def _capture_non_git(
     repository: AnchoredRepository,
     limits: SnapshotLimits,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], dict[str, object]]:
     pending = [""]
     eligible_seen = 0
     records: list[dict[str, object]] = []
+    manifest_entries: list[dict[str, object]] = []
+    excluded_entries: list[dict[str, object]] = []
+    omitted_entries: list[dict[str, object]] = []
     exclusion_reasons: dict[str, int] = {}
     excluded_files = 0
     omitted_files = 0
@@ -355,43 +516,78 @@ def _capture_non_git(
                 if PurePosixPath(entry.path).name in DEFAULT_IGNORED_DIRECTORIES:
                     excluded_files += 1
                     _increment(exclusion_reasons, "ignored_directory")
+                    excluded_entries.append(
+                        {"path": entry.path, "kind": "directory", "reason": "ignored_directory"}
+                    )
                 else:
+                    manifest_entries.append({"path": entry.path, "kind": "directory"})
                     pending.append(entry.path)
                 continue
             if entry.kind == "symlink":
                 excluded_files += 1
                 _increment(exclusion_reasons, "symlink")
+                excluded_entries.append(
+                    {"path": entry.path, "kind": "symlink", "reason": "symlink"}
+                )
                 continue
             if entry.kind != "file":
                 excluded_files += 1
                 _increment(exclusion_reasons, "non_regular")
+                excluded_entries.append(
+                    {"path": entry.path, "kind": entry.kind, "reason": "non_regular"}
+                )
                 continue
             if eligible_seen >= limits.max_files:
                 complete = False
                 omitted_files += 1
                 _increment(exclusion_reasons, "max_files")
+                omitted_entries.append(
+                    {"path": entry.path, "kind": "file", "reason": "max_files"}
+                )
                 continue
             if entry.size > limits.max_file_bytes:
                 eligible_seen += 1
                 complete = False
                 omitted_files += 1
                 _increment(exclusion_reasons, "max_file_bytes")
+                omitted_entries.append(
+                    {"path": entry.path, "kind": "file", "reason": "max_file_bytes"}
+                )
                 continue
             if total_bytes + entry.size > limits.max_total_bytes:
                 eligible_seen += 1
                 complete = False
                 omitted_files += 1
                 _increment(exclusion_reasons, "max_total_bytes")
+                omitted_entries.append(
+                    {"path": entry.path, "kind": "file", "reason": "max_total_bytes"}
+                )
                 continue
             record = _hash_entry(repository, entry)
             total_bytes += entry.size
             if record is None:
                 excluded_files += 1
                 _increment(exclusion_reasons, "binary")
+                excluded_entries.append(
+                    {"path": entry.path, "kind": "file", "reason": "binary"}
+                )
                 continue
             eligible_seen += 1
             records.append(record)
+            manifest_entries.append(
+                {
+                    "path": entry.path,
+                    "kind": "file",
+                    "identity_kind": "worktree",
+                    "size": int(record["size"]),
+                    "content_hash": str(record["content_hash"]),
+                    "metadata": _manifest_file_metadata(record["metadata"]),
+                }
+            )
     records.sort(key=lambda item: str(item["path"]))
+    manifest_entries.sort(key=_canonical_json)
+    excluded_entries.sort(key=_canonical_json)
+    omitted_entries.sort(key=_canonical_json)
     return {
         "complete": complete,
         "eligible_files": len(records),
@@ -399,6 +595,12 @@ def _capture_non_git(
         "omitted_files": omitted_files,
         "exclusion_reasons": dict(sorted(exclusion_reasons.items())),
         "content_digest": _digest_json(records),
+    }, {
+        "complete": complete,
+        "entries": manifest_entries,
+        "excluded": excluded_entries,
+        "omitted": omitted_entries,
+        "omitted_paths": [str(item["path"]) for item in omitted_entries],
     }
 
 
@@ -427,6 +629,8 @@ def _hash_git_content_paths(
     exclusions: dict[str, int] = {}
     excluded_paths: set[str] = set()
     omitted_paths: set[str] = set()
+    omitted_path_reasons: dict[str, str] = {}
+    excluded_path_reasons: dict[str, str] = {}
     total_bytes = 0
     for entry in entries:
         path = str(entry["path"])
@@ -443,10 +647,12 @@ def _hash_git_content_paths(
         size = int(metadata["size"])
         if size > limits.max_file_bytes:
             omitted_paths.add(path)
+            omitted_path_reasons[path] = "max_file_bytes"
             _increment(exclusions, "max_file_bytes")
             continue
         if total_bytes + size > limits.max_total_bytes:
             omitted_paths.add(path)
+            omitted_path_reasons[path] = "max_total_bytes"
             _increment(exclusions, "max_total_bytes")
             continue
         try:
@@ -456,10 +662,12 @@ def _hash_git_content_paths(
             if exc.code in {"repository_binary_file", "repository_non_text_file"}:
                 _increment(exclusions, "binary")
                 excluded_paths.add(path)
+                excluded_path_reasons[path] = "binary"
                 continue
             if exc.code == "context_path_rejected":
                 _increment(exclusions, "symlink")
                 excluded_paths.add(path)
+                excluded_path_reasons[path] = "symlink"
                 continue
             raise
         total_bytes += size
@@ -482,7 +690,9 @@ def _hash_git_content_paths(
     return worktree_records, untracked_records, {
         "complete": not omitted_paths,
         "omitted_paths": omitted_paths,
+        "omitted_path_reasons": omitted_path_reasons,
         "excluded_paths": excluded_paths,
+        "excluded_path_reasons": excluded_path_reasons,
         "exclusion_reasons": exclusions,
     }
 
@@ -555,6 +765,142 @@ def _hash_entry(
         "content_hash": value.content_hash,
         "metadata": metadata,
     }
+
+
+def _manifest_file_metadata(metadata: dict[str, object]) -> dict[str, int]:
+    return {
+        "mode": int(metadata["mode"]),
+        "mtime_ns": int(metadata["mtime_ns"]),
+        "size": int(metadata["size"]),
+    }
+
+
+def _git_path_manifest(
+    *,
+    included_paths: list[str],
+    omitted_paths: list[str],
+    index_records: list[dict[str, object]],
+    policy_exclusions: dict[str, str],
+    worktree_records: list[dict[str, object]],
+    untracked_records: list[dict[str, object]],
+    content_scope_state: dict[str, object],
+) -> dict[str, object]:
+    worktree_by_path = {str(item["path"]): item for item in worktree_records}
+    untracked_by_path = {str(item["path"]): item for item in untracked_records}
+    index_by_path: dict[str, list[dict[str, object]]] = {}
+    for item in index_records:
+        if _index_exclusion_reason(item) is not None:
+            continue
+        index_by_path.setdefault(str(item["path"]), []).append(item)
+
+    entries: list[dict[str, object]] = []
+    for path in included_paths:
+        if path in content_scope_state["omitted_paths"] or path in content_scope_state["excluded_paths"]:
+            continue
+        if path in worktree_by_path:
+            record = worktree_by_path[path]
+            entries.append(
+                {
+                    "path": path,
+                    "kind": "file",
+                    "identity_kind": "worktree",
+                    "size": int(record["size"]),
+                    "content_hash": str(record["content_hash"]),
+                    "metadata": _manifest_file_metadata(record["metadata"]),
+                }
+            )
+            continue
+        if path in untracked_by_path:
+            record = untracked_by_path[path]
+            entries.append(
+                {
+                    "path": path,
+                    "kind": "file",
+                    "identity_kind": "untracked",
+                    "size": int(record["size"]),
+                    "content_hash": str(record["content_hash"]),
+                    "metadata": _manifest_file_metadata(record["metadata"]),
+                }
+            )
+            continue
+        candidates = index_by_path.get(path, [])
+        if not candidates:
+            continue
+        if len(candidates) != 1:
+            raise RepositorySnapshotError(
+                "repository_snapshot_failed",
+                "Read-only Git index output was ambiguous for a tracked path.",
+                details={"path": path},
+            )
+        candidate = candidates[0]
+        entries.append(
+            {
+                "path": path,
+                "kind": "file",
+                "identity_kind": "git_index",
+                "git": {
+                    "mode": str(candidate["mode"]),
+                    "object_id": str(candidate["oid"]),
+                    "stage": int(candidate["stage"]),
+                },
+            }
+        )
+
+    excluded: list[dict[str, object]] = [
+        {"path": path, "kind": "file", "reason": reason}
+        for path, reason in sorted(policy_exclusions.items())
+    ]
+    excluded.extend(
+        {
+            "path": path,
+            "kind": "file",
+            "reason": reason,
+        }
+        for path, reason in sorted(content_scope_state["excluded_path_reasons"].items())
+    )
+    omitted: list[dict[str, object]] = [
+        {"path": path, "kind": "file", "reason": "max_files"}
+        for path in sorted(set(omitted_paths) - set(content_scope_state["omitted_paths"]))
+    ]
+    omitted.extend(
+        {
+            "path": path,
+            "kind": "file",
+            "reason": reason,
+        }
+        for path, reason in sorted(content_scope_state["omitted_path_reasons"].items())
+    )
+
+    directory_paths = {
+        str(parent)
+        for group in (entries, excluded, omitted)
+        for item in group
+        for parent in PurePosixPath(str(item["path"])).parents
+        if str(parent) != "."
+    }
+    directory_entries = [{"path": path, "kind": "directory"} for path in sorted(directory_paths)]
+    manifest_entries = directory_entries + sorted(entries, key=_canonical_json)
+    return {
+        "complete": not omitted,
+        "entries": manifest_entries,
+        "excluded": sorted(excluded, key=_canonical_json),
+        "omitted": sorted(omitted, key=_canonical_json),
+        "omitted_paths": [str(item["path"]) for item in sorted(omitted, key=_canonical_json)],
+    }
+
+
+def _git_object_oid(content: bytes, object_format: str) -> str:
+    if object_format not in {"sha1", "sha256"}:
+        raise RepositorySnapshotError(
+            "repository_snapshot_failed",
+            "Read-only Git inspection returned an unsupported object format.",
+            details={"object_format": object_format},
+        )
+    header = f"blob {len(content)}".encode("ascii") + b"\0"
+    digest = hashlib.new(object_format)
+    digest.update(header)
+    digest.update(content)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
