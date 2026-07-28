@@ -653,6 +653,43 @@ def test_excluded_and_omitted_snapshot_entries_are_no_content_sentinels(
     assert read_calls == 0
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected_error"),
+    [
+        (b"binary\x00content", "repository_binary_file"),
+        (b"\xff\xfeinvalid-utf8", "repository_non_text_file"),
+    ],
+)
+def test_git_index_snapshot_text_validation_rejects_non_text_drift(
+    tmp_path: Path,
+    payload: bytes,
+    expected_error: str,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    manifest = compile_snapshot_path_manifest(snapshot)
+    tracked = root / "README.md"
+    tracked.write_bytes(payload)
+
+    with repository_access.AnchoredRepository(
+        root,
+        expected_identity=snapshot.root_identity,
+    ) as repository:
+        entry = next(item for item in repository.list_directory("") if item.path == "README.md")
+        with pytest.raises(RepositorySnapshotError) as captured:
+            validate_snapshot_text_content(
+                repository,
+                manifest,
+                snapshot.source_control,
+                entry,
+                max_bytes=entry.size,
+            )
+
+    assert captured.value.code == "repository_snapshot_changed"
+    assert captured.value.details == {"path": "README.md"}
+    assert expected_error in {"repository_binary_file", "repository_non_text_file"}
+
+
 def test_snapshot_records_generated_binary_and_symlink_exclusions(
     tmp_path: Path,
 ) -> None:

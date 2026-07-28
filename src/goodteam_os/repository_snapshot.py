@@ -434,7 +434,7 @@ def validate_snapshot_text_content(
         result = repository.read_text(entry.path, max_bytes=max_bytes)
     except RepositoryAccessError as exc:
         if exc.code in {"repository_binary_file", "repository_non_text_file"}:
-            if state.get("identity_kind") in {"worktree", "untracked"}:
+            if state.get("identity_kind") in {"worktree", "untracked", "git_index"}:
                 raise RepositorySnapshotError(
                     "repository_snapshot_changed",
                     "Repository content no longer matches the captured snapshot.",
