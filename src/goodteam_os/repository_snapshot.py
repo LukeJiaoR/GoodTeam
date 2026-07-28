@@ -241,71 +241,72 @@ def _capture_git(
             _record_policy_exclusion(policy_exclusions, str(item["path"]), reason)
             continue
         all_eligible_status.append(item)
-    status_omitted = max(0, len(all_eligible_status) - limits.max_files)
-    eligible_status = all_eligible_status[: limits.max_files]
+    eligible_status = list(all_eligible_status)
     all_index_records = _parse_index_records(index)
-    eligible_index_records: list[bytes] = []
+    index_records_by_path: dict[str, bytes] = {}
     for item in all_index_records:
         reason = _index_exclusion_reason(item)
         if reason is not None:
             _record_policy_exclusion(policy_exclusions, str(item["path"]), reason)
             continue
-        eligible_index_records.append(bytes(item["record"]))
-    index_omitted = max(0, len(eligible_index_records) - limits.max_files)
-    index_records = eligible_index_records[: limits.max_files]
-    worktree_paths = sorted(
+        index_records_by_path[str(item["path"])] = bytes(item["record"])
+    status_records_by_path = {
+        str(item["path"]): str(item["record"]) for item in eligible_status
+    }
+    eligible_paths = sorted(
+        set(index_records_by_path) | set(status_records_by_path)
+    )
+    included_paths = eligible_paths[: limits.max_files]
+    omitted_paths = eligible_paths[limits.max_files :]
+    selected_entries = [
         {
-            str(item["path"])
-            for item in eligible_status
-            if item["kind"] == "tracked" and item["worktree_changed"]
+            "path": path,
+            "bucket": _content_bucket_for_path(path, eligible_status),
+            "status_record": status_records_by_path.get(path),
         }
-    )
-    untracked_paths = sorted(
-        {str(item["path"]) for item in eligible_status if item["kind"] == "untracked"}
-    )
-    worktree_records, worktree_scope = _hash_paths(
+        for path in included_paths
+    ]
+    index_records = [
+        index_records_by_path[path] for path in included_paths if path in index_records_by_path
+    ]
+    worktree_records, untracked_records, content_scope_state = _hash_git_content_paths(
         repository,
-        worktree_paths,
+        selected_entries,
         limits=limits,
     )
-    untracked_records, untracked_scope = _hash_paths(
-        repository,
-        untracked_paths,
-        limits=limits,
-    )
+    omitted_paths = sorted(set(omitted_paths) | set(content_scope_state["omitted_paths"]))
     exclusion_reasons = _merge_counts(
         _count_exclusion_reasons(policy_exclusions),
-        worktree_scope["exclusion_reasons"],
-        untracked_scope["exclusion_reasons"],
+        content_scope_state["exclusion_reasons"],
     )
-    ceiling_omitted = status_omitted + index_omitted
-    if ceiling_omitted:
-        exclusion_reasons["max_files"] = (
-            exclusion_reasons.get("max_files", 0) + ceiling_omitted
-        )
-    omitted = (
-        int(worktree_scope["omitted_files"])
-        + int(untracked_scope["omitted_files"])
-        + ceiling_omitted
-    )
-    complete = bool(
-        worktree_scope["complete"]
-        and untracked_scope["complete"]
-        and ceiling_omitted == 0
-    )
-    excluded_status_paths = set(worktree_scope["excluded_paths"]) | set(
-        untracked_scope["excluded_paths"]
-    )
+    if omitted_paths:
+        exclusion_reasons["max_files"] = len(
+            {
+                path
+                for path in eligible_paths[limits.max_files :]
+            }
+        ) + exclusion_reasons.get("max_files", 0)
+    omitted = len(omitted_paths)
+    complete = omitted == 0
+    excluded_status_paths = set(content_scope_state["excluded_paths"]) | set(omitted_paths)
+    represented_paths = [path for path in included_paths if path not in omitted_paths]
     canonical_status = [
-        item["record"]
+        status_records_by_path[path]
         for item in eligible_status
-        if str(item["path"]) not in excluded_status_paths
+        for path in [str(item["path"])]
+        if path in represented_paths and path not in excluded_status_paths
+    ]
+    index_records = [
+        index_records_by_path[path] for path in represented_paths if path in index_records_by_path
     ]
     source_control = {
         "kind": "git",
         "head_sha": head_sha,
         "branch": branch,
-        "dirty": bool(canonical_status),
+        "dirty": any(
+            str(item["path"]) not in content_scope_state["excluded_paths"]
+            for item in eligible_status
+        ),
         "status_digest": _digest_json(canonical_status),
         "index_digest": _digest_bytes(index_records),
         "worktree_digest": _digest_json(worktree_records),
@@ -314,7 +315,7 @@ def _capture_git(
     }
     content_scope = {
         "complete": complete,
-        "eligible_files": len(index_records) + len(worktree_records) + len(untracked_records),
+        "eligible_files": len(represented_paths),
         "excluded_files": sum(exclusion_reasons.values()) - omitted,
         "omitted_files": omitted,
         "exclusion_reasons": dict(sorted(exclusion_reasons.items())),
@@ -401,21 +402,36 @@ def _capture_non_git(
     }
 
 
-def _hash_paths(
+def _content_bucket_for_path(
+    path: str,
+    status_items: list[dict[str, object]],
+) -> str | None:
+    for item in status_items:
+        if str(item["path"]) != path:
+            continue
+        if item["kind"] == "tracked" and item["worktree_changed"]:
+            return "worktree"
+        if item["kind"] == "untracked":
+            return "untracked"
+    return None
+
+
+def _hash_git_content_paths(
     repository: AnchoredRepository,
-    paths: list[str],
+    entries: list[dict[str, object]],
     *,
     limits: SnapshotLimits,
-) -> tuple[list[dict[str, object]], dict[str, object]]:
-    records: list[dict[str, object]] = []
+) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+    worktree_records: list[dict[str, object]] = []
+    untracked_records: list[dict[str, object]] = []
     exclusions: dict[str, int] = {}
     excluded_paths: set[str] = set()
-    omitted = 0
+    omitted_paths: set[str] = set()
     total_bytes = 0
-    for index, path in enumerate(paths):
-        if index >= limits.max_files:
-            omitted += 1
-            _increment(exclusions, "max_files")
+    for entry in entries:
+        path = str(entry["path"])
+        bucket = entry["bucket"]
+        if bucket is None:
             continue
         try:
             value = repository.read_text(path, max_bytes=limits.max_file_bytes)
@@ -434,16 +450,18 @@ def _hash_paths(
             excluded_paths.add(path)
             continue
         if total_bytes + value.size > limits.max_total_bytes:
-            omitted += 1
+            omitted_paths.add(path)
             _increment(exclusions, "max_total_bytes")
             continue
-        records.append(
-            {"path": path, "size": value.size, "content_hash": value.content_hash}
-        )
+        record = {"path": path, "size": value.size, "content_hash": value.content_hash}
+        if bucket == "worktree":
+            worktree_records.append(record)
+        else:
+            untracked_records.append(record)
         total_bytes += value.size
-    return records, {
-        "complete": omitted == 0,
-        "omitted_files": omitted,
+    return worktree_records, untracked_records, {
+        "complete": not omitted_paths,
+        "omitted_paths": omitted_paths,
         "excluded_paths": excluded_paths,
         "exclusion_reasons": exclusions,
     }

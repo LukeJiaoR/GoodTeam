@@ -249,6 +249,84 @@ def test_git_index_ceiling_makes_snapshot_incomplete(tmp_path: Path) -> None:
     assert snapshot.content_scope["exclusion_reasons"]["max_files"] == 1
 
 
+def test_git_total_byte_ceiling_is_aggregate_across_worktree_and_untracked(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    tracked = root / "README.md"
+    tracked.write_text("staged-a\n", encoding="utf-8")
+    git(root, "add", "README.md")
+    tracked.write_text("worktree\n", encoding="utf-8")
+    extra = root / "extra.txt"
+    extra.write_text("ABCDEFG\n", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(
+        root,
+        project_key="DEMO",
+        limits=SnapshotLimits(max_files=10, max_total_bytes=10, max_file_bytes=100),
+    )
+
+    assert snapshot.source_control["dirty"] is True
+    assert snapshot.content_scope["eligible_files"] == 1
+    assert snapshot.content_scope["complete"] is False
+    assert snapshot.content_scope["omitted_files"] == 1
+    assert snapshot.content_scope["exclusion_reasons"]["max_total_bytes"] == 1
+    included_buckets = [
+        snapshot.source_control["worktree_digest"]
+        != "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        snapshot.source_control["untracked_digest"]
+        != "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    ]
+    assert included_buckets.count(True) == 1
+
+
+def test_git_file_ceiling_counts_unique_paths_across_index_and_untracked(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    tracked = root / "README.md"
+    tracked.write_text("staged\n", encoding="utf-8")
+    git(root, "add", "README.md")
+    tracked.write_text("worktree\n", encoding="utf-8")
+    (root / "extra.txt").write_text("extra\n", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(
+        root,
+        project_key="DEMO",
+        limits=SnapshotLimits(max_files=1, max_total_bytes=100, max_file_bytes=100),
+    )
+
+    assert snapshot.source_control["dirty"] is True
+    assert snapshot.content_scope["eligible_files"] == 1
+    assert snapshot.content_scope["complete"] is False
+    assert snapshot.content_scope["omitted_files"] == 1
+    assert snapshot.content_scope["exclusion_reasons"]["max_files"] == 1
+
+
+def test_modified_tracked_path_counts_once_when_it_fits(tmp_path: Path) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    tracked = root / "README.md"
+    tracked.write_text("staged\n", encoding="utf-8")
+    git(root, "add", "README.md")
+    tracked.write_text("worktree\n", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(
+        root,
+        project_key="DEMO",
+        limits=SnapshotLimits(max_files=1, max_total_bytes=100, max_file_bytes=100),
+    )
+
+    assert snapshot.source_control["dirty"] is True
+    assert snapshot.content_scope["eligible_files"] == 1
+    assert snapshot.content_scope["complete"] is True
+    assert snapshot.content_scope["omitted_files"] == 0
+    assert snapshot.source_control["index_digest"] != ""
+    assert (
+        snapshot.source_control["worktree_digest"]
+        != "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    )
+
+
 def test_git_policy_exclusions_are_counted_without_dirtying_identity(
     tmp_path: Path,
 ) -> None:
