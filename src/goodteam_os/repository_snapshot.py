@@ -23,6 +23,19 @@ from goodteam_os.repository_access import (
 
 _GIT_OUTPUT_LIMIT = 32 * 1024 * 1024
 _GIT_TIMEOUT_SECONDS = 5.0
+_PATH_MANIFEST_SCHEMA = "repository_snapshot.v1.path_manifest"
+_PATH_MANIFEST_KEYS = frozenset(
+    {"complete", "entries", "excluded", "omitted", "omitted_paths"}
+)
+_COMPILED_PATH_MANIFEST_KEYS = frozenset({"entries", "excluded", "omitted"})
+_EXCLUDED_REASON_KINDS = {
+    "binary": frozenset({"file"}),
+    "git_ignored": frozenset({"file"}),
+    "ignored_directory": frozenset({"directory", "file"}),
+    "non_regular": frozenset({"other"}),
+    "symlink": frozenset({"file", "symlink"}),
+}
+_OMITTED_REASONS = frozenset({"max_file_bytes", "max_files", "max_total_bytes"})
 
 
 class RepositorySnapshotError(ValueError):
@@ -158,31 +171,180 @@ def compile_snapshot_path_manifest(
     snapshot: RepositorySnapshot,
 ) -> dict[str, dict[str, dict[str, object]]]:
     manifest = snapshot.path_manifest
-    return {
-        "entries": {
-            str(item["path"]): dict(item)
-            for item in manifest.get("entries", [])
-            if isinstance(item, dict) and isinstance(item.get("path"), str)
-        },
-        "excluded": {
-            str(item["path"]): dict(item)
-            for item in manifest.get("excluded", [])
-            if isinstance(item, dict) and isinstance(item.get("path"), str)
-        },
-        "omitted": {
-            str(item["path"]): dict(item)
-            for item in manifest.get("omitted", [])
-            if isinstance(item, dict) and isinstance(item.get("path"), str)
-        },
+    if not isinstance(manifest, dict) or set(manifest) != _PATH_MANIFEST_KEYS:
+        raise _path_manifest_invalid()
+    if type(manifest["complete"]) is not bool:
+        raise _path_manifest_invalid()
+    collections: dict[str, list[object]] = {}
+    for state in _COMPILED_PATH_MANIFEST_KEYS:
+        value = manifest[state]
+        if not isinstance(value, list):
+            raise _path_manifest_invalid()
+        collections[state] = value
+    omitted_paths = manifest["omitted_paths"]
+    if not isinstance(omitted_paths, list):
+        raise _path_manifest_invalid()
+
+    compiled: dict[str, dict[str, dict[str, object]]] = {
+        "entries": {},
+        "excluded": {},
+        "omitted": {},
     }
+    seen_paths: set[str] = set()
+    for state in ("entries", "excluded", "omitted"):
+        for value in collections[state]:
+            record = _validate_path_manifest_record(state, value)
+            path = str(record["path"])
+            if path in seen_paths:
+                raise _path_manifest_invalid(path)
+            seen_paths.add(path)
+            compiled[state][path] = record
+
+    validated_omitted_paths: list[str] = []
+    for value in omitted_paths:
+        path = _validate_manifest_path(value)
+        if path in validated_omitted_paths:
+            raise _path_manifest_invalid(path)
+        validated_omitted_paths.append(path)
+    expected_omitted_paths = list(compiled["omitted"])
+    if validated_omitted_paths != expected_omitted_paths:
+        raise _path_manifest_invalid()
+    if bool(manifest["complete"]) != (not expected_omitted_paths):
+        raise _path_manifest_invalid()
+    return compiled
+
+
+def _validate_path_manifest_record(
+    state: str,
+    value: object,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise _path_manifest_invalid()
+    path = _validate_manifest_path(value.get("path"))
+    kind = value.get("kind")
+    if not isinstance(kind, str):
+        raise _path_manifest_invalid(path)
+
+    if state == "entries":
+        if kind == "directory":
+            if set(value) != {"path", "kind"}:
+                raise _path_manifest_invalid(path)
+        elif kind == "file":
+            _validate_represented_file_record(value, path)
+        else:
+            raise _path_manifest_invalid(path)
+    elif state == "excluded":
+        reason = value.get("reason")
+        if (
+            set(value) != {"path", "kind", "reason"}
+            or not isinstance(reason, str)
+            or kind not in _EXCLUDED_REASON_KINDS.get(reason, frozenset())
+        ):
+            raise _path_manifest_invalid(path)
+    elif state == "omitted":
+        if (
+            set(value) != {"path", "kind", "reason"}
+            or kind != "file"
+            or value.get("reason") not in _OMITTED_REASONS
+        ):
+            raise _path_manifest_invalid(path)
+    else:
+        raise _path_manifest_invalid()
+    return dict(value)
+
+
+def _validate_represented_file_record(value: dict[object, object], path: str) -> None:
+    identity_kind = value.get("identity_kind")
+    if identity_kind in {"worktree", "untracked"}:
+        if set(value) != {
+            "path",
+            "kind",
+            "identity_kind",
+            "size",
+            "content_hash",
+            "metadata",
+        }:
+            raise _path_manifest_invalid(path)
+        size = value.get("size")
+        content_hash = value.get("content_hash")
+        metadata = value.get("metadata")
+        if (
+            not _is_nonnegative_int(size)
+            or not _is_sha256_digest(content_hash)
+            or not isinstance(metadata, dict)
+            or set(metadata) != {"mode", "mtime_ns", "size"}
+            or not _is_nonnegative_int(metadata.get("mode"))
+            or not _is_int(metadata.get("mtime_ns"))
+            or not _is_nonnegative_int(metadata.get("size"))
+            or metadata.get("size") != size
+        ):
+            raise _path_manifest_invalid(path)
+        return
+    if identity_kind == "git_index":
+        git_identity = value.get("git")
+        if (
+            set(value) != {"path", "kind", "identity_kind", "git"}
+            or not isinstance(git_identity, dict)
+            or set(git_identity) != {"mode", "object_id", "stage"}
+            or git_identity.get("mode") not in {"100644", "100755", "160000"}
+            or not _is_git_object_id(git_identity.get("object_id"))
+            or git_identity.get("stage") != 0
+        ):
+            raise _path_manifest_invalid(path)
+        return
+    raise _path_manifest_invalid(path)
+
+
+def _validate_manifest_path(value: object) -> str:
+    if not isinstance(value, str):
+        raise _path_manifest_invalid()
+    try:
+        return canonical_relative_path(value)
+    except RepositoryAccessError as exc:
+        raise _path_manifest_invalid() from exc
+
+
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_nonnegative_int(value: object) -> bool:
+    return _is_int(value) and int(value) >= 0
+
+
+def _is_sha256_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 71
+        and value.startswith("sha256:")
+        and _is_lower_hex(value[7:])
+    )
+
+
+def _is_git_object_id(value: object) -> bool:
+    return isinstance(value, str) and len(value) in {40, 64} and _is_lower_hex(value)
+
+
+def _is_lower_hex(value: str) -> bool:
+    return bool(value) and all(character in "0123456789abcdef" for character in value)
+
+
+def _path_manifest_invalid(path: str | None = None) -> RepositorySnapshotError:
+    details = {"path": path} if path is not None else {"schema": _PATH_MANIFEST_SCHEMA}
+    return RepositorySnapshotError(
+        "repository_snapshot_invalid",
+        "Repository snapshot path manifest is invalid.",
+        details=details,
+    )
 
 
 def validate_snapshot_path_entry(
     snapshot_manifest: dict[str, dict[str, dict[str, object]]],
     entry: RepositoryEntry,
 ) -> dict[str, object] | None:
-    represented = snapshot_manifest["entries"].get(entry.path)
-    if represented is not None:
+    state, record = _compiled_manifest_record(snapshot_manifest, entry.path)
+    if state == "entries":
+        represented = record
         result = dict(represented)
         result["snapshot_state"] = "represented"
         if str(represented.get("kind")) != entry.kind:
@@ -209,14 +371,12 @@ def validate_snapshot_path_entry(
                     details={"path": entry.path},
                 )
         return result
-    excluded = snapshot_manifest["excluded"].get(entry.path)
-    if excluded is not None:
-        result = dict(excluded)
+    if state == "excluded":
+        result = dict(record)
         result["snapshot_state"] = "excluded"
         return result
-    omitted = snapshot_manifest["omitted"].get(entry.path)
-    if omitted is not None:
-        result = dict(omitted)
+    if state == "omitted":
+        result = dict(record)
         result["snapshot_state"] = "omitted"
         return result
     raise RepositorySnapshotError(
@@ -224,6 +384,33 @@ def validate_snapshot_path_entry(
         "Repository content no longer matches the captured snapshot.",
         details={"path": entry.path},
     )
+
+
+def _compiled_manifest_record(
+    snapshot_manifest: object,
+    path: str,
+) -> tuple[str | None, dict[str, object]]:
+    if (
+        not isinstance(snapshot_manifest, dict)
+        or set(snapshot_manifest) != _COMPILED_PATH_MANIFEST_KEYS
+    ):
+        raise _path_manifest_invalid()
+    matches: list[tuple[str, dict[str, object]]] = []
+    for state in ("entries", "excluded", "omitted"):
+        bucket = snapshot_manifest[state]
+        if not isinstance(bucket, dict):
+            raise _path_manifest_invalid()
+        if path not in bucket:
+            continue
+        record = _validate_path_manifest_record(state, bucket[path])
+        if record["path"] != path:
+            raise _path_manifest_invalid(path)
+        matches.append((state, record))
+    if len(matches) > 1:
+        raise _path_manifest_invalid(path)
+    if not matches:
+        return None, {}
+    return matches[0]
 
 
 def validate_snapshot_text_content(

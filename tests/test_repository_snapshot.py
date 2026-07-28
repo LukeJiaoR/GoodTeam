@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,11 @@ from goodteam_os.repository_snapshot import (
     RepositorySnapshotError,
     SnapshotLimits,
     capture_repository_snapshot,
+    compile_snapshot_path_manifest,
     compute_repository_snapshot_id,
     snapshot_identity_payload,
+    validate_snapshot_path_entry,
+    validate_snapshot_text_content,
     verify_repository_snapshot,
 )
 
@@ -340,6 +344,313 @@ def test_snapshot_identity_payload_path_manifest_is_bounded_and_deterministic(
     assert first == second
     assert first["complete"] is False
     assert first["omitted_paths"] == ["file-2.txt"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong_manifest_type",
+        "missing_entries",
+        "missing_excluded",
+        "missing_omitted",
+        "wrong_entries_type",
+        "wrong_excluded_type",
+        "wrong_omitted_type",
+        "non_object_entry",
+        "non_object_excluded",
+        "non_object_omitted",
+        "missing_entry_path",
+        "non_string_entry_path",
+        "noncanonical_entry_path",
+        "wrong_complete_type",
+        "wrong_omitted_paths_type",
+        "mismatched_omitted_paths",
+        "unsupported_top_level_field",
+    ],
+)
+def test_compile_snapshot_path_manifest_rejects_malformed_raw_shape(
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("hello\n", encoding="utf-8")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    manifest = dict(snapshot.path_manifest)
+
+    if mutation == "wrong_manifest_type":
+        malformed = replace(snapshot, path_manifest=None)
+    elif mutation == "missing_entries":
+        manifest.pop("entries")
+    elif mutation == "missing_excluded":
+        manifest.pop("excluded")
+    elif mutation == "missing_omitted":
+        manifest.pop("omitted")
+    elif mutation == "wrong_entries_type":
+        manifest["entries"] = {}
+    elif mutation == "wrong_excluded_type":
+        manifest["excluded"] = {}
+    elif mutation == "wrong_omitted_type":
+        manifest["omitted"] = {}
+    elif mutation == "non_object_entry":
+        manifest["entries"] = ["README.md"]
+    elif mutation == "non_object_excluded":
+        manifest["excluded"] = ["README.md"]
+    elif mutation == "non_object_omitted":
+        manifest["omitted"] = ["README.md"]
+        manifest["omitted_paths"] = ["README.md"]
+        manifest["complete"] = False
+    elif mutation == "missing_entry_path":
+        manifest["entries"] = [{"kind": "directory"}]
+    elif mutation == "non_string_entry_path":
+        manifest["entries"] = [{"path": 7, "kind": "directory"}]
+    elif mutation == "noncanonical_entry_path":
+        manifest["entries"] = [{"path": "../README.md", "kind": "directory"}]
+    elif mutation == "wrong_complete_type":
+        manifest["complete"] = "yes"
+    elif mutation == "wrong_omitted_paths_type":
+        manifest["omitted_paths"] = {}
+    elif mutation == "mismatched_omitted_paths":
+        manifest["omitted_paths"] = ["README.md"]
+    elif mutation == "unsupported_top_level_field":
+        manifest["raw_content"] = "must not be accepted"
+    if mutation != "wrong_manifest_type":
+        malformed = replace(snapshot, path_manifest=manifest)
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        compile_snapshot_path_manifest(malformed)
+
+    assert captured.value.code == "repository_snapshot_invalid"
+    assert str(captured.value) == "Repository snapshot path manifest is invalid."
+    assert set(captured.value.details) in ({"path"}, {"schema"})
+    assert "hello" not in str(captured.value.details)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "unsupported_identity_kind",
+        "missing_content_hash",
+        "invalid_metadata",
+        "missing_git_identity",
+        "unsupported_exclusion_reason",
+        "unsupported_omission_reason",
+    ],
+)
+def test_compile_snapshot_path_manifest_rejects_invalid_state_record(
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("hello\n", encoding="utf-8")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    manifest = {
+        key: list(value) if isinstance(value, list) else value
+        for key, value in snapshot.path_manifest.items()
+    }
+    entry = dict(manifest["entries"][0])
+
+    if mutation == "unsupported_identity_kind":
+        entry["identity_kind"] = "filesystem"
+        manifest["entries"] = [entry]
+    elif mutation == "missing_content_hash":
+        entry.pop("content_hash")
+        manifest["entries"] = [entry]
+    elif mutation == "invalid_metadata":
+        entry["metadata"] = {"mode": "regular", "mtime_ns": 1, "size": 6}
+        manifest["entries"] = [entry]
+    elif mutation == "missing_git_identity":
+        entry["identity_kind"] = "git_index"
+        entry.pop("size")
+        entry.pop("content_hash")
+        entry.pop("metadata")
+        manifest["entries"] = [entry]
+    elif mutation == "unsupported_exclusion_reason":
+        manifest["entries"] = []
+        manifest["excluded"] = [
+            {"path": "README.md", "kind": "file", "reason": "secret"}
+        ]
+    elif mutation == "unsupported_omission_reason":
+        manifest["entries"] = []
+        manifest["omitted"] = [
+            {"path": "README.md", "kind": "file", "reason": "later"}
+        ]
+        manifest["omitted_paths"] = ["README.md"]
+        manifest["complete"] = False
+
+    malformed = replace(snapshot, path_manifest=manifest)
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        compile_snapshot_path_manifest(malformed)
+
+    assert captured.value.code == "repository_snapshot_invalid"
+    assert captured.value.details == {"path": "README.md"}
+
+
+@pytest.mark.parametrize(
+    "duplicate_state",
+    [
+        "entries",
+        "excluded",
+        "omitted",
+        "entries_excluded",
+        "entries_omitted",
+    ],
+)
+def test_compile_snapshot_path_manifest_rejects_duplicate_and_cross_state_paths(
+    duplicate_state: str,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("hello\n", encoding="utf-8")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    represented = dict(snapshot.path_manifest["entries"][0])
+    manifest = {
+        "complete": duplicate_state != "omitted",
+        "entries": [represented],
+        "excluded": [],
+        "omitted": [],
+        "omitted_paths": [],
+    }
+    if duplicate_state == "entries":
+        manifest["entries"].append(dict(represented))
+    elif duplicate_state == "excluded":
+        manifest["entries"] = []
+        exclusion = {"path": "README.md", "kind": "file", "reason": "binary"}
+        manifest["excluded"] = [exclusion, dict(exclusion)]
+    elif duplicate_state == "omitted":
+        manifest["entries"] = []
+        omission = {"path": "README.md", "kind": "file", "reason": "max_files"}
+        manifest["omitted"] = [omission, dict(omission)]
+        manifest["omitted_paths"] = ["README.md"]
+    elif duplicate_state == "entries_excluded":
+        manifest["excluded"] = [
+            {"path": "README.md", "kind": "file", "reason": "binary"}
+        ]
+    else:
+        manifest["omitted"] = [
+            {"path": "README.md", "kind": "file", "reason": "max_files"}
+        ]
+        manifest["omitted_paths"] = ["README.md"]
+
+    malformed = replace(snapshot, path_manifest=manifest)
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        compile_snapshot_path_manifest(malformed)
+
+    assert captured.value.code == "repository_snapshot_invalid"
+    assert captured.value.details == {"path": "README.md"}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_bucket",
+        "wrong_bucket_type",
+        "non_object_record",
+        "missing_record_path",
+        "mismatched_record_path",
+        "unsupported_identity_kind",
+        "cross_state_path",
+    ],
+)
+def test_validate_snapshot_path_entry_rejects_malformed_compiled_manifest(
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    target = root / "README.md"
+    target.write_text("hello\n", encoding="utf-8")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    compiled = compile_snapshot_path_manifest(snapshot)
+    manifest: object = {
+        state: {path: dict(record) for path, record in bucket.items()}
+        for state, bucket in compiled.items()
+    }
+    entry = repository_access.RepositoryEntry(
+        path="README.md",
+        kind="file",
+        size=6,
+        mtime_ns=target.stat().st_mtime_ns,
+    )
+
+    if mutation == "missing_bucket":
+        manifest.pop("entries")
+    elif mutation == "wrong_bucket_type":
+        manifest["entries"] = []
+    elif mutation == "non_object_record":
+        manifest["entries"]["README.md"] = []
+    elif mutation == "missing_record_path":
+        manifest["entries"]["README.md"].pop("path")
+    elif mutation == "mismatched_record_path":
+        manifest["entries"]["README.md"]["path"] = "other.md"
+    elif mutation == "unsupported_identity_kind":
+        manifest["entries"]["README.md"]["identity_kind"] = "filesystem"
+    elif mutation == "cross_state_path":
+        manifest["excluded"]["README.md"] = {
+            "path": "README.md",
+            "kind": "file",
+            "reason": "binary",
+        }
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        validate_snapshot_path_entry(manifest, entry)
+
+    assert captured.value.code == "repository_snapshot_invalid"
+    assert str(captured.value) == "Repository snapshot path manifest is invalid."
+    assert set(captured.value.details) in ({"path"}, {"schema"})
+
+
+def test_excluded_and_omitted_snapshot_entries_are_no_content_sentinels(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "binary.bin").write_bytes(b"a\0b")
+    (root / "large.txt").write_text("12345", encoding="utf-8")
+    limits = SnapshotLimits(max_files=10, max_total_bytes=100, max_file_bytes=4)
+    snapshot = capture_repository_snapshot(root, "DEMO", None, limits)
+    manifest = compile_snapshot_path_manifest(snapshot)
+    read_calls = 0
+
+    def fail_read_text(self, path: str, *, max_bytes: int):
+        nonlocal read_calls
+        read_calls += 1
+        raise AssertionError(f"excluded/omitted path was read: {path}")
+
+    monkeypatch.setattr(
+        repository_access.AnchoredRepository,
+        "read_text",
+        fail_read_text,
+    )
+    with repository_access.AnchoredRepository(
+        root,
+        expected_identity=snapshot.root_identity,
+    ) as repository:
+        entries = {entry.path: entry for entry in repository.list_directory("")}
+        for path, expected_state in (
+            ("binary.bin", "excluded"),
+            ("large.txt", "omitted"),
+        ):
+            state = validate_snapshot_path_entry(manifest, entries[path])
+            assert state is not None
+            assert state["snapshot_state"] == expected_state
+            assert (
+                validate_snapshot_text_content(
+                    repository,
+                    manifest,
+                    snapshot.source_control,
+                    entries[path],
+                    max_bytes=100,
+                )
+                is None
+            )
+
+    assert read_calls == 0
 
 
 def test_snapshot_records_generated_binary_and_symlink_exclusions(
