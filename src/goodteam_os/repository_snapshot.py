@@ -234,7 +234,7 @@ def _capture_git(
         ],
     )
     index = _require_git(repository.root, ["ls-files", "--stage", "-z"])
-    submodules = _canonicalize_submodule_output(
+    submodules = _parse_submodule_records(
         _require_git(repository.root, ["submodule", "status", "--recursive"])
     )
 
@@ -249,14 +249,12 @@ def _capture_git(
         all_eligible_status.append(item)
     eligible_status = list(all_eligible_status)
     all_index_records = _parse_index_records(index)
-    eligible_index_records: list[bytes] = []
     index_paths: set[str] = set()
     for item in all_index_records:
         reason = _index_exclusion_reason(item)
         if reason is not None:
             _record_policy_exclusion(policy_exclusions, str(item["path"]), reason)
             continue
-        eligible_index_records.append(bytes(item["record"]))
         index_paths.add(str(item["path"]))
     status_records_by_path = {
         str(item["path"]): str(item["record"]) for item in eligible_status
@@ -292,11 +290,17 @@ def _capture_git(
     omitted = len(omitted_paths)
     complete = omitted == 0
     represented_paths = [path for path in included_paths if path not in omitted_paths]
-    canonical_status = [
-        str(item["record"])
-        for item in eligible_status
-        if str(item["path"]) not in content_scope_state["excluded_paths"]
-    ]
+    canonical_status = _status_identity_records(
+        eligible_status,
+        excluded_paths=content_scope_state["excluded_paths"],
+    )
+    canonical_index = _index_identity_records(
+        [
+            item
+            for item in all_index_records
+            if _index_exclusion_reason(item) is None
+        ]
+    )
     source_control = {
         "kind": "git",
         "head_sha": head_sha,
@@ -306,10 +310,10 @@ def _capture_git(
             for item in eligible_status
         ),
         "status_digest": _digest_json(canonical_status),
-        "index_digest": _digest_bytes(eligible_index_records),
+        "index_digest": _digest_json(canonical_index),
         "worktree_digest": _digest_json(worktree_records),
         "untracked_digest": _digest_json(untracked_records),
-        "submodule_digest": _digest_bytes(submodules),
+        "submodule_digest": _digest_json(submodules),
     }
     content_scope = {
         "complete": complete,
@@ -647,7 +651,24 @@ def _parse_status(value: bytes) -> list[dict[str, object]]:
                 raise _status_invalid()
             xy = parts[1]
             path = _canonical_git_path(parts[8])
-            records.append(_status_record(raw, path, xy))
+            records.append(
+                _status_record(
+                    raw,
+                    path,
+                    xy,
+                    {
+                        "entry_kind": "ordinary",
+                        "xy": os.fsdecode(parts[1]),
+                        "submodule": os.fsdecode(parts[2]),
+                        "head_mode": os.fsdecode(parts[3]),
+                        "index_mode": os.fsdecode(parts[4]),
+                        "worktree_mode": os.fsdecode(parts[5]),
+                        "head_oid": os.fsdecode(parts[6]),
+                        "index_oid": os.fsdecode(parts[7]),
+                        "path": path,
+                    },
+                )
+            )
         elif raw.startswith(b"2 "):
             parts = raw.split(b" ", 9)
             if len(parts) != 10 or index >= len(fields):
@@ -657,7 +678,24 @@ def _parse_status(value: bytes) -> list[dict[str, object]]:
             original = fields[index]
             index += 1
             original_path = _canonical_git_path(original)
-            item = _status_record(raw + b"\0" + original, path, xy)
+            item = _status_record(
+                raw + b"\0" + original,
+                path,
+                xy,
+                {
+                    "entry_kind": "renamed",
+                    "xy": os.fsdecode(parts[1]),
+                    "submodule": os.fsdecode(parts[2]),
+                    "head_mode": os.fsdecode(parts[3]),
+                    "index_mode": os.fsdecode(parts[4]),
+                    "worktree_mode": os.fsdecode(parts[5]),
+                    "head_oid": os.fsdecode(parts[6]),
+                    "index_oid": os.fsdecode(parts[7]),
+                    "score": os.fsdecode(parts[8]),
+                    "path": path,
+                    "original_path": original_path,
+                },
+            )
             item["original_path"] = original_path
             records.append(item)
         elif raw.startswith(b"u "):
@@ -666,7 +704,26 @@ def _parse_status(value: bytes) -> list[dict[str, object]]:
                 raise _status_invalid()
             xy = parts[1]
             path = _canonical_git_path(parts[10])
-            records.append(_status_record(raw, path, xy))
+            records.append(
+                _status_record(
+                    raw,
+                    path,
+                    xy,
+                    {
+                        "entry_kind": "unmerged",
+                        "xy": os.fsdecode(parts[1]),
+                        "submodule": os.fsdecode(parts[2]),
+                        "stage1_mode": os.fsdecode(parts[3]),
+                        "stage2_mode": os.fsdecode(parts[4]),
+                        "stage3_mode": os.fsdecode(parts[5]),
+                        "worktree_mode": os.fsdecode(parts[6]),
+                        "stage1_oid": os.fsdecode(parts[7]),
+                        "stage2_oid": os.fsdecode(parts[8]),
+                        "stage3_oid": os.fsdecode(parts[9]),
+                        "path": path,
+                    },
+                )
+            )
         elif raw.startswith(b"? "):
             path = _canonical_git_path(raw[2:])
             records.append(
@@ -675,6 +732,7 @@ def _parse_status(value: bytes) -> list[dict[str, object]]:
                     "path": path,
                     "worktree_changed": True,
                     "record": os.fsdecode(raw),
+                    "identity": {"entry_kind": "untracked", "path": path},
                 }
             )
         elif raw.startswith(b"! "):
@@ -685,6 +743,7 @@ def _parse_status(value: bytes) -> list[dict[str, object]]:
                     "path": path,
                     "worktree_changed": False,
                     "record": os.fsdecode(raw),
+                    "identity": {"entry_kind": "ignored", "path": path},
                 }
             )
         else:
@@ -692,12 +751,18 @@ def _parse_status(value: bytes) -> list[dict[str, object]]:
     return records
 
 
-def _status_record(raw: bytes, path: str, xy: bytes) -> dict[str, object]:
+def _status_record(
+    raw: bytes,
+    path: str,
+    xy: bytes,
+    identity: dict[str, object],
+) -> dict[str, object]:
     return {
         "kind": "tracked",
         "path": path,
         "worktree_changed": len(xy) == 2 and xy[1:2] not in {b".", b" "},
         "record": os.fsdecode(raw),
+        "identity": identity,
     }
 
 
@@ -721,7 +786,8 @@ def _canonical_git_path(value: bytes) -> str:
         ) from exc
 
 
-def _canonicalize_submodule_output(value: bytes) -> bytes:
+def _parse_submodule_records(value: bytes) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
     for record in value.splitlines():
         if not record:
             continue
@@ -735,10 +801,20 @@ def _canonicalize_submodule_output(value: bytes) -> bytes:
                 "Read-only Git submodule output was invalid.",
             )
         raw_path = record[42:]
+        description: str | None = None
         if raw_path.endswith(b")") and b" (" in raw_path:
-            raw_path = raw_path.rsplit(b" (", 1)[0]
-        _canonical_git_path(raw_path)
-    return value
+            raw_path, raw_description = raw_path.rsplit(b" (", 1)
+            description = os.fsdecode(b"(" + raw_description)
+        records.append(
+            {
+                "status": os.fsdecode(record[:1]),
+                "commit": os.fsdecode(record[1:41]),
+                "path": _canonical_git_path(raw_path),
+                "description": description,
+            }
+        )
+    records.sort(key=_canonical_json)
+    return records
 
 
 def _parse_index_records(value: bytes) -> list[dict[str, object]]:
@@ -758,14 +834,50 @@ def _parse_index_records(value: bytes) -> list[dict[str, object]]:
                 "repository_snapshot_failed",
                 "Read-only Git index output was invalid.",
             )
+        try:
+            stage = int(os.fsdecode(parts[2]))
+        except ValueError as exc:
+            raise RepositorySnapshotError(
+                "repository_snapshot_failed",
+                "Read-only Git index output was invalid.",
+            ) from exc
         records.append(
             {
                 "mode": os.fsdecode(parts[0]),
+                "oid": os.fsdecode(parts[1]),
+                "stage": stage,
                 "path": _canonical_git_path(raw_path),
                 "record": record,
+                "identity": {
+                    "mode": os.fsdecode(parts[0]),
+                    "oid": os.fsdecode(parts[1]),
+                    "stage": stage,
+                    "path": _canonical_git_path(raw_path),
+                },
             }
         )
-    records.sort(key=lambda item: bytes(item["record"]))
+    records.sort(key=lambda item: _canonical_json(item["identity"]))
+    return records
+
+
+def _status_identity_records(
+    items: list[dict[str, object]],
+    *,
+    excluded_paths: set[str] | None = None,
+) -> list[dict[str, object]]:
+    excluded_paths = excluded_paths or set()
+    records = [
+        dict(item["identity"])
+        for item in items
+        if str(item["path"]) not in excluded_paths
+    ]
+    records.sort(key=_canonical_json)
+    return records
+
+
+def _index_identity_records(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    records = [dict(item["identity"]) for item in items]
+    records.sort(key=_canonical_json)
     return records
 
 

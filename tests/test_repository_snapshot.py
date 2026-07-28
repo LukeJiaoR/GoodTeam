@@ -183,8 +183,8 @@ def test_unmerged_git_snapshot_parses_status_and_binds_all_index_stages(
     snapshot = capture_repository_snapshot(root, project_key="DEMO")
 
     assert snapshot.source_control["dirty"] is True
-    assert snapshot.source_control["index_digest"] == repository_snapshot._digest_bytes(
-        [bytes(item["record"]) for item in parsed_index]
+    assert snapshot.source_control["index_digest"] == repository_snapshot._digest_json(
+        repository_snapshot._index_identity_records(parsed_index)
     )
 
 
@@ -382,6 +382,136 @@ def test_git_status_identity_includes_untracked_path_beyond_file_ceiling(
     assert second.content_scope["complete"] is False
     assert first.source_control["status_digest"] != second.source_control["status_digest"]
     assert first.snapshot_id != second.snapshot_id
+
+
+def test_git_status_identity_canonicalizes_paths_and_rename_origins() -> None:
+    base = (
+        b"2 R. N... 100644 100644 100644 "
+        + b"0" * 40
+        + b" "
+        + b"1" * 40
+        + b" R100 target.txt\0source.txt\0"
+    )
+    canonical_equivalent = (
+        b"2 R. N... 100644 100644 100644 "
+        + b"0" * 40
+        + b" "
+        + b"1" * 40
+        + b" R100 target.txt/\0source.txt/\0"
+    )
+
+    first = repository_snapshot._status_identity_records(
+        repository_snapshot._parse_status(base),
+    )
+    second = repository_snapshot._status_identity_records(
+        repository_snapshot._parse_status(canonical_equivalent),
+    )
+
+    assert first == second
+    assert repository_snapshot._digest_json(first) == repository_snapshot._digest_json(
+        second
+    )
+
+
+def test_git_status_identity_changes_for_material_fields() -> None:
+    base = (
+        b"2 R. N... 100644 100644 100644 "
+        + b"0" * 40
+        + b" "
+        + b"1" * 40
+        + b" R100 target.txt\0source.txt\0"
+    )
+    renamed_differently = (
+        b"2 R. N... 100644 100644 100644 "
+        + b"0" * 40
+        + b" "
+        + b"1" * 40
+        + b" R090 target.txt\0source.txt\0"
+    )
+
+    first = repository_snapshot._status_identity_records(
+        repository_snapshot._parse_status(base),
+    )
+    second = repository_snapshot._status_identity_records(
+        repository_snapshot._parse_status(renamed_differently),
+    )
+
+    assert repository_snapshot._digest_json(first) != repository_snapshot._digest_json(
+        second
+    )
+
+
+def test_git_index_identity_canonicalizes_paths_without_collapsing_stages() -> None:
+    base = (
+        b"100644 "
+        + b"0" * 40
+        + b" 1\tconflict.txt\0"
+        + b"100644 "
+        + b"1" * 40
+        + b" 2\tconflict.txt\0"
+    )
+    canonical_equivalent = (
+        b"100644 "
+        + b"0" * 40
+        + b" 1\tconflict.txt/\0"
+        + b"100644 "
+        + b"1" * 40
+        + b" 2\tconflict.txt/\0"
+    )
+
+    first = repository_snapshot._index_identity_records(
+        repository_snapshot._parse_index_records(base),
+    )
+    second = repository_snapshot._index_identity_records(
+        repository_snapshot._parse_index_records(canonical_equivalent),
+    )
+
+    assert [record["stage"] for record in first] == [1, 2]
+    assert first == second
+    assert repository_snapshot._digest_json(first) == repository_snapshot._digest_json(
+        second
+    )
+
+
+def test_git_index_identity_changes_for_material_fields() -> None:
+    base = b"100644 " + b"0" * 40 + b" 1\tconflict.txt\0"
+    different_stage = b"100644 " + b"0" * 40 + b" 2\tconflict.txt\0"
+
+    first = repository_snapshot._index_identity_records(
+        repository_snapshot._parse_index_records(base),
+    )
+    second = repository_snapshot._index_identity_records(
+        repository_snapshot._parse_index_records(different_stage),
+    )
+
+    assert repository_snapshot._digest_json(first) != repository_snapshot._digest_json(
+        second
+    )
+
+
+def test_git_submodule_identity_canonicalizes_paths() -> None:
+    base = b" " + b"0" * 40 + b" deps/lib (heads/main)\n"
+    canonical_equivalent = b" " + b"0" * 40 + b" deps/lib/ (heads/main)\n"
+
+    first = repository_snapshot._parse_submodule_records(base)
+    second = repository_snapshot._parse_submodule_records(canonical_equivalent)
+
+    assert first == second
+    assert repository_snapshot._digest_json(first) == repository_snapshot._digest_json(
+        second
+    )
+
+
+def test_git_submodule_identity_changes_for_material_fields() -> None:
+    base = b" " + b"0" * 40 + b" deps/lib (heads/main)\n"
+    different_description = b" " + b"0" * 40 + b" deps/lib (tags/v1.0)\n"
+
+    first = repository_snapshot._parse_submodule_records(base)
+    second = repository_snapshot._parse_submodule_records(different_description)
+
+    assert repository_snapshot._digest_json(first) != repository_snapshot._digest_json(
+        second
+    )
 
 
 @pytest.mark.parametrize(
