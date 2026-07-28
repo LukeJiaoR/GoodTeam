@@ -212,6 +212,65 @@ def test_artifact_store_rejects_racing_malformed_publication(
     assert destination.read_bytes() == b"{malformed}"
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected_message"),
+    [
+        (b"{malformed}", "Published onboarding snapshot is invalid."),
+        (b"\xff\xfeinvalid-utf8", "Published onboarding snapshot is invalid."),
+    ],
+)
+def test_publish_inventory_rejects_malformed_existing_snapshot_artifact(
+    tmp_path: Path,
+    payload: bytes,
+    expected_message: str,
+) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+    artifact = snapshot_path(workspace, key, snapshot.snapshot_id)
+    before_root = _target_files(root)
+    artifact.write_bytes(payload)
+
+    with pytest.raises(ProjectImportError) as captured:
+        OnboardingArtifactStore(workspace, key, root).publish_inventory(inventory)
+
+    assert captured.value.code == "onboarding_artifact_conflict"
+    assert str(captured.value) == expected_message
+    assert artifact.read_bytes() == payload
+    assert _target_files(root) == before_root
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_message"),
+    [
+        (b"[]", "Published onboarding snapshot is invalid."),
+        (b"{\"schema\":\"repository_snapshot.v1\"}", "Published onboarding snapshot is invalid."),
+    ],
+)
+def test_observation_store_init_rejects_malformed_existing_snapshot_artifact(
+    tmp_path: Path,
+    payload: bytes,
+    expected_message: str,
+) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    artifact = snapshot_path(workspace, key, snapshot.snapshot_id)
+    before_root = _target_files(root)
+    artifact.write_bytes(payload)
+
+    with pytest.raises(ProjectImportError) as captured:
+        OnboardingObservationStore(
+            workspace,
+            key,
+            root,
+            "job-1",
+            snapshot.snapshot_id,
+        )
+
+    assert captured.value.code == "onboarding_artifact_conflict"
+    assert str(captured.value) == expected_message
+    assert artifact.read_bytes() == payload
+    assert _target_files(root) == before_root
+
+
 def test_observation_store_rejects_another_snapshot(tmp_path: Path) -> None:
     workspace, root, key = _imported_repository(tmp_path)
     first = capture_repository_snapshot(root, project_key=key)

@@ -446,9 +446,17 @@ def _require_snapshot_artifact(
             create=False,
         ) as snapshots_fd:
             payload = _read_json_file(snapshots_fd, f"{snapshot_id}.json")
+        validated = _validate_snapshot_payload(
+            payload,
+            project_key=project_key,
+            root=root,
+        )
     except FileNotFoundError as exc:
         raise _snapshot_missing(snapshot_id) from exc
-    validated = _validate_snapshot_payload(payload, project_key=project_key, root=root)
+    except ProjectImportError:
+        raise
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError) as exc:
+        raise _artifact_conflict("Published onboarding snapshot is invalid.") from exc
     if validated.get("snapshot_id") != snapshot_id:
         raise _artifact_conflict("Published onboarding snapshot identity conflicts.")
     return validated
