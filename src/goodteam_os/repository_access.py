@@ -179,14 +179,19 @@ class AnchoredRepository:
         *,
         ignored_directories: frozenset[str] = DEFAULT_IGNORED_DIRECTORIES,
         max_entries: int | None = None,
+        max_depth: int | None = None,
     ) -> list[RepositoryEntry]:
         canonical = canonical_relative_path(path, allow_root=True)
         if max_entries is not None and max_entries < 0:
             raise ValueError("max_entries must be non-negative")
+        if max_depth is not None and max_depth < 0:
+            raise ValueError("max_depth must be non-negative")
         results: list[RepositoryEntry] = []
-        pending = [canonical]
+        pending = [(canonical, 0)]
         while pending:
-            directory = pending.pop()
+            directory, depth = pending.pop()
+            if max_depth is not None and depth >= max_depth:
+                continue
             remaining = (
                 None if max_entries is None else max_entries - len(results)
             )
@@ -201,7 +206,7 @@ class AnchoredRepository:
                 results.append(entry)
                 if entry.kind == "directory":
                     child_directories.append(entry.path)
-            pending.extend(reversed(child_directories))
+            pending.extend((child, depth + 1) for child in reversed(child_directories))
         self.verify_root()
         return results
 

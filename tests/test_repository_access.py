@@ -144,6 +144,42 @@ def test_walk_stops_directory_observation_at_entry_limit(
     assert observed_entries == 3
 
 
+def test_walk_stops_directory_observation_at_depth_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    deepest = root / "level-1" / "level-2"
+    deepest.mkdir(parents=True)
+    (deepest / "secret.txt").write_text("secret\n", encoding="utf-8")
+    original_repository_entry = repository_access._repository_entry
+    observed_paths: list[str] = []
+
+    def recording_repository_entry(*args, **kwargs):
+        entry = original_repository_entry(*args, **kwargs)
+        observed_paths.append(entry.path)
+        return entry
+
+    monkeypatch.setattr(
+        repository_access,
+        "_repository_entry",
+        recording_repository_entry,
+    )
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        entries = repository.walk(max_depth=2)
+
+    assert [entry.path for entry in entries] == ["level-1", "level-1/level-2"]
+    assert observed_paths == ["level-1", "level-1/level-2"]
+
+
+def test_walk_rejects_negative_depth_limit(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        with pytest.raises(ValueError, match="max_depth must be non-negative"):
+            repository.walk(max_depth=-1)
+
+
 def test_reader_rejects_nul_as_binary(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
