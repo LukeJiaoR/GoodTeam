@@ -99,6 +99,7 @@ class OnboardingBudget:
         self._unique_turns: set[int] = set()
         self._tool_calls_used = 0
         self._total_observation_chars = 0
+        self._peak_single_result_chars = 0
         self._observed_files: set[str] = set()
         self._observed_file_chars: dict[str, int] = {}
         self._usage_by_turn: dict[int, dict[str, float]] = {}
@@ -170,6 +171,19 @@ class OnboardingBudget:
             self._total_observation_chars += chars
             self._update_close_requested()
 
+    def record_result_chars(self, chars: int) -> None:
+        with self._lock:
+            self._refresh_elapsed()
+            self._check_elapsed_limit()
+            if isinstance(chars, bool) or not isinstance(chars, int) or chars < 0:
+                raise self._budget_invalid("result_chars")
+            if chars > self.limits.max_single_result_chars:
+                raise self._budget_exceeded("max_single_result_chars")
+            if chars > self.result_char_allowance():
+                raise self._budget_exceeded("max_single_result_chars")
+            self._peak_single_result_chars = max(self._peak_single_result_chars, chars)
+            self._update_close_requested()
+
     def record_model_usage(
         self,
         *,
@@ -229,6 +243,7 @@ class OnboardingBudget:
                 "files_observed": len(self._observed_files),
                 "model_turns_used": len(self._unique_turns),
                 "observed_file_chars": dict(self._observed_file_chars),
+                "peak_single_result_chars": self._peak_single_result_chars,
                 "tool_calls_used": self._tool_calls_used,
                 "total_observation_chars_used": self._total_observation_chars,
             }
@@ -326,6 +341,14 @@ class OnboardingBudget:
                 self._total_observation_chars,
                 self.limits.max_total_observation_chars,
             ),
+            "single_result_chars": (
+                self._peak_single_result_chars,
+                self.limits.max_single_result_chars,
+            ),
+            "file_cumulative_chars": (
+                max(self._observed_file_chars.values(), default=0),
+                self.limits.max_file_cumulative_chars,
+            ),
             "elapsed_seconds": (self._elapsed_seconds(), self.limits.max_elapsed_seconds),
             "estimated_input_tokens": (
                 self._effective_input_tokens(),
@@ -396,38 +419,34 @@ class RepositoryContextProvider:
 
     def call(self, tool: str, request: dict[str, object], *, model_turn: int) -> dict[str, object]:
         turn = self._validate_model_turn(model_turn)
-        request_payload = _sanitize_request(request)
         tool_call_id = f"tool_{uuid.uuid4().hex}"
-        self.budget.begin_model_turn(turn)
-        if tool not in self._tool_handlers:
-            envelope = self._build_envelope(
-                tool_call_id=tool_call_id,
-                tool=tool,
-                model_turn=turn,
-                request=request_payload,
-                status="denied",
-                observations=[],
-                truncated=False,
-                response_metadata={"error": {"code": "context_tool_not_allowed"}},
-            )
-            self.observation_store.append(envelope)
-            raise ContextProviderError(
-                "context_tool_not_allowed",
-                "Repository context tool is not allowed.",
-            )
-        self.budget.begin_tool_call()
+        request_payload = _sanitize_request(request)
         try:
             with self._lock:
+                validated_request = _validate_request_object(request)
+                self.budget.begin_model_turn(turn)
+                if tool not in self._tool_handlers:
+                    envelope = self._build_envelope(
+                        tool_call_id=tool_call_id,
+                        tool=tool,
+                        model_turn=turn,
+                        request=request_payload,
+                        status="denied",
+                        observations=[],
+                        truncated=False,
+                        response_metadata={"error": {"code": "context_tool_not_allowed"}},
+                    )
+                    self.observation_store.append(envelope)
+                    raise ContextProviderError(
+                        "context_tool_not_allowed",
+                        "Repository context tool is not allowed.",
+                    )
+                self.budget.begin_tool_call()
                 self._verify_bindings()
-                buffered = self._tool_handlers[tool](dict(request))
+                buffered = self._tool_handlers[tool](validated_request)
                 observations = _normalize_observations(buffered.get("observations", []), tool_call_id=tool_call_id)
                 returned_chars = _count_string_leaves(observations)
-                if returned_chars > self.budget.result_char_allowance():
-                    raise ContextProviderError(
-                        "onboarding_budget_exceeded",
-                        "Onboarding budget limit reached.",
-                        details={"limit": "max_single_result_chars"},
-                    )
+                self.budget.record_result_chars(returned_chars)
                 for path, chars, count_toward_file in _observation_budget_events(observations):
                     self.budget.record_observation(
                         path=path,
@@ -451,13 +470,14 @@ class RepositoryContextProvider:
                 self.observation_store.append(envelope)
                 return envelope
         except ContextProviderError as exc:
-            self._persist_error_envelope(
-                tool_call_id=tool_call_id,
-                tool=tool,
-                model_turn=turn,
-                request=request_payload,
-                code=exc.code,
-            )
+            if exc.code != "context_tool_not_allowed":
+                self._persist_error_envelope(
+                    tool_call_id=tool_call_id,
+                    tool=tool,
+                    model_turn=turn,
+                    request=request_payload,
+                    code=exc.code,
+                )
             raise
         except (RepositoryAccessError, RepositorySnapshotError) as exc:
             code = getattr(exc, "code", "repository_snapshot_changed")
@@ -659,6 +679,15 @@ def _validate_limit_value(name: str, value: object, *, integer: bool) -> int | f
 def _sanitize_request(request: object) -> dict[str, object]:
     del request
     return {"redacted": True}
+
+
+def _validate_request_object(request: object) -> dict[str, object]:
+    if type(request) is not dict:
+        raise ContextProviderError(
+            "context_request_invalid",
+            "Repository context request must be a JSON object.",
+        )
+    return dict(request)
 
 
 def _normalize_observations(

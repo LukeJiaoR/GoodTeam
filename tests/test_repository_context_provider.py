@@ -67,6 +67,17 @@ def _last_record_dict(workspace: Path, project_key: str) -> dict[str, object]:
     return json.loads(_last_record_bytes(workspace, project_key))
 
 
+def _all_records(workspace: Path, project_key: str) -> list[dict[str, object]]:
+    path = observation_path(workspace, project_key, "job-1")
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+
+
 def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
     from goodteam_os.repository_context_provider import ContextProviderError
 
@@ -281,6 +292,298 @@ def test_budget_requests_close_at_eighty_percent() -> None:
 
     assert budget.close_requested is True
     assert budget.as_dict()["tool_calls_used"] == 4
+
+
+def test_second_call_over_max_tool_calls_persists_one_error_envelope(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget, RepositoryContextProvider
+
+    fixture = _provider_fixture(tmp_path)
+    workspace = fixture["workspace"]
+    root = fixture["root"]
+    project_key = fixture["project_key"]
+    snapshot = fixture["snapshot"]
+    store = fixture["store"]
+    provider = RepositoryContextProvider(
+        workspace=workspace,
+        project_key=project_key,
+        root=root,
+        snapshot=snapshot,
+        observation_store=store,
+        budget=OnboardingBudget(requested_limits={"max_tool_calls": 1}),
+    )
+
+    first = provider.call("list_tree", {"path": "", "max_entries": 10}, model_turn=1)
+    with pytest.raises(Exception) as captured:
+        provider.call("list_tree", {"path": "", "max_entries": 10}, model_turn=1)
+
+    assert captured.value.code == "onboarding_budget_exceeded"
+    records = _all_records(workspace, project_key)
+    assert [record["status"] for record in records] == ["ok", "error"]
+    assert records[0] == first
+    assert records[1]["response_metadata"] == {
+        "error": {"code": "onboarding_budget_exceeded"}
+    }
+    assert records[1]["observations"] == []
+    assert records[1]["request"] == {"redacted": True}
+
+
+def test_model_turn_hard_limit_or_order_failure_persists_one_error_envelope(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget, RepositoryContextProvider
+
+    fixture = _provider_fixture(tmp_path)
+    workspace = fixture["workspace"]
+    root = fixture["root"]
+    project_key = fixture["project_key"]
+    snapshot = fixture["snapshot"]
+    store = fixture["store"]
+    provider = RepositoryContextProvider(
+        workspace=workspace,
+        project_key=project_key,
+        root=root,
+        snapshot=snapshot,
+        observation_store=store,
+        budget=OnboardingBudget(requested_limits={"max_model_turns": 1}),
+    )
+
+    provider.call("list_tree", {"path": "", "max_entries": 10}, model_turn=1)
+    with pytest.raises(Exception) as captured:
+        provider.call("list_tree", {"path": "", "max_entries": 10}, model_turn=2)
+
+    assert captured.value.code == "onboarding_budget_exceeded"
+    records = _all_records(workspace, project_key)
+    assert len(records) == 2
+    assert records[-1]["status"] == "error"
+    assert records[-1]["response_metadata"] == {
+        "error": {"code": "onboarding_budget_exceeded"}
+    }
+    assert records[-1]["observations"] == []
+
+
+def test_provider_rejects_list_of_pairs_request_and_does_not_execute_handler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    provider = fixture["provider"]
+    workspace = fixture["workspace"]
+    project_key = fixture["project_key"]
+    called = False
+
+    def should_not_run(_request: dict[str, object]) -> dict[str, object]:
+        nonlocal called
+        called = True
+        return {"observations": [], "truncated": False}
+
+    monkeypatch.setitem(provider._tool_handlers, "list_tree", should_not_run)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", [("path", "")], model_turn=1)  # type: ignore[arg-type]
+
+    assert captured.value.code == "context_request_invalid"
+    assert called is False
+    record = _last_record_dict(workspace, project_key)
+    assert record["status"] == "error"
+    assert record["response_metadata"] == {"error": {"code": "context_request_invalid"}}
+    assert record["observations"] == []
+    assert record["request"] == {"redacted": True}
+
+
+def test_unknown_tool_invalid_request_precedence_is_request_validation(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    provider = fixture["provider"]
+    workspace = fixture["workspace"]
+    project_key = fixture["project_key"]
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("run_command", [("argv", ["cat", "README.md"])], model_turn=1)  # type: ignore[arg-type]
+
+    assert captured.value.code == "context_request_invalid"
+    records = _all_records(workspace, project_key)
+    assert len(records) == 1
+    assert records[0]["status"] == "error"
+    assert records[0]["tool"] == "run_command"
+    assert records[0]["response_metadata"] == {"error": {"code": "context_request_invalid"}}
+
+
+@pytest.mark.parametrize(
+    ("apply_usage", "expect_close"),
+    [
+        (
+            lambda budget: budget.begin_model_turn(1),
+            False,
+        ),
+        (
+            lambda budget: [budget.begin_model_turn(1), budget.begin_model_turn(2), budget.begin_model_turn(3), budget.begin_model_turn(4)],
+            True,
+        ),
+        (
+            lambda budget: [budget.begin_tool_call(), budget.begin_tool_call(), budget.begin_tool_call()],
+            False,
+        ),
+        (
+            lambda budget: [budget.begin_tool_call(), budget.begin_tool_call(), budget.begin_tool_call(), budget.begin_tool_call()],
+            True,
+        ),
+        (
+            lambda budget: [budget.record_observation(path=f"f{index}.txt", chars=1, count_toward_file=True) for index in range(7)],
+            False,
+        ),
+        (
+            lambda budget: [budget.record_observation(path=f"f{index}.txt", chars=1, count_toward_file=True) for index in range(8)],
+            True,
+        ),
+        (
+            lambda budget: budget.record_observation(path="README.md", chars=7, count_toward_file=True),
+            False,
+        ),
+        (
+            lambda budget: budget.record_observation(path="README.md", chars=8, count_toward_file=True),
+            True,
+        ),
+        (
+            lambda budget: budget.record_result_chars(7),
+            False,
+        ),
+        (
+            lambda budget: budget.record_result_chars(8),
+            True,
+        ),
+        (
+            lambda budget: budget.record_observation(path=None, chars=7, count_toward_file=False),
+            False,
+        ),
+        (
+            lambda budget: budget.record_observation(path=None, chars=8, count_toward_file=False),
+            True,
+        ),
+        (
+            lambda budget: budget.record_model_usage(
+                turn_number=1,
+                estimated_input_tokens=7,
+                estimated_output_tokens=1,
+            ),
+            False,
+        ),
+        (
+            lambda budget: budget.record_model_usage(
+                turn_number=1,
+                estimated_input_tokens=8,
+                estimated_output_tokens=1,
+            ),
+            True,
+        ),
+        (
+            lambda budget: budget.record_model_usage(turn_number=1, estimated_input_tokens=1, estimated_output_tokens=7),
+            False,
+        ),
+        (
+            lambda budget: budget.record_model_usage(turn_number=1, estimated_input_tokens=1, estimated_output_tokens=8),
+            True,
+        ),
+        (
+            lambda budget: budget.record_model_usage(
+                turn_number=1,
+                actual_input_tokens=7,
+                estimated_input_tokens=7,
+                estimated_output_tokens=1,
+            ),
+            False,
+        ),
+        (
+            lambda budget: budget.record_model_usage(
+                turn_number=1,
+                actual_input_tokens=8,
+                estimated_input_tokens=8,
+                estimated_output_tokens=1,
+            ),
+            True,
+        ),
+        (
+            lambda budget: budget.record_model_usage(
+                turn_number=1,
+                actual_output_tokens=7,
+                estimated_input_tokens=1,
+                estimated_output_tokens=7,
+            ),
+            False,
+        ),
+        (
+            lambda budget: budget.record_model_usage(
+                turn_number=1,
+                actual_output_tokens=8,
+                estimated_input_tokens=1,
+                estimated_output_tokens=8,
+            ),
+            True,
+        ),
+        (
+            lambda budget: budget.record_model_usage(
+                turn_number=1,
+                cost_usd=0.7,
+                estimated_input_tokens=1,
+                estimated_output_tokens=1,
+            ),
+            False,
+        ),
+        (
+            lambda budget: budget.record_model_usage(
+                turn_number=1,
+                cost_usd=0.8,
+                estimated_input_tokens=1,
+                estimated_output_tokens=1,
+            ),
+            True,
+        ),
+    ],
+)
+def test_budget_close_requested_audits_all_declared_dimensions(
+    apply_usage,
+    expect_close: bool,
+) -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_model_turns": 5,
+            "max_tool_calls": 5,
+            "max_files_observed": 10,
+            "max_total_observation_chars": 10,
+            "max_single_result_chars": 10,
+            "max_file_cumulative_chars": 10,
+            "max_elapsed_seconds": 10.0,
+            "max_estimated_input_tokens": 10,
+            "max_estimated_output_tokens": 10,
+            "max_cost_usd": 1.0,
+        },
+        monotonic_clock=lambda: 0.0,
+    )
+
+    result = apply_usage(budget)
+    assert result is None or isinstance(result, list)
+    assert budget.close_requested is expect_close
+
+
+def test_budget_close_requested_tracks_elapsed_dimension() -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget
+
+    times = iter((0.0, 0.0, 8.0))
+    budget = OnboardingBudget(
+        requested_limits={"max_elapsed_seconds": 10.0},
+        monotonic_clock=lambda: next(times),
+    )
+
+    budget.begin_model_turn(1)
+    assert budget.close_requested is False
+    budget.begin_tool_call()
+    assert budget.close_requested is True
 
 
 def test_success_envelope_is_exactly_persisted(tmp_path: Path) -> None:
