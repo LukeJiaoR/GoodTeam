@@ -5,6 +5,7 @@ import hashlib
 import os
 import stat
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path, PurePosixPath
 
 
@@ -145,14 +146,28 @@ class AnchoredRepository:
         if not self._matches_expected_root(current):
             raise self._root_changed(current)
 
-    def list_directory(self, path: str) -> list[RepositoryEntry]:
+    def list_directory(
+        self,
+        path: str,
+        *,
+        max_entries: int | None = None,
+    ) -> list[RepositoryEntry]:
         canonical = canonical_relative_path(path, allow_root=True)
+        if max_entries is not None and max_entries < 0:
+            raise ValueError("max_entries must be non-negative")
         descriptor = self._open_directory(canonical)
         try:
-            entries = [
-                _repository_entry(canonical, name, _lstat_at(descriptor, name))
-                for name in sorted(os.listdir(descriptor))
-            ]
+            with os.scandir(descriptor) as iterator:
+                selected = iterator if max_entries is None else islice(iterator, max_entries)
+                entries = [
+                    _repository_entry(
+                        canonical,
+                        entry.name,
+                        entry.stat(follow_symlinks=False),
+                    )
+                    for entry in selected
+                ]
+            entries.sort(key=lambda entry: entry.path)
         finally:
             os.close(descriptor)
         self.verify_root()
@@ -172,7 +187,10 @@ class AnchoredRepository:
         pending = [canonical]
         while pending:
             directory = pending.pop()
-            children = self.list_directory(directory)
+            remaining = (
+                None if max_entries is None else max_entries - len(results)
+            )
+            children = self.list_directory(directory, max_entries=remaining)
             child_directories: list[str] = []
             for entry in children:
                 if entry.kind == "directory" and PurePosixPath(entry.path).name in ignored_directories:

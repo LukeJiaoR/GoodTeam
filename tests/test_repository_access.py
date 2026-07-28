@@ -116,6 +116,34 @@ def test_walk_is_deterministic_and_skips_ignored_directories(tmp_path: Path) -> 
     ]
 
 
+def test_walk_stops_directory_observation_at_entry_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for index in range(20):
+        (root / f"file-{index:02d}.txt").write_text("value\n", encoding="utf-8")
+    original_repository_entry = repository_access._repository_entry
+    observed_entries = 0
+
+    def counting_repository_entry(*args, **kwargs):
+        nonlocal observed_entries
+        observed_entries += 1
+        return original_repository_entry(*args, **kwargs)
+
+    monkeypatch.setattr(
+        repository_access,
+        "_repository_entry",
+        counting_repository_entry,
+    )
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        entries = repository.walk(max_entries=3)
+
+    assert len(entries) == 3
+    assert observed_entries == 3
+
+
 def test_reader_rejects_nul_as_binary(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
