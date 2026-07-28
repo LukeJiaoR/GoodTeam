@@ -383,6 +383,135 @@ def test_store_detects_directory_replacement_when_write_also_fails(
     assert captured.value.code == "project_workspace_not_isolated"
 
 
+def test_append_rejects_leaf_swap_after_first_identity_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    store = OnboardingObservationStore(
+        workspace,
+        key,
+        root,
+        "job-1",
+        snapshot.snapshot_id,
+    )
+    before_root = _target_files(root)
+    observations = observation_path(workspace, key, "job-1")
+    real_verify = onboarding_store._verify_file_identity
+    swapped = False
+
+    def swap_after_first_verify(directory_fd: int, name: str, descriptor: int) -> None:
+        nonlocal swapped
+        real_verify(directory_fd, name, descriptor)
+        if not swapped and name == "observations.jsonl":
+            swapped = True
+            replaced = observations.with_name("observations-replaced.jsonl")
+            if observations.exists():
+                observations.rename(replaced)
+            observations.write_text('{"foreign":true}\n', encoding="utf-8")
+
+    monkeypatch.setattr(onboarding_store, "_verify_file_identity", swap_after_first_verify)
+
+    with pytest.raises(ProjectImportError) as captured:
+        store.append({"tool_call_id": "obs-1", "snapshot_id": snapshot.snapshot_id})
+
+    assert swapped
+    assert captured.value.code == "onboarding_observation_invalid"
+    assert observations.read_text(encoding="utf-8") == '{"foreign":true}\n'
+    assert _target_files(root) == before_root
+
+
+@pytest.mark.parametrize("operation", ["append", "read_all"])
+def test_observation_store_rejects_directory_leaf(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    store = OnboardingObservationStore(
+        workspace,
+        key,
+        root,
+        "job-1",
+        snapshot.snapshot_id,
+    )
+    before_root = _target_files(root)
+    store.append({"tool_call_id": "obs-1", "snapshot_id": snapshot.snapshot_id})
+    observations = observation_path(workspace, key, "job-1")
+    observations.unlink()
+    observations.mkdir()
+
+    with pytest.raises(ProjectImportError) as captured:
+        if operation == "append":
+            store.append({"tool_call_id": "obs-2", "snapshot_id": snapshot.snapshot_id})
+        else:
+            store.read_all()
+
+    assert captured.value.code == "onboarding_observation_invalid"
+    assert observations.is_dir()
+    assert _target_files(root) == before_root
+
+
+@pytest.mark.parametrize("operation", ["publish_inventory", "init_store"])
+def test_snapshot_artifact_directory_leaf_is_artifact_conflict(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    artifact = snapshot_path(workspace, key, snapshot.snapshot_id)
+    before_root = _target_files(root)
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+    artifact.unlink()
+    artifact.mkdir()
+
+    with pytest.raises(ProjectImportError) as captured:
+        if operation == "publish_inventory":
+            OnboardingArtifactStore(workspace, key, root).publish_inventory(inventory)
+        else:
+            OnboardingObservationStore(
+                workspace,
+                key,
+                root,
+                "job-1",
+                snapshot.snapshot_id,
+            )
+
+    assert captured.value.code == "onboarding_artifact_conflict"
+    assert artifact.is_dir()
+    assert _target_files(root) == before_root
+
+
+def test_publish_inventory_rejects_snapshot_leaf_swap_after_first_identity_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+    artifact = snapshot_path(workspace, key, snapshot.snapshot_id)
+    before_root = _target_files(root)
+    real_verify = onboarding_store._verify_file_identity
+    swapped = False
+
+    def swap_after_first_verify(directory_fd: int, name: str, descriptor: int) -> None:
+        nonlocal swapped
+        real_verify(directory_fd, name, descriptor)
+        if not swapped and name == f"{snapshot.snapshot_id}.json":
+            swapped = True
+            replaced = artifact.with_name(f"{artifact.stem}.replaced.json")
+            if artifact.exists():
+                artifact.rename(replaced)
+            artifact.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(onboarding_store, "_verify_file_identity", swap_after_first_verify)
+
+    with pytest.raises(ProjectImportError) as captured:
+        OnboardingArtifactStore(workspace, key, root).publish_inventory(inventory)
+
+    assert swapped
+    assert captured.value.code == "onboarding_artifact_conflict"
+    assert artifact.read_text(encoding="utf-8") == "{}"
+    assert _target_files(root) == before_root
+
+
 def test_concurrent_appends_are_complete_json_records(tmp_path: Path) -> None:
     workspace, root, key, snapshot = _published_snapshot(tmp_path)
     store = OnboardingObservationStore(
