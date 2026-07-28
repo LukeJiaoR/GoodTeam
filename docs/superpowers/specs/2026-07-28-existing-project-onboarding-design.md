@@ -27,7 +27,41 @@ An existing project is ready only after:
 The code layer supplies facts and retrieval operations. It does not claim to
 understand project purpose, architecture, data flows, or business risk.
 
-## 2. Why the current contract is insufficient
+## 2. Non-negotiable system invariants
+
+The following invariants are normative. They override convenience, adapter
+limitations, backward compatibility, and model capability. If GoodTeam cannot
+mechanically demonstrate an invariant, it must fail closed and must not complete
+`project_onboarding` or unlock the delivery workflow.
+
+1. **The model reads the project only through the bounded Context Provider.**
+   The onboarding runtime receives no direct repository mount, arbitrary shell,
+   command runner, or unrestricted filesystem tool. Every repository byte shown
+   to the model belongs to a persisted provider observation.
+2. **All onboarding knowledge binds to one coherent repository snapshot.**
+   Inventory, observations, claims, profile, review decision, confirmed commands,
+   and constraints carry the same `snapshot_id`. Snapshot drift invalidates
+   publication instead of producing mixed-version knowledge.
+3. **Every material claim has evidence or an explicit non-evidence status.**
+   A claim must cite provider observations, be marked `inferred` with its evidence
+   and inference rationale, or be marked `user_confirmed` with actor and timestamp.
+   Uncited model assertions are invalid.
+4. **Limited coverage requires explicit acceptance.** A `partial` profile cannot
+   unlock delivery through an ordinary acceptance. The user must choose
+   `accept_limited`, and the accepted limitations must constrain later task
+   intake.
+5. **Later Workers receive the reviewed profile but reread current files.** A
+   task dispatch is invalid when it contains only profile text. Its task-context
+   packet must cite current-snapshot reads for issue-relevant files and tests;
+   Workers must inspect current versions of files they plan to change.
+6. **Onboarding neither writes to nor executes the imported project.** Job state,
+   transcripts, profiles, and projections stay in the GoodTeam workspace. The
+   provider exposes no project-command execution, and before/after evidence must
+   show that the target root was not modified by onboarding.
+
+These invariants are acceptance gates and test contracts, not prompt guidance.
+
+## 3. Why the current contract is insufficient
 
 The existing `repository_understanding` step calls `scan_existing_project()`,
 which is intentionally bounded to 1,500 entries, four directory levels, and
@@ -45,7 +79,7 @@ but not to repository content. The existing `.goodteam/context/` cache is also
 insufficient as the new authority: it writes into the target repository, can be
 generated without a model, and does not carry claim-level evidence or freshness.
 
-## 3. Goals
+## 4. Goals
 
 - Make existing-project onboarding depend on a real model invocation.
 - Preserve the current read-only import, descriptor anchoring, symlink rejection,
@@ -60,7 +94,7 @@ generated without a model, and does not carry claim-level evidence or freshness.
 - Keep the target repository unmodified throughout onboarding unless the user
   separately authorizes a mirror operation.
 
-## 4. Non-goals
+## 5. Non-goals
 
 - Reading or embedding every file in the repository.
 - Executing discovered build, test, development, or deployment commands.
@@ -73,7 +107,7 @@ generated without a model, and does not carry claim-level evidence or freshness.
   onboarding readiness.
 - Replacing issue-specific code inspection with a project profile.
 
-## 5. Terminology
+## 6. Terminology
 
 ### Repository inventory
 
@@ -102,7 +136,7 @@ An observation is a bounded Context Provider result. A claim is a profile
 statement supported by observations, explicitly marked as inferred, or supplied
 by a user during profile review.
 
-## 6. Target architecture
+## 7. Target architecture
 
 ```text
 ProjectReadinessExecutor
@@ -131,7 +165,7 @@ The existing `WorkerJobStore` lifecycle ideas can be reused, but onboarding jobs
 must not use its current target-root storage or unrestricted project-root runtime.
 Their state belongs in the GoodTeam workspace.
 
-## 7. Persistence layout
+## 8. Persistence layout
 
 Canonical onboarding data is stored outside the target repository:
 
@@ -168,7 +202,7 @@ legacy context directory may be indexed as an untrusted optional source. A futur
 explicit export can mirror human-readable projections into a target repository,
 but that is outside this design.
 
-## 8. Repository snapshot contract
+## 9. Repository snapshot contract
 
 `repository_snapshot.v1` contains:
 
@@ -223,7 +257,7 @@ also records a content hash for every excerpt. If relevant repository content
 changes during onboarding, publication fails with `repository_snapshot_changed`.
 The system never publishes a profile assembled from multiple snapshots.
 
-## 9. Repository Context Provider
+## 10. Repository Context Provider
 
 ### 9.1 Security boundary
 
@@ -285,7 +319,7 @@ conservative adapters for Python and JavaScript/TypeScript, then expand by
 language. Unsupported semantic operations return `unsupported`, not fabricated
 results.
 
-## 10. Onboarding Worker
+## 11. Onboarding Worker
 
 ### 10.1 Role
 
@@ -331,7 +365,7 @@ external invocation, timestamps, usage, and terminal status.
 previews but yield `model_invocation_unverified` and cannot complete production
 `project_onboarding`.
 
-## 11. Budget contract
+## 12. Budget contract
 
 `onboarding_budget.v1` limits more than prompt size:
 
@@ -358,7 +392,7 @@ profile is valid only when it honestly identifies uncovered areas and passes the
 minimum profile contract. Budget exhaustion never becomes a complete-coverage
 claim.
 
-## 12. `project_profile.v1`
+## 13. `project_profile.v1`
 
 The canonical file is JSON, even when examples are shown as YAML for readability.
 It contains:
@@ -422,7 +456,7 @@ Each evidence item cites an observation ID and its snapshot, path, lines,
 content hash, and optional Git blob or commit identity. Line numbers are navigation
 aids; content hashes preserve identity when lines later move.
 
-## 13. Coverage and readiness policy
+## 14. Coverage and readiness policy
 
 Coverage has three values:
 
@@ -446,7 +480,7 @@ This policy does not mean every module is understood. It means GoodTeam has an
 evidence-backed map, knows its limitations, and will enforce those limitations
 at task intake.
 
-## 14. Readiness schema and state flow
+## 15. Readiness schema and state flow
 
 Existing-project readiness moves to schema version 3 with this exact mode step
 set:
@@ -499,7 +533,7 @@ the exact step set, execution/attempt provenance, required immutable artifacts,
 snapshot consistency, real model invocation evidence, accepted profile review,
 confirmed commands/constraints, delivery preflight, and lifecycle state.
 
-## 15. Error and recovery behavior
+## 16. Error and recovery behavior
 
 New stable error codes include:
 
@@ -518,7 +552,7 @@ Completed observations and model checkpoints are retained after interruption.
 A retry may resume only when its snapshot and job identity still match; otherwise
 it starts a new job and snapshot. Stale runners cannot publish artifacts.
 
-## 16. Human-readable projections
+## 17. Human-readable projections
 
 The following files are rendered from `project-profile.json`:
 
@@ -532,7 +566,7 @@ Every projection displays profile ID, snapshot identity, coverage status, creati
 time, and freshness. User review edits structured claims; projections are then
 regenerated. Editing a rendered Markdown file does not mutate the profile.
 
-## 17. Later Worker context
+## 18. Later Worker context
 
 Later Workers receive two context layers:
 
@@ -559,7 +593,7 @@ do not intersect profile limitations or relevant modules.
 Workers must reread current files they plan to change. Profile text is orientation,
 not current-code evidence.
 
-## 18. Incremental refresh
+## 19. Incremental refresh
 
 Profiles are versioned rather than overwritten. An incremental refresh receives:
 
@@ -576,7 +610,7 @@ onboarding rerun is required when the root identity changes, history is rewritte
 across the profile base, instruction boundaries change substantially, or the
 changed-path impact cannot be bounded safely.
 
-## 19. API and UI changes
+## 20. API and UI changes
 
 The existing readiness start/input/retry/cancel resources remain. New or expanded
 resources expose:
@@ -597,7 +631,7 @@ acceptance, limited acceptance, corrections, and targeted "read more" requests.
 
 The browser never decides coverage, freshness, or workflow capability locally.
 
-## 20. Migration
+## 21. Migration
 
 Schema 2 existing-project readiness cannot be relabeled as model onboarding.
 During upgrade:
@@ -619,7 +653,7 @@ The legacy context generation API remains readable during transition but is not
 used to satisfy onboarding. Once no active product path depends on it, target-root
 generation can be deprecated separately.
 
-## 21. Verification strategy
+## 22. Verification strategy
 
 This is control-plane work and requires Tier 3 persisted-state validation plus a
 Tier 4 isolated live path.
@@ -635,6 +669,8 @@ Tier 4 isolated live path.
 - Prompt-injection content cannot alter provider policy or enable command access.
 - Observation IDs, hashes, redaction, and snapshot consistency.
 - Profile schema, claim/evidence rules, coverage, and projection determinism.
+- Onboarding model runtimes have no direct target-root mount, shell, or fallback
+  filesystem path when the Context Provider is unavailable.
 
 ### Executor and API tests
 
@@ -644,6 +680,8 @@ Tier 4 isolated live path.
 - User accept, accept-limited, correct, request-more, and conflicting resubmission.
 - Schema 2 migration fails closed without losing legacy evidence.
 - Target-root before/after snapshots prove onboarding is read-only.
+- Later task dispatch rejects profile-only context and persists current-snapshot
+  observation refs for issue-relevant files and tests.
 
 ### Frontend tests
 
@@ -663,7 +701,7 @@ or refresh behavior. Never run the mutating smoke against an active project.
 The implementation PRs must report the changed contract area, verification tier,
 commands run, and any skipped live validation with a safety reason.
 
-## 22. Delivery decomposition
+## 23. Delivery decomposition
 
 This design is too large for one implementation PR. It will be delivered as five
 reviewable tracks, each based on latest `origin/main`:
@@ -684,7 +722,7 @@ Tracks 2-5 depend on the contracts delivered before them. No track may weaken
 the imported-root security boundary or claim model onboarding without invocation
 evidence.
 
-## 23. Acceptance criteria
+## 24. Acceptance criteria
 
 The program is complete when all of the following are true:
 
