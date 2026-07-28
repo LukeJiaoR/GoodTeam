@@ -230,7 +230,7 @@ class AnchoredRepository:
             max_bytes=max_bytes,
         )
         text = _decode_text(canonical, returned, allow_incomplete_suffix=False)
-        return RepositoryText(
+        result = RepositoryText(
             path=canonical,
             text=text,
             content_hash=f"sha256:{hashlib.sha256(returned).hexdigest()}",
@@ -239,6 +239,8 @@ class AnchoredRepository:
             end_line=_end_line(text),
             truncated=truncated,
         )
+        self.verify_root()
+        return result
 
     def _matches_expected_root(self, value: os.stat_result) -> bool:
         return (

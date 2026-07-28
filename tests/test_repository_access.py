@@ -186,3 +186,32 @@ def test_reader_detects_entry_change_during_read(
     assert changed is True
     assert error.value.code == "repository_entry_changed"
     assert error.value.details == {"path": "README.md"}
+
+
+def test_reader_rechecks_root_after_text_processing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    original_root = tmp_path / "original-repo"
+    root.mkdir()
+    (root / "README.md").write_text("original\n", encoding="utf-8")
+    original_bounded_text = repository_access._bounded_text_bytes
+
+    def replacing_root(
+        path: str,
+        observed: bytes,
+        *,
+        max_bytes: int,
+    ) -> tuple[bytes, bool]:
+        result = original_bounded_text(path, observed, max_bytes=max_bytes)
+        root.rename(original_root)
+        root.mkdir()
+        return result
+
+    monkeypatch.setattr(repository_access, "_bounded_text_bytes", replacing_root)
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        with pytest.raises(RepositoryAccessError) as error:
+            repository.read_text("README.md", max_bytes=128)
+
+    assert error.value.code == "repository_root_changed"
