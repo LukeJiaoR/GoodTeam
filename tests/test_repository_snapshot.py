@@ -55,6 +55,48 @@ def test_clean_git_snapshot_is_deterministic(tmp_path: Path) -> None:
     assert first.content_scope["complete"] is True
 
 
+def test_clean_git_capture_does_not_read_tracked_file_content(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    for index in range(4):
+        (root / f"tracked-{index}.txt").write_text(f"{index}\n", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "add tracked files")
+    calls = 0
+    real_read_text = repository_access.AnchoredRepository.read_text
+
+    def counting_read_text(self, path: str, *, max_bytes: int):
+        nonlocal calls
+        calls += 1
+        return real_read_text(self, path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(
+        repository_access.AnchoredRepository,
+        "read_text",
+        counting_read_text,
+    )
+
+    capture_repository_snapshot(root, project_key="DEMO")
+
+    assert calls == 0
+
+
+def test_git_capture_uses_no_raw_target_path_metadata_access(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+
+    def fail_lstat(path: object, *args, **kwargs):
+        raise AssertionError(f"unexpected raw lstat: {path}")
+
+    monkeypatch.setattr(repository_snapshot.os, "lstat", fail_lstat)
+
+    capture_repository_snapshot(root, project_key="DEMO")
+
+
 def test_snapshot_id_matches_published_identity_payload(tmp_path: Path) -> None:
     root = init_git_repo(tmp_path / "repo")
     snapshot = capture_repository_snapshot(root, project_key="DEMO")
@@ -231,7 +273,7 @@ def test_git_policy_exclusions_are_counted_without_dirtying_identity(
     assert snapshot.source_control["dirty"] is False
     assert snapshot.content_scope["complete"] is True
     assert snapshot.content_scope["excluded_files"] == 3
-    assert snapshot.content_scope["eligible_files"] == 2
+    assert snapshot.content_scope["eligible_files"] == 3
     assert snapshot.content_scope["exclusion_reasons"] == {
         "binary": 1,
         "ignored_directory": 1,
@@ -241,6 +283,23 @@ def test_git_policy_exclusions_are_counted_without_dirtying_identity(
         snapshot.source_control["worktree_digest"]
         == snapshot.source_control["untracked_digest"]
     )
+
+
+def test_git_ignored_paths_outside_default_policy_are_counted_stably(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    (root / ".gitignore").write_text("generated.log\n", encoding="utf-8")
+    git(root, "add", ".gitignore")
+    git(root, "commit", "-qm", "ignore generated log")
+    (root / "generated.log").write_text("noise\n", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    assert snapshot.source_control["dirty"] is False
+    assert snapshot.content_scope["complete"] is True
+    assert snapshot.content_scope["excluded_files"] == 1
+    assert snapshot.content_scope["exclusion_reasons"] == {"git_ignored": 1}
 
 
 def test_ignored_node_modules_change_does_not_change_identity_once_present(
