@@ -5,7 +5,6 @@ import hashlib
 import os
 import stat
 from dataclasses import dataclass
-from itertools import islice
 from pathlib import Path, PurePosixPath
 
 
@@ -157,17 +156,11 @@ class AnchoredRepository:
             raise ValueError("max_entries must be non-negative")
         descriptor = self._open_directory(canonical)
         try:
-            with os.scandir(descriptor) as iterator:
-                selected = iterator if max_entries is None else islice(iterator, max_entries)
-                entries = [
-                    _repository_entry(
-                        canonical,
-                        entry.name,
-                        entry.stat(follow_symlinks=False),
-                    )
-                    for entry in selected
-                ]
-            entries.sort(key=lambda entry: entry.path)
+            entries = _list_directory_entries(
+                descriptor,
+                canonical,
+                max_entries=max_entries,
+            )
         finally:
             os.close(descriptor)
         self.verify_root()
@@ -195,11 +188,18 @@ class AnchoredRepository:
             remaining = (
                 None if max_entries is None else max_entries - len(results)
             )
-            children = self.list_directory(directory, max_entries=remaining)
+            descriptor = self._open_directory(directory)
+            try:
+                children = _list_directory_entries(
+                    descriptor,
+                    directory,
+                    max_entries=remaining,
+                    ignored_directories=ignored_directories,
+                )
+            finally:
+                os.close(descriptor)
             child_directories: list[str] = []
             for entry in children:
-                if entry.kind == "directory" and PurePosixPath(entry.path).name in ignored_directories:
-                    continue
                 if max_entries is not None and len(results) >= max_entries:
                     self.verify_root()
                     return results
@@ -467,6 +467,35 @@ def _repository_entry(
         size=metadata.st_size,
         mtime_ns=metadata.st_mtime_ns,
     )
+
+
+def _list_directory_entries(
+    descriptor: int,
+    parent: str,
+    *,
+    max_entries: int | None,
+    ignored_directories: frozenset[str] | None = None,
+) -> list[RepositoryEntry]:
+    with os.scandir(descriptor) as iterator:
+        directory_entries = sorted(iterator, key=lambda entry: entry.name)
+    results: list[RepositoryEntry] = []
+    for entry in directory_entries:
+        if (
+            ignored_directories is not None
+            and entry.name in ignored_directories
+            and entry.is_dir(follow_symlinks=False)
+        ):
+            continue
+        if max_entries is not None and len(results) >= max_entries:
+            break
+        results.append(
+            _repository_entry(
+                parent,
+                entry.name,
+                entry.stat(follow_symlinks=False),
+            )
+        )
+    return results
 
 
 def _split_parent(path: str) -> tuple[str, str]:

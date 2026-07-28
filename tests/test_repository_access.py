@@ -116,6 +116,98 @@ def test_walk_is_deterministic_and_skips_ignored_directories(tmp_path: Path) -> 
     ]
 
 
+@pytest.mark.parametrize(
+    "ignored_name",
+    sorted(repository_access.DEFAULT_IGNORED_DIRECTORIES),
+)
+def test_walk_excludes_each_default_ignored_directory(
+    tmp_path: Path,
+    ignored_name: str,
+) -> None:
+    root = tmp_path / "repo"
+    ignored_dir = root / ignored_name
+    visible_dir = root / "src"
+    ignored_dir.mkdir(parents=True)
+    visible_dir.mkdir(parents=True)
+    (ignored_dir / "hidden.txt").write_text("secret\n", encoding="utf-8")
+    (visible_dir / "app.py").write_text("print('ok')\n", encoding="utf-8")
+
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        entries = repository.walk()
+
+    assert [entry.path for entry in entries] == ["src", "src/app.py"]
+
+
+def test_list_directory_selects_deterministic_lexicographic_subset_before_statting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    metadata_by_name: dict[str, os.stat_result] = {}
+    for name in ("a.txt", "b.txt", "c.txt"):
+        path = root / name
+        path.write_text(name, encoding="utf-8")
+        metadata_by_name[name] = path.stat()
+
+    stat_calls: list[str] = []
+
+    class FakeDirEntry:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def stat(self, *, follow_symlinks: bool = False) -> os.stat_result:
+            assert follow_symlinks is False
+            stat_calls.append(self.name)
+            return metadata_by_name[self.name]
+
+    class FakeScandir:
+        def __enter__(self) -> FakeScandir:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def __iter__(self):
+            for name in ("c.txt", "a.txt", "b.txt"):
+                yield FakeDirEntry(name)
+
+    monkeypatch.setattr(repository_access.os, "scandir", lambda fd: FakeScandir())
+
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        entries = repository.list_directory("", max_entries=2)
+
+    assert [entry.path for entry in entries] == ["a.txt", "b.txt"]
+    assert stat_calls == ["a.txt", "b.txt"]
+
+
+def test_walk_ignored_directories_do_not_consume_max_entries_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    (root / ".git").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / ".git" / "config").write_text("secret\n", encoding="utf-8")
+    (root / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+
+    original_repository_entry = repository_access._repository_entry
+    observed_paths: list[str] = []
+
+    def recording_repository_entry(*args, **kwargs):
+        entry = original_repository_entry(*args, **kwargs)
+        observed_paths.append(entry.path)
+        return entry
+
+    monkeypatch.setattr(repository_access, "_repository_entry", recording_repository_entry)
+
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        entries = repository.walk(max_entries=2)
+
+    assert [entry.path for entry in entries] == ["src", "src/app.py"]
+    assert observed_paths == ["src", "src/app.py"]
+
+
 def test_walk_stops_directory_observation_at_entry_limit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
