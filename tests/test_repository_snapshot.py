@@ -82,7 +82,7 @@ def test_dirty_states_each_change_identity(tmp_path: Path) -> None:
     ) == 4
 
 
-def test_staged_and_later_unstaged_content_have_separate_digests(
+def test_staged_and_unstaged_versions_have_distinct_digests(
     tmp_path: Path,
 ) -> None:
     root = init_git_repo(tmp_path / "repo")
@@ -150,7 +150,7 @@ def test_non_git_snapshot_is_deterministic(tmp_path: Path) -> None:
     assert first.content_scope["eligible_files"] == 1
 
 
-def test_snapshot_records_policy_exclusions_without_losing_completeness(
+def test_snapshot_records_generated_binary_and_symlink_exclusions(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "repo"
@@ -207,9 +207,49 @@ def test_git_index_ceiling_makes_snapshot_incomplete(tmp_path: Path) -> None:
     assert snapshot.content_scope["exclusion_reasons"]["max_files"] == 1
 
 
-def test_ignored_node_modules_change_does_not_change_identity(tmp_path: Path) -> None:
+def test_git_policy_exclusions_are_counted_without_dirtying_identity(
+    tmp_path: Path,
+) -> None:
     root = init_git_repo(tmp_path / "repo")
-    baseline = capture_repository_snapshot(root, project_key="DEMO")
+    (root / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    git(root, "add", ".gitignore")
+    git(root, "commit", "-qm", "ignore generated output")
+    (root / "binary.bin").write_bytes(b"alpha\x00beta")
+    git(root, "add", "binary.bin")
+    git(root, "commit", "-qm", "add binary fixture")
+    (root / "binary.bin").write_bytes(b"next\x00value")
+    (root / "linked").symlink_to("README.md")
+    git(root, "add", "linked")
+    git(root, "commit", "-qm", "add symlink fixture")
+    (root / "node_modules").mkdir()
+    generated = root / "node_modules" / "generated.js"
+    generated.write_text("one\n", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    assert snapshot.source_control["kind"] == "git"
+    assert snapshot.source_control["dirty"] is False
+    assert snapshot.content_scope["complete"] is True
+    assert snapshot.content_scope["excluded_files"] == 3
+    assert snapshot.content_scope["eligible_files"] == 2
+    assert snapshot.content_scope["exclusion_reasons"] == {
+        "binary": 1,
+        "ignored_directory": 1,
+        "symlink": 1,
+    }
+    assert (
+        snapshot.source_control["worktree_digest"]
+        == snapshot.source_control["untracked_digest"]
+    )
+
+
+def test_ignored_node_modules_change_does_not_change_identity_once_present(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    (root / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    git(root, "add", ".gitignore")
+    git(root, "commit", "-qm", "ignore generated output")
     (root / "node_modules").mkdir()
     generated = root / "node_modules" / "generated.js"
     generated.write_text("one\n", encoding="utf-8")
@@ -217,7 +257,22 @@ def test_ignored_node_modules_change_does_not_change_identity(tmp_path: Path) ->
     generated.write_text("two\n", encoding="utf-8")
     second = capture_repository_snapshot(root, project_key="DEMO")
 
-    assert baseline.snapshot_id == first.snapshot_id == second.snapshot_id
+    assert first.content_scope["excluded_files"] == 1
+    assert first.content_scope["exclusion_reasons"]["ignored_directory"] == 1
+    assert first.snapshot_id == second.snapshot_id
+
+
+def test_git_worktree_subdirectory_fails_closed(tmp_path: Path) -> None:
+    repository_root = init_git_repo(tmp_path / "repo")
+    package_root = repository_root / "pkg"
+    package_root.mkdir()
+    (package_root / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        capture_repository_snapshot(package_root, project_key="DEMO")
+
+    assert captured.value.code == "repository_snapshot_failed"
+    assert captured.value.details["operation"] == "rev-parse"
 
 
 def test_capture_rejects_change_between_stability_passes(
@@ -244,6 +299,36 @@ def test_capture_rejects_change_between_stability_passes(
         capture_repository_snapshot(root, project_key="DEMO")
 
     assert captured.value.code == "repository_snapshot_changed"
+
+
+def test_snapshot_rejects_root_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    target = root / "README.md"
+    target.write_text("stable\n", encoding="utf-8")
+    displaced = tmp_path / "repo-original"
+    real_capture_once = repository_snapshot._capture_once
+    calls = 0
+
+    def replacing_capture(*args, **kwargs):
+        nonlocal calls
+        result = real_capture_once(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            root.rename(displaced)
+            root.mkdir()
+            (root / "README.md").write_text("stable\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(repository_snapshot, "_capture_once", replacing_capture)
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        capture_repository_snapshot(root, project_key="DEMO")
+
+    assert captured.value.code == "repository_root_changed"
 
 
 def test_snapshot_rejects_root_identity_mismatch(tmp_path: Path) -> None:

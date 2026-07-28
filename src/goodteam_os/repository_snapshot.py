@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import time
@@ -75,17 +76,18 @@ def capture_repository_snapshot(
 ) -> RepositorySnapshot:
     limits.validate()
     root = _absolute_root(root)
+    bound_identity = _expected_root_identity(root, expected_identity)
     try:
         first = _capture_once(
             root,
             project_key=project_key,
-            expected_identity=expected_identity,
+            expected_identity=bound_identity,
             limits=limits,
         )
         second = _capture_once(
             root,
             project_key=project_key,
-            expected_identity=expected_identity,
+            expected_identity=bound_identity,
             limits=limits,
         )
     except RepositoryAccessError as exc:
@@ -197,7 +199,11 @@ def _capture_git(
 
     top_level = _require_git(repository.root, ["rev-parse", "--show-toplevel"])
     if os.path.abspath(os.fsdecode(top_level.strip())) != str(repository.root):
-        return None, None
+        raise RepositorySnapshotError(
+            "repository_snapshot_failed",
+            "Repository root must match the Git worktree root.",
+            details={"operation": "rev-parse"},
+        )
 
     head = _run_git(repository.root, ["rev-parse", "--verify", "HEAD"])
     if head.returncode not in {0, 128}:
@@ -216,21 +222,41 @@ def _capture_git(
     )
     status = _require_git(
         repository.root,
-        ["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        [
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
+            "--ignored=matching",
+        ],
     )
     index = _require_git(repository.root, ["ls-files", "--stage", "-z"])
     submodules = _require_git(repository.root, ["submodule", "status", "--recursive"])
 
     parsed_status = _parse_status(status)
-    all_eligible_status = [
-        item for item in parsed_status if not _ignored_path(item["path"])
-    ]
+    policy_exclusions: dict[str, str] = {}
+    all_eligible_status = []
+    for item in parsed_status:
+        reason = _status_exclusion_reason(repository, item, limits)
+        if reason is not None:
+            _record_policy_exclusion(policy_exclusions, str(item["path"]), reason)
+            continue
+        if item["kind"] == "ignored":
+            continue
+        all_eligible_status.append(item)
     dirty = bool(all_eligible_status)
     status_omitted = max(0, len(all_eligible_status) - limits.max_files)
     eligible_status = all_eligible_status[: limits.max_files]
-    all_index_records = _filter_index_records(index)
-    index_omitted = max(0, len(all_index_records) - limits.max_files)
-    index_records = all_index_records[: limits.max_files]
+    all_index_records = _parse_index_records(index)
+    eligible_index_records: list[bytes] = []
+    for item in all_index_records:
+        reason = _index_exclusion_reason(repository, item, limits)
+        if reason is not None:
+            _record_policy_exclusion(policy_exclusions, str(item["path"]), reason)
+            continue
+        eligible_index_records.append(bytes(item["record"]))
+    index_omitted = max(0, len(eligible_index_records) - limits.max_files)
+    index_records = eligible_index_records[: limits.max_files]
     worktree_paths = sorted(
         {
             str(item["path"])
@@ -252,6 +278,7 @@ def _capture_git(
         limits=limits,
     )
     exclusion_reasons = _merge_counts(
+        _count_exclusion_reasons(policy_exclusions),
         worktree_scope["exclusion_reasons"],
         untracked_scope["exclusion_reasons"],
     )
@@ -543,7 +570,14 @@ def _parse_status(value: bytes) -> list[dict[str, object]]:
                 }
             )
         elif raw.startswith(b"! "):
-            continue
+            records.append(
+                {
+                    "kind": "ignored",
+                    "path": os.fsdecode(raw[2:]),
+                    "worktree_changed": False,
+                    "record": os.fsdecode(raw),
+                }
+            )
         else:
             raise _status_invalid()
     return records
@@ -565,25 +599,114 @@ def _status_invalid() -> RepositorySnapshotError:
     )
 
 
-def _filter_index_records(value: bytes) -> list[bytes]:
+def _parse_index_records(value: bytes) -> list[dict[str, object]]:
     records = []
     for record in value.split(b"\0"):
         if not record:
             continue
-        _, separator, raw_path = record.partition(b"\t")
+        metadata, separator, raw_path = record.partition(b"\t")
         if not separator:
             raise RepositorySnapshotError(
                 "repository_snapshot_failed",
                 "Read-only Git index output was invalid.",
             )
-        if not _ignored_path(os.fsdecode(raw_path)):
-            records.append(record)
-    records.sort()
+        parts = metadata.split(b" ")
+        if len(parts) != 3:
+            raise RepositorySnapshotError(
+                "repository_snapshot_failed",
+                "Read-only Git index output was invalid.",
+            )
+        records.append(
+            {
+                "mode": os.fsdecode(parts[0]),
+                "path": os.fsdecode(raw_path),
+                "record": record,
+            }
+        )
+    records.sort(key=lambda item: bytes(item["record"]))
     return records
 
 
 def _ignored_path(path: object) -> bool:
     return any(part in DEFAULT_IGNORED_DIRECTORIES for part in PurePosixPath(str(path)).parts)
+
+
+def _status_exclusion_reason(
+    repository: AnchoredRepository,
+    item: dict[str, object],
+    limits: SnapshotLimits,
+) -> str | None:
+    path = str(item["path"])
+    ignored_reason = _ignored_path_reason(path)
+    if ignored_reason is not None:
+        return ignored_reason
+    if item["kind"] == "ignored":
+        return None
+    return _path_exclusion_reason(repository, path, limits)
+
+
+def _index_exclusion_reason(
+    repository: AnchoredRepository,
+    item: dict[str, object],
+    limits: SnapshotLimits,
+) -> str | None:
+    path = str(item["path"])
+    ignored_reason = _ignored_path_reason(path)
+    if ignored_reason is not None:
+        return ignored_reason
+    if item["mode"] == "120000":
+        return "symlink"
+    return _path_exclusion_reason(repository, path, limits)
+
+
+def _ignored_path_reason(path: str) -> str | None:
+    return "ignored_directory" if _ignored_path(path.rstrip("/")) else None
+
+
+def _path_exclusion_reason(
+    repository: AnchoredRepository,
+    path: str,
+    limits: SnapshotLimits,
+) -> str | None:
+    normalized = path.rstrip("/")
+    if not normalized:
+        return None
+    repository.verify_root()
+    absolute = repository.root / normalized
+    try:
+        metadata = os.lstat(absolute)
+    except OSError:
+        return None
+    if stat.S_ISLNK(metadata.st_mode):
+        return "symlink"
+    if not stat.S_ISREG(metadata.st_mode):
+        return "non_regular"
+    probe_size = max(1, min(metadata.st_size, limits.max_file_bytes))
+    try:
+        repository.read_text(normalized, max_bytes=probe_size)
+    except RepositoryAccessError as exc:
+        if exc.code in {"repository_binary_file", "repository_non_text_file"}:
+            return "binary"
+        if exc.code == "context_path_rejected":
+            return "symlink"
+        raise
+    return None
+
+
+def _record_policy_exclusion(
+    exclusions: dict[str, str],
+    path: str,
+    reason: str,
+) -> None:
+    normalized = path.rstrip("/") or path
+    exclusions.setdefault(normalized, reason)
+
+
+def _count_exclusion_reasons(exclusions: dict[str, str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for reason in exclusions.values():
+        _increment(counts, reason)
+    return counts
 
 
 def _expected_root_identity(
