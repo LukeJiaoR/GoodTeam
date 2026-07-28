@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from goodteam_os.repository_inventory import build_repository_inventory
+from goodteam_os.repository_snapshot import (
+    RepositorySnapshotError,
+    capture_repository_snapshot,
+)
+
+
+def test_inventory_is_snapshot_bound_and_deterministic(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "package.json").write_text(
+        json.dumps({"scripts": {"test": "vitest", "build": "vite build"}}),
+        encoding="utf-8",
+    )
+    (root / "src").mkdir()
+    (root / "src" / "main.ts").write_text(
+        "export const main = true;\n",
+        encoding="utf-8",
+    )
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    first = build_repository_inventory(root, snapshot=snapshot)
+    second = build_repository_inventory(root, snapshot=snapshot)
+
+    assert first["schema"] == "repository_inventory.v1"
+    assert first["snapshot_id"] == snapshot.snapshot_id
+    assert first["inventory_digest"] == second["inventory_digest"]
+    assert {item["command"] for item in first["commands"]} == {
+        "npm run build",
+        "npm run test",
+    }
+    assert all(item["classification"] == "heuristic" for item in first["commands"])
+    assert "src/main.ts" in first["entry_points"]
+    assert first["entrypoint_candidates"] == [
+        {
+            "path": "src/main.ts",
+            "basis": "conventional_entrypoint_filename",
+            "classification": "heuristic",
+        }
+    ]
+
+
+def test_inventory_digest_changes_with_a_new_snapshot(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_text("print('first')\n", encoding="utf-8")
+    first_snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    first = build_repository_inventory(root, snapshot=first_snapshot)
+    source.write_text("print('second')\n", encoding="utf-8")
+    second_snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    second = build_repository_inventory(root, snapshot=second_snapshot)
+
+    assert first["snapshot_id"] != second["snapshot_id"]
+    assert first["inventory_digest"] != second["inventory_digest"]
+
+
+def test_inventory_rejects_snapshot_drift(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_text("print('first')\n", encoding="utf-8")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    source.write_text("print('changed')\n", encoding="utf-8")
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        build_repository_inventory(root, snapshot=snapshot)
+
+    assert captured.value.code == "repository_snapshot_changed"
+
+
+def test_constraint_candidates_are_not_confirmed_claims(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "AGENTS.md").write_text("# Rules\nNever execute deploy.\n", encoding="utf-8")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+
+    assert inventory["constraints"] == ["AGENTS.md: Rules", "AGENTS.md: Never execute deploy."]
+    assert inventory["constraint_candidates"] == [
+        {
+            "path": "AGENTS.md",
+            "text": "Rules",
+            "basis": "instruction_document",
+            "classification": "heuristic",
+        },
+        {
+            "path": "AGENTS.md",
+            "text": "Never execute deploy.",
+            "basis": "instruction_document",
+            "classification": "heuristic",
+        },
+    ]
+
+
+def test_inventory_limits_entries_and_depth(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    current = root
+    for depth in range(5):
+        current = current / f"level-{depth}"
+        current.mkdir()
+        (current / "value.py").write_text("VALUE = 1\n", encoding="utf-8")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    inventory = build_repository_inventory(
+        root,
+        snapshot=snapshot,
+        max_entries=3,
+        max_depth=1,
+    )
+
+    assert inventory["scan"]["entries_seen"] <= 3
+    assert inventory["scan"]["max_depth"] == 1
+    assert any("bounded entry limit" in risk for risk in inventory["risks"])

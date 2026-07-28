@@ -89,7 +89,10 @@ def capture_repository_snapshot(
             limits=limits,
         )
     except RepositoryAccessError as exc:
-        raise RepositorySnapshotError(exc.code, str(exc), details=exc.details) from exc
+        code = exc.code
+        if code == "context_path_rejected" and exc.details.get("path") == str(root):
+            code = "repository_root_changed"
+        raise RepositorySnapshotError(code, str(exc), details=exc.details) from exc
     if _canonical_json(first) != _canonical_json(second):
         raise RepositorySnapshotError(
             "repository_snapshot_changed",
