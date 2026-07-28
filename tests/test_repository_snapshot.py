@@ -565,6 +565,47 @@ def test_git_submodule_output_rejects_noncanonical_path(
     assert captured.value.code == "repository_snapshot_failed"
 
 
+@pytest.mark.parametrize(
+    ("path_name", "prepare"),
+    [
+        (
+            "README.md",
+            lambda root: (root / "README.md").write_text("dirty\n", encoding="utf-8"),
+        ),
+        (
+            "extra.txt",
+            lambda root: (root / "extra.txt").write_text("untracked\n", encoding="utf-8"),
+        ),
+    ],
+)
+def test_git_selected_dirty_path_missing_metadata_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    path_name: str,
+    prepare,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    prepare(root)
+    real_anchored_file_metadata = repository_snapshot._anchored_file_metadata
+
+    def missing_selected_metadata(repository, path: str):
+        if path == path_name:
+            return None
+        return real_anchored_file_metadata(repository, path)
+
+    monkeypatch.setattr(
+        repository_snapshot,
+        "_anchored_file_metadata",
+        missing_selected_metadata,
+    )
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        capture_repository_snapshot(root, project_key="DEMO")
+
+    assert captured.value.code == "repository_entry_changed"
+    assert captured.value.details == {"path": path_name}
+
+
 def test_git_total_byte_ceiling_is_aggregate_across_worktree_and_untracked(
     tmp_path: Path,
 ) -> None:

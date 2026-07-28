@@ -435,7 +435,11 @@ def _hash_git_content_paths(
             continue
         metadata = _anchored_file_metadata(repository, path)
         if metadata is None:
-            continue
+            raise RepositoryAccessError(
+                "repository_entry_changed",
+                f"Repository entry changed while it was being read: {path}",
+                details={"path": path},
+            )
         size = int(metadata["size"])
         if size > limits.max_file_bytes:
             omitted_paths.add(path)
