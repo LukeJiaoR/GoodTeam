@@ -104,6 +104,19 @@ def test_snapshot_id_matches_published_identity_payload(tmp_path: Path) -> None:
     assert snapshot.snapshot_id == compute_repository_snapshot_id(snapshot)
 
 
+def test_snapshot_public_api_accepts_positional_optional_arguments(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("initial\n", encoding="utf-8")
+    limits = SnapshotLimits(max_files=1, max_total_bytes=100, max_file_bytes=100)
+
+    snapshot = capture_repository_snapshot(root, "DEMO", None, limits)
+    error = RepositorySnapshotError("example", "message", {"field": "value"})
+
+    assert snapshot.project_key == "DEMO"
+    assert error.details == {"field": "value"}
+
+
 def test_dirty_states_each_change_identity(tmp_path: Path) -> None:
     root = init_git_repo(tmp_path / "repo")
     clean = capture_repository_snapshot(root, project_key="DEMO")
@@ -137,6 +150,42 @@ def test_staged_and_unstaged_versions_have_distinct_digests(
     assert snapshot.source_control["index_digest"] != snapshot.source_control[
         "worktree_digest"
     ]
+
+
+def test_unmerged_git_snapshot_parses_status_and_binds_all_index_stages(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    base_branch = git(root, "branch", "--show-current")
+    git(root, "switch", "-qc", "conflicting-side")
+    (root / "README.md").write_text("side\n", encoding="utf-8")
+    git(root, "commit", "-qam", "side change")
+    git(root, "switch", "-q", base_branch)
+    (root / "README.md").write_text("base\n", encoding="utf-8")
+    git(root, "commit", "-qam", "base change")
+    merge = subprocess.run(
+        ["git", "merge", "conflicting-side"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert merge.returncode != 0
+    raw_index = subprocess.run(
+        ["git", "ls-files", "--stage", "-z"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    parsed_index = repository_snapshot._parse_index_records(raw_index)
+    assert len([item for item in parsed_index if item["path"] == "README.md"]) == 3
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    assert snapshot.source_control["dirty"] is True
+    assert snapshot.source_control["index_digest"] == repository_snapshot._digest_bytes(
+        [bytes(item["record"]) for item in parsed_index]
+    )
 
 
 def test_dirty_git_hashes_exact_path_without_listing_its_parent(
@@ -232,6 +281,54 @@ def test_ceiling_omissions_make_snapshot_incomplete(tmp_path: Path) -> None:
     assert snapshot.content_scope["exclusion_reasons"]["max_files"] == 1
 
 
+def test_non_git_file_ceiling_counts_only_eligible_files_and_exact_omissions(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "source"
+    source.mkdir()
+    for index in range(4):
+        (source / f"file-{index}.txt").write_text(f"{index}\n", encoding="utf-8")
+    (root / "node_modules").mkdir()
+    (root / "node_modules" / "generated.js").write_text("ignored\n", encoding="utf-8")
+    (root / "linked").symlink_to(source / "file-0.txt")
+
+    snapshot = capture_repository_snapshot(
+        root,
+        "DEMO",
+        None,
+        SnapshotLimits(max_files=2, max_total_bytes=100, max_file_bytes=100),
+    )
+
+    assert snapshot.content_scope["eligible_files"] == 2
+    assert snapshot.content_scope["excluded_files"] == 2
+    assert snapshot.content_scope["omitted_files"] == 2
+    assert snapshot.content_scope["exclusion_reasons"] == {
+        "ignored_directory": 1,
+        "max_files": 2,
+        "symlink": 1,
+    }
+
+
+def test_non_git_max_file_bytes_is_an_omission(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "large.txt").write_text("12345", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(
+        root,
+        "DEMO",
+        None,
+        SnapshotLimits(max_files=10, max_total_bytes=100, max_file_bytes=4),
+    )
+
+    assert snapshot.content_scope["complete"] is False
+    assert snapshot.content_scope["excluded_files"] == 0
+    assert snapshot.content_scope["omitted_files"] == 1
+    assert snapshot.content_scope["exclusion_reasons"] == {"max_file_bytes": 1}
+
+
 def test_git_index_ceiling_makes_snapshot_incomplete(tmp_path: Path) -> None:
     root = init_git_repo(tmp_path / "repo")
     (root / "second.txt").write_text("second\n", encoding="utf-8")
@@ -247,6 +344,95 @@ def test_git_index_ceiling_makes_snapshot_incomplete(tmp_path: Path) -> None:
     assert snapshot.content_scope["complete"] is False
     assert snapshot.content_scope["omitted_files"] == 1
     assert snapshot.content_scope["exclusion_reasons"]["max_files"] == 1
+
+
+def test_git_index_identity_includes_staged_path_beyond_file_ceiling(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    staged = root / "z-staged.txt"
+    staged.write_text("first\n", encoding="utf-8")
+    git(root, "add", staged.name)
+    limits = SnapshotLimits(max_files=1, max_total_bytes=100, max_file_bytes=100)
+    first = capture_repository_snapshot(root, "DEMO", None, limits)
+
+    staged.write_text("second\n", encoding="utf-8")
+    git(root, "add", staged.name)
+    second = capture_repository_snapshot(root, "DEMO", None, limits)
+
+    assert first.content_scope["complete"] is False
+    assert second.content_scope["complete"] is False
+    assert first.source_control["index_digest"] != second.source_control["index_digest"]
+    assert first.snapshot_id != second.snapshot_id
+
+
+def test_git_status_identity_includes_untracked_path_beyond_file_ceiling(
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    first_path = root / "z-first.txt"
+    first_path.write_text("same\n", encoding="utf-8")
+    limits = SnapshotLimits(max_files=1, max_total_bytes=100, max_file_bytes=100)
+    first = capture_repository_snapshot(root, "DEMO", None, limits)
+
+    first_path.rename(root / "z-second.txt")
+    second = capture_repository_snapshot(root, "DEMO", None, limits)
+
+    assert first.content_scope["complete"] is False
+    assert second.content_scope["complete"] is False
+    assert first.source_control["status_digest"] != second.source_control["status_digest"]
+    assert first.snapshot_id != second.snapshot_id
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        b"? ../escape.txt\0",
+        b"! invalid//ignored.txt\0",
+        b"! invalid//\0",
+        (
+            b"2 R. N... 100644 100644 100644 "
+            + b"0" * 40
+            + b" "
+            + b"1" * 40
+            + b" R100 target.txt\0../origin.txt\0"
+        ),
+    ],
+)
+def test_git_status_rejects_noncanonical_paths(value: bytes) -> None:
+    with pytest.raises(RepositorySnapshotError) as captured:
+        repository_snapshot._parse_status(value)
+
+    assert captured.value.code == "repository_snapshot_failed"
+
+
+def test_git_index_rejects_noncanonical_staged_only_path() -> None:
+    value = b"100644 " + b"0" * 40 + b" 0\t../escape.txt\0"
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        repository_snapshot._parse_index_records(value)
+
+    assert captured.value.code == "repository_snapshot_failed"
+
+
+def test_git_submodule_output_rejects_noncanonical_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    real_require_git = repository_snapshot._require_git
+
+    def invalid_submodule(root: Path, arguments: list[str]) -> bytes:
+        if arguments == ["submodule", "status", "--recursive"]:
+            return b" " + b"0" * 40 + b" ../escape (heads/main)\n"
+        return real_require_git(root, arguments)
+
+    monkeypatch.setattr(repository_snapshot, "_require_git", invalid_submodule)
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        capture_repository_snapshot(root, project_key="DEMO")
+
+    assert captured.value.code == "repository_snapshot_failed"
 
 
 def test_git_total_byte_ceiling_is_aggregate_across_worktree_and_untracked(
@@ -278,6 +464,47 @@ def test_git_total_byte_ceiling_is_aggregate_across_worktree_and_untracked(
         != "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
     ]
     assert included_buckets.count(True) == 1
+
+
+def test_git_total_byte_ceiling_bounds_physical_anchored_reads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    (root / "README.md").write_text("12345678", encoding="utf-8")
+    (root / "extra.txt").write_text("ABCDEFGH", encoding="utf-8")
+    physical_bytes = 0
+    real_read_bounded = repository_access._read_bounded
+
+    def counting_read_bounded(descriptor: int, limit: int) -> bytes:
+        nonlocal physical_bytes
+        value = real_read_bounded(descriptor, limit)
+        physical_bytes += len(value)
+        return value
+
+    monkeypatch.setattr(repository_access, "_read_bounded", counting_read_bounded)
+    limits = SnapshotLimits(max_files=10, max_total_bytes=10, max_file_bytes=100)
+
+    snapshot = capture_repository_snapshot(root, "DEMO", None, limits)
+
+    assert snapshot.content_scope["complete"] is False
+    assert physical_bytes <= limits.max_total_bytes * 2
+
+
+def test_git_max_file_bytes_is_an_omission(tmp_path: Path) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    (root / "large.txt").write_text("12345", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(
+        root,
+        "DEMO",
+        None,
+        SnapshotLimits(max_files=10, max_total_bytes=100, max_file_bytes=4),
+    )
+
+    assert snapshot.content_scope["complete"] is False
+    assert snapshot.content_scope["omitted_files"] == 1
+    assert snapshot.content_scope["exclusion_reasons"]["max_file_bytes"] == 1
 
 
 def test_git_file_ceiling_counts_unique_paths_across_index_and_untracked(
@@ -412,6 +639,18 @@ def test_git_worktree_subdirectory_fails_closed(tmp_path: Path) -> None:
     assert captured.value.details["operation"] == "rev-parse"
 
 
+def test_bare_git_repository_does_not_fall_back_to_non_git_capture(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo.git"
+    git(tmp_path, "init", "--bare", "-q", str(root))
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        capture_repository_snapshot(root, project_key="DEMO")
+
+    assert captured.value.code == "repository_snapshot_failed"
+
+
 def test_capture_rejects_change_between_stability_passes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -432,6 +671,67 @@ def test_capture_rejects_change_between_stability_passes(
         return result
 
     monkeypatch.setattr(repository_snapshot, "_capture_once", changing_capture)
+    with pytest.raises(RepositorySnapshotError) as captured:
+        capture_repository_snapshot(root, project_key="DEMO")
+
+    assert captured.value.code == "repository_snapshot_changed"
+
+
+def test_non_git_capture_rejects_metadata_change_between_stability_passes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    target = root / "README.md"
+    target.write_text("stable\n", encoding="utf-8")
+    real_capture_once = repository_snapshot._capture_once
+    calls = 0
+
+    def touching_capture(*args, **kwargs):
+        nonlocal calls
+        result = real_capture_once(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            before = target.stat()
+            os.utime(
+                target,
+                ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000),
+            )
+        return result
+
+    monkeypatch.setattr(repository_snapshot, "_capture_once", touching_capture)
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        capture_repository_snapshot(root, project_key="DEMO")
+
+    assert captured.value.code == "repository_snapshot_changed"
+
+
+def test_dirty_git_capture_rejects_metadata_change_between_stability_passes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    target = root / "README.md"
+    target.write_text("dirty\n", encoding="utf-8")
+    real_capture_once = repository_snapshot._capture_once
+    calls = 0
+
+    def touching_capture(*args, **kwargs):
+        nonlocal calls
+        result = real_capture_once(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            before = target.stat()
+            os.utime(
+                target,
+                ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000),
+            )
+        return result
+
+    monkeypatch.setattr(repository_snapshot, "_capture_once", touching_capture)
+
     with pytest.raises(RepositorySnapshotError) as captured:
         capture_repository_snapshot(root, project_key="DEMO")
 
