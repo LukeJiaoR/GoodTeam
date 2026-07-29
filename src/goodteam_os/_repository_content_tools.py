@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import selectors
@@ -46,6 +48,9 @@ def list_tree(
     truncated = len(entries) > max_entries
     returned_chars = 0
     for entry in entries[:max_entries]:
+        if _entry_is_sensitive(entry.path):
+            truncated = True
+            continue
         observation = {
             "kind": "tree_entry",
             "path": entry.path,
@@ -138,13 +143,13 @@ def search_text(
         entries = repository.walk(path, max_entries=scan_limits["walk_max_entries"] + 1)
         observations: list[dict[str, object]] = []
         returned_chars = 0
-        truncated = False
+        truncated = len(entries) > scan_limits["walk_max_entries"]
         scanned_files = 0
         remaining_read_bytes = scan_limits["max_read_bytes"]
-        for entry in entries:
-            if scanned_files >= scan_limits["walk_max_entries"]:
+        for entry in entries[: scan_limits["walk_max_entries"]]:
+            if _entry_is_sensitive(entry.path):
                 truncated = True
-                break
+                continue
             if entry.kind != "file":
                 continue
             if scanned_files >= scan_limits["max_files"]:
@@ -208,6 +213,14 @@ def _literal_search_scan_limits(
         "max_files": max(1, file_cap),
         "max_read_bytes": max(1, read_cap),
     }
+
+
+def _entry_is_sensitive(path: str) -> bool:
+    try:
+        reject_sensitive_path(path)
+    except RepositoryAccessError:
+        return True
+    return False
 
 
 def _validate_list_tree_request(
@@ -491,9 +504,15 @@ def _stream_regex_matches(
                 if payload.get("type") != "match":
                     continue
                 data = payload.get("data", {})
-                path_value = data.get("path", {}).get("text")
+                path_value = _extract_rg_field_text(
+                    data.get("path"),
+                    output_byte_limit=output_byte_limit,
+                )
                 line_number = data.get("line_number")
-                line_text = data.get("lines", {}).get("text")
+                line_text = _extract_rg_field_text(
+                    data.get("lines"),
+                    output_byte_limit=output_byte_limit,
+                )
                 if (
                     not isinstance(path_value, str)
                     or not isinstance(line_number, int)
@@ -558,9 +577,51 @@ def _build_search_match_observation(
     }
 
 
+def _extract_rg_field_text(field: object, *, output_byte_limit: int) -> str | None:
+    if type(field) is not dict:
+        return None
+    text_value = field.get("text")
+    if isinstance(text_value, str):
+        return text_value
+    bytes_value = field.get("bytes")
+    if not isinstance(bytes_value, str):
+        return None
+    decoded = _decode_rg_base64(bytes_value, output_byte_limit=output_byte_limit)
+    try:
+        return decoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContextProviderError(
+            "context_tool_invalid_output",
+            "Repository context tool produced invalid output.",
+        ) from exc
+
+
+def _decode_rg_base64(value: str, *, output_byte_limit: int) -> bytes:
+    max_encoded_length = ((output_byte_limit + 2) // 3) * 4
+    if len(value) > max_encoded_length:
+        raise ContextProviderError(
+            "context_tool_invalid_output",
+            "Repository context tool produced invalid output.",
+        )
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ContextProviderError(
+            "context_tool_invalid_output",
+            "Repository context tool produced invalid output.",
+        ) from exc
+    if len(decoded) > output_byte_limit:
+        raise ContextProviderError(
+            "context_tool_invalid_output",
+            "Repository context tool produced invalid output.",
+        )
+    return decoded
+
+
 def _validate_search_result_path(path: str) -> str:
     try:
-        canonical = canonical_relative_path(path)
+        normalized = path[2:] if path.startswith("./") else path
+        canonical = canonical_relative_path(normalized)
         reject_sensitive_path(canonical)
     except RepositoryAccessError as exc:
         raise ContextProviderError(

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import inspect
 import json
 import os
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -1375,6 +1377,38 @@ def test_list_tree_is_bounded_and_excludes_generated_content(tmp_path: Path) -> 
     )
 
 
+def test_list_tree_skips_sensitive_entries_without_leaking_names(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / "docs").mkdir()
+    (root / "docs" / "guide.md").write_text("guide\n", encoding="utf-8")
+    (root / ".env").write_text("topsecret\n", encoding="utf-8")
+    (root / "nested").mkdir()
+    (root / "nested" / "credentials.dev").write_text("topsecret\n", encoding="utf-8")
+    (root / "nested" / "secrets.local").write_text("topsecret\n", encoding="utf-8")
+    (root / "nested" / "id_ed25519").write_text("topsecret\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    response = fixture["provider"].call(
+        "list_tree",
+        {"path": "", "depth": 3, "max_entries": 10},
+        model_turn=1,
+    )
+
+    assert response["status"] == "ok"
+    assert response["truncated"] is True
+    returned_paths = [item["path"] for item in response["observations"]]
+    assert ".env" not in returned_paths
+    assert "nested/credentials.dev" not in returned_paths
+    assert "nested/secrets.local" not in returned_paths
+    assert "nested/id_ed25519" not in returned_paths
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    for forbidden in (".env", "credentials.dev", "secrets.local", "id_ed25519"):
+        assert forbidden not in encoded
+
+
 def test_literal_search_returns_bounded_matches(tmp_path: Path) -> None:
     fixture = _provider_fixture(tmp_path)
     src = fixture["root"] / "src"
@@ -1406,6 +1440,44 @@ def test_literal_search_returns_bounded_matches(tmp_path: Path) -> None:
         {"path", "line", "text", "content_hash"} <= set(item)
         for item in response["observations"]
     )
+
+
+def test_literal_search_skips_sensitive_files_during_broad_search(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / "docs").mkdir()
+    (root / "docs" / "public.txt").write_text("SAFE_MATCH\n", encoding="utf-8")
+    (root / ".env").write_text("SAFE_MATCH\n", encoding="utf-8")
+    (root / "nested").mkdir()
+    (root / "nested" / "credentials.json").write_text("SAFE_MATCH\n", encoding="utf-8")
+    (root / "nested" / "secrets.prod").write_text("SAFE_MATCH\n", encoding="utf-8")
+    (root / "nested" / "id_rsa").write_text("SAFE_MATCH\n", encoding="utf-8")
+    (root / "nested" / "tls.pem").write_text("SAFE_MATCH\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    response = fixture["provider"].call(
+        "search_text",
+        {"path": "", "query": "SAFE_MATCH", "mode": "literal", "max_matches": 10},
+        model_turn=1,
+    )
+
+    assert response["status"] == "ok"
+    assert response["truncated"] is True
+    assert [item["path"] for item in response["observations"]] == ["docs/public.txt"]
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["budget"]["files_observed"] == 1
+    assert record["budget"]["observed_file_chars"] == {"docs/public.txt": 10}
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    for forbidden in (
+        ".env",
+        "credentials.json",
+        "secrets.prod",
+        "id_rsa",
+        "tls.pem",
+    ):
+        assert forbidden not in encoded
 
 
 def test_literal_and_regex_matches_share_exact_line_contract(
@@ -1920,6 +1992,130 @@ def test_regex_spawn_excludes_default_ignored_and_sensitive_patterns(
         assert sensitive in argv
 
 
+def test_regex_root_search_normalizes_dot_slash_paths_with_real_rg(tmp_path: Path) -> None:
+    if shutil.which("rg") is None:
+        pytest.skip("rg unavailable")
+
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "ascii.txt").write_text("ROOT_MATCH\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    response = fixture["provider"].call(
+        "search_text",
+        {"path": "", "query": "ROOT_MATCH", "mode": "regex", "max_matches": 5},
+        model_turn=1,
+    )
+
+    assert response["status"] == "ok"
+    assert response["truncated"] is False
+    assert len(response["observations"]) == 1
+    observation = response["observations"][0]
+    assert observation["path"] == "ascii.txt"
+    assert observation["start_line"] == 1
+    assert observation["end_line"] == 1
+    assert observation["text"] == "ROOT_MATCH"
+    assert observation["content_hash"].startswith("sha256:")
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert '"path":"./ascii.txt"' not in encoded
+
+
+def test_regex_search_accepts_path_and_line_bytes_variants(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import goodteam_os._repository_content_tools as content_tools
+    from goodteam_os._repository_content_policy import hash_bytes
+
+    fixture = _provider_fixture(tmp_path)
+    raw_line = b"BYTE_MATCH\n"
+    payload = json.dumps(
+        {
+            "type": "match",
+            "data": {
+                "path": {"bytes": base64.b64encode(b"./ascii.txt").decode("ascii")},
+                "lines": {"bytes": base64.b64encode(raw_line).decode("ascii")},
+                "line_number": 1,
+                "submatches": [
+                    {
+                        "match": {
+                            "bytes": base64.b64encode(b"BYTE_MATCH").decode("ascii")
+                        },
+                        "start": 0,
+                        "end": 10,
+                    }
+                ],
+            },
+        }
+    ).encode("utf-8") + b"\n"
+    fake, release, writer, done = _make_pipe_process([("stdout", payload, 0.0)])
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
+
+    release.set()
+    response = fixture["provider"].call(
+        "search_text",
+        {"path": "", "query": "BYTE_MATCH", "mode": "regex", "max_matches": 5},
+        model_turn=1,
+    )
+
+    assert response["status"] == "ok"
+    assert response["observations"] == [
+        {
+            "kind": "search_match",
+            "path": "ascii.txt",
+            "line": 1,
+            "start_line": 1,
+            "end_line": 1,
+            "text": "BYTE_MATCH",
+            "content_hash": hash_bytes(raw_line),
+            "redaction_applied": False,
+            "observation_id": response["observations"][0]["observation_id"],
+        }
+    ]
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
+
+
+def test_regex_search_rejects_invalid_base64_payload_safely(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    payload = json.dumps(
+        {
+            "type": "match",
+            "data": {
+                "path": {"bytes": "%%%not-base64%%%"},
+                "lines": {"bytes": "%%%still-bad%%%"},
+                "line_number": 1,
+            },
+        }
+    ).encode("utf-8") + b"\n"
+    fake, release, writer, done = _make_pipe_process([("stdout", payload, 0.0)])
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
+
+    release.set()
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "BYTE_MATCH", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_invalid_output"
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "%%%not-base64%%%" not in encoded
+    assert "%%%still-bad%%%" not in encoded
+
+
 def test_regex_search_rejects_malformed_json_safely(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2243,6 +2439,64 @@ def test_literal_search_caps_per_file_read_bytes_from_tight_allowance(
     assert calls["read_count"] == 1
     assert calls["max_bytes"] == [320]
     assert calls["max_bytes"][0] < FILE_READ_MAX_BYTES
+
+
+def test_literal_search_reports_truncation_when_walk_cap_is_spent_on_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget, RepositoryContextProvider
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FakeEntry:
+        def __init__(self, path: str, kind: str) -> None:
+            self.path = path
+            self.kind = kind
+
+    class FakeRepository:
+        def __init__(self, root, *, expected_identity=None):
+            del root, expected_identity
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+
+        def walk(self, path="", *, ignored_directories=None, max_entries=None, max_depth=None):
+            del path, ignored_directories, max_depth, max_entries
+            entries = [FakeEntry(f"dir_{index}", "directory") for index in range(20)]
+            entries.append(FakeEntry("dir_19/deep.txt", "file"))
+            return entries
+
+        def read_text(self, path: str, *, max_bytes: int):
+            raise AssertionError(f"deep file should not be reached: {path} {max_bytes}")
+
+        def verify_root(self) -> None:
+            return None
+
+    monkeypatch.setattr(content_tools, "AnchoredRepository", FakeRepository)
+    provider = _rebuild_provider(
+        fixture,
+        RepositoryContextProvider,
+        budget=OnboardingBudget(
+            requested_limits={
+                "max_single_result_chars": 80,
+                "max_total_observation_chars": 80,
+            }
+        ),
+    )
+
+    response = provider.call(
+        "search_text",
+        {"path": "", "query": "DEEP_MATCH", "mode": "literal", "max_matches": 5},
+        model_turn=1,
+    )
+
+    assert response["observations"] == []
+    assert response["truncated"] is True
 
 
 def test_tools_reject_symlink_and_binary_files(tmp_path: Path) -> None:
