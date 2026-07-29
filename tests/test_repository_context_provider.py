@@ -794,6 +794,86 @@ def test_constructor_binding_failures_are_detached_and_sanitized(
     _assert_no_raw_binding_data(captured.value, *forbidden)
 
 
+@pytest.mark.parametrize(
+    ("field", "raw_value"),
+    [
+        ("workspace", "raw-workspace-secret"),
+        ("project_key", "RAW_PROJECT_KEY"),
+        ("root", "raw-root-secret"),
+        ("job_id", "raw-job-secret"),
+        ("snapshot_id", "raw-snapshot-secret"),
+    ],
+)
+def test_constructor_store_accessor_failures_are_detached_and_sanitized(
+    tmp_path: Path,
+    field: str,
+    raw_value: str,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class ExplodingStore:
+        def __init__(self, backing_store, exploding_field: str) -> None:
+            self._backing_store = backing_store
+            self._exploding_field = exploding_field
+
+        @property
+        def workspace(self):
+            if self._exploding_field == "workspace":
+                raise RuntimeError(raw_value)
+            return self._backing_store.workspace
+
+        @property
+        def project_key(self):
+            if self._exploding_field == "project_key":
+                raise RuntimeError(raw_value)
+            return self._backing_store.project_key
+
+        @property
+        def root(self):
+            if self._exploding_field == "root":
+                raise RuntimeError(raw_value)
+            return self._backing_store.root
+
+        @property
+        def job_id(self):
+            if self._exploding_field == "job_id":
+                raise RuntimeError(raw_value)
+            return self._backing_store.job_id
+
+        @property
+        def snapshot_id(self):
+            if self._exploding_field == "snapshot_id":
+                raise RuntimeError(raw_value)
+            return self._backing_store.snapshot_id
+
+    with pytest.raises(ContextProviderError) as captured:
+        RepositoryContextProvider(
+            workspace=fixture["workspace"],
+            project_key=fixture["project_key"],
+            root=fixture["root"],
+            snapshot=fixture["snapshot"],
+            observation_store=ExplodingStore(fixture["store"], field),
+            budget=OnboardingBudget(),
+        )
+
+    assert captured.value.code == "onboarding_snapshot_mismatch"
+    _assert_detached_error(captured.value)
+    _assert_no_raw_binding_data(
+        captured.value,
+        raw_value,
+        fixture["snapshot"].snapshot_id,
+        str(fixture["root"]),
+        str(fixture["workspace"]),
+        fixture["project_key"],
+    )
+
+
 def test_record_observation_cannot_steal_reserved_result_capacity() -> None:
     from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
 
@@ -944,6 +1024,148 @@ def test_store_rebinding_between_post_verification_and_append_fails_closed(
     assert not redirected_path.exists()
 
 
+@pytest.mark.parametrize(
+    ("status_kind", "field", "replacement"),
+    [
+        ("ok", "workspace", "redirected-workspace"),
+        ("ok", "project_key", "REDIRECTED"),
+        ("ok", "root", "redirected-root"),
+        ("ok", "job_id", "job-redirected"),
+        ("ok", "snapshot_id", "snap_redirected"),
+        ("denied", "workspace", "redirected-workspace"),
+        ("denied", "project_key", "REDIRECTED"),
+        ("denied", "root", "redirected-root"),
+        ("denied", "job_id", "job-redirected"),
+        ("denied", "snapshot_id", "snap_redirected"),
+        ("error", "workspace", "redirected-workspace"),
+        ("error", "project_key", "REDIRECTED"),
+        ("error", "root", "redirected-root"),
+        ("error", "job_id", "job-redirected"),
+        ("error", "snapshot_id", "snap_redirected"),
+    ],
+)
+def test_append_window_binding_mutations_fail_closed_and_write_nowhere(
+    tmp_path: Path,
+    status_kind: str,
+    field: str,
+    replacement: str,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    original_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        "job-1",
+    )
+
+    if field == "workspace":
+        redirected_workspace = fixture["workspace"].parent / replacement
+        import_project(redirected_workspace, str(fixture["root"]))
+        OnboardingArtifactStore(
+            redirected_workspace,
+            fixture["project_key"],
+            fixture["root"],
+        ).publish_snapshot(fixture["snapshot"])
+        replacement_value = redirected_workspace
+    elif field == "root":
+        replacement_value = fixture["root"].parent / replacement
+    else:
+        replacement_value = replacement
+
+    class AppendMutationProvider(RepositoryContextProvider):
+        def _recording_authority_error(self):
+            error = super()._recording_authority_error()
+            if error is None:
+                setattr(self.observation_store, field, replacement_value)
+            return error
+
+        def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
+            if status_kind == "error":
+                raise ContextProviderError(
+                    "context_handler_failed",
+                    "Repository context handler failed.",
+                )
+            return super()._handle_list_tree(request)
+
+    provider = _rebuild_provider(fixture, AppendMutationProvider)
+    redirected_path = observation_path(
+        provider.observation_store.workspace,
+        provider.observation_store.project_key,
+        provider.observation_store.job_id,
+    )
+    tool = "list_tree" if status_kind != "denied" else "run_command"
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call(tool, {}, model_turn=1)
+
+    assert captured.value.code == "onboarding_snapshot_mismatch"
+    _assert_detached_error(captured.value)
+    assert not original_path.exists()
+    if redirected_path != original_path:
+        assert not redirected_path.exists()
+
+
+@pytest.mark.parametrize("status_kind", ["ok", "denied", "error"])
+def test_store_swap_after_final_authority_fails_closed_and_writes_nowhere(
+    tmp_path: Path,
+    status_kind: str,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    redirected_job = "job-redirected"
+    redirected_store = OnboardingObservationStore(
+        fixture["workspace"],
+        fixture["project_key"],
+        fixture["root"],
+        redirected_job,
+        fixture["snapshot"].snapshot_id,
+    )
+    original_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        "job-1",
+    )
+    redirected_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        redirected_job,
+    )
+
+    class SwappingProvider(RepositoryContextProvider):
+        def _recording_authority_error(self):
+            error = super()._recording_authority_error()
+            if error is None:
+                self.observation_store = redirected_store
+            return error
+
+        def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
+            if status_kind == "error":
+                raise ContextProviderError(
+                    "context_handler_failed",
+                    "Repository context handler failed.",
+                )
+            return super()._handle_list_tree(request)
+
+    provider = _rebuild_provider(fixture, SwappingProvider)
+    tool = "list_tree" if status_kind != "denied" else "run_command"
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call(tool, {}, model_turn=1)
+
+    assert captured.value.code == "onboarding_snapshot_mismatch"
+    _assert_detached_error(captured.value)
+    assert not original_path.exists()
+    assert not redirected_path.exists()
+
+
 def test_list_tree_request_rejects_max_entries_above_server_cap(tmp_path: Path) -> None:
     from goodteam_os.repository_context_provider import ContextProviderError
 
@@ -1087,19 +1309,20 @@ def test_top_level_persistence_failure_is_detached(tmp_path: Path, monkeypatch: 
     from goodteam_os.repository_context_provider import ContextProviderError
 
     fixture = _provider_fixture(tmp_path)
-    original_append = fixture["store"].append
-    calls = [0]
 
-    def fail_success_persist(record: dict[str, object]):
-        calls[0] += 1
-        if record["status"] == "ok":
+    class FailingAppendStore:
+        def append(self, record: dict[str, object]) -> Path:
+            del record
             raise ProjectImportError(
                 "onboarding_observation_invalid",
                 "alpha raw persistence failure",
             )
-        return original_append(record)
 
-    monkeypatch.setattr(fixture["store"], "append", fail_success_persist)
+    monkeypatch.setattr(
+        fixture["provider"],
+        "_authoritative_append_store",
+        lambda: FailingAppendStore(),
+    )
 
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call("list_tree", {}, model_turn=1)
@@ -1928,7 +2151,15 @@ def test_error_append_failure_surfaces_safe_persistence_error(
             "raw ledger append failure sk-live-secret",
         )
 
-    monkeypatch.setattr(fixture["store"], "append", fail_append)
+    class FailingAppendStore:
+        def append(self, record: dict[str, object]) -> Path:
+            return fail_append(record)
+
+    monkeypatch.setattr(
+        provider,
+        "_authoritative_append_store",
+        lambda: FailingAppendStore(),
+    )
 
     with pytest.raises(ContextProviderError) as captured:
         provider.call("list_tree", {}, model_turn=1)

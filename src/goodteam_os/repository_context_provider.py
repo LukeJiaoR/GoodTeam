@@ -539,19 +539,19 @@ class RepositoryContextProvider:
         self.project_key = str(project_key)
         self.root = Path(root).expanduser().resolve()
         self.snapshot = snapshot
-        self.observation_store = observation_store
-        self._expected_observation_store = observation_store
-        self._expected_store_binding = _capture_store_binding(observation_store)
         self.budget = budget
         self._lock = threading.RLock()
         self._handler_context_local = threading.local()
-        self._artifact_store = OnboardingArtifactStore(
-            self.workspace,
-            self.project_key,
-            self.root,
-        )
+        self.observation_store = observation_store
         constructor_error: ContextProviderError | None = None
         try:
+            self._expected_observation_store = observation_store
+            self._expected_store_binding = _capture_store_binding(observation_store)
+            self._artifact_store = OnboardingArtifactStore(
+                self.workspace,
+                self.project_key,
+                self.root,
+            )
             self._validate_constructor_binding()
         except ContextProviderError as exc:
             constructor_error = _detach_context_provider_error(exc)
@@ -655,16 +655,8 @@ class RepositoryContextProvider:
                             "returned_chars": returned_chars,
                         },
                     )
-                    authority_error = self._recording_authority_error()
-                    if authority_error is not None:
-                        pending_error = authority_error
-                    else:
-                        try:
-                            self.observation_store.append(envelope)
-                        except Exception:
-                            pending_error = _build_persistence_failure_error()
-                        else:
-                            return envelope
+                    self._append_envelope(envelope)
+                    return envelope
         except ContextProviderError as exc:
             if _is_authority_error_code(exc.code):
                 pending_error = _detach_context_provider_error(exc)
@@ -852,9 +844,6 @@ class RepositoryContextProvider:
         error: ContextProviderError,
     ) -> ContextProviderError | None:
         error._terminal_record_attempted = True
-        authority_error = self._recording_authority_error()
-        if authority_error is not None:
-            return authority_error
         try:
             envelope = self._build_envelope(
                 tool_call_id=tool_call_id,
@@ -866,7 +855,11 @@ class RepositoryContextProvider:
                 truncated=False,
                 response_metadata={"error": {"code": error.code}},
             )
-            self.observation_store.append(envelope)
+            self._append_envelope(envelope)
+        except ContextProviderError as exc:
+            if _is_authority_error_code(exc.code):
+                return _detach_context_provider_error(exc)
+            return _build_persistence_failure_error()
         except Exception:
             return _build_persistence_failure_error()
         return None
@@ -881,9 +874,6 @@ class RepositoryContextProvider:
         error: ContextProviderError,
     ) -> ContextProviderError | None:
         error._terminal_record_attempted = True
-        authority_error = self._recording_authority_error()
-        if authority_error is not None:
-            return authority_error
         try:
             envelope = self._build_envelope(
                 tool_call_id=tool_call_id,
@@ -895,7 +885,11 @@ class RepositoryContextProvider:
                 truncated=False,
                 response_metadata={"error": {"code": error.code}},
             )
-            self.observation_store.append(envelope)
+            self._append_envelope(envelope)
+        except ContextProviderError as exc:
+            if _is_authority_error_code(exc.code):
+                return _detach_context_provider_error(exc)
+            return _build_persistence_failure_error()
         except Exception:
             return _build_persistence_failure_error()
         return None
@@ -947,6 +941,43 @@ class RepositoryContextProvider:
         except ProjectImportError as exc:
             return _detach_context_provider_error(_normalize_artifact_error(exc))
         return None
+
+    def _append_envelope(self, envelope: dict[str, object]) -> None:
+        authority_error = self._recording_authority_error()
+        if authority_error is not None:
+            raise authority_error
+        self._assert_store_binding()
+        append_store = self._authoritative_append_store()
+        try:
+            append_store.append(envelope)
+        except ProjectImportError as exc:
+            if exc.code in {
+                "onboarding_artifact_conflict",
+                "onboarding_snapshot_missing",
+                "onboarding_snapshot_mismatch",
+                "project_workspace_not_isolated",
+            }:
+                normalized = _normalize_artifact_error(exc)
+                if _is_authority_error_code(normalized.code):
+                    raise normalized
+            raise _build_persistence_failure_error()
+        except ContextProviderError:
+            raise
+        except Exception:
+            raise _build_persistence_failure_error()
+
+    def _authoritative_append_store(self) -> OnboardingObservationStore:
+        binding = self._expected_store_binding
+        try:
+            return OnboardingObservationStore(
+                binding.workspace,
+                binding.project_key,
+                binding.root,
+                binding.job_id,
+                binding.snapshot_id,
+            )
+        except ProjectImportError as exc:
+            raise _normalize_artifact_error(exc)
 
     def _invoke_handler(
         self,
