@@ -150,6 +150,8 @@ def _scan_repository(
                 if entry.kind == "symlink" or state.get("reason") == "symlink":
                     symlinks.append(entry.path)
                 continue
+            if state.get("kind") == "gitlink":
+                continue
             if entry.kind == "symlink":
                 symlinks.append(entry.path)
                 continue

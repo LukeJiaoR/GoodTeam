@@ -71,6 +71,65 @@ def test_inventory_builds_from_dirty_git_snapshot(tmp_path: Path) -> None:
     assert inventory["scan"]["files_seen"] == 2
 
 
+def test_inventory_treats_tracked_gitlink_as_opaque_directory(tmp_path: Path) -> None:
+    submodule = tmp_path / "submodule"
+    submodule.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=submodule, check=True)
+    (submodule / "package.json").write_text(
+        json.dumps({"scripts": {"test": "must-not-be-discovered"}}),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "package.json"], cwd=submodule, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=GoodTeam Test",
+            "-c",
+            "user.email=goodteam@example.invalid",
+            "commit",
+            "-qm",
+            "submodule fixture",
+        ],
+        cwd=submodule,
+        check=True,
+    )
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(submodule),
+            "vendor/dependency",
+        ],
+        cwd=root,
+        check=True,
+    )
+    subprocess.run(["git", "add", ".gitmodules", "vendor/dependency"], cwd=root, check=True)
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+
+    gitlink = next(
+        item
+        for item in snapshot.path_manifest["entries"]
+        if item["path"] == "vendor/dependency"
+    )
+    assert gitlink["git"]["mode"] == "160000"
+    assert inventory["scan"]["entries_seen"] == 4
+    assert inventory["scan"]["files_seen"] == 1
+    assert inventory["scan"]["directories_seen"] == 1
+    assert inventory["commands"] == []
+    assert "vendor/dependency" not in inventory["directory_structure"]
+
+
 def test_inventory_builds_from_linked_git_worktree_snapshot(tmp_path: Path) -> None:
     primary = tmp_path / "primary"
     linked = tmp_path / "linked"

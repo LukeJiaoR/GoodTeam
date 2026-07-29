@@ -489,6 +489,64 @@ def test_compile_snapshot_path_manifest_rejects_invalid_state_record(
 
 
 @pytest.mark.parametrize(
+    ("kind", "mode"),
+    [
+        ("gitlink", "100644"),
+        ("file", "160000"),
+    ],
+)
+def test_gitlink_manifest_kind_is_strictly_bound_to_index_mode(
+    tmp_path: Path,
+    kind: str,
+    mode: str,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    manifest = dict(snapshot.path_manifest)
+    entries = [dict(item) for item in manifest["entries"]]
+    readme = next(item for item in entries if item["path"] == "README.md")
+    readme["kind"] = kind
+    readme["git"] = {**readme["git"], "mode": mode}
+    manifest["entries"] = entries
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        compile_snapshot_path_manifest(replace(snapshot, path_manifest=manifest))
+
+    assert captured.value.code == "repository_snapshot_invalid"
+    assert captured.value.details == {"path": "README.md"}
+
+
+@pytest.mark.parametrize("actual_kind", ["file", "symlink"])
+def test_gitlink_manifest_only_accepts_a_real_directory_entry(
+    tmp_path: Path,
+    actual_kind: str,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    manifest = dict(snapshot.path_manifest)
+    entries = [dict(item) for item in manifest["entries"]]
+    readme = next(item for item in entries if item["path"] == "README.md")
+    readme["kind"] = "gitlink"
+    readme["git"] = {**readme["git"], "mode": "160000"}
+    manifest["entries"] = entries
+    compiled = compile_snapshot_path_manifest(
+        replace(snapshot, path_manifest=manifest)
+    )
+    entry = repository_access.RepositoryEntry(
+        path="README.md",
+        kind=actual_kind,
+        size=7,
+        mtime_ns=0,
+    )
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        validate_snapshot_path_entry(compiled, entry)
+
+    assert captured.value.code == "repository_snapshot_changed"
+    assert captured.value.details == {"path": "README.md"}
+
+
+@pytest.mark.parametrize(
     "duplicate_state",
     [
         "entries",

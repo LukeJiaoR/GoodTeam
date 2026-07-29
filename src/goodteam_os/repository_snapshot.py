@@ -229,7 +229,7 @@ def _validate_path_manifest_record(
         if kind == "directory":
             if set(value) != {"path", "kind"}:
                 raise _path_manifest_invalid(path)
-        elif kind == "file":
+        elif kind in {"file", "gitlink"}:
             _validate_represented_file_record(value, path)
         else:
             raise _path_manifest_invalid(path)
@@ -291,6 +291,8 @@ def _validate_represented_file_record(value: dict[object, object], path: str) ->
             or git_identity.get("stage") != 0
         ):
             raise _path_manifest_invalid(path)
+        if (value.get("kind") == "gitlink") != (git_identity.get("mode") == "160000"):
+            raise _path_manifest_invalid(path)
         return
     raise _path_manifest_invalid(path)
 
@@ -347,7 +349,10 @@ def validate_snapshot_path_entry(
         represented = record
         result = dict(represented)
         result["snapshot_state"] = "represented"
-        if str(represented.get("kind")) != entry.kind:
+        expected_entry_kind = (
+            "directory" if represented.get("kind") == "gitlink" else represented.get("kind")
+        )
+        if str(expected_entry_kind) != entry.kind:
             raise RepositorySnapshotError(
                 "repository_snapshot_changed",
                 "Repository content no longer matches the captured snapshot.",
@@ -1023,7 +1028,9 @@ def _git_path_manifest(
         entries.append(
             {
                 "path": path,
-                "kind": "file",
+                "kind": (
+                    "gitlink" if str(candidate["mode"]) == "160000" else "file"
+                ),
                 "identity_kind": "git_index",
                 "git": {
                     "mode": str(candidate["mode"]),
