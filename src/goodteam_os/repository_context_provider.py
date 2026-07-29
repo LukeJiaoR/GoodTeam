@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import subprocess
 import threading
 import time
 import uuid
@@ -539,12 +540,14 @@ class RepositoryContextProvider:
         snapshot: RepositorySnapshot,
         observation_store: OnboardingObservationStore,
         budget: OnboardingBudget,
+        process_factory=None,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve(strict=False)
         self.project_key = str(project_key)
         self.root = Path(root).expanduser().resolve()
         self.snapshot = snapshot
         self.budget = budget
+        self._process_factory = subprocess.Popen if process_factory is None else process_factory
         self._lock = threading.RLock()
         self._handler_context_local = threading.local()
         self.observation_store = observation_store
@@ -623,8 +626,8 @@ class RepositoryContextProvider:
                     try:
                         self._set_current_handler_context(handler_context)
                         buffered = self._invoke_handler(tool, validated_request)
-                        observations_payload, truncated = _validate_handler_payload(
-                            buffered
+                        observations_payload, truncated, result_status = (
+                            _validate_handler_payload(buffered)
                         )
                         observations = _normalize_observations(
                             observations_payload,
@@ -652,7 +655,7 @@ class RepositoryContextProvider:
                         tool=tool_label,
                         model_turn=turn,
                         request=request_payload,
-                        status="ok",
+                        status=result_status,
                         observations=observations,
                         truncated=truncated,
                         response_metadata={
@@ -1109,16 +1112,46 @@ class RepositoryContextProvider:
         )
 
     def _handle_inspect_manifest(self, request: dict[str, object]) -> dict[str, object]:
-        return self._not_implemented(request)
+        from goodteam_os._repository_structured_tools import inspect_manifest
+
+        return inspect_manifest(
+            root=self.root,
+            snapshot=self.snapshot,
+            request=request,
+            result_char_allowance=self._current_tool_call_context().result_char_allowance,
+        )
 
     def _handle_inspect_git_history(self, request: dict[str, object]) -> dict[str, object]:
-        return self._not_implemented(request)
+        from goodteam_os._repository_git_tools import inspect_git_history
+
+        return inspect_git_history(
+            root=self.root,
+            snapshot=self.snapshot,
+            request=request,
+            result_char_allowance=self._current_tool_call_context().result_char_allowance,
+            process_factory=self._process_factory,
+        )
 
     def _handle_inspect_tests(self, request: dict[str, object]) -> dict[str, object]:
-        return self._not_implemented(request)
+        from goodteam_os._repository_structured_tools import inspect_tests
+
+        return inspect_tests(
+            root=self.root,
+            snapshot=self.snapshot,
+            request=request,
+            result_char_allowance=self._current_tool_call_context().result_char_allowance,
+        )
 
     def _handle_inspect_recent_changes(self, request: dict[str, object]) -> dict[str, object]:
-        return self._not_implemented(request)
+        from goodteam_os._repository_git_tools import inspect_recent_changes
+
+        return inspect_recent_changes(
+            root=self.root,
+            snapshot=self.snapshot,
+            request=request,
+            result_char_allowance=self._current_tool_call_context().result_char_allowance,
+            process_factory=self._process_factory,
+        )
 
     def _not_implemented(self, request: dict[str, object]) -> dict[str, object]:
         del request
@@ -1290,7 +1323,7 @@ def _validate_list_tree_request(
 
 def _validate_handler_payload(
     payload: object,
-) -> tuple[list[dict[str, object]], bool]:
+) -> tuple[list[dict[str, object]], bool, str]:
     if type(payload) is not dict or not _is_json_safe(payload):
         raise ContextProviderError(
             "context_handler_failed",
@@ -1298,12 +1331,18 @@ def _validate_handler_payload(
         )
     observations = payload.get("observations", [])
     truncated = payload.get("truncated", False)
-    if not isinstance(observations, list) or not isinstance(truncated, bool):
+    status = payload.get("status", "ok")
+    if (
+        not isinstance(observations, list)
+        or not isinstance(truncated, bool)
+        or status not in {"ok", "invalid"}
+        or (status == "invalid" and observations)
+    ):
         raise ContextProviderError(
             "context_handler_failed",
             "Repository context handler returned an invalid payload.",
         )
-    return observations, truncated
+    return observations, truncated, status
 
 
 def _is_json_safe(value: object, active_containers: set[int] | None = None) -> bool:

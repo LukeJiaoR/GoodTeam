@@ -110,6 +110,35 @@ def _rebuild_provider(fixture: dict[str, object], provider_type, *, budget=None)
     )
 
 
+def _git_provider_fixture(tmp_path: Path, *, process_factory=None) -> dict[str, object]:
+    import subprocess
+
+    fixture = _provider_fixture(tmp_path)
+    root = fixture["root"]
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "GoodTeam Test"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+    _refresh_fixture_snapshot(fixture)
+    if process_factory is not None:
+        from goodteam_os.repository_context_provider import (
+            OnboardingBudget,
+            RepositoryContextProvider,
+        )
+
+        fixture["provider"] = RepositoryContextProvider(
+            workspace=fixture["workspace"],
+            project_key=fixture["project_key"],
+            root=root,
+            snapshot=fixture["snapshot"],
+            observation_store=fixture["store"],
+            budget=OnboardingBudget(),
+            process_factory=process_factory,
+        )
+    return fixture
+
+
 def _refresh_fixture_snapshot(fixture: dict[str, object]) -> dict[str, object]:
     from goodteam_os.repository_context_provider import RepositoryContextProvider
 
@@ -578,6 +607,275 @@ def test_result_char_failure_names_total_dimension() -> None:
         budget.record_result_chars(2)
 
     assert captured.value.details == {"limit": "max_total_observation_chars"}
+
+
+def test_manifest_is_data_and_never_executed(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    marker = tmp_path / "project-command-marker"
+    (fixture["root"] / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "orders-app",
+                "packageManager": "pnpm@10.0.0",
+                "scripts": {
+                    "test": "vitest",
+                    "postinstall": f"write-marker {marker}",
+                },
+                "dependencies": {"react": "latest"},
+                "private": True,
+                "repository": {"url": "raw-secret-url"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "inspect_manifest", {"path": "package.json"}, model_turn=1
+    )
+
+    manifest = result["observations"][0]
+    assert manifest["kind"] == "package.json"
+    assert manifest["scripts"]["test"] == "vitest"
+    assert "write-marker" in manifest["scripts"]["postinstall"]
+    assert manifest["dependencies"] == ["react"]
+    assert "repository" not in manifest
+    assert manifest["path"] == "package.json"
+    assert manifest["content_hash"].startswith("sha256:")
+    assert not marker.exists()
+
+
+def test_inspect_pyproject_allowlists_fields(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "pyproject.toml").write_text(
+        """
+[project]
+name = "orders-service"
+dependencies = ["fastapi>=0.100", "httpx[http2]"]
+[project.optional-dependencies]
+test = ["pytest"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[tool.ruff]
+line-length = 88
+[tool.private]
+password = "never-return-this"
+""".strip(),
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    manifest = fixture["provider"].call(
+        "inspect_manifest", {"path": "pyproject.toml"}, model_turn=1
+    )["observations"][0]
+
+    assert manifest["name"] == "orders-service"
+    assert manifest["dependencies"] == ["fastapi", "httpx"]
+    assert manifest["feature_names"] == ["test"]
+    assert manifest["build_backend"] == "hatchling.build"
+    assert manifest["build_dependencies"] == ["hatchling"]
+    assert manifest["tool_names"] == ["private", "ruff"]
+    assert "never-return-this" not in json.dumps(manifest)
+
+
+def test_inspect_cargo_allowlists_fields(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "Cargo.toml").write_text(
+        """
+[package]
+name = "orders"
+publish = false
+[dependencies]
+serde = "1"
+[dev-dependencies]
+insta = "1"
+[features]
+default = []
+enterprise = []
+[workspace]
+members = ["crates/api", "crates/core"]
+[[bin]]
+name = "orders-cli"
+path = "src/private-path.rs"
+""".strip(),
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    manifest = fixture["provider"].call(
+        "inspect_manifest", {"path": "Cargo.toml"}, model_turn=1
+    )["observations"][0]
+
+    assert manifest["name"] == "orders"
+    assert manifest["dependencies"] == ["serde"]
+    assert manifest["dev_dependencies"] == ["insta"]
+    assert manifest["feature_names"] == ["default", "enterprise"]
+    assert manifest["workspace_names"] == ["crates/api", "crates/core"]
+    assert manifest["target_names"] == ["orders-cli"]
+    assert "private-path" not in json.dumps(manifest)
+
+
+def test_inspect_go_mod_conservatively(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "go.mod").write_text(
+        """
+module example.com/orders
+go 1.24
+require (
+    github.com/acme/api v1.2.3
+    github.com/acme/indirect v1.0.0 // indirect
+)
+replace github.com/acme/api => ../private-checkout
+""".strip(),
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    manifest = fixture["provider"].call(
+        "inspect_manifest", {"path": "go.mod"}, model_turn=1
+    )["observations"][0]
+
+    assert manifest["module"] == "example.com/orders"
+    assert manifest["go_version"] == "1.24"
+    assert manifest["dependencies"] == [
+        "github.com/acme/api",
+        "github.com/acme/indirect",
+    ]
+    assert "private-checkout" not in json.dumps(manifest)
+
+
+def test_invalid_manifest_returns_invalid(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    raw = '{"name": "raw-parser-secret", invalid}'
+    (fixture["root"] / "package.json").write_text(raw, encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "inspect_manifest", {"path": "package.json"}, model_turn=1
+    )
+
+    assert result["status"] == "invalid"
+    assert result["observations"] == []
+    assert "raw-parser-secret" not in json.dumps(result)
+
+
+def test_test_inspection_returns_candidates(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    for relative in (
+        "tests/test_orders.py",
+        "test/unit.js",
+        "src/order_test.py",
+        "src/order.spec.ts",
+        "src/order.test.tsx",
+        "src/orders.py",
+    ):
+        path = fixture["root"] / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("pass\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "inspect_tests", {"path": "", "max_files": 20}, model_turn=1
+    )
+
+    assert all(
+        item["classification"] == "test_candidate"
+        and item["basis"] == "path_convention"
+        for item in result["observations"]
+    )
+    paths = {item["path"] for item in result["observations"]}
+    assert "tests/test_orders.py" in paths
+    assert "src/order_test.py" in paths
+    assert "src/order.spec.ts" in paths
+    assert "src/orders.py" not in paths
+
+
+@pytest.mark.parametrize(
+    ("tool", "payload"),
+    [
+        ("inspect_manifest", {"path": "package.json", "extra": True}),
+        ("inspect_tests", {"path": "", "max_files": 1, "extra": True}),
+        ("inspect_tests", {"path": "", "max_files": True}),
+        ("inspect_tests", {"path": "", "max_files": 51}),
+    ],
+)
+def test_structured_tools_reject_invalid_requests(
+    tmp_path: Path, tool: str, payload: dict[str, object]
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(tool, payload, model_turn=1)
+    assert captured.value.code in {
+        "context_path_rejected",
+        "context_request_invalid",
+        "context_tool_limit_exceeded",
+    }
+
+
+def test_structured_tools_reject_symlinks(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"name":"outside"}', encoding="utf-8")
+    (fixture["root"] / "package.json").symlink_to(outside)
+    _refresh_fixture_snapshot(fixture)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "inspect_manifest", {"path": "package.json"}, model_turn=1
+        )
+    assert captured.value.code == "context_path_rejected"
+
+
+def test_all_structured_tools_leave_target_bytes_and_status_unchanged(tmp_path: Path) -> None:
+    import subprocess
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / "package.json").write_text('{"name":"orders"}\n', encoding="utf-8")
+    (root / "tests").mkdir()
+    (root / "tests" / "test_orders.py").write_text("pass\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+    before_status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v2", "-z"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    before_bytes = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.parts
+    }
+
+    fixture["provider"].call(
+        "inspect_manifest", {"path": "package.json"}, model_turn=1
+    )
+    fixture["provider"].call(
+        "inspect_tests", {"path": "", "max_files": 20}, model_turn=1
+    )
+    fixture["provider"].call(
+        "inspect_git_history", {"path": "", "limit": 20}, model_turn=1
+    )
+    fixture["provider"].call(
+        "inspect_recent_changes", {"path": "", "limit": 20}, model_turn=1
+    )
+
+    after_status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v2", "-z"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    after_bytes = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.parts
+    }
+    assert after_bytes == before_bytes
+    assert after_status == before_status
 
 
 @pytest.mark.parametrize(
@@ -3178,16 +3476,583 @@ def test_call_time_binding_failures_win_without_any_ledger_write(
     if redirected_path != original_path:
         assert not redirected_path.exists()
 
+def test_git_history_uses_read_only_argv(tmp_path: Path) -> None:
+    import subprocess
+
+    recorded = []
+    real_popen = subprocess.Popen
+
+    def recording_process(command, **kwargs):
+        recorded.append((command, kwargs))
+        return real_popen(command, **kwargs)
+
+    fixture = _git_provider_fixture(tmp_path, process_factory=recording_process)
+    result = fixture["provider"].call(
+        "inspect_git_history", {"path": "", "limit": 5}, model_turn=1
+    )
+
+    assert len(result["observations"]) <= 5
+    forbidden = {"add", "commit", "checkout", "reset", "clean"}
+    assert recorded and all(command[0][0] == "git" for command in recorded)
+    assert not any(word in forbidden for command, _ in recorded for word in command)
+    assert all(kwargs["shell"] is False for _, kwargs in recorded)
+    assert all("--" in command for command, _ in recorded)
+    assert all("core.fsmonitor=false" in command for command, _ in recorded)
+
+
+def test_non_git_inspection_is_unsupported(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    for tool, request in (
+        ("inspect_git_history", {"path": "", "limit": 5}),
+        ("inspect_recent_changes", {"path": "", "limit": 5}),
+    ):
+        with pytest.raises(ContextProviderError) as captured:
+            fixture["provider"].call(tool, request, model_turn=1)
+        assert captured.value.code == "context_tool_unsupported"
+
+
+def test_git_history_is_path_scoped(tmp_path: Path) -> None:
+    import subprocess
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / "src").mkdir()
+    (root / "src" / "orders.py").write_text("orders = True\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "src/orders.py"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "src change"], check=True)
+    (root / "docs").mkdir()
+    (root / "docs" / "guide.md").write_text("guide\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "docs/guide.md"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "docs change"], check=True)
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "inspect_git_history", {"path": "src", "limit": 10}, model_turn=1
+    )
+
+    assert [item["message"] for item in result["observations"]] == ["src change"]
+    assert all(item["commit_sha"] for item in result["observations"])
+
+
+def test_recent_changes_covers_staged_unstaged_and_untracked(tmp_path: Path) -> None:
+    import subprocess
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / "staged.py").write_text("staged = True\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "staged.py"], check=True)
+    (root / "README.md").write_text("unstaged = True\n", encoding="utf-8")
+    (root / "untracked.py").write_text("untracked = True\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "inspect_recent_changes", {"path": "", "limit": 10}, model_turn=1
+    )
+
+    changes = {(item["path"], item["change_scope"]) for item in result["observations"]}
+    assert ("staged.py", "staged") in changes
+    assert ("README.md", "unstaged") in changes
+    assert ("untracked.py", "untracked") in changes
+    assert all(item["diff_hash"].startswith("sha256:") for item in result["observations"])
+
+
+def test_git_output_is_bounded(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _git_provider_fixture(tmp_path)
+    process, release, writer_thread, writer_done = _make_pipe_process(
+        [("stdout", b"x" * 1024, 0.0)]
+    )
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget(requested_limits={"max_single_result_chars": 128}),
+        process_factory=lambda *_args, **_kwargs: process,
+    )
+    release.set()
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("inspect_git_history", {"path": "", "limit": 5}, model_turn=1)
+
+    writer_thread.join(timeout=2.0)
+    assert captured.value.code == "context_tool_limit_exceeded"
+    assert process.terminated and process.waited and writer_done.is_set()
+    assert process.stdout.closed and process.stderr.closed
+
+
+@pytest.mark.parametrize("since_sha", [True, 123, "abc123", "g" * 40, "a" * 41])
+def test_invalid_revision_is_rejected(tmp_path: Path, since_sha: object) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _git_provider_fixture(tmp_path)
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "inspect_recent_changes",
+            {"path": "", "limit": 5, "since_sha": since_sha},
+            model_turn=1,
+        )
+    assert captured.value.code == "context_request_invalid"
+
+
+def test_git_process_is_terminated_on_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import goodteam_os._repository_git_tools as git_tools
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _git_provider_fixture(tmp_path)
+    process, release, writer_thread, _writer_done = _make_pipe_process(
+        [("stdout", b"late", 1.0)]
+    )
+    monkeypatch.setattr(git_tools, "_GIT_TIMEOUT_SECONDS", 0.01)
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget(),
+        process_factory=lambda *_args, **_kwargs: process,
+    )
+    release.set()
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call(
+            "inspect_git_history", {"path": "", "limit": 5}, model_turn=1
+        )
+
+    writer_thread.join(timeout=2.0)
+    assert captured.value.code == "context_tool_timeout"
+    assert process.terminated and process.waited
+    assert process.stdout.closed and process.stderr.closed
+
+
+def test_git_strips_unsafe_inherited_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    recorded = []
+    real_popen = subprocess.Popen
+    fixture = _git_provider_fixture(tmp_path)
+    monkeypatch.setenv("GIT_DIR", "/tmp/unsafe")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'alias.log=!touch /tmp/nope'")
+
+    def recording_process(command, **kwargs):
+        recorded.append(kwargs["env"])
+        return real_popen(command, **kwargs)
+
+    from goodteam_os.repository_context_provider import OnboardingBudget, RepositoryContextProvider
+
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget(),
+        process_factory=recording_process,
+    )
+    provider.call(
+        "inspect_git_history", {"path": "", "limit": 5}, model_turn=1
+    )
+
+    env = recorded[0]
+    assert "GIT_DIR" not in env
+    assert "GIT_CONFIG_PARAMETERS" not in env
+    assert env["GIT_OPTIONAL_LOCKS"] == "0"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["LC_ALL"] == "C"
+
+
 @pytest.mark.parametrize(
-    "tool",
+    ("tool", "payload"),
     [
-        "search_text",
-        "inspect_manifest",
-        "inspect_git_history",
-        "inspect_tests",
-        "inspect_recent_changes",
+        ("inspect_git_history", {"path": "", "limit": True}),
+        ("inspect_git_history", {"path": "", "limit": 51}),
+        ("inspect_git_history", {"path": "", "limit": 1, "argv": ["status"]}),
+        ("inspect_recent_changes", {"path": "../escape", "limit": 1}),
+        ("inspect_recent_changes", {"path": "", "limit": 1, "process_factory": "x"}),
     ],
 )
+def test_git_requests_cannot_control_dispatch(
+    tmp_path: Path, tool: str, payload: dict[str, object]
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _git_provider_fixture(tmp_path)
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(tool, payload, model_turn=1)
+    assert captured.value.code in {
+        "context_path_rejected",
+        "context_request_invalid",
+        "context_tool_limit_exceeded",
+    }
+
+
+def test_git_failure_is_normalized_without_process_output(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    process, release, writer_thread, _writer_done = _make_pipe_process(
+        [("stderr", b"raw-secret-from-git", 0.0)], final_returncode=2
+    )
+    fixture = _git_provider_fixture(
+        tmp_path, process_factory=lambda *_args, **_kwargs: process
+    )
+    release.set()
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "inspect_git_history", {"path": "", "limit": 5}, model_turn=1
+        )
+
+    writer_thread.join(timeout=2.0)
+    assert captured.value.code == "context_tool_failed"
+    assert "raw-secret-from-git" not in f"{captured.value} {captured.value.details}"
+
+
+def test_git_stderr_output_is_bounded(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _git_provider_fixture(tmp_path)
+    process, release, writer_thread, _writer_done = _make_pipe_process(
+        [("stderr", b"e" * 1024, 0.0)]
+    )
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget(requested_limits={"max_single_result_chars": 128}),
+        process_factory=lambda *_args, **_kwargs: process,
+    )
+    release.set()
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("inspect_git_history", {"path": "", "limit": 5}, model_turn=1)
+    writer_thread.join(timeout=2.0)
+    assert captured.value.code == "context_tool_limit_exceeded"
+    assert process.terminated and process.waited
+
+
+@pytest.mark.parametrize("payload", [b"not-a-record", b"\xff\x00bad\x1e"])
+def test_git_malformed_and_non_utf8_output_is_rejected(
+    tmp_path: Path, payload: bytes
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    process, release, writer_thread, _writer_done = _make_pipe_process(
+        [("stdout", payload, 0.0)]
+    )
+    fixture = _git_provider_fixture(
+        tmp_path, process_factory=lambda *_args, **_kwargs: process
+    )
+    release.set()
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "inspect_git_history", {"path": "", "limit": 5}, model_turn=1
+        )
+    writer_thread.join(timeout=2.0)
+    assert captured.value.code == "context_tool_invalid_output"
+    assert process.waited and process.stdout.closed and process.stderr.closed
+
+
+def test_git_malformed_raw_diff_metadata_is_rejected(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    process, release, writer_thread, _writer_done = _make_pipe_process(
+        [("stdout", b":100644 100644 not-an-oid still-not-an-oid M\0safe.txt\0", 0.0)]
+    )
+    fixture = _git_provider_fixture(
+        tmp_path, process_factory=lambda *_args, **_kwargs: process
+    )
+    release.set()
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "inspect_recent_changes", {"path": "", "limit": 5}, model_turn=1
+        )
+    writer_thread.join(timeout=2.0)
+    assert captured.value.code == "context_tool_invalid_output"
+
+
+def test_git_timeout_kills_when_terminate_does_not_stop_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    import goodteam_os._repository_git_tools as git_tools
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _git_provider_fixture(tmp_path)
+    process, release, writer_thread, _writer_done = _make_pipe_process(
+        [("stdout", b"late", 1.0)]
+    )
+    original_kill = process.kill
+    original_wait = process.wait
+
+    def stubborn_terminate() -> None:
+        process.terminated = True
+
+    def stubborn_wait(timeout=None) -> int:
+        if not process.killed:
+            raise subprocess.TimeoutExpired("git", timeout)
+        return original_wait(timeout)
+
+    def tracked_kill() -> None:
+        original_kill()
+
+    process.terminate = stubborn_terminate
+    process.wait = stubborn_wait
+    process.kill = tracked_kill
+    monkeypatch.setattr(git_tools, "_GIT_TIMEOUT_SECONDS", 0.01)
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget(),
+        process_factory=lambda *_args, **_kwargs: process,
+    )
+    release.set()
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("inspect_git_history", {"path": "", "limit": 5}, model_turn=1)
+    writer_thread.join(timeout=2.0)
+    assert captured.value.code == "context_tool_timeout"
+    assert process.terminated and process.killed and process.waited
+
+
+def test_recent_change_argv_families_and_separator_order(tmp_path: Path) -> None:
+    import subprocess
+
+    recorded = []
+    real_popen = subprocess.Popen
+
+    def recording_process(command, **kwargs):
+        recorded.append(command)
+        return real_popen(command, **kwargs)
+
+    fixture = _git_provider_fixture(tmp_path, process_factory=recording_process)
+    fixture["provider"].call(
+        "inspect_recent_changes", {"path": "", "limit": 5}, model_turn=1
+    )
+    operations = [
+        next(word for word in command if word in {"diff", "ls-files"})
+        for command in recorded
+    ]
+    assert set(operations) == {"diff", "ls-files"}
+    assert all(command.index("--") < len(command) - 1 for command in recorded)
+    assert all(command[-1] == "." for command in recorded)
+    assert all("core.fsmonitor=false" in command for command in recorded)
+    assert all("--no-ext-diff" in command for command in recorded if "diff" in command)
+    assert all("--no-textconv" in command for command in recorded if "diff" in command)
+
+
+def test_nonexistent_hex_revision_is_normalized(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _git_provider_fixture(tmp_path)
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "inspect_recent_changes",
+            {"path": "", "limit": 5, "since_sha": "deadbee"},
+            model_turn=1,
+        )
+    assert captured.value.code == "context_tool_failed"
+    assert "deadbee" not in f"{captured.value} {captured.value.details}"
+
+
+def test_git_path_symlink_is_rejected_before_spawn(tmp_path: Path) -> None:
+    import subprocess
+
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _git_provider_fixture(tmp_path)
+    (fixture["root"] / ".gitignore").write_text("linked\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(fixture["root"]), "add", ".gitignore"], check=True)
+    subprocess.run(["git", "-C", str(fixture["root"]), "commit", "-qm", "ignore linked"], check=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (fixture["root"] / "linked").symlink_to(outside, target_is_directory=True)
+    _refresh_fixture_snapshot(fixture)
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "inspect_git_history", {"path": "linked", "limit": 5}, model_turn=1
+        )
+    assert captured.value.code == "context_path_rejected"
+
+
+def test_structured_and_git_strings_are_redacted_in_return_and_store(tmp_path: Path) -> None:
+    import subprocess
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / "package.json").write_text(
+        json.dumps({"scripts": {"test": "Authorization: Bearer raw-script-secret"}}),
+        encoding="utf-8",
+    )
+    (root / "secret.py").write_text('API_KEY = "sk-live-secret-value"\n', encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "secret.py"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-qm", "Authorization: Bearer raw-commit-secret"],
+        check=True,
+    )
+    (root / "secret.py").write_text('API_KEY = "sk-live-updated-secret"\n', encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    manifest = fixture["provider"].call(
+        "inspect_manifest", {"path": "package.json"}, model_turn=1
+    )
+    history = fixture["provider"].call(
+        "inspect_git_history", {"path": "", "limit": 5}, model_turn=1
+    )
+    changes = fixture["provider"].call(
+        "inspect_recent_changes", {"path": "", "limit": 5}, model_turn=1
+    )
+    rendered = json.dumps([manifest, history, changes])
+    persisted = observation_path(
+        fixture["workspace"], fixture["project_key"], "job-1"
+    ).read_text(encoding="utf-8")
+    for forbidden in (
+        "raw-script-secret",
+        "raw-commit-secret",
+        "sk-live-secret-value",
+        "sk-live-updated-secret",
+    ):
+        assert forbidden not in rendered
+        assert forbidden not in persisted
+    assert "redacted" in rendered
+
+
+def test_recent_changes_omits_sensitive_paths_without_leaking(tmp_path: Path) -> None:
+    import subprocess
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / ".env").write_text("API_KEY=initial-secret\n", encoding="utf-8")
+    (root / "safe.txt").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", ".env", "safe.txt"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "add files"], check=True)
+    (root / ".env").write_text("API_KEY=raw-sensitive-change\n", encoding="utf-8")
+    (root / "safe.txt").write_text("changed\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "inspect_recent_changes", {"path": "", "limit": 10}, model_turn=1
+    )
+
+    assert result["truncated"] is True
+    assert [item["path"] for item in result["observations"]] == ["safe.txt"]
+    rendered = json.dumps(result)
+    persisted = observation_path(
+        fixture["workspace"], fixture["project_key"], "job-1"
+    ).read_text(encoding="utf-8")
+    assert ".env" not in rendered
+    assert ".env" not in persisted
+    assert "raw-sensitive-change" not in rendered
+    assert "raw-sensitive-change" not in persisted
+
+
+def test_git_drift_discards_buffered_output(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _git_provider_fixture(tmp_path)
+    real_popen = __import__("subprocess").Popen
+
+    def mutate_after_spawn(command, **kwargs):
+        process = real_popen(command, **kwargs)
+        (fixture["root"] / "README.md").write_text("drifted\n", encoding="utf-8")
+        return process
+
+    from goodteam_os.repository_context_provider import OnboardingBudget, RepositoryContextProvider
+
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget(),
+        process_factory=mutate_after_spawn,
+    )
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("inspect_git_history", {"path": "", "limit": 5}, model_turn=1)
+    assert captured.value.code == "repository_snapshot_changed"
+    assert "initial" not in f"{captured.value} {captured.value.details}"
+
+
+def test_git_root_replacement_after_spawn_reaps_process(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    moved = tmp_path / "moved-repo"
+    process, release, writer_thread, _writer_done = _make_pipe_process(
+        [("stdout", b"late", 1.0)]
+    )
+
+    def replacing_process(*_args, **_kwargs):
+        root.rename(moved)
+        root.mkdir()
+        return process
+
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=root,
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget(),
+        process_factory=replacing_process,
+    )
+    release.set()
+    try:
+        with pytest.raises(ContextProviderError) as captured:
+            provider.call(
+                "inspect_git_history", {"path": "", "limit": 5}, model_turn=1
+            )
+        process_state = (
+            process.terminated,
+            process.waited,
+            process.stdout.closed,
+            process.stderr.closed,
+        )
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        writer_thread.join(timeout=2.0)
+        shutil.rmtree(root)
+        moved.rename(root)
+
+    assert captured.value.code == "repository_root_changed"
+    assert process_state == (True, True, True, True)
+
+
+@pytest.mark.parametrize("tool", ["search_text"])
 def test_future_context_tools_fail_explicitly_until_implemented(
     tmp_path: Path,
     tool: str,
