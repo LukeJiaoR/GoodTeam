@@ -134,13 +134,18 @@ def verify_repository_snapshot(
     snapshot: RepositorySnapshot,
     limits: SnapshotLimits = SnapshotLimits(),
 ) -> None:
+    if compute_repository_snapshot_id(snapshot) != snapshot.snapshot_id:
+        raise RepositorySnapshotError(
+            "repository_snapshot_invalid",
+            "Repository snapshot identity is invalid.",
+        )
     current = capture_repository_snapshot(
         root,
         project_key=snapshot.project_key,
         expected_identity=snapshot.root_identity,
         limits=limits,
     )
-    if current.snapshot_id != snapshot.snapshot_id:
+    if _snapshot_comparison_payload(current) != _snapshot_comparison_payload(snapshot):
         raise RepositorySnapshotError(
             "repository_snapshot_changed",
             "Repository content no longer matches the captured snapshot.",
@@ -149,6 +154,37 @@ def verify_repository_snapshot(
                 "actual_snapshot_id": current.snapshot_id,
             },
         )
+
+
+def _snapshot_comparison_payload(snapshot: RepositorySnapshot) -> dict[str, object]:
+    payload = snapshot_identity_payload(snapshot)
+    manifest = payload.get("path_manifest")
+    legacy_gitlinks = 0
+    if isinstance(manifest, dict) and isinstance(manifest.get("entries"), list):
+        entries = []
+        for raw_record in manifest["entries"]:
+            record = dict(raw_record) if isinstance(raw_record, dict) else raw_record
+            if isinstance(record, dict):
+                git_identity = record.get("git")
+                if (
+                    record.get("kind") == "file"
+                    and record.get("identity_kind") == "git_index"
+                    and isinstance(git_identity, dict)
+                    and git_identity.get("mode") == "160000"
+                ):
+                    record["kind"] = "gitlink"
+                    legacy_gitlinks += 1
+            entries.append(record)
+        payload["path_manifest"] = {**manifest, "entries": entries}
+    content_scope = payload.get("content_scope")
+    if legacy_gitlinks and isinstance(content_scope, dict):
+        eligible_files = content_scope.get("eligible_files")
+        if _is_nonnegative_int(eligible_files) and eligible_files >= legacy_gitlinks:
+            payload["content_scope"] = {
+                **content_scope,
+                "eligible_files": eligible_files - legacy_gitlinks,
+            }
+    return payload
 
 
 def snapshot_identity_payload(snapshot: RepositorySnapshot) -> dict[str, object]:
@@ -225,12 +261,20 @@ def _validate_path_manifest_record(
     if not isinstance(kind, str):
         raise _path_manifest_invalid(path)
 
+    normalized = dict(value)
     if state == "entries":
         if kind == "directory":
             if set(value) != {"path", "kind"}:
                 raise _path_manifest_invalid(path)
         elif kind in {"file", "gitlink"}:
             _validate_represented_file_record(value, path)
+            git_identity = value.get("git")
+            if (
+                value.get("identity_kind") == "git_index"
+                and isinstance(git_identity, dict)
+                and git_identity.get("mode") == "160000"
+            ):
+                normalized["kind"] = "gitlink"
         else:
             raise _path_manifest_invalid(path)
     elif state == "excluded":
@@ -250,13 +294,13 @@ def _validate_path_manifest_record(
             raise _path_manifest_invalid(path)
     else:
         raise _path_manifest_invalid()
-    return dict(value)
+    return normalized
 
 
 def _validate_represented_file_record(value: dict[object, object], path: str) -> None:
     identity_kind = value.get("identity_kind")
     if identity_kind in {"worktree", "untracked"}:
-        if set(value) != {
+        if value.get("kind") != "file" or set(value) != {
             "path",
             "kind",
             "identity_kind",
@@ -291,7 +335,13 @@ def _validate_represented_file_record(value: dict[object, object], path: str) ->
             or git_identity.get("stage") != 0
         ):
             raise _path_manifest_invalid(path)
-        if (value.get("kind") == "gitlink") != (git_identity.get("mode") == "160000"):
+        if (
+            git_identity.get("mode") == "160000"
+            and value.get("kind") not in {"file", "gitlink"}
+        ) or (
+            git_identity.get("mode") != "160000"
+            and value.get("kind") != "file"
+        ):
             raise _path_manifest_invalid(path)
         return
     raise _path_manifest_invalid(path)
@@ -590,12 +640,15 @@ def _capture_git(
     eligible_status = list(all_eligible_status)
     all_index_records = _parse_index_records(index)
     index_paths: set[str] = set()
+    gitlink_paths: set[str] = set()
     for item in all_index_records:
         reason = _index_exclusion_reason(item)
         if reason is not None:
             _record_policy_exclusion(policy_exclusions, str(item["path"]), reason)
             continue
         index_paths.add(str(item["path"]))
+        if item["mode"] == "160000" and item["stage"] == 0:
+            gitlink_paths.add(str(item["path"]))
     status_records_by_path = {
         str(item["path"]): str(item["record"]) for item in eligible_status
     }
@@ -609,6 +662,7 @@ def _capture_git(
             "path": path,
             "bucket": _content_bucket_for_path(path, eligible_status),
             "status_record": status_records_by_path.get(path),
+            "gitlink": path in gitlink_paths,
         }
         for path in included_paths
     ]
@@ -629,7 +683,11 @@ def _capture_git(
         )
     omitted = len(omitted_paths)
     complete = omitted == 0
-    represented_paths = [path for path in included_paths if path not in omitted_paths]
+    represented_paths = [
+        path
+        for path in included_paths
+        if path not in omitted_paths and path not in gitlink_paths
+    ]
     canonical_status = _status_identity_records(
         eligible_status,
         excluded_paths=content_scope_state["excluded_paths"],
@@ -827,7 +885,7 @@ def _hash_git_content_paths(
     for entry in entries:
         path = str(entry["path"])
         bucket = entry["bucket"]
-        if bucket is None:
+        if bucket is None or entry["gitlink"]:
             continue
         metadata = _anchored_file_metadata(repository, path)
         if metadata is None:
@@ -1106,7 +1164,7 @@ class _ProcessResult:
 
 
 def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
-    command = ["git", "--no-pager", *arguments]
+    command = ["git", "-c", "core.fsmonitor=false", "--no-pager", *arguments]
     environment = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
@@ -1136,10 +1194,7 @@ def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
                     "repository_snapshot_failed",
                     "Read-only Git inspection timed out.",
                 )
-            if (
-                os.fstat(stdout.fileno()).st_size > _GIT_OUTPUT_LIMIT
-                or os.fstat(stderr.fileno()).st_size > _GIT_OUTPUT_LIMIT
-            ):
+            if _combined_process_output_size(stdout, stderr) > _GIT_OUTPUT_LIMIT:
                 process.kill()
                 process.wait()
                 raise RepositorySnapshotError(
@@ -1147,10 +1202,7 @@ def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
                     "Read-only Git inspection exceeded its output limit.",
                 )
             time.sleep(0.01)
-        if (
-            os.fstat(stdout.fileno()).st_size > _GIT_OUTPUT_LIMIT
-            or os.fstat(stderr.fileno()).st_size > _GIT_OUTPUT_LIMIT
-        ):
+        if _combined_process_output_size(stdout, stderr) > _GIT_OUTPUT_LIMIT:
             raise RepositorySnapshotError(
                 "repository_snapshot_failed",
                 "Read-only Git inspection exceeded its output limit.",
@@ -1163,6 +1215,10 @@ def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
             stdout=stdout.read(_GIT_OUTPUT_LIMIT + 1),
             stderr=stderr.read(_GIT_OUTPUT_LIMIT + 1),
         )
+
+
+def _combined_process_output_size(stdout: object, stderr: object) -> int:
+    return os.fstat(stdout.fileno()).st_size + os.fstat(stderr.fileno()).st_size
 
 
 def _require_git(root: Path, arguments: list[str]) -> bytes:

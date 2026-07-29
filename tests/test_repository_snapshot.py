@@ -62,6 +62,23 @@ def test_clean_git_snapshot_is_deterministic(tmp_path: Path) -> None:
     assert first.content_scope["complete"] is True
 
 
+def test_git_snapshot_disables_repository_fsmonitor_hook(tmp_path: Path) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    marker = tmp_path / "fsmonitor-executed"
+    monitor = tmp_path / "monitor.sh"
+    monitor.write_text(
+        f"#!/bin/sh\n: > {marker}\nexit 0\n",
+        encoding="utf-8",
+    )
+    monitor.chmod(0o755)
+    git(root, "config", "core.fsmonitor", str(monitor))
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    assert snapshot.source_control["kind"] == "git"
+    assert not marker.exists()
+
+
 def test_clean_git_capture_does_not_read_tracked_file_content(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -492,7 +509,6 @@ def test_compile_snapshot_path_manifest_rejects_invalid_state_record(
     ("kind", "mode"),
     [
         ("gitlink", "100644"),
-        ("file", "160000"),
     ],
 )
 def test_gitlink_manifest_kind_is_strictly_bound_to_index_mode(
@@ -514,6 +530,46 @@ def test_gitlink_manifest_kind_is_strictly_bound_to_index_mode(
 
     assert captured.value.code == "repository_snapshot_invalid"
     assert captured.value.details == {"path": "README.md"}
+
+
+@pytest.mark.parametrize("identity_kind", ["worktree", "untracked"])
+def test_gitlink_manifest_rejects_non_index_identity(
+    tmp_path: Path,
+    identity_kind: str,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("initial\n", encoding="utf-8")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    manifest = dict(snapshot.path_manifest)
+    entries = [dict(item) for item in manifest["entries"]]
+    readme = next(item for item in entries if item["path"] == "README.md")
+    readme["kind"] = "gitlink"
+    readme["identity_kind"] = identity_kind
+    manifest["entries"] = entries
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        compile_snapshot_path_manifest(replace(snapshot, path_manifest=manifest))
+
+    assert captured.value.code == "repository_snapshot_invalid"
+    assert captured.value.details == {"path": "README.md"}
+
+
+def test_compile_normalizes_legacy_gitlink_file_record(tmp_path: Path) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    manifest = dict(snapshot.path_manifest)
+    entries = [dict(item) for item in manifest["entries"]]
+    readme = next(item for item in entries if item["path"] == "README.md")
+    readme["kind"] = "file"
+    readme["git"] = {**readme["git"], "mode": "160000"}
+    manifest["entries"] = entries
+    legacy = replace(snapshot, path_manifest=manifest)
+
+    compiled = compile_snapshot_path_manifest(legacy)
+
+    assert legacy.path_manifest["entries"] == entries
+    assert compiled["entries"]["README.md"]["kind"] == "gitlink"
 
 
 @pytest.mark.parametrize("actual_kind", ["file", "symlink"])
@@ -544,6 +600,28 @@ def test_gitlink_manifest_only_accepts_a_real_directory_entry(
 
     assert captured.value.code == "repository_snapshot_changed"
     assert captured.value.details == {"path": "README.md"}
+
+
+def test_git_process_output_limit_is_combined(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        "#!/bin/sh\nprintf 123456\nprintf abcdef >&2\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin))
+    monkeypatch.setattr(repository_snapshot, "_GIT_OUTPUT_LIMIT", 10)
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        repository_snapshot._run_git(tmp_path, ["status"])
+
+    assert captured.value.code == "repository_snapshot_failed"
+    assert str(captured.value) == "Read-only Git inspection exceeded its output limit."
 
 
 @pytest.mark.parametrize(

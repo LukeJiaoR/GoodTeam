@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,10 @@ from goodteam_os import repository_inventory
 from goodteam_os.repository_access import RepositoryEntry
 from goodteam_os.repository_inventory import build_repository_inventory
 from goodteam_os.repository_snapshot import (
+    RepositorySnapshot,
     RepositorySnapshotError,
     capture_repository_snapshot,
+    compute_repository_snapshot_id,
 )
 
 
@@ -128,6 +131,136 @@ def test_inventory_treats_tracked_gitlink_as_opaque_directory(tmp_path: Path) ->
     assert inventory["scan"]["directories_seen"] == 1
     assert inventory["commands"] == []
     assert "vendor/dependency" not in inventory["directory_structure"]
+
+
+def test_dirty_submodule_is_opaque_and_changes_snapshot_identity(tmp_path: Path) -> None:
+    submodule = tmp_path / "submodule"
+    submodule.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=submodule, check=True)
+    (submodule / "inside.txt").write_text("clean\n", encoding="utf-8")
+    subprocess.run(["git", "add", "inside.txt"], cwd=submodule, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=GoodTeam Test",
+            "-c",
+            "user.email=goodteam@example.invalid",
+            "commit",
+            "-qm",
+            "submodule fixture",
+        ],
+        cwd=submodule,
+        check=True,
+    )
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(submodule),
+            "vendor/dependency",
+        ],
+        cwd=root,
+        check=True,
+    )
+    subprocess.run(["git", "add", ".gitmodules", "vendor/dependency"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=GoodTeam Test",
+            "-c",
+            "user.email=goodteam@example.invalid",
+            "commit",
+            "-qm",
+            "add submodule",
+        ],
+        cwd=root,
+        check=True,
+    )
+    clean = capture_repository_snapshot(root, project_key="DEMO")
+    (root / "vendor/dependency/inside.txt").write_text("dirty\n", encoding="utf-8")
+
+    dirty = capture_repository_snapshot(root, project_key="DEMO")
+    inventory = build_repository_inventory(root, snapshot=dirty)
+
+    assert dirty.snapshot_id != clean.snapshot_id
+    assert dirty.source_control["dirty"] is True
+    assert dirty.content_scope["eligible_files"] == 1
+    assert inventory["scan"]["files_seen"] == 1
+    assert inventory["scan"]["directories_seen"] == 1
+
+
+def test_inventory_accepts_round_tripped_legacy_gitlink_artifact(tmp_path: Path) -> None:
+    submodule = tmp_path / "legacy-submodule"
+    submodule.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=submodule, check=True)
+    (submodule / "inside.txt").write_text("opaque\n", encoding="utf-8")
+    subprocess.run(["git", "add", "inside.txt"], cwd=submodule, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=GoodTeam Test",
+            "-c",
+            "user.email=goodteam@example.invalid",
+            "commit",
+            "-qm",
+            "legacy fixture",
+        ],
+        cwd=submodule,
+        check=True,
+    )
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            str(submodule),
+            "dependency",
+        ],
+        cwd=root,
+        check=True,
+    )
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    manifest = dict(snapshot.path_manifest)
+    entries = [dict(item) for item in manifest["entries"]]
+    gitlink = next(item for item in entries if item["path"] == "dependency")
+    gitlink["kind"] = "file"
+    manifest["entries"] = entries
+    legacy_scope = {
+        **snapshot.content_scope,
+        "eligible_files": snapshot.content_scope["eligible_files"] + 1,
+    }
+    legacy = replace(
+        snapshot,
+        path_manifest=manifest,
+        content_scope=legacy_scope,
+        snapshot_id="",
+    )
+    legacy = replace(legacy, snapshot_id=compute_repository_snapshot_id(legacy))
+    artifact = tmp_path / "legacy-snapshot.json"
+    artifact.write_text(json.dumps(legacy.as_dict()), encoding="utf-8")
+    loaded = RepositorySnapshot(**json.loads(artifact.read_text(encoding="utf-8")))
+
+    inventory = build_repository_inventory(root, snapshot=loaded)
+
+    assert inventory["snapshot_id"] == legacy.snapshot_id
+    assert inventory["scan"]["files_seen"] == 1
+    assert inventory["scan"]["directories_seen"] == 0
 
 
 def test_inventory_builds_from_linked_git_worktree_snapshot(tmp_path: Path) -> None:
