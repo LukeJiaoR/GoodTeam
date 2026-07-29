@@ -15,7 +15,7 @@ QUERY_LENGTH_MAX = 256
 FILE_READ_MAX_BYTES = 256 * 1024
 
 SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|"
+    r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|authorization|"
     r"cookie|password|passwd|secret|client[_-]?secret)\b"
     r"(\s*[:=]\s*)(?:[\"'][^\"'\r\n]*[\"']|[^\s,;#]+)"
 )
@@ -23,13 +23,14 @@ AUTHORIZATION_VALUE = re.compile(
     r"(?im)(authorization\s*[:=]\s*)(?:bearer|basic)\s+[^\s,;]+"
 )
 TOKEN_SHAPE = re.compile(
-    r"\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{3,}|"
+    r"\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{12,}|"
+    r"sk-(?:live|test)-[A-Za-z0-9_-]{3,}|"
     r"sk_(?:live|test)_[A-Za-z0-9_]{8,}|"
     r"gh[opusr]_[A-Za-z0-9]{20,}|"
     r"xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[A-Z0-9]{16})\b"
 )
 SENSITIVE_KEY = re.compile(
-    r"(?i)^(api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|"
+    r"(?i)^(api[_-]?key|access[_-]?token|refresh[_-]?token|token|authorization|"
     r"cookie|password|passwd|secret|client[_-]?secret)$"
 )
 SENSITIVE_PATH_PATTERNS = (

@@ -19,7 +19,7 @@ from goodteam_os._repository_content_policy import (
     redacted_path_label,
     reject_sensitive_path,
 )
-from goodteam_os.repository_access import RepositoryAccessError
+from goodteam_os.repository_access import RepositoryAccessError, canonical_relative_path
 from goodteam_os.repository_snapshot import (
     RepositorySnapshot,
     RepositorySnapshotError,
@@ -1011,6 +1011,24 @@ class RepositoryContextProvider:
                 raise
             if exc.code == "context_tool_limit_exceeded":
                 raise
+            if exc.code == "context_tool_timeout":
+                raise ContextProviderError(
+                    "context_tool_timeout",
+                    "Repository context tool timed out.",
+                    details=_safe_handler_error_details(exc.details),
+                ) from exc
+            if exc.code == "context_tool_invalid_output":
+                raise ContextProviderError(
+                    "context_tool_invalid_output",
+                    "Repository context tool produced invalid output.",
+                    details=_safe_handler_error_details(exc.details),
+                ) from exc
+            if exc.code == "context_tool_failed":
+                raise ContextProviderError(
+                    "context_tool_failed",
+                    "Repository context tool failed.",
+                    details=_safe_handler_error_details(exc.details),
+                ) from exc
             if exc.code == "context_tool_not_implemented":
                 raise ContextProviderError(
                     "context_tool_not_implemented",
@@ -1205,10 +1223,13 @@ def _sanitize_request_value(value: object, *, key: str | None = None) -> object:
     if isinstance(value, str):
         if key == "path":
             try:
+                canonical_relative_path(value, allow_root=True)
                 reject_sensitive_path(value)
             except RepositoryAccessError as exc:
                 path = exc.details.get("path")
-                return path if isinstance(path, str) else redacted_path_label(value)
+                if exc.details.get("reason") == "sensitive_path" and isinstance(path, str):
+                    return path
+                return redacted_path_label(value)
         return redact_observation_value(value, key_name=key)
     if isinstance(value, list):
         return [_sanitize_request_value(item, key=key) for item in value]

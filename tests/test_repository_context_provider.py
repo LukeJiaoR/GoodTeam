@@ -1333,6 +1333,62 @@ def test_literal_search_returns_bounded_matches(tmp_path: Path) -> None:
     )
 
 
+def test_literal_and_regex_matches_share_exact_line_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "src").mkdir()
+    raw_line = "create_order(token)\n"
+    (fixture["root"] / "src" / "orders.py").write_text(
+        "before\n" + raw_line + "after\n",
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout: float | None = None):
+            del timeout
+            payload = json.dumps(
+                {
+                    "type": "match",
+                    "data": {
+                        "path": {"text": "src/orders.py"},
+                        "line_number": 2,
+                        "lines": {"text": raw_line},
+                    },
+                }
+            )
+            return payload + "\n", ""
+
+    monkeypatch.setattr(
+        content_tools,
+        "_spawn_rg_process",
+        lambda **kwargs: FakeProcess(),
+    )
+
+    literal = fixture["provider"].call(
+        "search_text",
+        {"path": "src", "query": "create_order", "mode": "literal", "max_matches": 5},
+        model_turn=1,
+    )["observations"][0]
+    regex = fixture["provider"].call(
+        "search_text",
+        {"path": "src", "query": "create_order", "mode": "regex", "max_matches": 5},
+        model_turn=2,
+    )["observations"][0]
+
+    for observation in (literal, regex):
+        assert {"path", "start_line", "end_line", "text", "content_hash", "redaction_applied"} <= set(observation)
+        assert observation["path"] == "src/orders.py"
+        assert (observation["start_line"], observation["end_line"]) == (2, 2)
+    assert literal["content_hash"] == regex["content_hash"]
+
+
 def test_excerpt_rejects_invalid_line_range(tmp_path: Path) -> None:
     from goodteam_os.repository_context_provider import ContextProviderError
 
@@ -1505,15 +1561,15 @@ def test_regex_search_times_out(
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(
             "search_text",
-            {"path": "", "query": "alpha", "mode": "regex", "max_matches": 5},
+            {"path": "", "query": "token", "mode": "regex", "max_matches": 5},
             model_turn=1,
         )
 
-    assert captured.value.code == "context_handler_failed"
+    assert captured.value.code == "context_tool_timeout"
     assert fake_process.killed is True
     record = _last_record_dict(fixture["workspace"], fixture["project_key"])
     assert record["response_metadata"] == {
-        "error": {"code": "context_handler_failed"}
+        "error": {"code": "context_tool_timeout"}
     }
 
 
@@ -1535,7 +1591,7 @@ def test_regex_search_returns_unsupported_when_rg_is_unavailable(
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(
             "search_text",
-            {"path": "", "query": "alpha", "mode": "regex", "max_matches": 5},
+            {"path": "", "query": "token", "mode": "regex", "max_matches": 5},
             model_turn=1,
         )
 
@@ -1544,6 +1600,459 @@ def test_regex_search_returns_unsupported_when_rg_is_unavailable(
     assert record["response_metadata"] == {
         "error": {"code": "context_tool_unsupported"}
     }
+
+
+def test_regex_search_rejects_parent_escape_before_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("sk-live-secret\n", encoding="utf-8")
+
+    called = False
+
+    def fail_if_spawned(*, root, query: str, target: str):
+        nonlocal called
+        del root, query, target
+        called = True
+        raise AssertionError("rg must not spawn for escaped paths")
+
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", fail_if_spawned)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "../outside", "query": "secret", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_path_rejected"
+    assert called is False
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert record["response_metadata"] == {"error": {"code": "context_path_rejected"}}
+    assert "sk-live-secret" not in encoded
+    assert "../outside" not in encoded
+
+
+def test_regex_search_stops_streaming_at_match_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FakeStdout:
+        def __init__(self, lines: list[str]) -> None:
+            self._lines = list(lines)
+
+        def readline(self) -> str:
+            if self._lines:
+                return self._lines.pop(0)
+            return ""
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.stdout = FakeStdout(
+                [
+                    json.dumps(
+                        {
+                            "type": "match",
+                            "data": {
+                                "path": {"text": "README.md"},
+                                "line_number": 1,
+                                "lines": {"text": "alpha\n"},
+                            },
+                        }
+                    )
+                    + "\n",
+                    json.dumps(
+                        {
+                            "type": "match",
+                            "data": {
+                                "path": {"text": "README.md"},
+                                "line_number": 2,
+                                "lines": {"text": "beta\n"},
+                            },
+                        }
+                    )
+                    + "\n",
+                ]
+            )
+            self.stderr = FakeStdout([])
+            self.terminated = False
+            self.killed = False
+            self.waited = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = 0
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            self.waited = True
+            if self.returncode is None:
+                self.returncode = 0
+            return self.returncode
+
+    fake = FakeProcess()
+    monkeypatch.setattr(
+        content_tools,
+        "_spawn_rg_process",
+        lambda **kwargs: fake,
+    )
+
+    response = fixture["provider"].call(
+        "search_text",
+        {"path": "", "query": "a", "mode": "regex", "max_matches": 1},
+        model_turn=1,
+    )
+
+    assert response["truncated"] is True
+    assert len(response["observations"]) == 1
+    assert fake.terminated is True
+    assert fake.waited is True
+    assert fake.killed is False
+
+
+def test_regex_stream_timeout_terminates_and_reaps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    now = {"value": 100.0}
+
+    class FakeStdout:
+        def readline(self) -> str:
+            now["value"] = 102.5
+            return json.dumps(
+                {
+                    "type": "match",
+                    "data": {
+                        "path": {"text": "README.md"},
+                        "line_number": 1,
+                        "lines": {"text": "alpha\n"},
+                    },
+                }
+            ) + "\n"
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = FakeStdout()
+            self.stderr = FakeStdout()
+            self.returncode = None
+            self.terminated = False
+            self.killed = False
+            self.waited = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            self.waited = True
+            self.returncode = 0
+            return self.returncode
+
+    fake = FakeProcess()
+    monkeypatch.setattr(content_tools.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "token", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_timeout"
+    assert fake.terminated is True
+    assert fake.waited is True
+    assert fake.killed is False
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "alpha" not in encoded
+
+
+def test_regex_spawn_excludes_default_ignored_and_sensitive_patterns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import goodteam_os._repository_content_tools as content_tools
+
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        pass
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(content_tools.subprocess, "Popen", fake_popen)
+
+    content_tools._spawn_rg_process(root=Path("/tmp/repo"), query="alpha", target="src")
+
+    argv = captured["argv"]
+    for ignored in (".git", ".hg", ".next", ".svn", ".venv", "__pycache__", "build", "coverage", "dist", "node_modules"):
+        assert f"!{ignored}/**" in argv
+    for sensitive in (
+        "!.env",
+        "!.env.*",
+        "!.npmrc",
+        "!.pypirc",
+        "!.netrc",
+        "!credentials.json",
+        "!credentials.*",
+        "!secrets.*",
+        "!id_rsa",
+        "!id_ed25519",
+        "!*.pem",
+        "!*.key",
+        "!*.p12",
+        "!*.pfx",
+    ):
+        assert sensitive in argv
+
+
+def test_regex_search_rejects_malformed_json_safely(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout: float | None = None):
+            del timeout
+            return '{"type":"match","data":{"path":{"text":"README.md"}}\n', "raw stderr secret"
+
+    monkeypatch.setattr(
+        content_tools,
+        "_spawn_rg_process",
+        lambda **kwargs: FakeProcess(),
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "alpha", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_invalid_output"
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "raw stderr secret" not in encoded
+
+
+def test_regex_search_rejects_emitted_escape_path_safely(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout: float | None = None):
+            del timeout
+            payload = json.dumps(
+                {
+                    "type": "match",
+                    "data": {
+                        "path": {"text": "../outside/secret.txt"},
+                        "line_number": 1,
+                        "lines": {"text": "sk-live-secret-value\n"},
+                    },
+                }
+            )
+            return payload + "\n", "stderr secret"
+
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: FakeProcess())
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "token", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_invalid_output"
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "../outside/secret.txt" not in encoded
+    assert "sk-live-secret-value" not in encoded
+    assert "stderr secret" not in encoded
+
+
+def test_regex_search_reports_nonzero_exit_safely(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FakeProcess:
+        returncode = 2
+
+        def communicate(self, timeout: float | None = None):
+            del timeout
+            return "", "fatal secret output"
+
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: FakeProcess())
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "token", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_failed"
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "fatal secret output" not in encoded
+
+
+def test_regex_search_overflow_is_bounded_and_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, timeout: float | None = None):
+            del timeout
+            oversized = "x" * (content_tools.FILE_READ_MAX_BYTES + 1)
+            return oversized, "stderr secret"
+
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: FakeProcess())
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "token", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_limit_exceeded"
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "stderr secret" not in encoded
+    assert ("x" * 64) not in encoded
+
+
+def test_literal_search_respects_prework_scan_ceiling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget, RepositoryContextProvider
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    calls: dict[str, object] = {"walk_max_entries": None, "read_count": 0}
+
+    class FakeText:
+        def __init__(self, path: str) -> None:
+            self.path = path
+            self.text = "no match here\n"
+
+    class FakeEntry:
+        def __init__(self, path: str) -> None:
+            self.kind = "file"
+            self.path = path
+
+    class FakeRepository:
+        def __init__(self, root, *, expected_identity=None):
+            del root, expected_identity
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+
+        def walk(self, path="", *, ignored_directories=None, max_entries=None, max_depth=None):
+            del path, ignored_directories, max_depth
+            calls["walk_max_entries"] = max_entries
+            return [FakeEntry(f"src/file_{index}.py") for index in range(100)]
+
+        def read_text(self, path: str, *, max_bytes: int):
+            del max_bytes
+            calls["read_count"] = int(calls["read_count"]) + 1
+            return FakeText(path)
+
+        def verify_root(self) -> None:
+            return None
+
+    monkeypatch.setattr(content_tools, "AnchoredRepository", FakeRepository)
+    provider = _rebuild_provider(
+        fixture,
+        RepositoryContextProvider,
+        budget=OnboardingBudget(
+            requested_limits={
+                "max_single_result_chars": 80,
+                "max_total_observation_chars": 80,
+            }
+        ),
+    )
+
+    response = provider.call(
+        "search_text",
+        {"path": "src", "query": "create_order", "mode": "literal", "max_matches": 5},
+        model_turn=1,
+    )
+
+    assert response["observations"] == []
+    assert calls["walk_max_entries"] is not None
+    assert int(calls["walk_max_entries"]) < 100
+    assert int(calls["read_count"]) < 100
 
 
 def test_tools_reject_symlink_and_binary_files(tmp_path: Path) -> None:
@@ -1682,6 +2191,33 @@ def test_authorization_and_bare_tokens_are_redacted(tmp_path: Path) -> None:
     assert "top-secret-value" not in encoded
     assert "super-secret" not in encoded
     assert "ghp_12345678901234567890" not in encoded
+
+
+def test_short_sk_token_is_not_redacted_but_long_one_is(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "src").mkdir()
+    (fixture["root"] / "src" / "tokens.txt").write_text(
+        "\n".join(
+            [
+                "short=sk-demo",
+                "long=sk-abcdefghijkl",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    response = fixture["provider"].call(
+        "read_file_excerpt",
+        {"path": "src/tokens.txt", "start_line": 1, "line_count": 2},
+        model_turn=1,
+    )
+
+    text = response["observations"][0]["text"]
+    assert "sk-demo" in text
+    assert "sk-abcdefghijkl" not in text
+    assert "<redacted-token>" in text
 
 
 def test_structured_values_are_recursively_redacted(tmp_path: Path) -> None:
