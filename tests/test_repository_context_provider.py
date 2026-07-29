@@ -1378,6 +1378,63 @@ def test_search_rejects_empty_or_oversized_query(tmp_path: Path, query: str) -> 
     }
 
 
+@pytest.mark.parametrize(
+    ("tool", "payload"),
+    [
+        (
+            "read_file_excerpt",
+            {"path": "src/app.py", "start_line": 1, "line_count": 1, "extra": True},
+        ),
+        (
+            "search_text",
+            {
+                "path": "src",
+                "query": "alpha",
+                "mode": "literal",
+                "max_matches": 5,
+                "extra": True,
+            },
+        ),
+    ],
+)
+def test_content_tools_reject_unknown_request_keys(
+    tmp_path: Path,
+    tool: str,
+    payload: dict[str, object],
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(tool, payload, model_turn=1)
+
+    assert captured.value.code == "context_tool_limit_exceeded"
+
+
+@pytest.mark.parametrize(
+    ("tool", "payload"),
+    [
+        ("list_tree", {"path": "", "depth": True, "max_entries": 5}),
+        ("read_file_excerpt", {"path": "src/app.py", "start_line": 1, "line_count": True}),
+        ("search_text", {"path": "src", "query": "alpha", "mode": "literal", "max_matches": True}),
+    ],
+)
+def test_content_tool_bounds_reject_bool_values(
+    tmp_path: Path,
+    tool: str,
+    payload: dict[str, object],
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(tool, payload, model_turn=1)
+
+    assert captured.value.code == "context_tool_limit_exceeded"
+
+
 def test_tools_reject_sensitive_file_names(tmp_path: Path) -> None:
     from goodteam_os.repository_context_provider import ContextProviderError
 
