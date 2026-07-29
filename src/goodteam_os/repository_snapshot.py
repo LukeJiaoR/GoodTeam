@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import select
+import shutil
+import signal
 import stat
 import subprocess
-import tempfile
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -1158,15 +1160,18 @@ def _git_object_oid(content: bytes, object_format: str) -> str:
 @dataclass(frozen=True)
 class _ProcessResult:
     args: tuple[str, ...]
+    operation: str
     returncode: int
     stdout: bytes
     stderr: bytes
 
 
 def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
-    command = ["git", "-c", "core.fsmonitor=false", "--no-pager", *arguments]
+    operation = arguments[0] if arguments else "unknown"
+    executable, trusted_path = _trusted_git_executable(root, operation)
+    command = [executable, "-c", "core.fsmonitor=false", "--no-pager", *arguments]
     environment = {
-        "PATH": os.environ.get("PATH", ""),
+        "PATH": trusted_path,
         "HOME": os.environ.get("HOME", ""),
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
@@ -1175,50 +1180,119 @@ def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
         "GIT_TERMINAL_PROMPT": "0",
         "LC_ALL": "C",
     }
-    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-        process = subprocess.Popen(
-            command,
-            cwd=root,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=stdout,
-            stderr=stderr,
-            shell=False,
+    process = subprocess.Popen(
+        command,
+        cwd=root,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        start_new_session=True,
+    )
+    if process.stdout is None or process.stderr is None:
+        _kill_process_group(process)
+        raise RepositorySnapshotError(
+            "repository_snapshot_failed",
+            "Read-only Git inspection failed.",
+            details={"operation": operation},
         )
+    streams = {"stdout": process.stdout, "stderr": process.stderr}
+    stream_names = {stream.fileno(): name for name, stream in streams.items()}
+    open_streams = list(streams.values())
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    completed = False
+    try:
+        for stream in open_streams:
+            os.set_blocking(stream.fileno(), False)
         deadline = time.monotonic() + _GIT_TIMEOUT_SECONDS
-        while process.poll() is None:
-            if time.monotonic() >= deadline:
-                process.kill()
-                process.wait()
+        total = 0
+        while open_streams:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _kill_process_group(process)
                 raise RepositorySnapshotError(
                     "repository_snapshot_failed",
                     "Read-only Git inspection timed out.",
+                    details={"operation": operation},
                 )
-            if _combined_process_output_size(stdout, stderr) > _GIT_OUTPUT_LIMIT:
-                process.kill()
-                process.wait()
-                raise RepositorySnapshotError(
-                    "repository_snapshot_failed",
-                    "Read-only Git inspection exceeded its output limit.",
-                )
-            time.sleep(0.01)
-        if _combined_process_output_size(stdout, stderr) > _GIT_OUTPUT_LIMIT:
-            raise RepositorySnapshotError(
-                "repository_snapshot_failed",
-                "Read-only Git inspection exceeded its output limit.",
+            readable, _, _ = select.select(
+                open_streams,
+                [],
+                [],
+                min(remaining, 0.1),
             )
-        stdout.seek(0)
-        stderr.seek(0)
+            for stream in readable:
+                chunk = os.read(
+                    stream.fileno(),
+                    min(64 * 1024, _GIT_OUTPUT_LIMIT - total + 1),
+                )
+                if not chunk:
+                    open_streams.remove(stream)
+                    continue
+                output[stream_names[stream.fileno()]].extend(chunk)
+                total += len(chunk)
+                if total > _GIT_OUTPUT_LIMIT:
+                    _kill_process_group(process)
+                    raise RepositorySnapshotError(
+                        "repository_snapshot_failed",
+                        "Read-only Git inspection exceeded its output limit.",
+                        details={"operation": operation},
+                    )
+        process.wait()
+        completed = True
         return _ProcessResult(
             args=tuple(command),
+            operation=operation,
             returncode=process.returncode,
-            stdout=stdout.read(_GIT_OUTPUT_LIMIT + 1),
-            stderr=stderr.read(_GIT_OUTPUT_LIMIT + 1),
+            stdout=bytes(output["stdout"]),
+            stderr=bytes(output["stderr"]),
         )
+    finally:
+        if not completed:
+            _kill_process_group(process)
+        process.stdout.close()
+        process.stderr.close()
 
 
-def _combined_process_output_size(stdout: object, stderr: object) -> int:
-    return os.fstat(stdout.fileno()).st_size + os.fstat(stderr.fileno()).st_size
+def _trusted_git_executable(root: Path, operation: str) -> tuple[str, str]:
+    root_value = os.path.abspath(root)
+    trusted_entries = []
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry or not os.path.isabs(entry):
+            continue
+        absolute_entry = os.path.abspath(entry)
+        if _path_is_within(absolute_entry, root_value):
+            continue
+        trusted_entries.append(entry)
+    trusted_path = os.pathsep.join(trusted_entries)
+    executable = shutil.which("git", path=trusted_path)
+    if executable is None or _path_is_within(os.path.abspath(executable), root_value):
+        raise RepositorySnapshotError(
+            "repository_snapshot_failed",
+            "Trusted Git executable was not available.",
+            details={"operation": operation},
+        )
+    return os.path.abspath(executable), trusted_path
+
+
+def _path_is_within(candidate: str, root: str) -> bool:
+    try:
+        return os.path.commonpath((candidate, root)) == root
+    except ValueError:
+        return False
+
+
+def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
+    returncode = process.poll()
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        if returncode is None:
+            process.kill()
+    process.wait()
 
 
 def _require_git(root: Path, arguments: list[str]) -> bytes:
@@ -1232,7 +1306,7 @@ def _git_failed(result: _ProcessResult) -> RepositorySnapshotError:
     return RepositorySnapshotError(
         "repository_snapshot_failed",
         "Read-only Git inspection failed.",
-        details={"operation": result.args[2] if len(result.args) > 2 else "unknown"},
+        details={"operation": result.operation},
     )
 
 

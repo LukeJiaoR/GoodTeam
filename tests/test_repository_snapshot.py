@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -72,6 +74,28 @@ def test_git_snapshot_disables_repository_fsmonitor_hook(tmp_path: Path) -> None
     )
     monitor.chmod(0o755)
     git(root, "config", "core.fsmonitor", str(monitor))
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    assert snapshot.source_control["kind"] == "git"
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("relative_entry", [".", ""])
+def test_git_snapshot_ignores_relative_path_executable_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    relative_entry: str,
+) -> None:
+    trusted_git = shutil.which("git")
+    assert trusted_git is not None
+    root = init_git_repo(tmp_path / "repo")
+    marker = tmp_path / "fake-git-executed"
+    fake_git = root / "git"
+    fake_git.write_text(f"#!/bin/sh\n: > {marker}\nexit 99\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+    original_path = os.environ.get("PATH", "")
+    monkeypatch.setenv("PATH", f"{relative_entry}{os.pathsep}{original_path}")
 
     snapshot = capture_repository_snapshot(root, project_key="DEMO")
 
@@ -614,14 +638,64 @@ def test_git_process_output_limit_is_combined(
         encoding="utf-8",
     )
     fake_git.chmod(0o755)
-    monkeypatch.setenv("PATH", str(fake_bin))
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}/bin")
     monkeypatch.setattr(repository_snapshot, "_GIT_OUTPUT_LIMIT", 10)
 
     with pytest.raises(RepositorySnapshotError) as captured:
-        repository_snapshot._run_git(tmp_path, ["status"])
+        repository_snapshot._run_git(root, ["status"])
 
     assert captured.value.code == "repository_snapshot_failed"
     assert str(captured.value) == "Read-only Git inspection exceeded its output limit."
+
+
+def test_git_output_limit_kills_process_group_descendants(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    marker = tmp_path / "descendant-survived"
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        (
+            "#!/bin/sh\n"
+            f"(sleep 0.3; : > {marker}) &\n"
+            "while :; do printf 1234567890; done\n"
+        ),
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}/bin")
+    monkeypatch.setattr(repository_snapshot, "_GIT_OUTPUT_LIMIT", 1024)
+
+    with pytest.raises(RepositorySnapshotError, match="output limit"):
+        repository_snapshot._run_git(root, ["status"])
+    time.sleep(0.5)
+
+    assert not marker.exists()
+
+
+def test_git_failure_reports_explicit_operation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        repository_snapshot._require_git(root, ["status", "--short"])
+
+    assert captured.value.details == {"operation": "status"}
 
 
 @pytest.mark.parametrize(

@@ -3725,9 +3725,8 @@ def test_git_output_is_bounded(tmp_path: Path) -> None:
         snapshot=fixture["snapshot"],
         observation_store=fixture["store"],
         budget=OnboardingBudget(requested_limits={"max_single_result_chars": 128}),
-        process_factory=lambda *_args, **_kwargs: process,
+        process_factory=lambda *_args, **_kwargs: (release.set() or process),
     )
-    release.set()
 
     with pytest.raises(ContextProviderError) as captured:
         provider.call("inspect_git_history", {"path": "", "limit": 5}, model_turn=1)
@@ -3772,9 +3771,8 @@ def test_git_process_is_terminated_on_timeout(tmp_path: Path, monkeypatch: pytes
         snapshot=fixture["snapshot"],
         observation_store=fixture["store"],
         budget=OnboardingBudget(),
-        process_factory=lambda *_args, **_kwargs: process,
+        process_factory=lambda *_args, **_kwargs: (release.set() or process),
     )
-    release.set()
 
     with pytest.raises(ContextProviderError) as captured:
         provider.call(
