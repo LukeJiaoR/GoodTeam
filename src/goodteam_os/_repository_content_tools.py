@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import selectors
 import time
 import subprocess
 
@@ -138,7 +140,7 @@ def search_text(
         returned_chars = 0
         truncated = False
         scanned_files = 0
-        read_bytes = 0
+        remaining_read_bytes = scan_limits["max_read_bytes"]
         for entry in entries:
             if scanned_files >= scan_limits["walk_max_entries"]:
                 truncated = True
@@ -148,12 +150,19 @@ def search_text(
             if scanned_files >= scan_limits["max_files"]:
                 truncated = True
                 break
-            if read_bytes >= scan_limits["max_read_bytes"]:
+            if remaining_read_bytes <= 0:
                 truncated = True
                 break
-            text = repository.read_text(entry.path, max_bytes=FILE_READ_MAX_BYTES)
+            per_read_cap = min(FILE_READ_MAX_BYTES, remaining_read_bytes)
+            if per_read_cap <= 0:
+                truncated = True
+                break
+            text = repository.read_text(entry.path, max_bytes=per_read_cap)
             scanned_files += 1
-            read_bytes += len(text.text.encode("utf-8"))
+            observed_read_bytes = len(text.text.encode("utf-8"))
+            remaining_read_bytes = max(0, remaining_read_bytes - observed_read_bytes)
+            if text.truncated:
+                truncated = True
             for line_number, line in enumerate(text.text.splitlines(keepends=True), start=1):
                 if query not in line:
                     continue
@@ -192,7 +201,7 @@ def _literal_search_scan_limits(
     file_cap = min(walk_cap, max_matches * 2, max(1, allowance // 40))
     read_cap = min(
         FILE_READ_MAX_BYTES,
-        max(FILE_READ_MAX_BYTES // 32, allowance * 4),
+        max(1, allowance * 4),
     )
     return {
         "walk_max_entries": max(1, walk_cap),
@@ -373,7 +382,6 @@ def _spawn_rg_process(*, root, query: str, target: str):
         cwd=str(root),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
     )
 
 
@@ -386,152 +394,144 @@ def _stream_regex_matches(
     deadline = time.monotonic() + 2.0
     observations: list[dict[str, object]] = []
     returned_chars = 0
-    output_bytes = 0
-    output_byte_limit = max(FILE_READ_MAX_BYTES, result_char_allowance * 4)
     stdout = getattr(process, "stdout", None)
-    if stdout is None or not hasattr(stdout, "readline"):
-        return _collect_regex_matches_fallback(
-            process=process,
-            result_char_allowance=result_char_allowance,
-            max_matches=max_matches,
+    stderr = getattr(process, "stderr", None)
+    if stdout is None or stderr is None:
+        _terminate_process(process)
+        raise ContextProviderError(
+            "context_tool_unsupported",
+            "Repository context tool is unsupported.",
         )
-    while True:
-        if time.monotonic() >= deadline:
+    try:
+        stdout_fd = stdout.fileno()
+        stderr_fd = stderr.fileno()
+    except (AttributeError, OSError, ValueError) as exc:
+        _terminate_process(process)
+        raise ContextProviderError(
+            "context_tool_unsupported",
+            "Repository context tool is unsupported.",
+        ) from exc
+    try:
+        selector = selectors.DefaultSelector()
+        selector.register(stdout_fd, selectors.EVENT_READ, "stdout")
+        selector.register(stderr_fd, selectors.EVENT_READ, "stderr")
+        os.set_blocking(stdout_fd, False)
+        os.set_blocking(stderr_fd, False)
+    except Exception as exc:
+        _terminate_process(process)
+        raise ContextProviderError(
+            "context_tool_unsupported",
+            "Repository context tool is unsupported.",
+        ) from exc
+    stdout_buffer = bytearray()
+    stderr_bytes = 0
+    stdout_bytes = 0
+    output_byte_limit = max(FILE_READ_MAX_BYTES, result_char_allowance * 4)
+    open_streams = {"stdout", "stderr"}
+    while open_streams:
+        now = time.monotonic()
+        if now >= deadline:
             _terminate_process(process)
             raise ContextProviderError(
                 "context_tool_timeout",
                 "Repository context regex search timed out.",
             )
-        raw_line = stdout.readline()
-        if raw_line == "":
-            break
-        output_bytes += len(raw_line.encode("utf-8"))
-        if output_bytes > output_byte_limit:
+        ready = selector.select(deadline - now)
+        if not ready:
             _terminate_process(process)
             raise ContextProviderError(
-                "context_tool_limit_exceeded",
-                "Repository context request exceeded a content-tool limit.",
+                "context_tool_timeout",
+                "Repository context regex search timed out.",
             )
-        try:
-            payload = json.loads(raw_line)
-        except json.JSONDecodeError as exc:
-            _terminate_process(process)
-            raise ContextProviderError(
-                "context_tool_invalid_output",
-                "Repository context tool produced invalid output.",
-            ) from exc
-        if payload.get("type") != "match":
-            continue
-        data = payload.get("data", {})
-        path_value = data.get("path", {}).get("text")
-        line_number = data.get("line_number")
-        line_text = data.get("lines", {}).get("text")
-        if (
-            not isinstance(path_value, str)
-            or not isinstance(line_number, int)
-            or not isinstance(line_text, str)
-        ):
-            _terminate_process(process)
-            raise ContextProviderError(
-                "context_tool_invalid_output",
-                "Repository context tool produced invalid output.",
-            )
-        validated_path = _validate_search_result_path(path_value)
-        observation = _build_search_match_observation(
-            path=validated_path,
-            line_number=line_number,
-            raw_line=line_text,
+        for key, _events in ready:
+            stream_name = key.data
+            try:
+                chunk = os.read(key.fd, 4096)
+            except BlockingIOError:
+                continue
+            if not chunk:
+                try:
+                    selector.unregister(key.fd)
+                except Exception:
+                    pass
+                open_streams.discard(stream_name)
+                continue
+            if stream_name == "stderr":
+                stderr_bytes += len(chunk)
+                if stderr_bytes > output_byte_limit:
+                    _terminate_process(process)
+                    raise ContextProviderError(
+                        "context_tool_limit_exceeded",
+                        "Repository context request exceeded a content-tool limit.",
+                    )
+                continue
+            stdout_bytes += len(chunk)
+            if stdout_bytes > output_byte_limit:
+                _terminate_process(process)
+                raise ContextProviderError(
+                    "context_tool_limit_exceeded",
+                    "Repository context request exceeded a content-tool limit.",
+                )
+            stdout_buffer.extend(chunk)
+            while True:
+                newline_index = stdout_buffer.find(b"\n")
+                if newline_index < 0:
+                    break
+                raw_line_bytes = bytes(stdout_buffer[: newline_index + 1])
+                del stdout_buffer[: newline_index + 1]
+                try:
+                    raw_line = raw_line_bytes.decode("utf-8")
+                    payload = json.loads(raw_line)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    _terminate_process(process)
+                    raise ContextProviderError(
+                        "context_tool_invalid_output",
+                        "Repository context tool produced invalid output.",
+                    ) from exc
+                if payload.get("type") != "match":
+                    continue
+                data = payload.get("data", {})
+                path_value = data.get("path", {}).get("text")
+                line_number = data.get("line_number")
+                line_text = data.get("lines", {}).get("text")
+                if (
+                    not isinstance(path_value, str)
+                    or not isinstance(line_number, int)
+                    or not isinstance(line_text, str)
+                ):
+                    _terminate_process(process)
+                    raise ContextProviderError(
+                        "context_tool_invalid_output",
+                        "Repository context tool produced invalid output.",
+                    )
+                validated_path = _validate_search_result_path(path_value)
+                observation = _build_search_match_observation(
+                    path=validated_path,
+                    line_number=line_number,
+                    raw_line=line_text,
+                )
+                next_chars = returned_chars + sum(
+                    len(value)
+                    for value in observation.values()
+                    if isinstance(value, str)
+                )
+                if next_chars > result_char_allowance:
+                    _terminate_process(process)
+                    return {"observations": observations, "truncated": True}
+                observations.append(observation)
+                returned_chars = next_chars
+                if len(observations) >= max_matches:
+                    _terminate_process(process)
+                    return {"observations": observations, "truncated": True}
+    selector.close()
+    if stdout_buffer:
+        _terminate_process(process)
+        raise ContextProviderError(
+            "context_tool_invalid_output",
+            "Repository context tool produced invalid output.",
         )
-        next_chars = returned_chars + sum(
-            len(value)
-            for value in observation.values()
-            if isinstance(value, str)
-        )
-        if next_chars > result_char_allowance:
-            _terminate_process(process)
-            return {"observations": observations, "truncated": True}
-        observations.append(observation)
-        returned_chars = next_chars
-        if len(observations) >= max_matches:
-            _terminate_process(process)
-            return {"observations": observations, "truncated": True}
     returncode = process.wait(timeout=1.0)
     if returncode not in {0, 1}:
-        raise ContextProviderError(
-            "context_tool_failed",
-            "Repository context tool failed.",
-        )
-    return {"observations": observations, "truncated": False}
-
-
-def _collect_regex_matches_fallback(
-    *,
-    process,
-    result_char_allowance: int,
-    max_matches: int,
-) -> dict[str, object]:
-    try:
-        stdout, _stderr = process.communicate(timeout=2.0)
-    except subprocess.TimeoutExpired as exc:
-        if hasattr(process, "kill"):
-            process.kill()
-        if hasattr(process, "wait"):
-            process.wait(timeout=1.0)
-        raise ContextProviderError(
-            "context_tool_timeout",
-            "Repository context regex search timed out.",
-        ) from exc
-    observations: list[dict[str, object]] = []
-    returned_chars = 0
-    output_bytes = 0
-    output_byte_limit = max(FILE_READ_MAX_BYTES, result_char_allowance * 4)
-    for raw_line in stdout.splitlines():
-        output_bytes += len(raw_line.encode("utf-8"))
-        if output_bytes > output_byte_limit:
-            raise ContextProviderError(
-                "context_tool_limit_exceeded",
-                "Repository context request exceeded a content-tool limit.",
-            )
-        try:
-            payload = json.loads(raw_line)
-        except json.JSONDecodeError as exc:
-            raise ContextProviderError(
-                "context_tool_invalid_output",
-                "Repository context tool produced invalid output.",
-            ) from exc
-        if payload.get("type") != "match":
-            continue
-        data = payload.get("data", {})
-        path_value = data.get("path", {}).get("text")
-        line_number = data.get("line_number")
-        line_text = data.get("lines", {}).get("text")
-        if (
-            not isinstance(path_value, str)
-            or not isinstance(line_number, int)
-            or not isinstance(line_text, str)
-        ):
-            raise ContextProviderError(
-                "context_tool_invalid_output",
-                "Repository context tool produced invalid output.",
-            )
-        validated_path = _validate_search_result_path(path_value)
-        observation = _build_search_match_observation(
-            path=validated_path,
-            line_number=line_number,
-            raw_line=line_text,
-        )
-        next_chars = returned_chars + sum(
-            len(value)
-            for value in observation.values()
-            if isinstance(value, str)
-        )
-        if next_chars > result_char_allowance:
-            return {"observations": observations, "truncated": True}
-        observations.append(observation)
-        returned_chars = next_chars
-        if len(observations) >= max_matches:
-            return {"observations": observations, "truncated": True}
-    if getattr(process, "returncode", 0) not in {0, 1}:
         raise ContextProviderError(
             "context_tool_failed",
             "Repository context tool failed.",

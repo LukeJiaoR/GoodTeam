@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import inspect
 import json
-import subprocess
+import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from math import inf, nan
 from pathlib import Path
@@ -135,6 +136,80 @@ def _refresh_fixture_snapshot(fixture: dict[str, object]) -> dict[str, object]:
         budget=fixture["budget"],
     )
     return fixture
+
+
+def _make_pipe_process(
+    events: list[tuple[str, bytes, float]],
+    *,
+    final_returncode: int = 0,
+):
+    stdout_r, stdout_w = os.pipe()
+    stderr_r, stderr_w = os.pipe()
+    release = threading.Event()
+    writer_done = threading.Event()
+    open_fds = {"stdout_w": stdout_w, "stderr_w": stderr_w}
+
+    def close_writer(name: str) -> None:
+        fd = open_fds.pop(name, None)
+        if fd is not None:
+            os.close(fd)
+
+    class PipeProcess:
+        def __init__(self) -> None:
+            self.stdout = os.fdopen(stdout_r, "rb", buffering=0)
+            self.stderr = os.fdopen(stderr_r, "rb", buffering=0)
+            self.returncode = None
+            self.terminated = False
+            self.killed = False
+            self.waited = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+            close_writer("stdout_w")
+            close_writer("stderr_w")
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.killed = True
+            close_writer("stdout_w")
+            close_writer("stderr_w")
+            self.returncode = -9
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            self.waited = True
+            if self.returncode is None:
+                self.returncode = final_returncode
+            self.stdout.close()
+            self.stderr.close()
+            return self.returncode
+
+    def writer() -> None:
+        release.wait(timeout=10.0)
+        try:
+            for stream_name, payload, delay_seconds in events:
+                if delay_seconds > 0:
+                    time.sleep(delay_seconds)
+                if stream_name == "stdout":
+                    fd_name = "stdout_w"
+                else:
+                    fd_name = "stderr_w"
+                fd = open_fds.get(fd_name)
+                if fd is None:
+                    return
+                os.write(fd, payload)
+            close_writer("stdout_w")
+            close_writer("stderr_w")
+        finally:
+            writer_done.set()
+
+    process = PipeProcess()
+    writer_thread = threading.Thread(target=writer, daemon=True)
+    writer_thread.start()
+    return process, release, writer_thread, writer_done
 
 
 def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
@@ -1240,7 +1315,7 @@ def test_read_excerpt_returns_lines_and_redacts_secrets(tmp_path: Path) -> None:
         "\n".join(
             [
                 "DEBUG = False",
-                'STRIPE_KEY = "sk-live-secret"',
+                'API_KEY = "sk-live-secret"',
                 "SERVICE = 'payments'",
                 "ENABLED = True",
                 "",
@@ -1348,27 +1423,22 @@ def test_literal_and_regex_matches_share_exact_line_contract(
     )
     _refresh_fixture_snapshot(fixture)
 
-    class FakeProcess:
-        returncode = 0
-
-        def communicate(self, timeout: float | None = None):
-            del timeout
-            payload = json.dumps(
-                {
-                    "type": "match",
-                    "data": {
-                        "path": {"text": "src/orders.py"},
-                        "line_number": 2,
-                        "lines": {"text": raw_line},
-                    },
-                }
-            )
-            return payload + "\n", ""
+    payload = json.dumps(
+        {
+            "type": "match",
+            "data": {
+                "path": {"text": "src/orders.py"},
+                "line_number": 2,
+                "lines": {"text": raw_line},
+            },
+        }
+    ).encode("utf-8") + b"\n"
+    fake, release, writer, done = _make_pipe_process([("stdout", payload, 0.0)])
 
     monkeypatch.setattr(
         content_tools,
         "_spawn_rg_process",
-        lambda **kwargs: FakeProcess(),
+        lambda **kwargs: fake,
     )
 
     literal = fixture["provider"].call(
@@ -1376,11 +1446,14 @@ def test_literal_and_regex_matches_share_exact_line_contract(
         {"path": "src", "query": "create_order", "mode": "literal", "max_matches": 5},
         model_turn=1,
     )["observations"][0]
+    release.set()
     regex = fixture["provider"].call(
         "search_text",
         {"path": "src", "query": "create_order", "mode": "regex", "max_matches": 5},
         model_turn=2,
     )["observations"][0]
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
 
     for observation in (literal, regex):
         assert {"path", "start_line", "end_line", "text", "content_hash", "redaction_applied"} <= set(observation)
@@ -1532,21 +1605,10 @@ def test_regex_search_times_out(
     import goodteam_os._repository_content_tools as content_tools
 
     fixture = _provider_fixture(tmp_path)
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.killed = False
-
-        def communicate(self, timeout: float | None = None):
-            raise subprocess.TimeoutExpired(cmd=["rg"], timeout=timeout or 0.0)
-
-        def kill(self) -> None:
-            self.killed = True
-
-        def wait(self, timeout: float | None = None) -> int:
-            return 0
-
-    fake_process = FakeProcess()
+    fake_process, release, writer, done = _make_pipe_process(
+        [("stdout", b"", 2.4)],
+        final_returncode=0,
+    )
 
     def fake_spawn_rg_process(*, root, query: str, target: str):
         del root, query, target
@@ -1558,6 +1620,7 @@ def test_regex_search_times_out(
         fake_spawn_rg_process,
     )
 
+    release.set()
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(
             "search_text",
@@ -1566,7 +1629,10 @@ def test_regex_search_times_out(
         )
 
     assert captured.value.code == "context_tool_timeout"
-    assert fake_process.killed is True
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
     record = _last_record_dict(fixture["workspace"], fixture["project_key"])
     assert record["response_metadata"] == {
         "error": {"code": "context_tool_timeout"}
@@ -1649,75 +1715,47 @@ def test_regex_search_stops_streaming_at_match_limit(
     import goodteam_os._repository_content_tools as content_tools
 
     fixture = _provider_fixture(tmp_path)
-
-    class FakeStdout:
-        def __init__(self, lines: list[str]) -> None:
-            self._lines = list(lines)
-
-        def readline(self) -> str:
-            if self._lines:
-                return self._lines.pop(0)
-            return ""
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.returncode = None
-            self.stdout = FakeStdout(
-                [
-                    json.dumps(
-                        {
-                            "type": "match",
-                            "data": {
-                                "path": {"text": "README.md"},
-                                "line_number": 1,
-                                "lines": {"text": "alpha\n"},
-                            },
-                        }
-                    )
-                    + "\n",
-                    json.dumps(
-                        {
-                            "type": "match",
-                            "data": {
-                                "path": {"text": "README.md"},
-                                "line_number": 2,
-                                "lines": {"text": "beta\n"},
-                            },
-                        }
-                    )
-                    + "\n",
-                ]
-            )
-            self.stderr = FakeStdout([])
-            self.terminated = False
-            self.killed = False
-            self.waited = False
-
-        def poll(self):
-            return self.returncode
-
-        def terminate(self) -> None:
-            self.terminated = True
-            self.returncode = 0
-
-        def kill(self) -> None:
-            self.killed = True
-            self.returncode = -9
-
-        def wait(self, timeout: float | None = None) -> int:
-            del timeout
-            self.waited = True
-            if self.returncode is None:
-                self.returncode = 0
-            return self.returncode
-
-    fake = FakeProcess()
+    fake, release, writer, done = _make_pipe_process(
+        [
+            (
+                "stdout",
+                json.dumps(
+                    {
+                        "type": "match",
+                        "data": {
+                            "path": {"text": "README.md"},
+                            "line_number": 1,
+                            "lines": {"text": "alpha\n"},
+                        },
+                    }
+                ).encode("utf-8")
+                + b"\n",
+                0.0,
+            ),
+            (
+                "stdout",
+                json.dumps(
+                    {
+                        "type": "match",
+                        "data": {
+                            "path": {"text": "README.md"},
+                            "line_number": 2,
+                            "lines": {"text": "beta\n"},
+                        },
+                    }
+                ).encode("utf-8")
+                + b"\n",
+                0.0,
+            ),
+        ]
+    )
     monkeypatch.setattr(
         content_tools,
         "_spawn_rg_process",
         lambda **kwargs: fake,
     )
 
+    release.set()
     response = fixture["provider"].call(
         "search_text",
         {"path": "", "query": "a", "mode": "regex", "max_matches": 1},
@@ -1729,6 +1767,8 @@ def test_regex_search_stops_streaming_at_match_limit(
     assert fake.terminated is True
     assert fake.waited is True
     assert fake.killed is False
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
 
 
 def test_regex_stream_timeout_terminates_and_reaps(
@@ -1740,50 +1780,36 @@ def test_regex_stream_timeout_terminates_and_reaps(
 
     fixture = _provider_fixture(tmp_path)
     now = {"value": 100.0}
+    fake, release, writer, done = _make_pipe_process(
+        [
+            (
+                "stdout",
+                json.dumps(
+                    {
+                        "type": "match",
+                        "data": {
+                            "path": {"text": "README.md"},
+                            "line_number": 1,
+                            "lines": {"text": "alpha\n"},
+                        },
+                    }
+                ).encode("utf-8")
+                + b"\n",
+                0.0,
+            )
+        ]
+    )
+    original_select = content_tools.selectors.DefaultSelector.select
 
-    class FakeStdout:
-        def readline(self) -> str:
-            now["value"] = 102.5
-            return json.dumps(
-                {
-                    "type": "match",
-                    "data": {
-                        "path": {"text": "README.md"},
-                        "line_number": 1,
-                        "lines": {"text": "alpha\n"},
-                    },
-                }
-            ) + "\n"
+    def fake_select(self, timeout=None):
+        now["value"] = 102.5
+        return original_select(self, timeout)
 
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.stdout = FakeStdout()
-            self.stderr = FakeStdout()
-            self.returncode = None
-            self.terminated = False
-            self.killed = False
-            self.waited = False
-
-        def poll(self):
-            return self.returncode
-
-        def terminate(self) -> None:
-            self.terminated = True
-
-        def kill(self) -> None:
-            self.killed = True
-            self.returncode = -9
-
-        def wait(self, timeout: float | None = None) -> int:
-            del timeout
-            self.waited = True
-            self.returncode = 0
-            return self.returncode
-
-    fake = FakeProcess()
     monkeypatch.setattr(content_tools.time, "monotonic", lambda: now["value"])
+    monkeypatch.setattr(content_tools.selectors.DefaultSelector, "select", fake_select)
     monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
 
+    release.set()
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(
             "search_text",
@@ -1795,10 +1821,62 @@ def test_regex_stream_timeout_terminates_and_reaps(
     assert fake.terminated is True
     assert fake.waited is True
     assert fake.killed is False
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
     encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
         "utf-8"
     )
     assert "alpha" not in encoded
+
+
+def test_regex_real_pipe_enforces_deadline_while_waiting_for_stdout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    fake, release, writer, done = _make_pipe_process(
+        [
+            (
+                "stdout",
+                (
+                    json.dumps(
+                        {
+                            "type": "match",
+                            "data": {
+                                "path": {"text": "README.md"},
+                                "line_number": 1,
+                                "lines": {"text": "alpha\n"},
+                            },
+                        }
+                    )
+                    + "\n"
+                ).encode("utf-8"),
+                2.4,
+            )
+        ]
+    )
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
+
+    started = time.monotonic()
+    release.set()
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "token", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+    elapsed = time.monotonic() - started
+    writer.join(timeout=5.0)
+
+    assert captured.value.code == "context_tool_timeout"
+    assert elapsed < 2.3
+    assert fake.terminated is True
+    assert fake.waited is True
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
 
 
 def test_regex_spawn_excludes_default_ignored_and_sensitive_patterns(
@@ -1851,19 +1929,20 @@ def test_regex_search_rejects_malformed_json_safely(
 
     fixture = _provider_fixture(tmp_path)
 
-    class FakeProcess:
-        returncode = 0
-
-        def communicate(self, timeout: float | None = None):
-            del timeout
-            return '{"type":"match","data":{"path":{"text":"README.md"}}\n', "raw stderr secret"
+    fake, release, writer, done = _make_pipe_process(
+        [
+            ("stdout", b'{"type":"match","data":{"path":{"text":"README.md"}}\n', 0.0),
+            ("stderr", b"raw stderr secret", 0.0),
+        ]
+    )
 
     monkeypatch.setattr(
         content_tools,
         "_spawn_rg_process",
-        lambda **kwargs: FakeProcess(),
+        lambda **kwargs: fake,
     )
 
+    release.set()
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(
             "search_text",
@@ -1872,6 +1951,8 @@ def test_regex_search_rejects_malformed_json_safely(
         )
 
     assert captured.value.code == "context_tool_invalid_output"
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
     encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
         "utf-8"
     )
@@ -1887,25 +1968,23 @@ def test_regex_search_rejects_emitted_escape_path_safely(
 
     fixture = _provider_fixture(tmp_path)
 
-    class FakeProcess:
-        returncode = 0
+    payload = json.dumps(
+        {
+            "type": "match",
+            "data": {
+                "path": {"text": "../outside/secret.txt"},
+                "line_number": 1,
+                "lines": {"text": "sk-live-secret-value\n"},
+            },
+        }
+    ).encode("utf-8") + b"\n"
+    fake, release, writer, done = _make_pipe_process(
+        [("stdout", payload, 0.0), ("stderr", b"stderr secret", 0.0)]
+    )
 
-        def communicate(self, timeout: float | None = None):
-            del timeout
-            payload = json.dumps(
-                {
-                    "type": "match",
-                    "data": {
-                        "path": {"text": "../outside/secret.txt"},
-                        "line_number": 1,
-                        "lines": {"text": "sk-live-secret-value\n"},
-                    },
-                }
-            )
-            return payload + "\n", "stderr secret"
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
 
-    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: FakeProcess())
-
+    release.set()
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(
             "search_text",
@@ -1914,6 +1993,8 @@ def test_regex_search_rejects_emitted_escape_path_safely(
         )
 
     assert captured.value.code == "context_tool_invalid_output"
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
     encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
         "utf-8"
     )
@@ -1931,15 +2012,14 @@ def test_regex_search_reports_nonzero_exit_safely(
 
     fixture = _provider_fixture(tmp_path)
 
-    class FakeProcess:
-        returncode = 2
+    fake, release, writer, done = _make_pipe_process(
+        [("stderr", b"fatal secret output", 0.0)],
+        final_returncode=2,
+    )
 
-        def communicate(self, timeout: float | None = None):
-            del timeout
-            return "", "fatal secret output"
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
 
-    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: FakeProcess())
-
+    release.set()
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(
             "search_text",
@@ -1948,6 +2028,8 @@ def test_regex_search_reports_nonzero_exit_safely(
         )
 
     assert captured.value.code == "context_tool_failed"
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
     encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
         "utf-8"
     )
@@ -1963,16 +2045,14 @@ def test_regex_search_overflow_is_bounded_and_safe(
 
     fixture = _provider_fixture(tmp_path)
 
-    class FakeProcess:
-        returncode = 0
+    oversized = b"x" * (content_tools.FILE_READ_MAX_BYTES + 1)
+    fake, release, writer, done = _make_pipe_process(
+        [("stdout", oversized, 0.0), ("stderr", b"stderr secret", 0.0)]
+    )
 
-        def communicate(self, timeout: float | None = None):
-            del timeout
-            oversized = "x" * (content_tools.FILE_READ_MAX_BYTES + 1)
-            return oversized, "stderr secret"
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
 
-    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: FakeProcess())
-
+    release.set()
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(
             "search_text",
@@ -1981,11 +2061,45 @@ def test_regex_search_overflow_is_bounded_and_safe(
         )
 
     assert captured.value.code == "context_tool_limit_exceeded"
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
     encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
         "utf-8"
     )
     assert "stderr secret" not in encoded
     assert ("x" * 64) not in encoded
+
+
+def test_regex_search_stderr_overflow_is_bounded_and_safe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    oversized = b"e" * (content_tools.FILE_READ_MAX_BYTES + 1)
+    fake, release, writer, done = _make_pipe_process([("stderr", oversized, 0.0)])
+
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
+
+    release.set()
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "token", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_limit_exceeded"
+    assert fake.terminated is True
+    assert fake.waited is True
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert ("e" * 64) not in encoded
 
 
 def test_literal_search_respects_prework_scan_ceiling(
@@ -2002,6 +2116,7 @@ def test_literal_search_respects_prework_scan_ceiling(
         def __init__(self, path: str) -> None:
             self.path = path
             self.text = "no match here\n"
+            self.truncated = False
 
     class FakeEntry:
         def __init__(self, path: str) -> None:
@@ -2053,6 +2168,81 @@ def test_literal_search_respects_prework_scan_ceiling(
     assert calls["walk_max_entries"] is not None
     assert int(calls["walk_max_entries"]) < 100
     assert int(calls["read_count"]) < 100
+
+
+def test_literal_search_caps_per_file_read_bytes_from_tight_allowance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os._repository_content_policy import FILE_READ_MAX_BYTES
+    from goodteam_os.repository_access import RepositoryText
+    from goodteam_os.repository_context_provider import OnboardingBudget, RepositoryContextProvider
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    calls: dict[str, object] = {"max_bytes": [], "read_count": 0}
+
+    class FakeEntry:
+        def __init__(self, path: str) -> None:
+            self.kind = "file"
+            self.path = path
+
+    class FakeRepository:
+        def __init__(self, root, *, expected_identity=None):
+            del root, expected_identity
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+
+        def walk(self, path="", *, ignored_directories=None, max_entries=None, max_depth=None):
+            del path, ignored_directories, max_depth, max_entries
+            return [FakeEntry("src/huge.txt")]
+
+        def read_text(self, path: str, *, max_bytes: int):
+            calls["read_count"] = int(calls["read_count"]) + 1
+            cast_list = calls["max_bytes"]
+            assert isinstance(cast_list, list)
+            cast_list.append(max_bytes)
+            text = "x" * max_bytes
+            return RepositoryText(
+                path=path,
+                text=text,
+                content_hash="sha256:" + ("0" * 64),
+                size=FILE_READ_MAX_BYTES * 2,
+                start_line=1,
+                end_line=1,
+                truncated=True,
+            )
+
+        def verify_root(self) -> None:
+            return None
+
+    monkeypatch.setattr(content_tools, "AnchoredRepository", FakeRepository)
+    provider = _rebuild_provider(
+        fixture,
+        RepositoryContextProvider,
+        budget=OnboardingBudget(
+            requested_limits={
+                "max_single_result_chars": 80,
+                "max_total_observation_chars": 80,
+            }
+        ),
+    )
+
+    response = provider.call(
+        "search_text",
+        {"path": "src", "query": "create_order", "mode": "literal", "max_matches": 5},
+        model_turn=1,
+    )
+
+    assert response["observations"] == []
+    assert response["truncated"] is True
+    assert calls["read_count"] == 1
+    assert calls["max_bytes"] == [320]
+    assert calls["max_bytes"][0] < FILE_READ_MAX_BYTES
 
 
 def test_tools_reject_symlink_and_binary_files(tmp_path: Path) -> None:
@@ -2193,14 +2383,19 @@ def test_authorization_and_bare_tokens_are_redacted(tmp_path: Path) -> None:
     assert "ghp_12345678901234567890" not in encoded
 
 
-def test_short_sk_token_is_not_redacted_but_long_one_is(tmp_path: Path) -> None:
+def test_redactor_scope_preserves_plain_token_and_hyphenated_sk_live_but_redacts_allowed_shapes(
+    tmp_path: Path,
+) -> None:
     fixture = _provider_fixture(tmp_path)
     (fixture["root"] / "src").mkdir()
     (fixture["root"] / "src" / "tokens.txt").write_text(
         "\n".join(
             [
-                "short=sk-demo",
-                "long=sk-abcdefghijkl",
+                "token=harmless-value",
+                "access_token=top-secret",
+                "hyphenated=sk-live-abc",
+                "openai=sk-abcdefghijkl",
+                "stripe=sk_live_abcdefgh",
                 "",
             ]
         ),
@@ -2210,14 +2405,18 @@ def test_short_sk_token_is_not_redacted_but_long_one_is(tmp_path: Path) -> None:
 
     response = fixture["provider"].call(
         "read_file_excerpt",
-        {"path": "src/tokens.txt", "start_line": 1, "line_count": 2},
+        {"path": "src/tokens.txt", "start_line": 1, "line_count": 5},
         model_turn=1,
     )
 
     text = response["observations"][0]["text"]
-    assert "sk-demo" in text
+    assert "token=harmless-value" in text
+    assert "access_token=top-secret" not in text
+    assert "sk-live-abc" in text
     assert "sk-abcdefghijkl" not in text
+    assert "sk_live_abcdefgh" not in text
     assert "<redacted-token>" in text
+    assert "access_token=<redacted>" in text
 
 
 def test_structured_values_are_recursively_redacted(tmp_path: Path) -> None:
@@ -2901,7 +3100,7 @@ def test_denied_error_envelope_exact_persistence_and_no_raw_request_content_leak
     with pytest.raises(ContextProviderError) as captured:
         provider.call(
             "list_tree",
-            {"token": "sk-live-secret", "path": "README.md"},
+            {"access_token": "sk-abcdefghijkl", "path": "README.md"},
             model_turn=1,
         )
 
@@ -2911,9 +3110,9 @@ def test_denied_error_envelope_exact_persistence_and_no_raw_request_content_leak
     response = _last_record_dict(workspace, project_key)
     assert response["status"] == "error"
     assert response["observations"] == []
-    assert response["request"] == {"token": "<redacted-token>", "path": "README.md"}
+    assert response["request"] == {"access_token": "<redacted-token>", "path": "README.md"}
     encoded = _last_record_bytes(workspace, project_key).decode("utf-8")
-    assert "sk-live-secret" not in encoded
+    assert "sk-abcdefghijkl" not in encoded
     assert "alpha" not in encoded
 
 
