@@ -905,7 +905,10 @@ class RepositoryContextProvider:
             del self._handler_context_local.value
 
     def _current_tool_call_context(self) -> RepositoryContextHandlerCallContext:
-        context = getattr(self._handler_context_local, "value", None)
+        try:
+            context = self._handler_context_local.value
+        except AttributeError:
+            context = None
         if not isinstance(context, RepositoryContextHandlerCallContext):
             raise ContextProviderError(
                 "context_provider_failed",
@@ -1195,6 +1198,11 @@ def _validate_request_object(request: object) -> dict[str, object]:
 def _validate_list_tree_request(
     request: dict[str, object],
 ) -> tuple[str, int]:
+    if set(request) - {"path", "max_entries"}:
+        raise ContextProviderError(
+            "context_request_invalid",
+            "Repository context request must be a JSON object.",
+        )
     path = request.get("path", "")
     max_entries = request.get("max_entries", 10)
     if not isinstance(path, str):
@@ -1404,6 +1412,7 @@ def _is_authority_error_code(code: str) -> bool:
         "onboarding_snapshot_mismatch",
         "onboarding_artifact_conflict",
         "project_workspace_not_isolated",
+        "repository_root_changed",
         "repository_snapshot_changed",
     }
 

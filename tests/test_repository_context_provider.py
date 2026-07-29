@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -1185,6 +1186,25 @@ def test_list_tree_request_rejects_max_entries_above_server_cap(tmp_path: Path) 
     assert record["response_metadata"] == {"error": {"code": "context_request_invalid"}}
 
 
+@pytest.mark.parametrize("payload", [{"path": "", "depth": 1}, {"path": "", "extra": True}])
+def test_list_tree_request_rejects_unsupported_keys(
+    tmp_path: Path,
+    payload: dict[str, object],
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call("list_tree", payload, model_turn=1)
+
+    assert captured.value.code == "context_request_invalid"
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["status"] == "error"
+    assert record["observations"] == []
+    assert record["response_metadata"] == {"error": {"code": "context_request_invalid"}}
+
+
 def test_list_tree_reports_truncation_honestly(tmp_path: Path) -> None:
     fixture = _provider_fixture(tmp_path)
     for index in range(12):
@@ -1997,6 +2017,48 @@ def test_handler_time_snapshot_drift_rolls_back_result_budget(tmp_path: Path) ->
     assert _all_records(fixture["workspace"], fixture["project_key"]) == []
 
 
+def test_root_inode_replacement_preserves_repository_root_changed_without_ledger_write(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_single_result_chars": 50,
+            "max_total_observation_chars": 50,
+        }
+    )
+
+    class RootReplacingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            displaced_root = self.root.with_name("repo-displaced")
+            self.root.rename(displaced_root)
+            self.root.mkdir()
+            (self.root / "README.md").write_text("replacement\n", encoding="utf-8")
+            return {
+                "observations": [{"path": "README.md", "text": "alpha"}],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, RootReplacingProvider, budget=budget)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "repository_root_changed"
+    _assert_detached_error(captured.value)
+    state = budget.as_dict()
+    assert state["total_observation_chars_used"] == 0
+    assert state["files_observed"] == 0
+    assert budget.result_char_allowance() == 50
+    assert _all_records(fixture["workspace"], fixture["project_key"]) == []
+
+
 def test_shared_budget_reservation_prevents_concurrent_handler_overcommit(
     tmp_path: Path,
 ) -> None:
@@ -2295,6 +2357,8 @@ def test_provider_requires_exact_validated_snapshot_artifact_binding(
 
 
 def test_exact_allowlist_no_reflection_assertions(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import RepositoryContextProvider
+
     fixture = _provider_fixture(tmp_path)
     provider = fixture["provider"]
 
@@ -2309,3 +2373,7 @@ def test_exact_allowlist_no_reflection_assertions(tmp_path: Path) -> None:
     }
     assert provider.raw_argv_dispatch is False
     assert provider.uses_reflection_dispatch is False
+    current_context_source = inspect.getsource(
+        RepositoryContextProvider._current_tool_call_context
+    )
+    assert "getattr(" not in current_context_source
