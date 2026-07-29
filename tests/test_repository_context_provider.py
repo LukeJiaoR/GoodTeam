@@ -3638,7 +3638,7 @@ def test_git_process_is_terminated_on_timeout(tmp_path: Path, monkeypatch: pytes
     assert process.stdout.closed and process.stderr.closed
 
 
-def test_git_strips_unsafe_inherited_environment(
+def test_git_operations_ignore_inherited_config_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import subprocess
@@ -3646,6 +3646,35 @@ def test_git_strips_unsafe_inherited_environment(
     recorded = []
     real_popen = subprocess.Popen
     fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / "home-hidden.txt").write_text("home\n", encoding="utf-8")
+    (root / "xdg-hidden.txt").write_text("xdg\n", encoding="utf-8")
+    (root / "config-hidden.txt").write_text("config\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    (fake_home / ".gitignore-global").write_text("home-hidden.txt\n", encoding="utf-8")
+    (fake_home / ".gitconfig").write_text(
+        "[core]\n\texcludesfile = .gitignore-global\n",
+        encoding="utf-8",
+    )
+
+    fake_xdg = tmp_path / "fake-xdg"
+    (fake_xdg / "git").mkdir(parents=True)
+    (fake_xdg / "git" / "ignore").write_text("xdg-hidden.txt\n", encoding="utf-8")
+
+    fake_global = tmp_path / "fake-global.gitconfig"
+    (tmp_path / "global-excludes").write_text("config-hidden.txt\n", encoding="utf-8")
+    fake_global.write_text(
+        "[core]\n\texcludesfile = "
+        f"{(tmp_path / 'global-excludes').as_posix()}\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(fake_xdg))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(fake_global))
     monkeypatch.setenv("GIT_DIR", "/tmp/unsafe")
     monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'alias.log=!touch /tmp/nope'")
 
@@ -3665,15 +3694,57 @@ def test_git_strips_unsafe_inherited_environment(
         process_factory=recording_process,
     )
     provider.call(
-        "inspect_git_history", {"path": "", "limit": 5}, model_turn=1
+        "inspect_recent_changes", {"path": "", "limit": 10}, model_turn=1
     )
 
     env = recorded[0]
+    observed_paths = {
+        item["path"]
+        for item in provider.call(
+            "inspect_recent_changes", {"path": "", "limit": 10}, model_turn=2
+        )["observations"]
+    }
+    assert {"home-hidden.txt", "xdg-hidden.txt", "config-hidden.txt"} <= observed_paths
+    assert "HOME" not in env
+    assert "XDG_CONFIG_HOME" not in env
     assert "GIT_DIR" not in env
     assert "GIT_CONFIG_PARAMETERS" not in env
+    assert "PATH" in env
     assert env["GIT_OPTIONAL_LOCKS"] == "0"
     assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert env["GIT_PAGER"] == "cat"
     assert env["LC_ALL"] == "C"
+    if os.name == "nt":
+        assert set(env) <= {
+            "PATH",
+            "PATHEXT",
+            "SYSTEMROOT",
+            "SystemRoot",
+            "WINDIR",
+            "COMSPEC",
+            "ComSpec",
+            "TMP",
+            "TEMP",
+            "GIT_OPTIONAL_LOCKS",
+            "GIT_TERMINAL_PROMPT",
+            "GIT_PAGER",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_CONFIG_GLOBAL",
+            "LC_ALL",
+        }
+    else:
+        assert set(env) == {
+                "PATH",
+                "TMPDIR",
+                "GIT_OPTIONAL_LOCKS",
+                "GIT_TERMINAL_PROMPT",
+                "GIT_PAGER",
+                "GIT_CONFIG_NOSYSTEM",
+                "GIT_CONFIG_GLOBAL",
+            "LC_ALL",
+        }
 
 
 @pytest.mark.parametrize(
@@ -3748,6 +3819,54 @@ def test_git_stderr_output_is_bounded(tmp_path: Path) -> None:
     writer_thread.join(timeout=2.0)
     assert captured.value.code == "context_tool_limit_exceeded"
     assert process.terminated and process.waited
+
+
+def test_git_combined_stdout_stderr_output_is_bounded_and_reaped(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _git_provider_fixture(tmp_path)
+    process, release, writer_thread, writer_done = _make_pipe_process(
+        [("stdout", b"x" * 80, 0.0), ("stderr", b"e" * 80, 0.0)]
+    )
+    original_kill = process.kill
+    original_wait = process.wait
+
+    def stubborn_terminate() -> None:
+        process.terminated = True
+
+    def stubborn_wait(timeout=None) -> int:
+        if process.terminated and not process.killed:
+            raise subprocess.TimeoutExpired("git", timeout)
+        return original_wait(timeout)
+
+    process.terminate = stubborn_terminate
+    process.wait = stubborn_wait
+    process.kill = original_kill
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget(requested_limits={"max_single_result_chars": 128}),
+        process_factory=lambda *_args, **_kwargs: process,
+    )
+    release.set()
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("inspect_git_history", {"path": "", "limit": 5}, model_turn=1)
+    writer_thread.join(timeout=2.0)
+    assert captured.value.code == "context_tool_limit_exceeded"
+    assert process.terminated and process.killed and process.waited
+    assert process.stdout.closed and process.stderr.closed
+    assert writer_done.is_set()
 
 
 @pytest.mark.parametrize("payload", [b"not-a-record", b"\xff\x00bad\x1e"])

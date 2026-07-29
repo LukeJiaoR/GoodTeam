@@ -28,6 +28,24 @@ _ZERO_OID = re.compile(r"^0+$")
 _RAW_MODE = re.compile(rb"^[0-7]{6}$")
 _RAW_OID = re.compile(rb"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _RAW_STATUS = re.compile(rb"^[A-Z]$")
+_SAFE_EXECUTION_ENV_KEYS = frozenset(
+    {
+        "PATH",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "LIBPATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "SystemRoot",
+        "WINDIR",
+        "COMSPEC",
+        "ComSpec",
+        "TMP",
+        "TEMP",
+        "TMPDIR",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -350,8 +368,13 @@ def _build_git_argv(
 
 
 def _git_environment() -> dict[str, str]:
+    # Preserve only execution-time variables that can be required to locate the
+    # binary or load its runtime on supported platforms. All config-bearing
+    # variables, including HOME and XDG_CONFIG_HOME, are omitted on purpose.
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        key: value
+        for key, value in os.environ.items()
+        if key in _SAFE_EXECUTION_ENV_KEYS and value
     }
     environment.update(
         {
@@ -359,6 +382,7 @@ def _git_environment() -> dict[str, str]:
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_PAGER": "cat",
             "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
             "LC_ALL": "C",
         }
     )
@@ -387,7 +411,7 @@ def _read_process_bounded(process, *, output_allowance: int) -> _ProcessResult:
         ) from exc
     selector = selectors.DefaultSelector()
     stdout_buffer = bytearray()
-    stderr_bytes = 0
+    combined_bytes = 0
     deadline = time.monotonic() + _GIT_TIMEOUT_SECONDS
     try:
         selector.register(stdout_fd, selectors.EVENT_READ, "stdout")
@@ -409,11 +433,7 @@ def _read_process_bounded(process, *, output_allowance: int) -> _ProcessResult:
                     "Repository context Git inspection timed out.",
                 )
             for key, _events in ready:
-                stream_name = key.data
-                consumed = (
-                    len(stdout_buffer) if stream_name == "stdout" else stderr_bytes
-                )
-                read_limit = output_allowance + 1 - consumed
+                read_limit = output_allowance + 1 - combined_bytes
                 if read_limit <= 0:
                     _terminate_process(process)
                     raise ContextProviderError(
@@ -429,15 +449,12 @@ def _read_process_bounded(process, *, output_allowance: int) -> _ProcessResult:
                         selector.unregister(key.fd)
                     except Exception:
                         pass
-                    open_streams.discard(stream_name)
+                    open_streams.discard(key.data)
                     continue
-                if stream_name == "stdout":
+                combined_bytes += len(chunk)
+                if key.data == "stdout":
                     stdout_buffer.extend(chunk)
-                    exceeded = len(stdout_buffer) > output_allowance
-                else:
-                    stderr_bytes += len(chunk)
-                    exceeded = stderr_bytes > output_allowance
-                if exceeded:
+                if combined_bytes > output_allowance:
                     _terminate_process(process)
                     raise ContextProviderError(
                         "context_tool_limit_exceeded",
