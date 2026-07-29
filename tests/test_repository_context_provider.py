@@ -214,6 +214,22 @@ def _make_pipe_process(
     return process, release, writer_thread, writer_done
 
 
+def _tracking_selector_factory(base_selector_type):
+    created: list[object] = []
+
+    class TrackingSelector(base_selector_type):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.close_calls = 0
+            created.append(self)
+
+        def close(self):
+            self.close_calls += 1
+            return super().close()
+
+    return TrackingSelector, created
+
+
 def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
     from goodteam_os.repository_context_provider import ContextProviderError
 
@@ -2114,6 +2130,143 @@ def test_regex_search_rejects_invalid_base64_payload_safely(
     )
     assert "%%%not-base64%%%" not in encoded
     assert "%%%still-bad%%%" not in encoded
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_code"),
+    [
+        ("success", None),
+        ("match_limit", None),
+        ("timeout", "context_tool_timeout"),
+        ("stdout_overflow", "context_tool_limit_exceeded"),
+        ("stderr_overflow", "context_tool_limit_exceeded"),
+        ("invalid_base64", "context_tool_invalid_output"),
+        ("malformed_json", "context_tool_invalid_output"),
+        ("nonzero_exit", "context_tool_failed"),
+    ],
+)
+def test_regex_selector_is_closed_once_on_every_terminal_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    expected_code: str | None,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+    output_limit = max(content_tools.FILE_READ_MAX_BYTES, 80 * 4)
+    if case == "success":
+        payload = json.dumps(
+            {
+                "type": "match",
+                "data": {
+                    "path": {"text": "README.md"},
+                    "lines": {"text": "alpha\n"},
+                    "line_number": 1,
+                },
+            }
+        ).encode("utf-8") + b"\n"
+        events = [("stdout", payload, 0.0)]
+        query = "alpha"
+        max_matches = 5
+        final_returncode = 0
+    elif case == "match_limit":
+        first = json.dumps(
+            {
+                "type": "match",
+                "data": {
+                    "path": {"text": "README.md"},
+                    "lines": {"text": "alpha\n"},
+                    "line_number": 1,
+                },
+            }
+        ).encode("utf-8") + b"\n"
+        second = json.dumps(
+            {
+                "type": "match",
+                "data": {
+                    "path": {"text": "README.md"},
+                    "lines": {"text": "beta\n"},
+                    "line_number": 2,
+                },
+            }
+        ).encode("utf-8") + b"\n"
+        events = [("stdout", first, 0.0), ("stdout", second, 0.0)]
+        query = "a"
+        max_matches = 1
+        final_returncode = 0
+    elif case == "timeout":
+        events = [("stdout", b"", 2.4)]
+        query = "alpha"
+        max_matches = 5
+        final_returncode = 0
+    elif case == "stdout_overflow":
+        events = [("stdout", b"x" * (output_limit + 1), 0.0)]
+        query = "alpha"
+        max_matches = 5
+        final_returncode = 0
+    elif case == "stderr_overflow":
+        events = [("stderr", b"e" * (output_limit + 1), 0.0)]
+        query = "alpha"
+        max_matches = 5
+        final_returncode = 0
+    elif case == "invalid_base64":
+        payload = json.dumps(
+            {
+                "type": "match",
+                "data": {
+                    "path": {"bytes": "%%%bad%%%"},
+                    "lines": {"text": "alpha\n"},
+                    "line_number": 1,
+                },
+            }
+        ).encode("utf-8") + b"\n"
+        events = [("stdout", payload, 0.0)]
+        query = "alpha"
+        max_matches = 5
+        final_returncode = 0
+    elif case == "malformed_json":
+        events = [("stdout", b'{"type":"match"\n', 0.0)]
+        query = "alpha"
+        max_matches = 5
+        final_returncode = 0
+    elif case == "nonzero_exit":
+        events = [("stderr", b"fatal\n", 0.0)]
+        query = "alpha"
+        max_matches = 5
+        final_returncode = 2
+    else:
+        raise AssertionError(case)
+
+    fake, release, writer, done = _make_pipe_process(events, final_returncode=final_returncode)
+    TrackingSelector, created = _tracking_selector_factory(content_tools.selectors.DefaultSelector)
+    monkeypatch.setattr(content_tools.selectors, "DefaultSelector", TrackingSelector)
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", lambda **kwargs: fake)
+
+    release.set()
+    if expected_code is None:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": query, "mode": "regex", "max_matches": max_matches},
+            model_turn=1,
+        )
+    else:
+        with pytest.raises(ContextProviderError) as captured:
+            fixture["provider"].call(
+                "search_text",
+                {"path": "", "query": query, "mode": "regex", "max_matches": max_matches},
+                model_turn=1,
+            )
+        assert captured.value.code == expected_code
+
+    assert done.wait(timeout=5.0)
+    writer.join(timeout=5.0)
+    assert len(created) == 1
+    assert created[0].close_calls == 1
+    assert fake.waited is True
+    assert fake.stdout.closed is True
+    assert fake.stderr.closed is True
 
 
 def test_regex_search_rejects_malformed_json_safely(
