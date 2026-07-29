@@ -106,6 +106,23 @@ class OnboardingArtifactStore:
                 )
         return destination
 
+    def verify_snapshot(self, snapshot_id: str) -> RepositorySnapshot:
+        identifier = _validate_identifier(snapshot_id)
+        with bound_project_state_directory(
+            self.workspace,
+            self.project_key,
+            self.root,
+            ("onboarding",),
+            False,
+        ) as onboarding_fd:
+            payload = _require_snapshot_artifact(
+                onboarding_fd,
+                identifier,
+                project_key=self.project_key,
+                root=self.root,
+            )
+        return RepositorySnapshot(**payload)
+
     def publish_inventory(self, inventory: dict[str, object]) -> Path:
         payload = _validate_inventory(inventory)
         identifier = str(payload["snapshot_id"])

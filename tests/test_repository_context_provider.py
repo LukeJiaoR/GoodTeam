@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from math import inf, nan
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -78,6 +81,19 @@ def _all_records(workspace: Path, project_key: str) -> list[dict[str, object]]:
     ]
 
 
+def _rebuild_provider(fixture: dict[str, object], provider_type, *, budget=None):
+    from goodteam_os.repository_context_provider import OnboardingBudget
+
+    return provider_type(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=OnboardingBudget() if budget is None else budget,
+    )
+
+
 def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
     from goodteam_os.repository_context_provider import ContextProviderError
 
@@ -91,10 +107,12 @@ def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
         provider.call("run_command", {"argv": ["cat", "README.md"]}, model_turn=1)
 
     assert captured.value.code == "context_tool_not_allowed"
-    assert store.read_all() == [_last_record_dict(workspace, project_key)]
-    assert _last_record_dict(workspace, project_key) == {
-        "budget": provider.budget.as_dict(),
-        "created_at": _last_record_dict(workspace, project_key)["created_at"],
+    record = _last_record_dict(workspace, project_key)
+    assert store.read_all() == [record]
+    assert record["budget"]["tool_calls_used"] == 1
+    assert record == {
+        "budget": record["budget"],
+        "created_at": record["created_at"],
         "limits": provider.budget.limits.as_dict(),
         "model_turn": 1,
         "observations": [],
@@ -104,7 +122,7 @@ def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
         "snapshot_id": fixture["snapshot"].snapshot_id,
         "status": "denied",
         "tool": "run_command",
-        "tool_call_id": _last_record_dict(workspace, project_key)["tool_call_id"],
+        "tool_call_id": record["tool_call_id"],
         "truncated": False,
     }
     encoded = _last_record_bytes(workspace, project_key).decode("utf-8")
@@ -172,18 +190,19 @@ def test_budget_fails_closed_at_hard_limits() -> None:
         lambda: budget.record_observation(
             path="README.md", chars=1, count_toward_file=True
         ),
-        lambda: budget.record_model_usage(
-            turn_number=1,
-            estimated_input_tokens=1,
-            estimated_output_tokens=1,
-            actual_input_tokens=1,
-            actual_output_tokens=1,
-            cost_usd=0.1,
-        ),
     ):
         with pytest.raises(ContextProviderError) as captured:
             action()
         assert captured.value.code == "onboarding_budget_exceeded"
+
+    budget.record_model_usage(
+        turn_number=1,
+        actual_input_tokens=1,
+        actual_output_tokens=1,
+        cost_usd=0.1,
+    )
+    assert budget.as_dict()["estimated_input_tokens_used"] == 1
+    assert budget.as_dict()["estimated_output_tokens_used"] == 1
 
 
 def test_budget_counts_unique_files_once() -> None:
@@ -214,21 +233,130 @@ def test_budget_enforces_cumulative_per_file_chars() -> None:
     assert captured.value.code == "onboarding_budget_exceeded"
 
 
+def test_rejected_observation_leaves_all_budget_state_unchanged() -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_file_cumulative_chars": 5,
+            "max_total_observation_chars": 10,
+        },
+        monotonic_clock=lambda: 0.0,
+    )
+    before = budget.as_dict()
+
+    with pytest.raises(ContextProviderError) as captured:
+        budget.record_observation(path="new.txt", chars=6, count_toward_file=True)
+
+    assert captured.value.details == {"limit": "max_file_cumulative_chars"}
+    assert budget.as_dict() == before
+
+
+def test_result_reservation_is_atomic_and_released_after_rejection() -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_file_cumulative_chars": 5,
+            "max_single_result_chars": 10,
+            "max_total_observation_chars": 10,
+        }
+    )
+    reservation = budget.reserve_result()
+
+    with pytest.raises(ContextProviderError) as captured:
+        budget.commit_result(
+            reservation,
+            result_chars=6,
+            total_chars=6,
+            observed_paths=("new.txt",),
+            file_chars={"new.txt": 6},
+        )
+
+    assert captured.value.details == {"limit": "max_file_cumulative_chars"}
+    assert budget.as_dict()["files_observed"] == 0
+    assert budget.as_dict()["total_observation_chars_used"] == 0
+    assert budget.reserve_result().allowance == 10
+
+
+def test_result_reservation_prevents_overcommit_until_released() -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_single_result_chars": 5,
+            "max_total_observation_chars": 5,
+        }
+    )
+    first = budget.reserve_result()
+
+    with pytest.raises(ContextProviderError) as captured:
+        budget.reserve_result()
+    assert captured.value.details == {"limit": "max_total_observation_chars"}
+
+    budget.release_result(first)
+    assert budget.reserve_result().allowance == 5
+
+
+def test_result_transaction_rejects_total_above_reserved_allowance() -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_single_result_chars": 5,
+            "max_total_observation_chars": 10,
+        },
+        monotonic_clock=lambda: 0.0,
+    )
+    reservation = budget.reserve_result()
+
+    with pytest.raises(ContextProviderError) as captured:
+        budget.commit_result(
+            reservation,
+            result_chars=0,
+            total_chars=6,
+            observed_paths=(),
+            file_chars={},
+        )
+
+    assert captured.value.details == {"limit": "max_total_observation_chars"}
+    assert budget.as_dict()["total_observation_chars_used"] == 0
+    assert budget.result_char_allowance() == 5
+
+
 def test_budget_uses_injected_monotonic_clock() -> None:
     from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
 
-    times = iter((10.0, 10.0, 820.0, 950.1))
-    budget = OnboardingBudget(monotonic_clock=lambda: next(times))
+    now = [10.0]
+    budget = OnboardingBudget(monotonic_clock=lambda: now[0])
 
     budget.begin_model_turn(1)
+    now[0] = 820.0
     budget.begin_tool_call()
     assert budget.close_requested is True
 
+    now[0] = 950.1
     with pytest.raises(ContextProviderError) as captured:
         budget.begin_tool_call()
 
     assert captured.value.code == "onboarding_budget_exceeded"
     assert budget.as_dict()["elapsed_seconds"] == pytest.approx(940.1)
+
+
+def test_budget_as_dict_refreshes_elapsed_and_close_requested() -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget
+
+    now = [0.0]
+    budget = OnboardingBudget(
+        requested_limits={"max_elapsed_seconds": 10.0},
+        monotonic_clock=lambda: now[0],
+    )
+    now[0] = 8.0
+
+    state = budget.as_dict()
+
+    assert state["elapsed_seconds"] == 8.0
+    assert state["close_requested"] is True
 
 
 def test_budget_replaces_estimates_with_authoritative_model_usage() -> None:
@@ -258,6 +386,67 @@ def test_budget_replaces_estimates_with_authoritative_model_usage() -> None:
     assert budget.as_dict()["cost_usd_used"] == 0.25
 
 
+def test_budget_replaces_exact_ceiling_estimate_with_partial_authoritative_usage() -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_estimated_input_tokens": 10,
+            "max_estimated_output_tokens": 10,
+        }
+    )
+    budget.record_model_usage(
+        turn_number=1,
+        estimated_input_tokens=10,
+        estimated_output_tokens=5,
+    )
+
+    budget.record_model_usage(turn_number=1, actual_input_tokens=3)
+    assert budget.as_dict()["estimated_input_tokens_used"] == 3
+    assert budget.as_dict()["estimated_output_tokens_used"] == 5
+
+    budget.record_model_usage(turn_number=1, actual_output_tokens=0)
+    assert budget.as_dict()["estimated_input_tokens_used"] == 3
+    assert budget.as_dict()["estimated_output_tokens_used"] == 0
+
+
+def test_rejected_model_usage_does_not_advance_turn_or_change_usage() -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={"max_estimated_input_tokens": 10},
+        monotonic_clock=lambda: 0.0,
+    )
+    budget.record_model_usage(turn_number=1, estimated_input_tokens=5)
+    before = budget.as_dict()
+
+    with pytest.raises(ContextProviderError) as captured:
+        budget.record_model_usage(turn_number=2, actual_input_tokens=6)
+
+    assert captured.value.details == {"limit": "max_estimated_input_tokens"}
+    assert budget.as_dict() == before
+
+    budget.record_model_usage(turn_number=1, estimated_input_tokens=4)
+    assert budget.as_dict()["estimated_input_tokens_used"] == 4
+
+
+def test_result_char_failure_names_total_dimension() -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_single_result_chars": 10,
+            "max_total_observation_chars": 5,
+        }
+    )
+    budget.record_observation(path=None, chars=4, count_toward_file=False)
+
+    with pytest.raises(ContextProviderError) as captured:
+        budget.record_result_chars(2)
+
+    assert captured.value.details == {"limit": "max_total_observation_chars"}
+
+
 @pytest.mark.parametrize(
     "requested_limits",
     [
@@ -279,6 +468,30 @@ def test_budget_rejects_limits_above_server_ceiling(requested_limits: dict[str, 
         OnboardingBudget(requested_limits=requested_limits)
 
     assert captured.value.code == "onboarding_budget_invalid"
+
+
+def test_budget_limits_and_server_ceilings_cannot_be_widened() -> None:
+    import goodteam_os.repository_context_provider as context_provider
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        OnboardingBudgetLimits,
+    )
+
+    budget = OnboardingBudget(requested_limits={"max_tool_calls": 1})
+
+    assert isinstance(context_provider._SERVER_CEILINGS, MappingProxyType)
+    with pytest.raises(TypeError):
+        context_provider._SERVER_CEILINGS["max_tool_calls"] = 80  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        budget.limits = OnboardingBudgetLimits(max_tool_calls=80)
+
+    budget.begin_tool_call()
+    with pytest.raises(ContextProviderError) as captured:
+        budget.begin_tool_call()
+
+    assert captured.value.code == "onboarding_budget_exceeded"
+    assert captured.value.details == {"limit": "max_tool_calls"}
 
 
 def test_budget_requests_close_at_eighty_percent() -> None:
@@ -363,22 +576,24 @@ def test_model_turn_hard_limit_or_order_failure_persists_one_error_envelope(
 
 def test_provider_rejects_list_of_pairs_request_and_does_not_execute_handler(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from goodteam_os.repository_context_provider import ContextProviderError
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
 
     fixture = _provider_fixture(tmp_path)
-    provider = fixture["provider"]
     workspace = fixture["workspace"]
     project_key = fixture["project_key"]
     called = False
 
-    def should_not_run(_request: dict[str, object]) -> dict[str, object]:
-        nonlocal called
-        called = True
-        return {"observations": [], "truncated": False}
+    class TrackingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            nonlocal called
+            called = True
+            return {"observations": [], "truncated": False}
 
-    monkeypatch.setitem(provider._tool_handlers, "list_tree", should_not_run)
+    provider = _rebuild_provider(fixture, TrackingProvider)
 
     with pytest.raises(ContextProviderError) as captured:
         provider.call("list_tree", [("path", "")], model_turn=1)  # type: ignore[arg-type]
@@ -411,6 +626,97 @@ def test_unknown_tool_invalid_request_precedence_is_request_validation(
     assert records[0]["status"] == "error"
     assert records[0]["tool"] == "run_command"
     assert records[0]["response_metadata"] == {"error": {"code": "context_request_invalid"}}
+
+
+def test_request_validation_precedes_invalid_turn_and_tool_type(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    provider = fixture["provider"]
+
+    with pytest.raises(ContextProviderError) as request_error:
+        provider.call([], [("path", "")], model_turn=0)  # type: ignore[arg-type]
+    assert request_error.value.code == "context_request_invalid"
+
+    with pytest.raises(ContextProviderError) as tool_error:
+        provider.call([], {}, model_turn=1)  # type: ignore[arg-type]
+    assert tool_error.value.code == "context_tool_not_allowed"
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["tool"] == "<invalid>"
+    assert record["status"] == "denied"
+
+
+def test_denied_tools_consume_quota_before_dispatch(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    budget = OnboardingBudget(requested_limits={"max_tool_calls": 1})
+    provider = _rebuild_provider(fixture, RepositoryContextProvider, budget=budget)
+
+    with pytest.raises(ContextProviderError) as first:
+        provider.call("run_command", {}, model_turn=1)
+    assert first.value.code == "context_tool_not_allowed"
+    assert budget.as_dict()["tool_calls_used"] == 1
+
+    with pytest.raises(ContextProviderError) as second:
+        provider.call("another_unknown", {}, model_turn=1)
+    assert second.value.code == "onboarding_budget_exceeded"
+    assert second.value.details == {"limit": "max_tool_calls"}
+    assert [
+        record["status"]
+        for record in _all_records(fixture["workspace"], fixture["project_key"])
+    ] == ["denied", "error"]
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        "search_text",
+        "read_file_excerpt",
+        "inspect_manifest",
+        "inspect_git_history",
+        "inspect_tests",
+        "inspect_recent_changes",
+    ],
+)
+def test_future_context_tools_fail_explicitly_until_implemented(
+    tmp_path: Path,
+    tool: str,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(tool, {}, model_turn=1)
+
+    assert captured.value.code == "context_tool_not_implemented"
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["status"] == "error"
+    assert record["observations"] == []
+    assert record["response_metadata"] == {
+        "error": {"code": "context_tool_not_implemented"}
+    }
+
+
+def test_provider_has_no_mutable_callable_dispatch_map(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    provider = fixture["provider"]
+
+    assert not hasattr(provider, "_tool_handlers")
+    assert provider.tool_names() == (
+        "list_tree",
+        "search_text",
+        "read_file_excerpt",
+        "inspect_manifest",
+        "inspect_git_history",
+        "inspect_tests",
+        "inspect_recent_changes",
+    )
 
 
 @pytest.mark.parametrize(
@@ -656,39 +962,48 @@ def test_constructor_snapshot_store_artifact_mismatch_cases(tmp_path: Path) -> N
             observation_store=other_store,
             budget=OnboardingBudget(),
         )
-    code = getattr(artifact_error.value, "code", "")
-    assert code in {"onboarding_artifact_conflict", "onboarding_snapshot_mismatch"}
+    assert artifact_error.value.code in {
+        "onboarding_artifact_conflict",
+        "onboarding_snapshot_mismatch",
+    }
     assert other_snapshot.snapshot_id == snapshot.snapshot_id
 
 
 def test_denied_error_envelope_exact_persistence_and_no_raw_request_content_leakage(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from goodteam_os.repository_context_provider import ContextProviderError
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
 
     fixture = _provider_fixture(tmp_path)
-    provider = fixture["provider"]
     workspace = fixture["workspace"]
     project_key = fixture["project_key"]
 
-    def boom(_request: dict[str, object]) -> dict[str, object]:
-        raise ContextProviderError(
-            "context_handler_failed",
-            "handler failed",
-            details={"path": "README.md", "limit": "max_single_result_chars"},
-        )
+    class FailingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            raise ContextProviderError(
+                "repository_text_was_alpha",
+                "handler failed with alpha",
+                details={
+                    "path": "README.md",
+                    "limit": "max_single_result_chars",
+                },
+            )
 
-    monkeypatch.setitem(provider._tool_handlers, "inspect_recent_changes", boom)
+    provider = _rebuild_provider(fixture, FailingProvider)
 
     with pytest.raises(ContextProviderError) as captured:
         provider.call(
-            "inspect_recent_changes",
+            "list_tree",
             {"token": "sk-live-secret", "path": "README.md"},
             model_turn=1,
         )
 
     assert captured.value.code == "context_handler_failed"
+    assert str(captured.value) == "Repository context handler failed."
+    assert captured.value.details == {"limit": "max_single_result_chars"}
     response = _last_record_dict(workspace, project_key)
     assert response["status"] == "error"
     assert response["observations"] == []
@@ -697,6 +1012,476 @@ def test_denied_error_envelope_exact_persistence_and_no_raw_request_content_leak
     assert "sk-live-secret" not in encoded
     assert '"path":"README.md"' not in encoded
     assert "alpha" not in encoded
+
+
+def test_generic_handler_failure_is_safe_and_persisted(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FailingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            raise RuntimeError("alpha sk-live-secret README.md")
+
+    provider = _rebuild_provider(fixture, FailingProvider)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {"secret": "sk-live-secret"}, model_turn=1)
+
+    assert captured.value.code == "context_handler_failed"
+    assert str(captured.value) == "Repository context handler failed."
+    assert captured.value.details == {}
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["status"] == "error"
+    assert record["observations"] == []
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode()
+    assert "alpha" not in encoded
+    assert "sk-live-secret" not in encoded
+    assert "README.md" not in encoded
+
+
+def test_allowlisted_handler_error_code_still_normalizes_raw_material(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class UnsupportedProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            raise ContextProviderError(
+                "context_tool_unsupported",
+                "unsupported because alpha sk-live-secret",
+                details={"path": "README.md", "text": "alpha"},
+            )
+
+    provider = _rebuild_provider(fixture, UnsupportedProvider)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "context_tool_unsupported"
+    assert str(captured.value) == "Repository context tool is unsupported."
+    assert captured.value.details == {}
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode()
+    assert "alpha" not in encoded
+    assert "sk-live-secret" not in encoded
+    assert "README.md" not in encoded
+
+
+def test_handler_output_must_be_json_safe(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class InvalidOutputProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            return {
+                "observations": [{"path": "README.md", "text": {"alpha"}}],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, InvalidOutputProvider)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "context_handler_failed"
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["status"] == "error"
+    assert record["observations"] == []
+
+
+def test_cyclic_handler_output_is_a_safe_handler_failure(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class CyclicOutputProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            observation: dict[str, object] = {"path": "README.md"}
+            observation["cycle"] = observation
+            return {"observations": [observation], "truncated": False}
+
+    provider = _rebuild_provider(fixture, CyclicOutputProvider)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "context_handler_failed"
+    assert str(captured.value) == "Repository context handler returned an invalid payload."
+    assert _last_record_dict(fixture["workspace"], fixture["project_key"])[
+        "status"
+    ] == "error"
+
+
+def test_derived_observation_id_wins_and_chars_are_counted_once(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import RepositoryContextProvider
+
+    fixture = _provider_fixture(tmp_path)
+
+    class ObservationProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            return {
+                "observations": [
+                    {
+                        "observation_id": "attacker-controlled",
+                        "kind": "excerpt",
+                        "path": "README.md",
+                        "text": "alpha",
+                        "matches": [{"text": "beta"}],
+                    }
+                ],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, ObservationProvider)
+
+    response = provider.call("list_tree", {}, model_turn=1)
+
+    assert response["observations"][0]["observation_id"] == (
+        f'{response["tool_call_id"]}:0'
+    )
+    assert response["response_metadata"]["returned_chars"] == 25
+    assert response["budget"]["total_observation_chars_used"] == 25
+    assert response["budget"]["observed_file_chars"] == {"README.md": 9}
+
+
+def test_handler_time_snapshot_drift_rolls_back_result_budget(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_single_result_chars": 50,
+            "max_total_observation_chars": 50,
+        }
+    )
+
+    class DriftingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            (self.root / "README.md").write_text("changed\n", encoding="utf-8")
+            return {
+                "observations": [{"path": "README.md", "text": "alpha"}],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, DriftingProvider, budget=budget)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "repository_snapshot_changed"
+    state = budget.as_dict()
+    assert state["total_observation_chars_used"] == 0
+    assert state["files_observed"] == 0
+    assert budget.result_char_allowance() == 50
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["status"] == "error"
+    assert record["observations"] == []
+
+
+def test_shared_budget_reservation_prevents_concurrent_handler_overcommit(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_single_result_chars": 5,
+            "max_total_observation_chars": 5,
+        }
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    class BlockingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
+            name = str(request["name"])
+            calls.append(name)
+            if name == "first":
+                entered.set()
+                assert release.wait(timeout=10)
+            return {
+                "observations": [{"path": "a", "text": "x"}],
+                "truncated": False,
+            }
+
+    first_provider = _rebuild_provider(fixture, BlockingProvider, budget=budget)
+    second_provider = _rebuild_provider(fixture, BlockingProvider, budget=budget)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            first_provider.call,
+            "list_tree",
+            {"name": "first"},
+            model_turn=1,
+        )
+        assert entered.wait(timeout=10)
+        try:
+            with pytest.raises(ContextProviderError) as captured:
+                second_provider.call(
+                    "list_tree",
+                    {"name": "second"},
+                    model_turn=1,
+                )
+            assert captured.value.details == {
+                "limit": "max_total_observation_chars"
+            }
+        finally:
+            release.set()
+        assert future.result()["status"] == "ok"
+
+    assert calls == ["first"]
+    assert budget.as_dict()["total_observation_chars_used"] == 2
+    assert budget.result_char_allowance() == 3
+
+
+def test_failed_handler_releases_shared_result_reservation(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_single_result_chars": 5,
+            "max_total_observation_chars": 5,
+        }
+    )
+
+    class ToggleProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
+            if request.get("fail"):
+                raise RuntimeError("raw repository failure")
+            return {
+                "observations": [{"path": "a", "text": "x"}],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, ToggleProvider, budget=budget)
+
+    with pytest.raises(ContextProviderError):
+        provider.call("list_tree", {"fail": True}, model_turn=1)
+
+    response = provider.call("list_tree", {"fail": False}, model_turn=1)
+    assert response["status"] == "ok"
+    assert budget.as_dict()["total_observation_chars_used"] == 2
+
+
+def test_error_recording_does_not_read_the_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FailingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            raise RuntimeError("alpha raw repository failure")
+
+    provider = _rebuild_provider(fixture, FailingProvider)
+
+    def fail_read() -> list[dict[str, object]]:
+        raise ProjectImportError(
+            "onboarding_observation_invalid",
+            "raw ledger read failure alpha",
+        )
+
+    monkeypatch.setattr(fixture["store"], "read_all", fail_read)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "context_handler_failed"
+    assert captured.value.operational_signals == ()
+    assert _last_record_dict(fixture["workspace"], fixture["project_key"])[
+        "status"
+    ] == "error"
+
+
+def test_error_append_failure_preserves_original_safe_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FailingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            raise RuntimeError("alpha raw repository failure")
+
+    provider = _rebuild_provider(fixture, FailingProvider)
+
+    def fail_append(_record: dict[str, object]) -> Path:
+        raise ProjectImportError(
+            "onboarding_observation_invalid",
+            "raw ledger append failure sk-live-secret",
+        )
+
+    monkeypatch.setattr(fixture["store"], "append", fail_append)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "context_handler_failed"
+    assert str(captured.value) == "Repository context handler failed."
+    assert captured.value.details == {}
+    assert captured.value.operational_signals == (
+        "context_observation_persistence_failed",
+    )
+    assert "raw ledger" not in str(captured.value)
+    assert "sk-live-secret" not in str(captured.value)
+
+
+def test_error_envelope_build_failure_preserves_original_safe_error(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class BuildFailingBudget(OnboardingBudget):
+        def as_dict(self) -> dict[str, object]:
+            raise RuntimeError("raw budget audit failure alpha")
+
+    class FailingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            raise RuntimeError("raw handler failure beta")
+
+    provider = _rebuild_provider(
+        fixture,
+        FailingProvider,
+        budget=BuildFailingBudget(),
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "context_handler_failed"
+    assert str(captured.value) == "Repository context handler failed."
+    assert captured.value.operational_signals == (
+        "context_observation_persistence_failed",
+    )
+
+
+def test_denied_envelope_build_failure_preserves_denial(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class BuildFailingBudget(OnboardingBudget):
+        def as_dict(self) -> dict[str, object]:
+            raise RuntimeError("raw denied audit failure alpha")
+
+    provider = _rebuild_provider(
+        fixture,
+        RepositoryContextProvider,
+        budget=BuildFailingBudget(),
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("run_command", {}, model_turn=1)
+
+    assert captured.value.code == "context_tool_not_allowed"
+    assert str(captured.value) == "Repository context tool is not allowed."
+    assert captured.value.operational_signals == (
+        "context_observation_persistence_failed",
+    )
+
+
+def test_provider_rejects_symlinked_snapshot_artifact_on_call(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    artifact = snapshot_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        fixture["snapshot"].snapshot_id,
+    )
+    original = artifact.with_name("original-snapshot.json")
+    artifact.rename(original)
+    artifact.symlink_to(original)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "onboarding_artifact_conflict"
+    assert captured.value.operational_signals == (
+        "context_observation_persistence_failed",
+    )
+
+
+def test_provider_requires_exact_validated_snapshot_artifact_binding(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    artifact = snapshot_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        fixture["snapshot"].snapshot_id,
+    )
+    artifact.write_text(
+        json.dumps(
+            {
+                **fixture["snapshot"].as_dict(),
+                "captured_at": "2099-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        _rebuild_provider(fixture, RepositoryContextProvider)
+
+    assert captured.value.code == "onboarding_snapshot_mismatch"
 
 
 def test_exact_allowlist_no_reflection_assertions(tmp_path: Path) -> None:

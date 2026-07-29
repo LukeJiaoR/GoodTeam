@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import threading
 import time
@@ -8,18 +7,22 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 
-from goodteam_os.onboarding_store import OnboardingObservationStore, snapshot_path
+from goodteam_os.onboarding_store import (
+    OnboardingArtifactStore,
+    OnboardingObservationStore,
+)
+from goodteam_os.project_import import ProjectImportError
 from goodteam_os.repository_access import AnchoredRepository, RepositoryAccessError
 from goodteam_os.repository_snapshot import (
     RepositorySnapshot,
     RepositorySnapshotError,
-    compute_repository_snapshot_id,
     verify_repository_snapshot,
 )
 
 
-_SERVER_CEILINGS = {
+_SERVER_CEILINGS = MappingProxyType({
     "max_model_turns": 24,
     "max_tool_calls": 80,
     "max_files_observed": 120,
@@ -30,7 +33,7 @@ _SERVER_CEILINGS = {
     "max_estimated_input_tokens": 180000,
     "max_estimated_output_tokens": 30000,
     "max_cost_usd": 5.0,
-}
+})
 _INTEGER_LIMITS = frozenset(
     {
         "max_model_turns",
@@ -43,7 +46,6 @@ _INTEGER_LIMITS = frozenset(
         "max_estimated_output_tokens",
     }
 )
-_FLOAT_LIMITS = frozenset({"max_elapsed_seconds", "max_cost_usd"})
 _ALLOWED_TOOLS = (
     "list_tree",
     "search_text",
@@ -65,6 +67,12 @@ class ContextProviderError(ValueError):
         super().__init__(message)
         self.code = code
         self.details = details or {}
+        self.operational_signals: tuple[str, ...] = ()
+        self._terminal_record_attempted = False
+
+    def add_operational_signal(self, signal: str) -> None:
+        if signal not in self.operational_signals:
+            self.operational_signals = (*self.operational_signals, signal)
 
 
 @dataclass(frozen=True)
@@ -82,6 +90,12 @@ class OnboardingBudgetLimits:
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class OnboardingBudgetReservation:
+    allowance: int
+    _token: str
 
 
 class OnboardingBudget:
@@ -102,32 +116,31 @@ class OnboardingBudget:
         self._peak_single_result_chars = 0
         self._observed_files: set[str] = set()
         self._observed_file_chars: dict[str, int] = {}
-        self._usage_by_turn: dict[int, dict[str, float]] = {}
-        self.limits = self._resolve_limits(requested_limits)
+        self._usage_by_turn: dict[int, dict[str, float | bool]] = {}
+        self._result_reservations: dict[str, int] = {}
+        self._reserved_result_chars = 0
+        self._limits = self._resolve_limits(requested_limits)
         self.close_requested = False
+
+    @property
+    def limits(self) -> OnboardingBudgetLimits:
+        return self._limits
 
     def begin_model_turn(self, turn_number: int) -> None:
         with self._lock:
             turn = self._validate_turn_number(turn_number)
             self._refresh_elapsed()
             self._check_elapsed_limit()
-            self._check_turn_independent_limits()
-            if self._last_model_turn == 0:
-                if turn != 1:
-                    raise self._budget_invalid("model_turn")
-            elif turn != self._last_model_turn and turn != self._last_model_turn + 1:
-                raise self._budget_invalid("model_turn")
-            if turn not in self._unique_turns and len(self._unique_turns) >= self.limits.max_model_turns:
-                raise self._budget_exceeded("max_model_turns")
-            self._unique_turns.add(turn)
-            self._last_model_turn = max(self._last_model_turn, turn)
+            self._check_consumed_hard_limits()
+            self._validate_turn_transition(turn)
+            self._commit_model_turn(turn)
             self._update_close_requested()
 
     def begin_tool_call(self) -> None:
         with self._lock:
             self._refresh_elapsed()
             self._check_elapsed_limit()
-            self._check_tool_independent_limits()
+            self._check_consumed_hard_limits()
             if self._tool_calls_used >= self.limits.max_tool_calls:
                 raise self._budget_exceeded("max_tool_calls")
             self._tool_calls_used += 1
@@ -137,10 +150,82 @@ class OnboardingBudget:
         with self._lock:
             self._refresh_elapsed()
             self._check_elapsed_limit()
-            remaining_total = self.limits.max_total_observation_chars - self._total_observation_chars
+            remaining_total = (
+                self.limits.max_total_observation_chars
+                - self._total_observation_chars
+                - self._reserved_result_chars
+            )
             if remaining_total <= 0:
                 return 0
             return max(0, min(self.limits.max_single_result_chars, remaining_total))
+
+    def reserve_result(self) -> OnboardingBudgetReservation:
+        with self._lock:
+            self._refresh_elapsed()
+            self._check_elapsed_limit()
+            self._check_consumed_hard_limits()
+            remaining_total = (
+                self.limits.max_total_observation_chars
+                - self._total_observation_chars
+                - self._reserved_result_chars
+            )
+            if remaining_total <= 0:
+                raise self._budget_exceeded("max_total_observation_chars")
+            allowance = min(self.limits.max_single_result_chars, remaining_total)
+            token = uuid.uuid4().hex
+            self._result_reservations[token] = allowance
+            self._reserved_result_chars += allowance
+            return OnboardingBudgetReservation(allowance=allowance, _token=token)
+
+    def release_result(self, reservation: OnboardingBudgetReservation) -> None:
+        with self._lock:
+            if not isinstance(reservation, OnboardingBudgetReservation):
+                return
+            allowance = self._result_reservations.pop(reservation._token, None)
+            if allowance is not None:
+                self._reserved_result_chars -= allowance
+
+    def commit_result(
+        self,
+        reservation: OnboardingBudgetReservation,
+        *,
+        result_chars: int,
+        total_chars: int,
+        observed_paths: tuple[str, ...],
+        file_chars: dict[str, int],
+    ) -> None:
+        with self._lock:
+            if not isinstance(reservation, OnboardingBudgetReservation):
+                raise self._budget_invalid("result_reservation")
+            allowance = self._result_reservations.pop(reservation._token, None)
+            if allowance is None:
+                raise self._budget_invalid("result_reservation")
+            self._reserved_result_chars -= allowance
+            self._refresh_elapsed()
+            self._check_elapsed_limit()
+            self._check_consumed_hard_limits()
+            validated_result = _validate_nonnegative_integer("result_chars", result_chars)
+            validated_total = _validate_nonnegative_integer("total_chars", total_chars)
+            if validated_result > self.limits.max_single_result_chars:
+                raise self._budget_exceeded("max_single_result_chars")
+            if validated_result > allowance:
+                raise self._budget_exceeded("max_total_observation_chars")
+            if validated_total > allowance:
+                raise self._budget_exceeded("max_total_observation_chars")
+            if self._total_observation_chars + validated_total > self.limits.max_total_observation_chars:
+                raise self._budget_exceeded("max_total_observation_chars")
+            next_files, next_file_chars = self._project_observation_state(
+                observed_paths=observed_paths,
+                file_chars=file_chars,
+            )
+            self._observed_files = next_files
+            self._observed_file_chars = next_file_chars
+            self._total_observation_chars += validated_total
+            self._peak_single_result_chars = max(
+                self._peak_single_result_chars,
+                validated_result,
+            )
+            self._update_close_requested()
 
     def record_observation(
         self,
@@ -150,90 +235,116 @@ class OnboardingBudget:
         count_toward_file: bool,
     ) -> None:
         with self._lock:
+            validated_chars = _validate_nonnegative_integer("chars", chars)
+            if path is not None and not isinstance(path, str):
+                raise self._budget_invalid("path")
+            if not isinstance(count_toward_file, bool):
+                raise self._budget_invalid("count_toward_file")
             self._refresh_elapsed()
             self._check_elapsed_limit()
-            self._check_observation_independent_limits(path, count_toward_file)
-            if isinstance(chars, bool) or not isinstance(chars, int) or chars < 0:
-                raise self._budget_invalid("chars")
-            if self._total_observation_chars + chars > self.limits.max_total_observation_chars:
+            self._check_consumed_hard_limits()
+            if self._total_observation_chars + validated_chars > self.limits.max_total_observation_chars:
                 raise self._budget_exceeded("max_total_observation_chars")
-            if path is not None:
-                normalized = _safe_path_label(path)
-                if normalized not in self._observed_files:
-                    if len(self._observed_files) >= self.limits.max_files_observed:
-                        raise self._budget_exceeded("max_files_observed")
-                    self._observed_files.add(normalized)
-                if count_toward_file:
-                    next_value = self._observed_file_chars.get(normalized, 0) + chars
-                    if next_value > self.limits.max_file_cumulative_chars:
-                        raise self._budget_exceeded("max_file_cumulative_chars")
-                    self._observed_file_chars[normalized] = next_value
-            self._total_observation_chars += chars
+            observed_paths = () if path is None else (path,)
+            file_chars = {path: validated_chars} if path is not None and count_toward_file else {}
+            next_files, next_file_chars = self._project_observation_state(
+                observed_paths=observed_paths,
+                file_chars=file_chars,
+            )
+            self._observed_files = next_files
+            self._observed_file_chars = next_file_chars
+            self._total_observation_chars += validated_chars
             self._update_close_requested()
 
     def record_result_chars(self, chars: int) -> None:
         with self._lock:
             self._refresh_elapsed()
             self._check_elapsed_limit()
-            if isinstance(chars, bool) or not isinstance(chars, int) or chars < 0:
-                raise self._budget_invalid("result_chars")
-            if chars > self.limits.max_single_result_chars:
+            validated_chars = _validate_nonnegative_integer("result_chars", chars)
+            if validated_chars > self.limits.max_single_result_chars:
                 raise self._budget_exceeded("max_single_result_chars")
-            if chars > self.result_char_allowance():
-                raise self._budget_exceeded("max_single_result_chars")
-            self._peak_single_result_chars = max(self._peak_single_result_chars, chars)
+            remaining_total = (
+                self.limits.max_total_observation_chars
+                - self._total_observation_chars
+                - self._reserved_result_chars
+            )
+            if validated_chars > remaining_total:
+                raise self._budget_exceeded("max_total_observation_chars")
+            self._peak_single_result_chars = max(self._peak_single_result_chars, validated_chars)
             self._update_close_requested()
 
     def record_model_usage(
         self,
         *,
         turn_number: int,
-        estimated_input_tokens: int = 0,
-        estimated_output_tokens: int = 0,
+        estimated_input_tokens: int | None = None,
+        estimated_output_tokens: int | None = None,
         actual_input_tokens: int | None = None,
         actual_output_tokens: int | None = None,
         cost_usd: float | None = None,
     ) -> None:
         with self._lock:
             turn = self._validate_turn_number(turn_number)
+            estimated_input = _validate_optional_usage_integer(
+                "estimated_input_tokens",
+                estimated_input_tokens,
+            )
+            estimated_output = _validate_optional_usage_integer(
+                "estimated_output_tokens",
+                estimated_output_tokens,
+            )
+            actual_input = _validate_optional_usage_integer(
+                "actual_input_tokens",
+                actual_input_tokens,
+            )
+            actual_output = _validate_optional_usage_integer(
+                "actual_output_tokens",
+                actual_output_tokens,
+            )
+            actual_cost = _validate_optional_usage_float("cost_usd", cost_usd)
             self._refresh_elapsed()
             self._check_elapsed_limit()
-            self._check_model_usage_independent_limits()
-            if turn not in self._unique_turns:
-                self.begin_model_turn(turn)
-            estimated_input = _validate_limit_value("estimated_input_tokens", estimated_input_tokens, integer=True)
-            estimated_output = _validate_limit_value("estimated_output_tokens", estimated_output_tokens, integer=True)
-            actual_input = (
-                estimated_input
-                if actual_input_tokens is None
-                else _validate_limit_value("actual_input_tokens", actual_input_tokens, integer=True)
+            self._validate_turn_transition(turn)
+            previous = self._usage_by_turn.get(
+                turn,
+                {
+                    "input_tokens": 0.0,
+                    "input_authoritative": False,
+                    "output_tokens": 0.0,
+                    "output_authoritative": False,
+                    "cost_usd": 0.0,
+                },
             )
-            actual_output = (
-                estimated_output
-                if actual_output_tokens is None
-                else _validate_limit_value("actual_output_tokens", actual_output_tokens, integer=True)
-            )
-            actual_cost = 0.0 if cost_usd is None else _validate_limit_value("cost_usd", cost_usd, integer=False)
-            next_usage = {
-                "input_tokens": float(actual_input),
-                "output_tokens": float(actual_output),
-                "cost_usd": float(actual_cost),
-            }
-            previous = self._usage_by_turn.get(turn, {"input_tokens": 0.0, "output_tokens": 0.0, "cost_usd": 0.0})
-            projected_input = self._effective_input_tokens() - previous["input_tokens"] + next_usage["input_tokens"]
-            projected_output = self._effective_output_tokens() - previous["output_tokens"] + next_usage["output_tokens"]
-            projected_cost = self._effective_cost_usd() - previous["cost_usd"] + next_usage["cost_usd"]
+            next_usage = dict(previous)
+            if actual_input is not None:
+                next_usage["input_tokens"] = float(actual_input)
+                next_usage["input_authoritative"] = True
+            elif estimated_input is not None and not bool(previous["input_authoritative"]):
+                next_usage["input_tokens"] = float(estimated_input)
+            if actual_output is not None:
+                next_usage["output_tokens"] = float(actual_output)
+                next_usage["output_authoritative"] = True
+            elif estimated_output is not None and not bool(previous["output_authoritative"]):
+                next_usage["output_tokens"] = float(estimated_output)
+            if actual_cost is not None:
+                next_usage["cost_usd"] = float(actual_cost)
+            projected_input = self._effective_input_tokens() - float(previous["input_tokens"]) + float(next_usage["input_tokens"])
+            projected_output = self._effective_output_tokens() - float(previous["output_tokens"]) + float(next_usage["output_tokens"])
+            projected_cost = self._effective_cost_usd() - float(previous["cost_usd"]) + float(next_usage["cost_usd"])
             if projected_input > self.limits.max_estimated_input_tokens:
                 raise self._budget_exceeded("max_estimated_input_tokens")
             if projected_output > self.limits.max_estimated_output_tokens:
                 raise self._budget_exceeded("max_estimated_output_tokens")
             if projected_cost > self.limits.max_cost_usd:
                 raise self._budget_exceeded("max_cost_usd")
+            self._commit_model_turn(turn)
             self._usage_by_turn[turn] = next_usage
             self._update_close_requested()
 
     def as_dict(self) -> dict[str, object]:
         with self._lock:
+            self._refresh_elapsed()
+            self._update_close_requested()
             return {
                 "close_requested": self.close_requested,
                 "cost_usd_used": self._effective_cost_usd(),
@@ -268,13 +379,13 @@ class OnboardingBudget:
         return OnboardingBudgetLimits(**resolved)
 
     def _effective_input_tokens(self) -> float:
-        return sum(item["input_tokens"] for item in self._usage_by_turn.values())
+        return sum(float(item["input_tokens"]) for item in self._usage_by_turn.values())
 
     def _effective_output_tokens(self) -> float:
-        return sum(item["output_tokens"] for item in self._usage_by_turn.values())
+        return sum(float(item["output_tokens"]) for item in self._usage_by_turn.values())
 
     def _effective_cost_usd(self) -> float:
-        return sum(item["cost_usd"] for item in self._usage_by_turn.values())
+        return sum(float(item["cost_usd"]) for item in self._usage_by_turn.values())
 
     def _elapsed_seconds(self) -> float:
         return self._elapsed_seconds_cached
@@ -286,51 +397,59 @@ class OnboardingBudget:
         if self._elapsed_seconds() > self.limits.max_elapsed_seconds:
             raise self._budget_exceeded("max_elapsed_seconds")
 
-    def _check_turn_independent_limits(self) -> None:
-        if (
-            self._total_observation_chars >= self.limits.max_total_observation_chars
-            or self._effective_input_tokens() >= self.limits.max_estimated_input_tokens
-            or self._effective_output_tokens() >= self.limits.max_estimated_output_tokens
-            or self._effective_cost_usd() >= self.limits.max_cost_usd
-        ):
-            raise self._budget_exceeded("limit_reached")
+    def _check_consumed_hard_limits(self) -> None:
+        dimensions = (
+            (self._total_observation_chars, self.limits.max_total_observation_chars, "max_total_observation_chars"),
+            (self._effective_input_tokens(), self.limits.max_estimated_input_tokens, "max_estimated_input_tokens"),
+            (self._effective_output_tokens(), self.limits.max_estimated_output_tokens, "max_estimated_output_tokens"),
+            (self._effective_cost_usd(), self.limits.max_cost_usd, "max_cost_usd"),
+        )
+        for used, limit, name in dimensions:
+            if used >= limit:
+                raise self._budget_exceeded(name)
 
-    def _check_tool_independent_limits(self) -> None:
-        if (
-            self._total_observation_chars >= self.limits.max_total_observation_chars
-            or self._effective_input_tokens() >= self.limits.max_estimated_input_tokens
-            or self._effective_output_tokens() >= self.limits.max_estimated_output_tokens
-            or self._effective_cost_usd() >= self.limits.max_cost_usd
-        ):
-            raise self._budget_exceeded("limit_reached")
+    def _validate_turn_transition(self, turn: int) -> None:
+        if self._last_model_turn == 0:
+            if turn != 1:
+                raise self._budget_invalid("model_turn")
+        elif turn != self._last_model_turn and turn != self._last_model_turn + 1:
+            raise self._budget_invalid("model_turn")
+        if turn not in self._unique_turns and len(self._unique_turns) >= self.limits.max_model_turns:
+            raise self._budget_exceeded("max_model_turns")
 
-    def _check_observation_independent_limits(
+    def _commit_model_turn(self, turn: int) -> None:
+        self._unique_turns.add(turn)
+        self._last_model_turn = max(self._last_model_turn, turn)
+
+    def _project_observation_state(
         self,
-        path: str | None,
-        count_toward_file: bool,
-    ) -> None:
-        if self._total_observation_chars >= self.limits.max_total_observation_chars:
-            raise self._budget_exceeded("max_total_observation_chars")
-        if path is not None:
+        *,
+        observed_paths: tuple[str, ...],
+        file_chars: dict[str, int],
+    ) -> tuple[set[str], dict[str, int]]:
+        next_files = set(self._observed_files)
+        next_file_chars = dict(self._observed_file_chars)
+        for path in observed_paths:
+            if not isinstance(path, str):
+                raise self._budget_invalid("path")
+            next_files.add(_safe_path_label(path))
+        if len(next_files) > self.limits.max_files_observed:
+            raise self._budget_exceeded("max_files_observed")
+        if not isinstance(file_chars, dict):
+            raise self._budget_invalid("file_chars")
+        for path, chars in file_chars.items():
+            if not isinstance(path, str):
+                raise self._budget_invalid("path")
+            validated_chars = _validate_nonnegative_integer("file_chars", chars)
             normalized = _safe_path_label(path)
-            if normalized not in self._observed_files and len(self._observed_files) >= self.limits.max_files_observed:
-                raise self._budget_exceeded("max_files_observed")
-            if count_toward_file and self._observed_file_chars.get(normalized, 0) >= self.limits.max_file_cumulative_chars:
+            next_files.add(normalized)
+            next_value = next_file_chars.get(normalized, 0) + validated_chars
+            if next_value > self.limits.max_file_cumulative_chars:
                 raise self._budget_exceeded("max_file_cumulative_chars")
-        if (
-            self._effective_input_tokens() >= self.limits.max_estimated_input_tokens
-            or self._effective_output_tokens() >= self.limits.max_estimated_output_tokens
-            or self._effective_cost_usd() >= self.limits.max_cost_usd
-        ):
-            raise self._budget_exceeded("limit_reached")
-
-    def _check_model_usage_independent_limits(self) -> None:
-        if (
-            self._effective_input_tokens() >= self.limits.max_estimated_input_tokens
-            or self._effective_output_tokens() >= self.limits.max_estimated_output_tokens
-            or self._effective_cost_usd() >= self.limits.max_cost_usd
-        ):
-            raise self._budget_exceeded("limit_reached")
+            next_file_chars[normalized] = next_value
+        if len(next_files) > self.limits.max_files_observed:
+            raise self._budget_exceeded("max_files_observed")
+        return next_files, next_file_chars
 
     def _update_close_requested(self) -> None:
         dimensions = {
@@ -403,92 +522,170 @@ class RepositoryContextProvider:
         self.observation_store = observation_store
         self.budget = budget
         self._lock = threading.RLock()
-        self._tool_handlers = {
-            "list_tree": self._handle_list_tree,
-            "search_text": self._handle_search_text,
-            "read_file_excerpt": self._handle_read_file_excerpt,
-            "inspect_manifest": self._handle_empty,
-            "inspect_git_history": self._handle_empty,
-            "inspect_tests": self._handle_empty,
-            "inspect_recent_changes": self._handle_empty,
-        }
+        self._artifact_store = OnboardingArtifactStore(
+            self.workspace,
+            self.project_key,
+            self.root,
+        )
         self._validate_constructor_binding()
 
     def tool_names(self) -> tuple[str, ...]:
-        return tuple(self._tool_handlers)
+        return _ALLOWED_TOOLS
 
-    def call(self, tool: str, request: dict[str, object], *, model_turn: int) -> dict[str, object]:
-        turn = self._validate_model_turn(model_turn)
+    def call(
+        self,
+        tool: str,
+        request: dict[str, object],
+        *,
+        model_turn: int,
+    ) -> dict[str, object]:
         tool_call_id = f"tool_{uuid.uuid4().hex}"
         request_payload = _sanitize_request(request)
+        tool_label = _safe_tool_label(tool)
+        turn = (
+            model_turn
+            if isinstance(model_turn, int)
+            and not isinstance(model_turn, bool)
+            and model_turn > 0
+            else None
+        )
         try:
             with self._lock:
                 validated_request = _validate_request_object(request)
+                turn = self._validate_model_turn(model_turn)
                 self.budget.begin_model_turn(turn)
-                if tool not in self._tool_handlers:
-                    envelope = self._build_envelope(
-                        tool_call_id=tool_call_id,
-                        tool=tool,
-                        model_turn=turn,
-                        request=request_payload,
-                        status="denied",
-                        observations=[],
-                        truncated=False,
-                        response_metadata={"error": {"code": "context_tool_not_allowed"}},
-                    )
-                    self.observation_store.append(envelope)
-                    raise ContextProviderError(
+                self.budget.begin_tool_call()
+                self._verify_bindings()
+                if not isinstance(tool, str) or tool not in _ALLOWED_TOOLS:
+                    error = ContextProviderError(
                         "context_tool_not_allowed",
                         "Repository context tool is not allowed.",
                     )
-                self.budget.begin_tool_call()
-                self._verify_bindings()
-                buffered = self._tool_handlers[tool](validated_request)
-                observations = _normalize_observations(buffered.get("observations", []), tool_call_id=tool_call_id)
-                returned_chars = _count_string_leaves(observations)
-                self.budget.record_result_chars(returned_chars)
-                for path, chars, count_toward_file in _observation_budget_events(observations):
-                    self.budget.record_observation(
-                        path=path,
-                        chars=chars,
-                        count_toward_file=count_toward_file,
+                    self._try_persist_denied_envelope(
+                        tool_call_id=tool_call_id,
+                        tool=tool_label,
+                        model_turn=turn,
+                        request=request_payload,
+                        error=error,
                     )
-                self._verify_bindings()
+                    raise error
+
+                reservation = self.budget.reserve_result()
+                try:
+                    buffered = self._invoke_handler(tool, validated_request)
+                    observations_payload, truncated = _validate_handler_payload(
+                        buffered
+                    )
+                    observations = _normalize_observations(
+                        observations_payload,
+                        tool_call_id=tool_call_id,
+                    )
+                    returned_chars, observed_paths, file_chars = (
+                        _observation_budget_delta(observations)
+                    )
+                    self._verify_bindings()
+                    self.budget.commit_result(
+                        reservation,
+                        result_chars=returned_chars,
+                        total_chars=returned_chars,
+                        observed_paths=observed_paths,
+                        file_chars=file_chars,
+                    )
+                    reservation = None
+                finally:
+                    if reservation is not None:
+                        self.budget.release_result(reservation)
+
                 envelope = self._build_envelope(
                     tool_call_id=tool_call_id,
-                    tool=tool,
+                    tool=tool_label,
                     model_turn=turn,
                     request=request_payload,
                     status="ok",
                     observations=observations,
-                    truncated=bool(buffered.get("truncated", False)),
+                    truncated=truncated,
                     response_metadata={
                         "observation_count": len(observations),
                         "returned_chars": returned_chars,
                     },
                 )
-                self.observation_store.append(envelope)
+                try:
+                    self.observation_store.append(envelope)
+                except Exception as exc:
+                    error = ContextProviderError(
+                        "context_observation_persistence_failed",
+                        "Repository context observation could not be persisted.",
+                    )
+                    error._terminal_record_attempted = True
+                    error.add_operational_signal(
+                        "context_observation_persistence_failed"
+                    )
+                    raise error from exc
                 return envelope
         except ContextProviderError as exc:
-            if exc.code != "context_tool_not_allowed":
-                self._persist_error_envelope(
+            if not exc._terminal_record_attempted and turn is not None:
+                self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
-                    tool=tool,
+                    tool=tool_label,
                     model_turn=turn,
                     request=request_payload,
-                    code=exc.code,
+                    error=exc,
                 )
             raise
-        except (RepositoryAccessError, RepositorySnapshotError) as exc:
-            code = getattr(exc, "code", "repository_snapshot_changed")
-            self._persist_error_envelope(
-                tool_call_id=tool_call_id,
-                tool=tool,
-                model_turn=turn,
-                request=request_payload,
-                code=code,
+        except RepositoryAccessError as exc:
+            error = ContextProviderError(
+                exc.code,
+                "Repository context operation failed.",
+                details=_safe_repository_error_details(exc.details),
             )
-            raise ContextProviderError(code, "Repository snapshot verification failed.") from exc
+            if turn is not None:
+                self._try_persist_error_envelope(
+                    tool_call_id=tool_call_id,
+                    tool=tool_label,
+                    model_turn=turn,
+                    request=request_payload,
+                    error=error,
+                )
+            raise error from exc
+        except RepositorySnapshotError as exc:
+            error = ContextProviderError(
+                exc.code,
+                "Repository snapshot verification failed.",
+            )
+            if turn is not None:
+                self._try_persist_error_envelope(
+                    tool_call_id=tool_call_id,
+                    tool=tool_label,
+                    model_turn=turn,
+                    request=request_payload,
+                    error=error,
+                )
+            raise error from exc
+        except ProjectImportError as exc:
+            error = _normalize_artifact_error(exc)
+            if turn is not None:
+                self._try_persist_error_envelope(
+                    tool_call_id=tool_call_id,
+                    tool=tool_label,
+                    model_turn=turn,
+                    request=request_payload,
+                    error=error,
+                )
+            raise error from exc
+        except Exception as exc:
+            error = ContextProviderError(
+                "context_provider_failed",
+                "Repository context operation failed.",
+            )
+            if turn is not None:
+                self._try_persist_error_envelope(
+                    tool_call_id=tool_call_id,
+                    tool=tool_label,
+                    model_turn=turn,
+                    request=request_payload,
+                    error=error,
+                )
+            raise error from exc
 
     def _validate_constructor_binding(self) -> None:
         if not isinstance(self.snapshot, RepositorySnapshot):
@@ -510,38 +707,13 @@ class RepositoryContextProvider:
 
     def _verify_bindings(self) -> None:
         verify_repository_snapshot(self.root, self.snapshot)
-        artifact = snapshot_path(self.workspace, self.project_key, self.snapshot.snapshot_id)
         try:
-            payload = json.loads(artifact.read_text(encoding="utf-8"))
-        except FileNotFoundError as exc:
-            raise ContextProviderError(
-                "onboarding_snapshot_mismatch",
-                "Repository snapshot does not match the onboarding binding.",
-            ) from exc
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ContextProviderError(
-                "onboarding_artifact_conflict",
-                "Published onboarding snapshot is invalid.",
-            ) from exc
-        if not isinstance(payload, dict):
-            raise ContextProviderError(
-                "onboarding_artifact_conflict",
-                "Published onboarding snapshot is invalid.",
+            published = self._artifact_store.verify_snapshot(
+                self.snapshot.snapshot_id
             )
-        try:
-            published = RepositorySnapshot(**payload)
-        except TypeError as exc:
-            raise ContextProviderError(
-                "onboarding_artifact_conflict",
-                "Published onboarding snapshot is invalid.",
-            ) from exc
-        if (
-            published.snapshot_id != self.snapshot.snapshot_id
-            or published.project_key != self.project_key
-            or published.canonical_root != str(self.root)
-            or compute_repository_snapshot_id(published) != self.snapshot.snapshot_id
-            or published.root_identity != self.snapshot.root_identity
-        ):
+        except ProjectImportError as exc:
+            raise _normalize_artifact_error(exc) from exc
+        if published.as_dict() != self.snapshot.as_dict():
             raise ContextProviderError(
                 "onboarding_snapshot_mismatch",
                 "Repository snapshot does not match the onboarding binding.",
@@ -575,29 +747,116 @@ class RepositoryContextProvider:
             "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
 
-    def _persist_error_envelope(
+    def _try_persist_error_envelope(
         self,
         *,
         tool_call_id: str,
         tool: str,
         model_turn: int,
         request: dict[str, object],
-        code: str,
+        error: ContextProviderError,
     ) -> None:
-        envelope = self._build_envelope(
-            tool_call_id=tool_call_id,
-            tool=tool,
-            model_turn=model_turn,
-            request=request,
-            status="error",
-            observations=[],
-            truncated=False,
-            response_metadata={"error": {"code": code}},
+        error._terminal_record_attempted = True
+        try:
+            envelope = self._build_envelope(
+                tool_call_id=tool_call_id,
+                tool=tool,
+                model_turn=model_turn,
+                request=request,
+                status="error",
+                observations=[],
+                truncated=False,
+                response_metadata={"error": {"code": error.code}},
+            )
+            self.observation_store.append(envelope)
+        except Exception:
+            error.add_operational_signal(
+                "context_observation_persistence_failed"
+            )
+
+    def _try_persist_denied_envelope(
+        self,
+        *,
+        tool_call_id: str,
+        tool: str,
+        model_turn: int,
+        request: dict[str, object],
+        error: ContextProviderError,
+    ) -> None:
+        error._terminal_record_attempted = True
+        try:
+            envelope = self._build_envelope(
+                tool_call_id=tool_call_id,
+                tool=tool,
+                model_turn=model_turn,
+                request=request,
+                status="denied",
+                observations=[],
+                truncated=False,
+                response_metadata={"error": {"code": error.code}},
+            )
+            self.observation_store.append(envelope)
+        except Exception:
+            error.add_operational_signal(
+                "context_observation_persistence_failed"
+            )
+
+    def _invoke_handler(
+        self,
+        tool: str,
+        request: dict[str, object],
+    ) -> dict[str, object]:
+        try:
+            return self._dispatch_tool(tool, request)
+        except ContextProviderError as exc:
+            if exc.code == "context_tool_not_implemented":
+                raise ContextProviderError(
+                    "context_tool_not_implemented",
+                    "Repository context tool is not implemented.",
+                    details=_safe_handler_error_details(exc.details),
+                ) from exc
+            if exc.code == "context_tool_unsupported":
+                raise ContextProviderError(
+                    "context_tool_unsupported",
+                    "Repository context tool is unsupported.",
+                    details=_safe_handler_error_details(exc.details),
+                ) from exc
+            raise ContextProviderError(
+                "context_handler_failed",
+                "Repository context handler failed.",
+                details=_safe_handler_error_details(exc.details),
+            ) from exc
+        except (RepositoryAccessError, RepositorySnapshotError):
+            raise
+        except Exception as exc:
+            raise ContextProviderError(
+                "context_handler_failed",
+                "Repository context handler failed.",
+            ) from exc
+
+    def _dispatch_tool(
+        self,
+        tool: str,
+        request: dict[str, object],
+    ) -> dict[str, object]:
+        if tool == "list_tree":
+            return self._handle_list_tree(request)
+        if tool == "search_text":
+            return self._handle_search_text(request)
+        if tool == "read_file_excerpt":
+            return self._handle_read_file_excerpt(request)
+        if tool == "inspect_manifest":
+            return self._handle_inspect_manifest(request)
+        if tool == "inspect_git_history":
+            return self._handle_inspect_git_history(request)
+        if tool == "inspect_tests":
+            return self._handle_inspect_tests(request)
+        if tool == "inspect_recent_changes":
+            return self._handle_inspect_recent_changes(request)
+        raise ContextProviderError(
+            "context_tool_not_allowed",
+            "Repository context tool is not allowed.",
         )
-        existing = self.observation_store.read_all()
-        if existing and existing[-1].get("tool_call_id") == tool_call_id:
-            return
-        self.observation_store.append(envelope)
 
     def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
         path = ""
@@ -619,14 +878,29 @@ class RepositoryContextProvider:
         return {"observations": observations, "truncated": False}
 
     def _handle_search_text(self, request: dict[str, object]) -> dict[str, object]:
-        return {"observations": [], "truncated": False}
+        return self._not_implemented(request)
 
     def _handle_read_file_excerpt(self, request: dict[str, object]) -> dict[str, object]:
-        return {"observations": [], "truncated": False}
+        return self._not_implemented(request)
 
-    def _handle_empty(self, request: dict[str, object]) -> dict[str, object]:
+    def _handle_inspect_manifest(self, request: dict[str, object]) -> dict[str, object]:
+        return self._not_implemented(request)
+
+    def _handle_inspect_git_history(self, request: dict[str, object]) -> dict[str, object]:
+        return self._not_implemented(request)
+
+    def _handle_inspect_tests(self, request: dict[str, object]) -> dict[str, object]:
+        return self._not_implemented(request)
+
+    def _handle_inspect_recent_changes(self, request: dict[str, object]) -> dict[str, object]:
+        return self._not_implemented(request)
+
+    def _not_implemented(self, request: dict[str, object]) -> dict[str, object]:
         del request
-        return {"observations": [], "truncated": False}
+        raise ContextProviderError(
+            "context_tool_not_implemented",
+            "Repository context tool is not implemented.",
+        )
 
     def _validate_model_turn(self, model_turn: int) -> int:
         if isinstance(model_turn, bool) or not isinstance(model_turn, int) or model_turn <= 0:
@@ -676,9 +950,54 @@ def _validate_limit_value(name: str, value: object, *, integer: bool) -> int | f
     return numeric
 
 
+def _validate_nonnegative_integer(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ContextProviderError(
+            "onboarding_budget_invalid",
+            "Onboarding budget configuration is invalid.",
+            details={"limit": name},
+        )
+    return value
+
+
+def _validate_optional_usage_integer(name: str, value: object) -> int | None:
+    if value is None:
+        return None
+    return _validate_nonnegative_integer(name, value)
+
+
+def _validate_optional_usage_float(name: str, value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ContextProviderError(
+            "onboarding_budget_invalid",
+            "Onboarding budget configuration is invalid.",
+            details={"limit": name},
+        )
+    numeric = float(value)
+    if numeric < 0.0 or not math.isfinite(numeric):
+        raise ContextProviderError(
+            "onboarding_budget_invalid",
+            "Onboarding budget configuration is invalid.",
+            details={"limit": name},
+        )
+    return numeric
+
+
 def _sanitize_request(request: object) -> dict[str, object]:
     del request
     return {"redacted": True}
+
+
+def _safe_tool_label(tool: object) -> str:
+    if (
+        isinstance(tool, str)
+        and 0 < len(tool) <= 64
+        and all(character.isascii() and (character.isalnum() or character == "_") for character in tool)
+    ):
+        return tool
+    return "<invalid>"
 
 
 def _validate_request_object(request: object) -> dict[str, object]:
@@ -690,24 +1009,70 @@ def _validate_request_object(request: object) -> dict[str, object]:
     return dict(request)
 
 
-def _normalize_observations(
-    observations: object,
-    *,
-    tool_call_id: str,
-) -> list[dict[str, object]]:
-    if not isinstance(observations, list):
+def _validate_handler_payload(
+    payload: object,
+) -> tuple[list[dict[str, object]], bool]:
+    if type(payload) is not dict or not _is_json_safe(payload):
         raise ContextProviderError(
             "context_handler_failed",
             "Repository context handler returned an invalid payload.",
         )
+    observations = payload.get("observations", [])
+    truncated = payload.get("truncated", False)
+    if not isinstance(observations, list) or not isinstance(truncated, bool):
+        raise ContextProviderError(
+            "context_handler_failed",
+            "Repository context handler returned an invalid payload.",
+        )
+    return observations, truncated
+
+
+def _is_json_safe(value: object, active_containers: set[int] | None = None) -> bool:
+    if value is None or isinstance(value, (bool, str, int)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, list) or type(value) is dict:
+        if active_containers is None:
+            active_containers = set()
+        identity = id(value)
+        if identity in active_containers:
+            return False
+        active_containers.add(identity)
+        try:
+            if isinstance(value, list):
+                return all(
+                    _is_json_safe(item, active_containers) for item in value
+                )
+            return all(
+                isinstance(key, str)
+                and _is_json_safe(item, active_containers)
+                for key, item in value.items()
+            )
+        finally:
+            active_containers.remove(identity)
+    return False
+
+
+def _normalize_observations(
+    observations: list[dict[str, object]],
+    *,
+    tool_call_id: str,
+) -> list[dict[str, object]]:
     normalized: list[dict[str, object]] = []
     for index, item in enumerate(observations):
-        if not isinstance(item, dict):
+        if type(item) is not dict:
             raise ContextProviderError(
                 "context_handler_failed",
                 "Repository context handler returned an invalid payload.",
             )
-        normalized.append({"observation_id": f"{tool_call_id}:{index}", **item})
+        normalized_item = {
+            key: value
+            for key, value in item.items()
+            if key != "observation_id"
+        }
+        normalized_item["observation_id"] = f"{tool_call_id}:{index}"
+        normalized.append(normalized_item)
     return normalized
 
 
@@ -721,23 +1086,88 @@ def _count_string_leaves(value: object) -> int:
     return 0
 
 
-def _observation_budget_events(
+def _observation_budget_delta(
     observations: list[dict[str, object]],
-) -> list[tuple[str | None, int, bool]]:
-    events: list[tuple[str | None, int, bool]] = []
+) -> tuple[int, tuple[str, ...], dict[str, int]]:
+    total_chars = 0
+    observed_paths: list[str] = []
+    file_chars: dict[str, int] = {}
     for item in observations:
-        chars = _count_string_leaves(item)
-        if chars:
-            events.append((str(item.get("path")) if isinstance(item.get("path"), str) else None, chars, False))
+        total_chars += _count_string_leaves(
+            {
+                key: value
+                for key, value in item.items()
+                if key != "observation_id"
+            }
+        )
+        path = item.get("path")
+        if isinstance(path, str):
+            observed_paths.append(path)
         text = item.get("text")
-        if isinstance(text, str) and isinstance(item.get("path"), str):
-            events.append((str(item["path"]), len(text), True))
+        if isinstance(text, str) and isinstance(path, str):
+            file_chars[path] = file_chars.get(path, 0) + len(text)
         matches = item.get("matches")
-        if isinstance(matches, list) and isinstance(item.get("path"), str):
+        if isinstance(matches, list) and isinstance(path, str):
             for match in matches:
                 if isinstance(match, dict) and isinstance(match.get("text"), str):
-                    events.append((str(item["path"]), len(match["text"]), True))
-    return events
+                    file_chars[path] = file_chars.get(path, 0) + len(match["text"])
+    return total_chars, tuple(observed_paths), file_chars
+
+
+def _safe_handler_error_details(details: dict[str, object]) -> dict[str, object]:
+    if not isinstance(details, dict):
+        return {}
+    limit = details.get("limit")
+    if isinstance(limit, str) and limit in {
+        *_SERVER_CEILINGS,
+        "chars",
+        "file_chars",
+        "model_turn",
+        "result_chars",
+        "total_chars",
+    }:
+        return {"limit": limit}
+    return {}
+
+
+def _safe_repository_error_details(
+    details: dict[str, object],
+) -> dict[str, object]:
+    if not isinstance(details, dict):
+        return {}
+    safe = _safe_handler_error_details(details)
+    if "path" in details:
+        safe["path"] = "<redacted>"
+    reason = details.get("reason")
+    if isinstance(reason, str) and reason in {
+        "binary",
+        "sensitive_path",
+        "symlink",
+    }:
+        safe["reason"] = reason
+    return safe
+
+
+def _normalize_artifact_error(exc: ProjectImportError) -> ContextProviderError:
+    if exc.code == "onboarding_artifact_conflict":
+        return ContextProviderError(
+            "onboarding_artifact_conflict",
+            "Published onboarding snapshot is invalid.",
+        )
+    if exc.code in {"onboarding_snapshot_missing", "onboarding_snapshot_mismatch"}:
+        return ContextProviderError(
+            "onboarding_snapshot_mismatch",
+            "Repository snapshot does not match the onboarding binding.",
+        )
+    if exc.code == "project_workspace_not_isolated":
+        return ContextProviderError(
+            "project_workspace_not_isolated",
+            "Project workspace binding is invalid.",
+        )
+    return ContextProviderError(
+        "onboarding_artifact_conflict",
+        "Published onboarding snapshot is invalid.",
+    )
 
 
 def _safe_path_label(value: str) -> str:

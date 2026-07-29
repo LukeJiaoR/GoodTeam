@@ -271,6 +271,27 @@ def test_observation_store_init_rejects_malformed_existing_snapshot_artifact(
     assert _target_files(root) == before_root
 
 
+def test_artifact_store_verify_snapshot_is_descriptor_safe(tmp_path: Path) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    store = OnboardingArtifactStore(workspace, key, root)
+    artifact = snapshot_path(workspace, key, snapshot.snapshot_id)
+    original = artifact.with_name("original-snapshot.json")
+    artifact.rename(original)
+    artifact.symlink_to(original)
+
+    with pytest.raises(ProjectImportError) as captured:
+        store.verify_snapshot(snapshot.snapshot_id)
+
+    assert captured.value.code == "onboarding_artifact_conflict"
+    assert artifact.is_symlink()
+    assert original.read_bytes() == json.dumps(
+        snapshot.as_dict(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+
+
 def test_observation_store_rejects_another_snapshot(tmp_path: Path) -> None:
     workspace, root, key = _imported_repository(tmp_path)
     first = capture_repository_snapshot(root, project_key=key)
