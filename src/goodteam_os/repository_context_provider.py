@@ -14,7 +14,12 @@ from goodteam_os.onboarding_store import (
     OnboardingObservationStore,
 )
 from goodteam_os.project_import import ProjectImportError
-from goodteam_os.repository_access import AnchoredRepository, RepositoryAccessError
+from goodteam_os._repository_content_policy import (
+    redact_observation_value,
+    redacted_path_label,
+    reject_sensitive_path,
+)
+from goodteam_os.repository_access import RepositoryAccessError
 from goodteam_os.repository_snapshot import (
     RepositorySnapshot,
     RepositorySnapshotError,
@@ -1004,6 +1009,8 @@ class RepositoryContextProvider:
         except ContextProviderError as exc:
             if exc.code == "context_request_invalid":
                 raise
+            if exc.code == "context_tool_limit_exceeded":
+                raise
             if exc.code == "context_tool_not_implemented":
                 raise ContextProviderError(
                     "context_tool_not_implemented",
@@ -1054,32 +1061,34 @@ class RepositoryContextProvider:
         )
 
     def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
-        call_context = self._current_tool_call_context()
-        path, max_entries = _validate_list_tree_request(request)
-        with AnchoredRepository(self.root, expected_identity=self.snapshot.root_identity) as repository:
-            entries = repository.list_directory(path, max_entries=max_entries + 1)
-        observations: list[dict[str, object]] = []
-        truncated = len(entries) > max_entries
-        returned_chars = 0
-        for entry in entries[:max_entries]:
-            observation = {
-                "kind": "tree_entry",
-                "path": entry.path,
-                "entry_kind": entry.kind,
-            }
-            next_chars = returned_chars + _count_string_leaves(observation)
-            if next_chars > call_context.result_char_allowance:
-                truncated = True
-                break
-            observations.append(observation)
-            returned_chars = next_chars
-        return {"observations": observations, "truncated": truncated}
+        from goodteam_os._repository_content_tools import list_tree
+
+        return list_tree(
+            root=self.root,
+            snapshot=self.snapshot,
+            request=request,
+            result_char_allowance=self._current_tool_call_context().result_char_allowance,
+        )
 
     def _handle_search_text(self, request: dict[str, object]) -> dict[str, object]:
-        return self._not_implemented(request)
+        from goodteam_os._repository_content_tools import search_text
+
+        return search_text(
+            root=self.root,
+            snapshot=self.snapshot,
+            request=request,
+            result_char_allowance=self._current_tool_call_context().result_char_allowance,
+        )
 
     def _handle_read_file_excerpt(self, request: dict[str, object]) -> dict[str, object]:
-        return self._not_implemented(request)
+        from goodteam_os._repository_content_tools import read_file_excerpt
+
+        return read_file_excerpt(
+            root=self.root,
+            snapshot=self.snapshot,
+            request=request,
+            result_char_allowance=self._current_tool_call_context().result_char_allowance,
+        )
 
     def _handle_inspect_manifest(self, request: dict[str, object]) -> dict[str, object]:
         return self._not_implemented(request)
@@ -1184,8 +1193,31 @@ def _validate_optional_usage_float(name: str, value: object) -> float | None:
 
 
 def _sanitize_request(request: object) -> dict[str, object]:
-    del request
+    if type(request) is not dict:
+        return {"redacted": True}
+    redacted = _sanitize_request_value(request)
+    if type(redacted) is dict:
+        return redacted
     return {"redacted": True}
+
+
+def _sanitize_request_value(value: object, *, key: str | None = None) -> object:
+    if isinstance(value, str):
+        if key == "path":
+            try:
+                reject_sensitive_path(value)
+            except RepositoryAccessError as exc:
+                path = exc.details.get("path")
+                return path if isinstance(path, str) else redacted_path_label(value)
+        return redact_observation_value(value, key_name=key)
+    if isinstance(value, list):
+        return [_sanitize_request_value(item, key=key) for item in value]
+    if type(value) is dict:
+        return {
+            str(item_key): _sanitize_request_value(item, key=str(item_key))
+            for item_key, item in value.items()
+        }
+    return value
 
 
 def _safe_tool_label(tool: object) -> str:
@@ -1293,7 +1325,7 @@ def _normalize_observations(
                 "Repository context handler returned an invalid payload.",
             )
         normalized_item = {
-            key: value
+            key: redact_observation_value(value)
             for key, value in item.items()
             if key != "observation_id"
         }
@@ -1363,7 +1395,8 @@ def _safe_repository_error_details(
         return {}
     safe = _safe_handler_error_details(details)
     if "path" in details:
-        safe["path"] = "<redacted>"
+        path = details.get("path")
+        safe["path"] = path if isinstance(path, str) and path.startswith("<redacted>") else "<redacted>"
     reason = details.get("reason")
     if isinstance(reason, str) and reason in {
         "binary",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from math import inf, nan
@@ -158,7 +159,7 @@ def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
         "limits": provider.budget.limits.as_dict(),
         "model_turn": 1,
         "observations": [],
-        "request": {"redacted": True},
+        "request": {"argv": ["cat", "README.md"]},
         "response_metadata": {"error": {"code": "context_tool_not_allowed"}},
         "schema": "repository_observation.v1",
         "snapshot_id": fixture["snapshot"].snapshot_id,
@@ -169,9 +170,6 @@ def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
     }
     encoded = _last_record_bytes(workspace, project_key).decode("utf-8")
     assert "run_command" in encoded
-    assert "argv" not in encoded
-    assert "README.md" not in encoded
-    assert '"cat"' not in encoded
     assert "shell" not in encoded
 
 
@@ -579,7 +577,7 @@ def test_second_call_over_max_tool_calls_persists_one_error_envelope(tmp_path: P
         "error": {"code": "onboarding_budget_exceeded"}
     }
     assert records[1]["observations"] == []
-    assert records[1]["request"] == {"redacted": True}
+    assert records[1]["request"] == {"path": "", "max_entries": 10}
 
 
 def test_model_turn_hard_limit_or_order_failure_persists_one_error_envelope(
@@ -1209,14 +1207,14 @@ def test_list_tree_request_rejects_max_entries_above_server_cap(tmp_path: Path) 
             model_turn=1,
         )
 
-    assert captured.value.code == "context_request_invalid"
+    assert captured.value.code == "context_tool_limit_exceeded"
     record = _last_record_dict(fixture["workspace"], fixture["project_key"])
     assert record["status"] == "error"
     assert record["observations"] == []
-    assert record["response_metadata"] == {"error": {"code": "context_request_invalid"}}
+    assert record["response_metadata"] == {"error": {"code": "context_tool_limit_exceeded"}}
 
 
-@pytest.mark.parametrize("payload", [{"path": "", "depth": 1}, {"path": "", "extra": True}])
+@pytest.mark.parametrize("payload", [{"path": "", "extra": True}])
 def test_list_tree_request_rejects_unsupported_keys(
     tmp_path: Path,
     payload: dict[str, object],
@@ -1300,6 +1298,396 @@ def test_list_tree_is_bounded_and_excludes_generated_content(tmp_path: Path) -> 
         not item["path"].startswith("node_modules")
         for item in response["observations"]
     )
+
+
+def test_literal_search_returns_bounded_matches(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    src = fixture["root"] / "src"
+    src.mkdir()
+    for index in range(7):
+        (src / f"service_{index}.py").write_text(
+            "\n".join(
+                [
+                    "def noop():",
+                    "    return None",
+                    f"def create_order_{index}():",
+                    "    return 'ok'",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    _refresh_fixture_snapshot(fixture)
+
+    response = fixture["provider"].call(
+        "search_text",
+        {"path": "src", "query": "create_order", "mode": "literal", "max_matches": 5},
+        model_turn=1,
+    )
+
+    assert response["status"] == "ok"
+    assert len(response["observations"]) <= 5
+    assert all(
+        {"path", "line", "text", "content_hash"} <= set(item)
+        for item in response["observations"]
+    )
+
+
+def test_excerpt_rejects_invalid_line_range(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "src").mkdir()
+    (fixture["root"] / "src" / "settings.py").write_text("one\ntwo\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "read_file_excerpt",
+            {"path": "src/settings.py", "start_line": 2, "line_count": 3},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_limit_exceeded"
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["response_metadata"] == {
+        "error": {"code": "context_tool_limit_exceeded"}
+    }
+
+
+@pytest.mark.parametrize("query", ["", "x" * 257])
+def test_search_rejects_empty_or_oversized_query(tmp_path: Path, query: str) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "src").mkdir()
+    (fixture["root"] / "src" / "app.py").write_text("create_order()\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "src", "query": query, "mode": "literal", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_limit_exceeded"
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["response_metadata"] == {
+        "error": {"code": "context_tool_limit_exceeded"}
+    }
+
+
+def test_tools_reject_sensitive_file_names(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / ".env").write_text(
+        "OPENAI_API_KEY=sk-live-secret\n",
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "read_file_excerpt",
+            {"path": ".env", "start_line": 1, "line_count": 1},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_path_rejected"
+    assert captured.value.details == {
+        "path": "<redacted>/.env",
+        "reason": "sensitive_path",
+    }
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert record["response_metadata"] == {
+        "error": {"code": "context_path_rejected"}
+    }
+    assert "sk-live-secret" not in encoded
+    assert '".env"' not in encoded
+
+
+def test_regex_search_times_out(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.killed = False
+
+        def communicate(self, timeout: float | None = None):
+            raise subprocess.TimeoutExpired(cmd=["rg"], timeout=timeout or 0.0)
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    fake_process = FakeProcess()
+
+    def fake_spawn_rg_process(*, root, query: str, target: str):
+        del root, query, target
+        return fake_process
+
+    monkeypatch.setattr(
+        content_tools,
+        "_spawn_rg_process",
+        fake_spawn_rg_process,
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "alpha", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_handler_failed"
+    assert fake_process.killed is True
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["response_metadata"] == {
+        "error": {"code": "context_handler_failed"}
+    }
+
+
+def test_regex_search_returns_unsupported_when_rg_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+    import goodteam_os._repository_content_tools as content_tools
+
+    fixture = _provider_fixture(tmp_path)
+
+    def missing_rg(*, root, query: str, target: str):
+        del root, query, target
+        raise FileNotFoundError("rg")
+
+    monkeypatch.setattr(content_tools, "_spawn_rg_process", missing_rg)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "", "query": "alpha", "mode": "regex", "max_matches": 5},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_tool_unsupported"
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["response_metadata"] == {
+        "error": {"code": "context_tool_unsupported"}
+    }
+
+
+def test_tools_reject_symlink_and_binary_files(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "src").mkdir()
+    (fixture["root"] / "src" / "real.txt").write_text("alpha\n", encoding="utf-8")
+    (fixture["root"] / "src" / "linked.txt").symlink_to(fixture["root"] / "src" / "real.txt")
+    (fixture["root"] / "src" / "data.bin").write_bytes(b"alpha\x00beta")
+    _refresh_fixture_snapshot(fixture)
+
+    with pytest.raises(ContextProviderError) as symlink_error:
+        fixture["provider"].call(
+            "read_file_excerpt",
+            {"path": "src/linked.txt", "start_line": 1, "line_count": 1},
+            model_turn=1,
+        )
+    assert symlink_error.value.code == "context_path_rejected"
+
+    with pytest.raises(ContextProviderError) as binary_error:
+        fixture["provider"].call(
+            "search_text",
+            {"path": "src", "query": "alpha", "mode": "literal", "max_matches": 5},
+            model_turn=2,
+        )
+    assert binary_error.value.code == "repository_binary_file"
+
+def test_result_is_truncated_to_allowance(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import OnboardingBudget, RepositoryContextProvider
+
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "src").mkdir()
+    (fixture["root"] / "src" / "big.txt").write_text(
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda\n",
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+    provider = _rebuild_provider(
+        fixture,
+        RepositoryContextProvider,
+        budget=OnboardingBudget(
+            requested_limits={
+                "max_single_result_chars": 140,
+                "max_total_observation_chars": 140,
+            }
+        ),
+    )
+
+    response = provider.call(
+        "read_file_excerpt",
+        {"path": "src/big.txt", "start_line": 1, "line_count": 1},
+        model_turn=1,
+    )
+
+    assert response["truncated"] is True
+    assert len(response["observations"][0]["text"]) < len(
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda\n"
+    )
+
+
+def test_repeated_excerpt_exhausts_per_file_budget(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "src").mkdir()
+    (fixture["root"] / "src" / "notes.txt").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+    provider = _rebuild_provider(
+        fixture,
+        RepositoryContextProvider,
+        budget=OnboardingBudget(
+            requested_limits={
+                "max_file_cumulative_chars": 12,
+                "max_single_result_chars": 200,
+                "max_total_observation_chars": 200,
+            }
+        ),
+    )
+
+    provider.call(
+        "read_file_excerpt",
+        {"path": "src/notes.txt", "start_line": 1, "line_count": 1},
+        model_turn=1,
+    )
+    provider.call(
+        "read_file_excerpt",
+        {"path": "src/notes.txt", "start_line": 2, "line_count": 1},
+        model_turn=2,
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call(
+            "read_file_excerpt",
+            {"path": "src/notes.txt", "start_line": 3, "line_count": 1},
+            model_turn=3,
+        )
+
+    assert captured.value.code == "onboarding_budget_exceeded"
+
+
+def test_authorization_and_bare_tokens_are_redacted(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "src").mkdir()
+    (fixture["root"] / "src" / "config.txt").write_text(
+        "\n".join(
+            [
+                "Authorization: Bearer top-secret-value",
+                "password=super-secret",
+                "ghp_12345678901234567890",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    response = fixture["provider"].call(
+        "read_file_excerpt",
+        {"path": "src/config.txt", "start_line": 1, "line_count": 3},
+        model_turn=1,
+    )
+
+    text = response["observations"][0]["text"]
+    assert "top-secret-value" not in text
+    assert "super-secret" not in text
+    assert "ghp_12345678901234567890" not in text
+    assert "<redacted>" in text or "<redacted-token>" in text
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "top-secret-value" not in encoded
+    assert "super-secret" not in encoded
+    assert "ghp_12345678901234567890" not in encoded
+
+
+def test_structured_values_are_recursively_redacted(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import RepositoryContextProvider
+
+    fixture = _provider_fixture(tmp_path)
+
+    class StructuredProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            return {
+                "observations": [
+                    {
+                        "kind": "structured",
+                        "path": "src/config.py",
+                        "details": {
+                            "token": "ghp_12345678901234567890",
+                            "headers": ["Authorization: Bearer nested-secret"],
+                        },
+                    }
+                ],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, StructuredProvider)
+    response = provider.call("list_tree", {}, model_turn=1)
+
+    details = response["observations"][0]["details"]
+    assert details["token"] == "<redacted-token>"
+    assert details["headers"] == ["Authorization: <redacted>"]
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "nested-secret" not in encoded
+    assert "ghp_12345678901234567890" not in encoded
+
+
+def test_returned_and_persisted_redaction_are_equal(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import RepositoryContextProvider
+
+    fixture = _provider_fixture(tmp_path)
+
+    class StructuredProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, _request: dict[str, object]) -> dict[str, object]:
+            return {
+                "observations": [
+                    {
+                        "kind": "structured",
+                        "path": "src/config.py",
+                        "details": {"password": "super-secret"},
+                    }
+                ],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, StructuredProvider)
+    response = provider.call("list_tree", {"authorization": "Bearer top-secret"}, model_turn=1)
+
+    assert response == _last_record_dict(fixture["workspace"], fixture["project_key"])
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "top-secret" not in encoded
+    assert "super-secret" not in encoded
 
 
 def test_list_tree_reports_truncation_honestly(tmp_path: Path) -> None:
@@ -1612,12 +2000,17 @@ def test_future_context_tools_fail_explicitly_until_implemented(
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call(tool, {}, model_turn=1)
 
-    assert captured.value.code == "context_tool_not_implemented"
+    expected_code = (
+        "context_tool_limit_exceeded"
+        if tool == "search_text"
+        else "context_tool_not_implemented"
+    )
+    assert captured.value.code == expected_code
     record = _last_record_dict(fixture["workspace"], fixture["project_key"])
     assert record["status"] == "error"
     assert record["observations"] == []
     assert record["response_metadata"] == {
-        "error": {"code": "context_tool_not_implemented"}
+        "error": {"code": expected_code}
     }
 
 
@@ -1925,10 +2318,9 @@ def test_denied_error_envelope_exact_persistence_and_no_raw_request_content_leak
     response = _last_record_dict(workspace, project_key)
     assert response["status"] == "error"
     assert response["observations"] == []
-    assert response["request"] == {"redacted": True}
+    assert response["request"] == {"token": "<redacted-token>", "path": "README.md"}
     encoded = _last_record_bytes(workspace, project_key).decode("utf-8")
     assert "sk-live-secret" not in encoded
-    assert '"path":"README.md"' not in encoded
     assert "alpha" not in encoded
 
 
