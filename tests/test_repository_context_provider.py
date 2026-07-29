@@ -86,6 +86,12 @@ def _assert_detached_error(error: BaseException) -> None:
     assert error.__context__ is None
 
 
+def _assert_no_raw_binding_data(error: BaseException, *forbidden: str) -> None:
+    rendered = f"{error!r} {error} {getattr(error, 'details', {})!r}"
+    for value in forbidden:
+        assert value not in rendered
+
+
 def _rebuild_provider(fixture: dict[str, object], provider_type, *, budget=None):
     from goodteam_os.repository_context_provider import OnboardingBudget
 
@@ -712,6 +718,80 @@ def test_constructor_rejects_cross_workspace_observation_store(tmp_path: Path) -
         )
 
     assert captured.value.code == "onboarding_snapshot_mismatch"
+    _assert_detached_error(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_code", "forbidden"),
+    [
+        (
+            lambda fixture: setattr(
+                fixture["store"],
+                "snapshot_id",
+                "snap_foreign",
+            ),
+            "onboarding_snapshot_mismatch",
+            ("snap_foreign",),
+        ),
+        (
+            lambda fixture: setattr(
+                fixture["store"],
+                "project_key",
+                "FOREIGN",
+            ),
+            "onboarding_snapshot_mismatch",
+            ("FOREIGN",),
+        ),
+        (
+            lambda fixture: setattr(
+                fixture["store"],
+                "root",
+                fixture["root"].parent,
+            ),
+            "onboarding_snapshot_mismatch",
+            tuple(),
+        ),
+        (
+            lambda fixture: (
+                snapshot_path(
+                    fixture["workspace"],
+                    fixture["project_key"],
+                    fixture["snapshot"].snapshot_id,
+                ).unlink()
+            ),
+            "onboarding_snapshot_mismatch",
+            tuple(),
+        ),
+        (
+            lambda fixture: (fixture["root"] / "README.md").write_text(
+                "changed\n",
+                encoding="utf-8",
+            ),
+            "repository_snapshot_changed",
+            tuple(),
+        ),
+    ],
+)
+def test_constructor_binding_failures_are_detached_and_sanitized(
+    tmp_path: Path,
+    mutate,
+    expected_code: str,
+    forbidden: tuple[str, ...],
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    mutate(fixture)
+
+    with pytest.raises(ContextProviderError) as captured:
+        _rebuild_provider(fixture, RepositoryContextProvider)
+
+    assert captured.value.code == expected_code
+    _assert_detached_error(captured.value)
+    _assert_no_raw_binding_data(captured.value, *forbidden)
 
 
 def test_record_observation_cannot_steal_reserved_result_capacity() -> None:
@@ -737,6 +817,131 @@ def test_record_observation_cannot_steal_reserved_result_capacity() -> None:
     budget.release_result(reservation)
     budget.record_observation(path="README.md", chars=5, count_toward_file=True)
     assert budget.as_dict()["total_observation_chars_used"] == 5
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement_factory"),
+    [
+        ("workspace", lambda fixture: fixture["workspace"].parent / "redirected-workspace"),
+        ("job_id", lambda fixture: "job-redirected"),
+        ("project_key", lambda fixture: "REDIRECTED"),
+        ("root", lambda fixture: fixture["root"].parent),
+        ("snapshot_id", lambda fixture: "snap_redirected"),
+    ],
+)
+def test_store_rebinding_after_construction_fails_closed_before_handler_and_writes_nowhere(
+    tmp_path: Path,
+    field: str,
+    replacement_factory,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    original_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        "job-1",
+    )
+    replacement = replacement_factory(fixture)
+    if field == "workspace":
+        import_project(replacement, str(fixture["root"]))
+        OnboardingArtifactStore(
+            replacement,
+            fixture["project_key"],
+            fixture["root"],
+        ).publish_snapshot(fixture["snapshot"])
+    setattr(fixture["store"], field, replacement)
+    redirected_path = observation_path(
+        fixture["store"].workspace,
+        fixture["store"].project_key,
+        fixture["store"].job_id,
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "onboarding_snapshot_mismatch"
+    _assert_detached_error(captured.value)
+    assert not original_path.exists()
+    assert not redirected_path.exists()
+
+
+def test_store_rebinding_during_handler_fails_closed_and_writes_nowhere(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    original_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        "job-1",
+    )
+    redirected_job = "job-redirected"
+    redirected_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        redirected_job,
+    )
+
+    class MutatingProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
+            del request
+            self.observation_store.job_id = redirected_job
+            return {
+                "observations": [{"path": "README.md", "text": "x"}],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, MutatingProvider)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "onboarding_snapshot_mismatch"
+    _assert_detached_error(captured.value)
+    assert not original_path.exists()
+    assert not redirected_path.exists()
+
+
+def test_store_rebinding_between_post_verification_and_append_fails_closed(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    original_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        "job-1",
+    )
+    redirected_job = "job-redirected"
+    redirected_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        redirected_job,
+    )
+
+    class AppendWindowProvider(RepositoryContextProvider):
+        def _build_envelope(self, **kwargs):
+            self.observation_store.job_id = redirected_job
+            return super()._build_envelope(**kwargs)
+
+    provider = _rebuild_provider(fixture, AppendWindowProvider)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "onboarding_snapshot_mismatch"
+    _assert_detached_error(captured.value)
+    assert not original_path.exists()
+    assert not redirected_path.exists()
 
 
 def test_list_tree_request_rejects_max_entries_above_server_cap(tmp_path: Path) -> None:
@@ -950,6 +1155,101 @@ def test_top_level_repository_access_failure_is_detached(tmp_path: Path) -> None
 
     assert captured.value.code == "context_path_rejected"
     _assert_detached_error(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_code"),
+    [
+        (
+            lambda fixture: (fixture["workspace"] / "state" / "projects" / fixture["project_key"] / "onboarding").rename(
+                fixture["workspace"] / "state" / "projects" / fixture["project_key"] / "onboarding-moved"
+            ),
+            "onboarding_snapshot_mismatch",
+        ),
+        (
+            lambda fixture: snapshot_path(
+                fixture["workspace"],
+                fixture["project_key"],
+                fixture["snapshot"].snapshot_id,
+            ).unlink(),
+            "onboarding_snapshot_mismatch",
+        ),
+        (
+            lambda fixture: (
+                snapshot_path(
+                    fixture["workspace"],
+                    fixture["project_key"],
+                    fixture["snapshot"].snapshot_id,
+                ).rename(
+                    snapshot_path(
+                        fixture["workspace"],
+                        fixture["project_key"],
+                        fixture["snapshot"].snapshot_id,
+                    ).with_name("snapshot-original.json")
+                ),
+                snapshot_path(
+                    fixture["workspace"],
+                    fixture["project_key"],
+                    fixture["snapshot"].snapshot_id,
+                ).symlink_to(
+                    snapshot_path(
+                        fixture["workspace"],
+                        fixture["project_key"],
+                        fixture["snapshot"].snapshot_id,
+                    ).with_name("snapshot-original.json")
+                ),
+            ),
+            "onboarding_artifact_conflict",
+        ),
+        (
+            lambda fixture: snapshot_path(
+                fixture["workspace"],
+                fixture["project_key"],
+                fixture["snapshot"].snapshot_id,
+            ).write_text("{malformed", encoding="utf-8"),
+            "onboarding_artifact_conflict",
+        ),
+        (
+            lambda fixture: (fixture["root"] / "README.md").write_text(
+                "changed\n",
+                encoding="utf-8",
+            ),
+            "repository_snapshot_changed",
+        ),
+        (
+            lambda fixture: setattr(fixture["store"], "job_id", "job-redirected"),
+            "onboarding_snapshot_mismatch",
+        ),
+    ],
+)
+def test_call_time_binding_failures_win_without_any_ledger_write(
+    tmp_path: Path,
+    mutate,
+    expected_code: str,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    original_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        "job-1",
+    )
+    mutate(fixture)
+    redirected_path = observation_path(
+        fixture["store"].workspace,
+        fixture["store"].project_key,
+        fixture["store"].job_id,
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == expected_code
+    _assert_detached_error(captured.value)
+    assert not original_path.exists()
+    if redirected_path != original_path:
+        assert not redirected_path.exists()
 
 @pytest.mark.parametrize(
     "tool",
@@ -1471,9 +1771,7 @@ def test_handler_time_snapshot_drift_rolls_back_result_budget(tmp_path: Path) ->
     assert state["total_observation_chars_used"] == 0
     assert state["files_observed"] == 0
     assert budget.result_char_allowance() == 50
-    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
-    assert record["status"] == "error"
-    assert record["observations"] == []
+    assert _all_records(fixture["workspace"], fixture["project_key"]) == []
 
 
 def test_shared_budget_reservation_prevents_concurrent_handler_overcommit(
@@ -1730,11 +2028,9 @@ def test_provider_rejects_symlinked_snapshot_artifact_on_call(tmp_path: Path) ->
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call("list_tree", {}, model_turn=1)
 
-    assert captured.value.code == "context_observation_persistence_failed"
-    assert captured.value.operational_signals == (
-        "context_observation_persistence_failed",
-    )
+    assert captured.value.code == "onboarding_artifact_conflict"
     _assert_detached_error(captured.value)
+    assert _all_records(fixture["workspace"], fixture["project_key"]) == []
 
 
 def test_provider_requires_exact_validated_snapshot_artifact_binding(

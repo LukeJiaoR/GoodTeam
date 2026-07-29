@@ -104,6 +104,15 @@ class RepositoryContextHandlerCallContext:
     result_char_allowance: int
 
 
+@dataclass(frozen=True)
+class _ObservationStoreBinding:
+    workspace: Path
+    project_key: str
+    root: Path
+    job_id: str
+    snapshot_id: str
+
+
 class OnboardingBudget:
     def __init__(
         self,
@@ -531,6 +540,8 @@ class RepositoryContextProvider:
         self.root = Path(root).expanduser().resolve()
         self.snapshot = snapshot
         self.observation_store = observation_store
+        self._expected_observation_store = observation_store
+        self._expected_store_binding = _capture_store_binding(observation_store)
         self.budget = budget
         self._lock = threading.RLock()
         self._handler_context_local = threading.local()
@@ -539,7 +550,20 @@ class RepositoryContextProvider:
             self.project_key,
             self.root,
         )
-        self._validate_constructor_binding()
+        constructor_error: ContextProviderError | None = None
+        try:
+            self._validate_constructor_binding()
+        except ContextProviderError as exc:
+            constructor_error = _detach_context_provider_error(exc)
+        except RepositorySnapshotError as exc:
+            constructor_error = _detach_context_provider_error(
+                ContextProviderError(
+                    exc.code,
+                    "Repository snapshot verification failed.",
+                )
+            )
+        if constructor_error is not None:
+            raise constructor_error
 
     def tool_names(self) -> tuple[str, ...]:
         return _ALLOWED_TOOLS
@@ -631,14 +655,20 @@ class RepositoryContextProvider:
                             "returned_chars": returned_chars,
                         },
                     )
-                    try:
-                        self.observation_store.append(envelope)
-                    except Exception:
-                        pending_error = _build_persistence_failure_error()
+                    authority_error = self._recording_authority_error()
+                    if authority_error is not None:
+                        pending_error = authority_error
                     else:
-                        return envelope
+                        try:
+                            self.observation_store.append(envelope)
+                        except Exception:
+                            pending_error = _build_persistence_failure_error()
+                        else:
+                            return envelope
         except ContextProviderError as exc:
-            if not exc._terminal_record_attempted and turn is not None:
+            if _is_authority_error_code(exc.code):
+                pending_error = _detach_context_provider_error(exc)
+            elif not exc._terminal_record_attempted and turn is not None:
                 persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
@@ -659,7 +689,9 @@ class RepositoryContextProvider:
                 "Repository context operation failed.",
                 details=_safe_repository_error_details(exc.details),
             )
-            if turn is not None:
+            if _is_authority_error_code(error.code):
+                pending_error = _detach_context_provider_error(error)
+            elif turn is not None:
                 persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
@@ -679,7 +711,9 @@ class RepositoryContextProvider:
                 exc.code,
                 "Repository snapshot verification failed.",
             )
-            if turn is not None:
+            if _is_authority_error_code(error.code):
+                pending_error = _detach_context_provider_error(error)
+            elif turn is not None:
                 persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
@@ -696,7 +730,9 @@ class RepositoryContextProvider:
                 pending_error = _detach_context_provider_error(error)
         except ProjectImportError as exc:
             error = _normalize_artifact_error(exc)
-            if turn is not None:
+            if _is_authority_error_code(error.code):
+                pending_error = _detach_context_provider_error(error)
+            elif turn is not None:
                 persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
@@ -740,31 +776,38 @@ class RepositoryContextProvider:
                 "onboarding_snapshot_mismatch",
                 "Repository snapshot does not match the onboarding binding.",
             )
-        if self.observation_store.snapshot_id != self.snapshot.snapshot_id:
+        if self._expected_store_binding.snapshot_id != self.snapshot.snapshot_id:
             raise ContextProviderError(
                 "onboarding_snapshot_mismatch",
                 "Repository snapshot does not match the onboarding binding.",
             )
-        if self.observation_store.project_key != self.project_key or self.observation_store.root != self.root:
+        if self._expected_store_binding.project_key != self.project_key:
             raise ContextProviderError(
                 "onboarding_snapshot_mismatch",
                 "Repository snapshot does not match the onboarding binding.",
             )
-        if self.observation_store.workspace != self.workspace:
+        if self._expected_store_binding.root != self.root:
             raise ContextProviderError(
                 "onboarding_snapshot_mismatch",
                 "Repository snapshot does not match the onboarding binding.",
             )
+        if self._expected_store_binding.workspace != self.workspace:
+            raise ContextProviderError(
+                "onboarding_snapshot_mismatch",
+                "Repository snapshot does not match the onboarding binding.",
+            )
+        self._assert_store_binding()
         self._verify_bindings()
 
     def _verify_bindings(self) -> None:
+        self._assert_store_binding()
         verify_repository_snapshot(self.root, self.snapshot)
         try:
             published = self._artifact_store.verify_snapshot(
                 self.snapshot.snapshot_id
             )
         except ProjectImportError as exc:
-            raise _normalize_artifact_error(exc) from exc
+            raise _normalize_artifact_error(exc)
         if published.as_dict() != self.snapshot.as_dict():
             raise ContextProviderError(
                 "onboarding_snapshot_mismatch",
@@ -809,6 +852,9 @@ class RepositoryContextProvider:
         error: ContextProviderError,
     ) -> ContextProviderError | None:
         error._terminal_record_attempted = True
+        authority_error = self._recording_authority_error()
+        if authority_error is not None:
+            return authority_error
         try:
             envelope = self._build_envelope(
                 tool_call_id=tool_call_id,
@@ -835,6 +881,9 @@ class RepositoryContextProvider:
         error: ContextProviderError,
     ) -> ContextProviderError | None:
         error._terminal_record_attempted = True
+        authority_error = self._recording_authority_error()
+        if authority_error is not None:
+            return authority_error
         try:
             envelope = self._build_envelope(
                 tool_call_id=tool_call_id,
@@ -869,6 +918,35 @@ class RepositoryContextProvider:
                 "Repository context operation failed.",
             )
         return context
+
+    def _assert_store_binding(self) -> None:
+        if self.observation_store is not self._expected_observation_store:
+            raise ContextProviderError(
+                "onboarding_snapshot_mismatch",
+                "Repository snapshot does not match the onboarding binding.",
+            )
+        current = _capture_store_binding(self.observation_store)
+        if current != self._expected_store_binding:
+            raise ContextProviderError(
+                "onboarding_snapshot_mismatch",
+                "Repository snapshot does not match the onboarding binding.",
+            )
+
+    def _recording_authority_error(self) -> ContextProviderError | None:
+        try:
+            self._verify_bindings()
+        except ContextProviderError as exc:
+            return _detach_context_provider_error(exc)
+        except RepositorySnapshotError as exc:
+            return _detach_context_provider_error(
+                ContextProviderError(
+                    exc.code,
+                    "Repository snapshot verification failed.",
+                )
+            )
+        except ProjectImportError as exc:
+            return _detach_context_provider_error(_normalize_artifact_error(exc))
+        return None
 
     def _invoke_handler(
         self,
@@ -1265,6 +1343,38 @@ def _normalize_artifact_error(exc: ProjectImportError) -> ContextProviderError:
         "onboarding_artifact_conflict",
         "Published onboarding snapshot is invalid.",
     )
+
+
+def _capture_store_binding(
+    store: OnboardingObservationStore,
+) -> _ObservationStoreBinding:
+    try:
+        workspace = Path(store.workspace).expanduser().resolve(strict=False)
+        project_key = str(store.project_key)
+        root = Path(store.root).expanduser().resolve()
+        job_id = str(store.job_id)
+        snapshot_id = str(store.snapshot_id)
+    except Exception:
+        raise ContextProviderError(
+            "onboarding_snapshot_mismatch",
+            "Repository snapshot does not match the onboarding binding.",
+        )
+    return _ObservationStoreBinding(
+        workspace=workspace,
+        project_key=project_key,
+        root=root,
+        job_id=job_id,
+        snapshot_id=snapshot_id,
+    )
+
+
+def _is_authority_error_code(code: str) -> bool:
+    return code in {
+        "onboarding_snapshot_mismatch",
+        "onboarding_artifact_conflict",
+        "project_workspace_not_isolated",
+        "repository_snapshot_changed",
+    }
 
 
 def _detach_context_provider_error(
