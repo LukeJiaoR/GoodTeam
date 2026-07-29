@@ -950,7 +950,10 @@ class RepositoryContextProvider:
         if authority_error is not None:
             raise authority_error
         self._assert_store_binding()
-        append_store = self._authoritative_append_store()
+        try:
+            append_store = self._authoritative_append_store()
+        except ContextProviderError as exc:
+            raise self._prefer_append_window_authority_error(exc) from None
         try:
             append_store.append(envelope)
         except ProjectImportError as exc:
@@ -962,7 +965,7 @@ class RepositoryContextProvider:
             }:
                 normalized = _normalize_artifact_error(exc)
                 if _is_authority_error_code(normalized.code):
-                    raise normalized
+                    raise self._prefer_append_window_authority_error(normalized) from None
             raise _build_persistence_failure_error()
         except ContextProviderError:
             raise
@@ -981,6 +984,15 @@ class RepositoryContextProvider:
             )
         except ProjectImportError as exc:
             raise _normalize_artifact_error(exc)
+
+    def _prefer_append_window_authority_error(
+        self,
+        fallback: ContextProviderError,
+    ) -> ContextProviderError:
+        authority_error = self._recording_authority_error()
+        if authority_error is not None:
+            return authority_error
+        return _detach_context_provider_error(fallback)
 
     def _invoke_handler(
         self,

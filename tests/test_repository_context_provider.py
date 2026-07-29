@@ -2059,6 +2059,48 @@ def test_root_inode_replacement_preserves_repository_root_changed_without_ledger
     assert _all_records(fixture["workspace"], fixture["project_key"]) == []
 
 
+@pytest.mark.parametrize("status_kind", ["ok", "denied", "error"])
+def test_root_inode_replacement_in_append_window_preserves_primary_root_error(
+    tmp_path: Path,
+    status_kind: str,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    original_path = observation_path(
+        fixture["workspace"],
+        fixture["project_key"],
+        "job-1",
+    )
+
+    class AppendWindowRootReplacingProvider(RepositoryContextProvider):
+        def _authoritative_append_store(self) -> OnboardingObservationStore:
+            displaced_root = self.root.with_name("repo-displaced")
+            self.root.rename(displaced_root)
+            self.root.mkdir()
+            (self.root / "README.md").write_text("replacement\n", encoding="utf-8")
+            return super()._authoritative_append_store()
+
+        def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
+            if status_kind == "error":
+                raise RuntimeError("raw repository failure")
+            return super()._handle_list_tree(request)
+
+    provider = _rebuild_provider(fixture, AppendWindowRootReplacingProvider)
+    tool = "run_command" if status_kind == "denied" else "list_tree"
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call(tool, {}, model_turn=1)
+
+    assert captured.value.code == "repository_root_changed"
+    _assert_detached_error(captured.value)
+    assert not original_path.exists()
+    assert _all_records(fixture["workspace"], fixture["project_key"]) == []
+
+
 def test_shared_budget_reservation_prevents_concurrent_handler_overcommit(
     tmp_path: Path,
 ) -> None:
