@@ -1166,9 +1166,19 @@ class _ProcessResult:
     stderr: bytes
 
 
+@dataclass(frozen=True)
+class _ExecutableIdentity:
+    device: int
+    inode: int
+    mode: int
+
+
 def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
     operation = arguments[0] if arguments else "unknown"
-    executable, trusted_path = _trusted_git_executable(root, operation)
+    executable, trusted_path, executable_identity = _trusted_git_executable(
+        root,
+        operation,
+    )
     command = [executable, "-c", "core.fsmonitor=false", "--no-pager", *arguments]
     environment = {
         "PATH": trusted_path,
@@ -1180,16 +1190,24 @@ def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
         "GIT_TERMINAL_PROMPT": "0",
         "LC_ALL": "C",
     }
-    process = subprocess.Popen(
-        command,
-        cwd=root,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=False,
-        start_new_session=True,
+    executable_fd = _open_verified_executable(
+        executable,
+        executable_identity,
+        operation,
     )
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=root,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            start_new_session=True,
+        )
+    finally:
+        os.close(executable_fd)
     if process.stdout is None or process.stderr is None:
         _kill_process_group(process)
         raise RepositorySnapshotError(
@@ -1255,25 +1273,82 @@ def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
         process.stderr.close()
 
 
-def _trusted_git_executable(root: Path, operation: str) -> tuple[str, str]:
-    root_value = os.path.abspath(root)
-    trusted_entries = []
+def _trusted_git_executable(
+    root: Path,
+    operation: str,
+) -> tuple[str, str, _ExecutableIdentity]:
+    root_value = os.path.realpath(root)
+    canonical_entries = []
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         if not entry or not os.path.isabs(entry):
             continue
-        absolute_entry = os.path.abspath(entry)
-        if _path_is_within(absolute_entry, root_value):
+        canonical_entry = os.path.realpath(entry)
+        if _path_is_within(canonical_entry, root_value):
             continue
+        if canonical_entry not in canonical_entries:
+            canonical_entries.append(canonical_entry)
+    trusted_entries = []
+    selected: tuple[str, _ExecutableIdentity] | None = None
+    for entry in canonical_entries:
+        candidate = shutil.which("git", path=entry)
+        if candidate is None:
+            trusted_entries.append(entry)
+            continue
+        executable = os.path.realpath(candidate)
+        if _path_is_within(executable, root_value):
+            continue
+        try:
+            descriptor = os.open(
+                executable,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except OSError:
+            continue
+        try:
+            value = os.fstat(descriptor)
+            if not stat.S_ISREG(value.st_mode) or not value.st_mode & 0o111:
+                continue
+            identity = _ExecutableIdentity(value.st_dev, value.st_ino, value.st_mode)
+        finally:
+            os.close(descriptor)
         trusted_entries.append(entry)
-    trusted_path = os.pathsep.join(trusted_entries)
-    executable = shutil.which("git", path=trusted_path)
-    if executable is None or _path_is_within(os.path.abspath(executable), root_value):
+        if selected is None:
+            selected = (executable, identity)
+    if selected is not None:
+        return selected[0], os.pathsep.join(trusted_entries), selected[1]
+    raise RepositorySnapshotError(
+        "repository_snapshot_failed",
+        "Trusted Git executable was not available.",
+        details={"operation": operation},
+    )
+
+
+def _open_verified_executable(
+    executable: str,
+    expected: _ExecutableIdentity,
+    operation: str,
+) -> int:
+    try:
+        descriptor = os.open(
+            executable,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
         raise RepositorySnapshotError(
             "repository_snapshot_failed",
-            "Trusted Git executable was not available.",
+            "Trusted Git executable changed before use.",
+            details={"operation": operation},
+        ) from exc
+    value = os.fstat(descriptor)
+    actual = _ExecutableIdentity(value.st_dev, value.st_ino, value.st_mode)
+    if actual != expected or not stat.S_ISREG(value.st_mode):
+        os.close(descriptor)
+        raise RepositorySnapshotError(
+            "repository_snapshot_failed",
+            "Trusted Git executable changed before use.",
             details={"operation": operation},
         )
-    return os.path.abspath(executable), trusted_path
+    return descriptor
 
 
 def _path_is_within(candidate: str, root: str) -> bool:

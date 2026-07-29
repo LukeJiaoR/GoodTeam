@@ -103,6 +103,76 @@ def test_git_snapshot_ignores_relative_path_executable_entries(
     assert not marker.exists()
 
 
+@pytest.mark.parametrize("bypass", ["directory_symlink", "executable_symlink", "direct"])
+def test_git_snapshot_never_executes_target_controlled_absolute_path_git(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    bypass: str,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    target_bin = root / "bin"
+    target_bin.mkdir()
+    marker = tmp_path / f"{bypass}-git-executed"
+    fake_git = target_bin / "git"
+    fake_git.write_text(f"#!/bin/sh\n: > {marker}\nexit 99\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if bypass == "directory_symlink":
+        path_entry = outside / "linked-bin"
+        path_entry.symlink_to(target_bin, target_is_directory=True)
+    elif bypass == "executable_symlink":
+        path_entry = outside / "bin"
+        path_entry.mkdir()
+        (path_entry / "git").symlink_to(fake_git)
+    else:
+        path_entry = target_bin
+    original_path = os.environ.get("PATH", "")
+    monkeypatch.setenv("PATH", f"{path_entry}{os.pathsep}{original_path}")
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    assert snapshot.source_control["kind"] == "git"
+    assert not marker.exists()
+
+
+def test_git_executable_identity_change_before_spawn_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    fake_bin = tmp_path / "trusted-bin"
+    fake_bin.mkdir()
+    executable = fake_bin / "git"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    replacement = tmp_path / "replacement-git"
+    marker = tmp_path / "replacement-executed"
+    replacement.write_text(f"#!/bin/sh\n: > {marker}\nexit 0\n", encoding="utf-8")
+    replacement.chmod(0o755)
+    real_open = repository_snapshot.os.open
+    opens = 0
+
+    def replacing_open(path: object, flags: int, *args, **kwargs):
+        nonlocal opens
+        if os.path.abspath(os.fspath(path)) == str(executable):
+            opens += 1
+            if opens == 2:
+                replacement.replace(executable)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setenv("PATH", str(fake_bin))
+    monkeypatch.setattr(repository_snapshot.os, "open", replacing_open)
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        repository_snapshot._run_git(root, ["status"])
+
+    assert captured.value.code == "repository_snapshot_failed"
+    assert captured.value.details == {"operation": "status"}
+    assert not marker.exists()
+
+
 def test_clean_git_capture_does_not_read_tracked_file_content(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -136,9 +206,12 @@ def test_git_capture_uses_no_raw_target_path_metadata_access(
     tmp_path: Path,
 ) -> None:
     root = init_git_repo(tmp_path / "repo")
+    real_lstat = repository_snapshot.os.lstat
 
     def fail_lstat(path: object, *args, **kwargs):
-        raise AssertionError(f"unexpected raw lstat: {path}")
+        if os.path.abspath(os.fspath(path)) == str(root / "README.md"):
+            raise AssertionError(f"unexpected raw content lstat: {path}")
+        return real_lstat(path, *args, **kwargs)
 
     monkeypatch.setattr(repository_snapshot.os, "lstat", fail_lstat)
 
