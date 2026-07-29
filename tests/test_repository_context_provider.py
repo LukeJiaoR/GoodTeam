@@ -81,6 +81,11 @@ def _all_records(workspace: Path, project_key: str) -> list[dict[str, object]]:
     ]
 
 
+def _assert_detached_error(error: BaseException) -> None:
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
 def _rebuild_provider(fixture: dict[str, object], provider_type, *, budget=None):
     from goodteam_os.repository_context_provider import OnboardingBudget
 
@@ -671,6 +676,280 @@ def test_denied_tools_consume_quota_before_dispatch(tmp_path: Path) -> None:
         for record in _all_records(fixture["workspace"], fixture["project_key"])
     ] == ["denied", "error"]
 
+
+def test_constructor_rejects_cross_workspace_observation_store(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+    other_workspace = tmp_path / "other-workspace"
+    other_import = import_project(other_workspace, str(fixture["root"]))
+    assert str(other_import["project"]["project_key"]) == fixture["project_key"]
+    OnboardingArtifactStore(
+        other_workspace,
+        fixture["project_key"],
+        fixture["root"],
+    ).publish_snapshot(fixture["snapshot"])
+    other_store = OnboardingObservationStore(
+        other_workspace,
+        fixture["project_key"],
+        fixture["root"],
+        "job-1",
+        fixture["snapshot"].snapshot_id,
+    )
+
+    with pytest.raises(ContextProviderError) as captured:
+        RepositoryContextProvider(
+            workspace=fixture["workspace"],
+            project_key=fixture["project_key"],
+            root=fixture["root"],
+            snapshot=fixture["snapshot"],
+            observation_store=other_store,
+            budget=OnboardingBudget(),
+        )
+
+    assert captured.value.code == "onboarding_snapshot_mismatch"
+
+
+def test_record_observation_cannot_steal_reserved_result_capacity() -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError, OnboardingBudget
+
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_single_result_chars": 6,
+            "max_total_observation_chars": 10,
+        },
+        monotonic_clock=lambda: 0.0,
+    )
+    reservation = budget.reserve_result()
+    before = budget.as_dict()
+
+    with pytest.raises(ContextProviderError) as captured:
+        budget.record_observation(path="README.md", chars=5, count_toward_file=True)
+
+    assert captured.value.code == "onboarding_budget_exceeded"
+    assert captured.value.details == {"limit": "max_total_observation_chars"}
+    assert budget.as_dict() == before
+
+    budget.release_result(reservation)
+    budget.record_observation(path="README.md", chars=5, count_toward_file=True)
+    assert budget.as_dict()["total_observation_chars_used"] == 5
+
+
+def test_list_tree_request_rejects_max_entries_above_server_cap(tmp_path: Path) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call(
+            "list_tree",
+            {"path": "", "max_entries": 501},
+            model_turn=1,
+        )
+
+    assert captured.value.code == "context_request_invalid"
+    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["status"] == "error"
+    assert record["observations"] == []
+    assert record["response_metadata"] == {"error": {"code": "context_request_invalid"}}
+
+
+def test_list_tree_reports_truncation_honestly(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    for index in range(12):
+        (fixture["root"] / f"file-{index:02d}.txt").write_text("x\n", encoding="utf-8")
+    fixture["snapshot"] = capture_repository_snapshot(
+        fixture["root"],
+        project_key=fixture["project_key"],
+    )
+    OnboardingArtifactStore(
+        fixture["workspace"],
+        fixture["project_key"],
+        fixture["root"],
+    ).publish_snapshot(fixture["snapshot"])
+    fixture["store"] = OnboardingObservationStore(
+        fixture["workspace"],
+        fixture["project_key"],
+        fixture["root"],
+        "job-1",
+        fixture["snapshot"].snapshot_id,
+    )
+    from goodteam_os.repository_context_provider import RepositoryContextProvider
+
+    provider = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=fixture["budget"],
+    )
+
+    response = provider.call("list_tree", {"path": "", "max_entries": 5}, model_turn=1)
+
+    assert response["status"] == "ok"
+    assert response["truncated"] is True
+    assert len(response["observations"]) == 5
+
+
+def test_handler_receives_immutable_call_context_with_reserved_allowance(
+    tmp_path: Path,
+) -> None:
+    from goodteam_os.repository_context_provider import RepositoryContextProvider
+
+    fixture = _provider_fixture(tmp_path)
+
+    class ContextAwareProvider(RepositoryContextProvider):
+        def _handle_list_tree(
+            self,
+            request: dict[str, object],
+        ) -> dict[str, object]:
+            context = self._current_tool_call_context()
+            assert request == {"path": "", "max_entries": 1}
+            assert isinstance(context.result_char_allowance, int)
+            assert context.result_char_allowance > 0
+            with pytest.raises(Exception):
+                context.result_char_allowance = 1  # type: ignore[misc]
+            return {
+                "observations": [{"path": "README.md", "text": "x"}],
+                "truncated": False,
+            }
+
+    provider = _rebuild_provider(fixture, ContextAwareProvider)
+    response = provider.call(
+        "list_tree",
+        {"path": "", "max_entries": 1},
+        model_turn=1,
+    )
+
+    assert response["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("build_provider", "mutate_fixture", "expected_code"),
+    [
+        (
+            lambda fixture: _rebuild_provider(
+                fixture,
+                type(
+                    "HandlerFail",
+                    (fixture["provider"].__class__,),
+                    {
+                        "_handle_list_tree": lambda self, request: (_ for _ in ()).throw(
+                            RuntimeError("alpha README.md sk-live-secret")
+                        )
+                    },
+                ),
+            ),
+            lambda fixture: None,
+            "context_handler_failed",
+        ),
+        (
+            lambda fixture: fixture["provider"],
+            lambda fixture: (fixture["root"] / "README.md").write_text(
+                "changed\n",
+                encoding="utf-8",
+            ),
+            "repository_snapshot_changed",
+        ),
+    ],
+)
+def test_top_level_errors_detach_exception_chains_for_selected_failures(
+    tmp_path: Path,
+    build_provider,
+    mutate_fixture,
+    expected_code,
+) -> None:
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    mutate_fixture(fixture)
+    provider = build_provider(fixture)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == expected_code
+    _assert_detached_error(captured.value)
+
+
+def test_top_level_persistence_failure_is_detached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from goodteam_os.project_import import ProjectImportError
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+    original_append = fixture["store"].append
+    calls = [0]
+
+    def fail_success_persist(record: dict[str, object]):
+        calls[0] += 1
+        if record["status"] == "ok":
+            raise ProjectImportError(
+                "onboarding_observation_invalid",
+                "alpha raw persistence failure",
+            )
+        return original_append(record)
+
+    monkeypatch.setattr(fixture["store"], "append", fail_success_persist)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "context_observation_persistence_failed"
+    _assert_detached_error(captured.value)
+
+
+def test_top_level_artifact_failure_is_detached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from goodteam_os.project_import import ProjectImportError
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    fixture = _provider_fixture(tmp_path)
+
+    def fail_verify(snapshot_id: str):
+        del snapshot_id
+        raise ProjectImportError(
+            "onboarding_artifact_conflict",
+            "alpha raw artifact failure",
+        )
+
+    monkeypatch.setattr(fixture["provider"]._artifact_store, "verify_snapshot", fail_verify)
+
+    with pytest.raises(ContextProviderError) as captured:
+        fixture["provider"].call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "onboarding_artifact_conflict"
+    _assert_detached_error(captured.value)
+
+
+def test_top_level_repository_access_failure_is_detached(tmp_path: Path) -> None:
+    from goodteam_os.repository_access import RepositoryAccessError
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        RepositoryContextProvider,
+    )
+
+    fixture = _provider_fixture(tmp_path)
+
+    class AccessFailProvider(RepositoryContextProvider):
+        def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
+            del request
+            raise RepositoryAccessError(
+                "context_path_rejected",
+                "alpha raw path failure",
+                details={"path": "README.md", "reason": "symlink"},
+            )
+
+    provider = _rebuild_provider(fixture, AccessFailProvider)
+
+    with pytest.raises(ContextProviderError) as captured:
+        provider.call("list_tree", {}, model_turn=1)
+
+    assert captured.value.code == "context_path_rejected"
+    _assert_detached_error(captured.value)
 
 @pytest.mark.parametrize(
     "tool",
@@ -1328,7 +1607,7 @@ def test_error_recording_does_not_read_the_ledger(
     ] == "error"
 
 
-def test_error_append_failure_preserves_original_safe_error(
+def test_error_append_failure_surfaces_safe_persistence_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1356,17 +1635,18 @@ def test_error_append_failure_preserves_original_safe_error(
     with pytest.raises(ContextProviderError) as captured:
         provider.call("list_tree", {}, model_turn=1)
 
-    assert captured.value.code == "context_handler_failed"
-    assert str(captured.value) == "Repository context handler failed."
+    assert captured.value.code == "context_observation_persistence_failed"
+    assert str(captured.value) == "Repository context observation could not be persisted."
     assert captured.value.details == {}
     assert captured.value.operational_signals == (
         "context_observation_persistence_failed",
     )
+    _assert_detached_error(captured.value)
     assert "raw ledger" not in str(captured.value)
     assert "sk-live-secret" not in str(captured.value)
 
 
-def test_error_envelope_build_failure_preserves_original_safe_error(
+def test_error_envelope_build_failure_surfaces_safe_persistence_error(
     tmp_path: Path,
 ) -> None:
     from goodteam_os.repository_context_provider import (
@@ -1394,14 +1674,15 @@ def test_error_envelope_build_failure_preserves_original_safe_error(
     with pytest.raises(ContextProviderError) as captured:
         provider.call("list_tree", {}, model_turn=1)
 
-    assert captured.value.code == "context_handler_failed"
-    assert str(captured.value) == "Repository context handler failed."
+    assert captured.value.code == "context_observation_persistence_failed"
+    assert str(captured.value) == "Repository context observation could not be persisted."
     assert captured.value.operational_signals == (
         "context_observation_persistence_failed",
     )
+    _assert_detached_error(captured.value)
 
 
-def test_denied_envelope_build_failure_preserves_denial(
+def test_denied_envelope_build_failure_surfaces_safe_persistence_error(
     tmp_path: Path,
 ) -> None:
     from goodteam_os.repository_context_provider import (
@@ -1425,11 +1706,12 @@ def test_denied_envelope_build_failure_preserves_denial(
     with pytest.raises(ContextProviderError) as captured:
         provider.call("run_command", {}, model_turn=1)
 
-    assert captured.value.code == "context_tool_not_allowed"
-    assert str(captured.value) == "Repository context tool is not allowed."
+    assert captured.value.code == "context_observation_persistence_failed"
+    assert str(captured.value) == "Repository context observation could not be persisted."
     assert captured.value.operational_signals == (
         "context_observation_persistence_failed",
     )
+    _assert_detached_error(captured.value)
 
 
 def test_provider_rejects_symlinked_snapshot_artifact_on_call(tmp_path: Path) -> None:
@@ -1448,10 +1730,11 @@ def test_provider_rejects_symlinked_snapshot_artifact_on_call(tmp_path: Path) ->
     with pytest.raises(ContextProviderError) as captured:
         fixture["provider"].call("list_tree", {}, model_turn=1)
 
-    assert captured.value.code == "onboarding_artifact_conflict"
+    assert captured.value.code == "context_observation_persistence_failed"
     assert captured.value.operational_signals == (
         "context_observation_persistence_failed",
     )
+    _assert_detached_error(captured.value)
 
 
 def test_provider_requires_exact_validated_snapshot_artifact_binding(

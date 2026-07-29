@@ -292,6 +292,22 @@ def test_artifact_store_verify_snapshot_is_descriptor_safe(tmp_path: Path) -> No
     ).encode("utf-8")
 
 
+def test_artifact_store_verify_snapshot_reports_missing_onboarding_directory(
+    tmp_path: Path,
+) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    store = OnboardingArtifactStore(workspace, key, root)
+    onboarding = workspace / "state" / "projects" / key / "onboarding"
+    moved = onboarding.with_name("onboarding-moved")
+    onboarding.rename(moved)
+
+    with pytest.raises(ProjectImportError) as captured:
+        store.verify_snapshot(snapshot.snapshot_id)
+
+    assert captured.value.code == "onboarding_snapshot_missing"
+    assert moved.is_dir()
+
+
 def test_observation_store_rejects_another_snapshot(tmp_path: Path) -> None:
     workspace, root, key = _imported_repository(tmp_path)
     first = capture_repository_snapshot(root, project_key=key)

@@ -55,6 +55,7 @@ _ALLOWED_TOOLS = (
     "inspect_tests",
     "inspect_recent_changes",
 )
+_LIST_TREE_MAX_ENTRIES = 500
 
 
 class ContextProviderError(ValueError):
@@ -96,6 +97,11 @@ class OnboardingBudgetLimits:
 class OnboardingBudgetReservation:
     allowance: int
     _token: str
+
+
+@dataclass(frozen=True)
+class RepositoryContextHandlerCallContext:
+    result_char_allowance: int
 
 
 class OnboardingBudget:
@@ -243,7 +249,12 @@ class OnboardingBudget:
             self._refresh_elapsed()
             self._check_elapsed_limit()
             self._check_consumed_hard_limits()
-            if self._total_observation_chars + validated_chars > self.limits.max_total_observation_chars:
+            if (
+                self._total_observation_chars
+                + self._reserved_result_chars
+                + validated_chars
+                > self.limits.max_total_observation_chars
+            ):
                 raise self._budget_exceeded("max_total_observation_chars")
             observed_paths = () if path is None else (path,)
             file_chars = {path: validated_chars} if path is not None and count_toward_file else {}
@@ -522,6 +533,7 @@ class RepositoryContextProvider:
         self.observation_store = observation_store
         self.budget = budget
         self._lock = threading.RLock()
+        self._handler_context_local = threading.local()
         self._artifact_store = OnboardingArtifactStore(
             self.workspace,
             self.project_key,
@@ -542,6 +554,7 @@ class RepositoryContextProvider:
         tool_call_id = f"tool_{uuid.uuid4().hex}"
         request_payload = _sanitize_request(request)
         tool_label = _safe_tool_label(tool)
+        pending_error: ContextProviderError | None = None
         turn = (
             model_turn
             if isinstance(model_turn, int)
@@ -561,77 +574,85 @@ class RepositoryContextProvider:
                         "context_tool_not_allowed",
                         "Repository context tool is not allowed.",
                     )
-                    self._try_persist_denied_envelope(
+                    persistence_error = self._try_persist_denied_envelope(
                         tool_call_id=tool_call_id,
                         tool=tool_label,
                         model_turn=turn,
                         request=request_payload,
                         error=error,
                     )
-                    raise error
-
-                reservation = self.budget.reserve_result()
-                try:
-                    buffered = self._invoke_handler(tool, validated_request)
-                    observations_payload, truncated = _validate_handler_payload(
-                        buffered
+                    pending_error = (
+                        persistence_error
+                        if persistence_error is not None
+                        else _detach_context_provider_error(error)
                     )
-                    observations = _normalize_observations(
-                        observations_payload,
+                else:
+                    reservation = self.budget.reserve_result()
+                    handler_context = RepositoryContextHandlerCallContext(
+                        result_char_allowance=reservation.allowance
+                    )
+                    try:
+                        self._set_current_handler_context(handler_context)
+                        buffered = self._invoke_handler(tool, validated_request)
+                        observations_payload, truncated = _validate_handler_payload(
+                            buffered
+                        )
+                        observations = _normalize_observations(
+                            observations_payload,
+                            tool_call_id=tool_call_id,
+                        )
+                        returned_chars, observed_paths, file_chars = (
+                            _observation_budget_delta(observations)
+                        )
+                        self._verify_bindings()
+                        self.budget.commit_result(
+                            reservation,
+                            result_chars=returned_chars,
+                            total_chars=returned_chars,
+                            observed_paths=observed_paths,
+                            file_chars=file_chars,
+                        )
+                        reservation = None
+                    finally:
+                        self._clear_current_handler_context()
+                        if reservation is not None:
+                            self.budget.release_result(reservation)
+
+                    envelope = self._build_envelope(
                         tool_call_id=tool_call_id,
+                        tool=tool_label,
+                        model_turn=turn,
+                        request=request_payload,
+                        status="ok",
+                        observations=observations,
+                        truncated=truncated,
+                        response_metadata={
+                            "observation_count": len(observations),
+                            "returned_chars": returned_chars,
+                        },
                     )
-                    returned_chars, observed_paths, file_chars = (
-                        _observation_budget_delta(observations)
-                    )
-                    self._verify_bindings()
-                    self.budget.commit_result(
-                        reservation,
-                        result_chars=returned_chars,
-                        total_chars=returned_chars,
-                        observed_paths=observed_paths,
-                        file_chars=file_chars,
-                    )
-                    reservation = None
-                finally:
-                    if reservation is not None:
-                        self.budget.release_result(reservation)
-
-                envelope = self._build_envelope(
-                    tool_call_id=tool_call_id,
-                    tool=tool_label,
-                    model_turn=turn,
-                    request=request_payload,
-                    status="ok",
-                    observations=observations,
-                    truncated=truncated,
-                    response_metadata={
-                        "observation_count": len(observations),
-                        "returned_chars": returned_chars,
-                    },
-                )
-                try:
-                    self.observation_store.append(envelope)
-                except Exception as exc:
-                    error = ContextProviderError(
-                        "context_observation_persistence_failed",
-                        "Repository context observation could not be persisted.",
-                    )
-                    error._terminal_record_attempted = True
-                    error.add_operational_signal(
-                        "context_observation_persistence_failed"
-                    )
-                    raise error from exc
-                return envelope
+                    try:
+                        self.observation_store.append(envelope)
+                    except Exception:
+                        pending_error = _build_persistence_failure_error()
+                    else:
+                        return envelope
         except ContextProviderError as exc:
             if not exc._terminal_record_attempted and turn is not None:
-                self._try_persist_error_envelope(
+                persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
                     model_turn=turn,
                     request=request_payload,
                     error=exc,
                 )
-            raise
+                pending_error = (
+                    persistence_error
+                    if persistence_error is not None
+                    else _detach_context_provider_error(exc)
+                )
+            elif pending_error is None:
+                pending_error = _detach_context_provider_error(exc)
         except RepositoryAccessError as exc:
             error = ContextProviderError(
                 exc.code,
@@ -639,53 +660,79 @@ class RepositoryContextProvider:
                 details=_safe_repository_error_details(exc.details),
             )
             if turn is not None:
-                self._try_persist_error_envelope(
+                persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
                     model_turn=turn,
                     request=request_payload,
                     error=error,
                 )
-            raise error from exc
+                pending_error = (
+                    persistence_error
+                    if persistence_error is not None
+                    else _detach_context_provider_error(error)
+                )
+            else:
+                pending_error = _detach_context_provider_error(error)
         except RepositorySnapshotError as exc:
             error = ContextProviderError(
                 exc.code,
                 "Repository snapshot verification failed.",
             )
             if turn is not None:
-                self._try_persist_error_envelope(
+                persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
                     model_turn=turn,
                     request=request_payload,
                     error=error,
                 )
-            raise error from exc
+                pending_error = (
+                    persistence_error
+                    if persistence_error is not None
+                    else _detach_context_provider_error(error)
+                )
+            else:
+                pending_error = _detach_context_provider_error(error)
         except ProjectImportError as exc:
             error = _normalize_artifact_error(exc)
             if turn is not None:
-                self._try_persist_error_envelope(
+                persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
                     model_turn=turn,
                     request=request_payload,
                     error=error,
                 )
-            raise error from exc
-        except Exception as exc:
+                pending_error = (
+                    persistence_error
+                    if persistence_error is not None
+                    else _detach_context_provider_error(error)
+                )
+            else:
+                pending_error = _detach_context_provider_error(error)
+        except Exception:
             error = ContextProviderError(
                 "context_provider_failed",
                 "Repository context operation failed.",
             )
             if turn is not None:
-                self._try_persist_error_envelope(
+                persistence_error = self._try_persist_error_envelope(
                     tool_call_id=tool_call_id,
                     tool=tool_label,
                     model_turn=turn,
                     request=request_payload,
                     error=error,
                 )
-            raise error from exc
+                pending_error = (
+                    persistence_error
+                    if persistence_error is not None
+                    else _detach_context_provider_error(error)
+                )
+            else:
+                pending_error = _detach_context_provider_error(error)
+        if pending_error is not None:
+            raise pending_error
 
     def _validate_constructor_binding(self) -> None:
         if not isinstance(self.snapshot, RepositorySnapshot):
@@ -699,6 +746,11 @@ class RepositoryContextProvider:
                 "Repository snapshot does not match the onboarding binding.",
             )
         if self.observation_store.project_key != self.project_key or self.observation_store.root != self.root:
+            raise ContextProviderError(
+                "onboarding_snapshot_mismatch",
+                "Repository snapshot does not match the onboarding binding.",
+            )
+        if self.observation_store.workspace != self.workspace:
             raise ContextProviderError(
                 "onboarding_snapshot_mismatch",
                 "Repository snapshot does not match the onboarding binding.",
@@ -755,7 +807,7 @@ class RepositoryContextProvider:
         model_turn: int,
         request: dict[str, object],
         error: ContextProviderError,
-    ) -> None:
+    ) -> ContextProviderError | None:
         error._terminal_record_attempted = True
         try:
             envelope = self._build_envelope(
@@ -770,9 +822,8 @@ class RepositoryContextProvider:
             )
             self.observation_store.append(envelope)
         except Exception:
-            error.add_operational_signal(
-                "context_observation_persistence_failed"
-            )
+            return _build_persistence_failure_error()
+        return None
 
     def _try_persist_denied_envelope(
         self,
@@ -782,7 +833,7 @@ class RepositoryContextProvider:
         model_turn: int,
         request: dict[str, object],
         error: ContextProviderError,
-    ) -> None:
+    ) -> ContextProviderError | None:
         error._terminal_record_attempted = True
         try:
             envelope = self._build_envelope(
@@ -797,9 +848,27 @@ class RepositoryContextProvider:
             )
             self.observation_store.append(envelope)
         except Exception:
-            error.add_operational_signal(
-                "context_observation_persistence_failed"
+            return _build_persistence_failure_error()
+        return None
+
+    def _set_current_handler_context(
+        self,
+        context: RepositoryContextHandlerCallContext,
+    ) -> None:
+        self._handler_context_local.value = context
+
+    def _clear_current_handler_context(self) -> None:
+        if hasattr(self._handler_context_local, "value"):
+            del self._handler_context_local.value
+
+    def _current_tool_call_context(self) -> RepositoryContextHandlerCallContext:
+        context = getattr(self._handler_context_local, "value", None)
+        if not isinstance(context, RepositoryContextHandlerCallContext):
+            raise ContextProviderError(
+                "context_provider_failed",
+                "Repository context operation failed.",
             )
+        return context
 
     def _invoke_handler(
         self,
@@ -809,6 +878,8 @@ class RepositoryContextProvider:
         try:
             return self._dispatch_tool(tool, request)
         except ContextProviderError as exc:
+            if exc.code == "context_request_invalid":
+                raise
             if exc.code == "context_tool_not_implemented":
                 raise ContextProviderError(
                     "context_tool_not_implemented",
@@ -859,23 +930,26 @@ class RepositoryContextProvider:
         )
 
     def _handle_list_tree(self, request: dict[str, object]) -> dict[str, object]:
-        path = ""
-        if "path" in request and isinstance(request["path"], str):
-            path = request["path"]
-        max_entries = 10
-        if "max_entries" in request and isinstance(request["max_entries"], int) and not isinstance(request["max_entries"], bool):
-            max_entries = request["max_entries"]
+        call_context = self._current_tool_call_context()
+        path, max_entries = _validate_list_tree_request(request)
         with AnchoredRepository(self.root, expected_identity=self.snapshot.root_identity) as repository:
-            entries = repository.list_directory(path, max_entries=max_entries)
-        observations = [
-            {
+            entries = repository.list_directory(path, max_entries=max_entries + 1)
+        observations: list[dict[str, object]] = []
+        truncated = len(entries) > max_entries
+        returned_chars = 0
+        for entry in entries[:max_entries]:
+            observation = {
                 "kind": "tree_entry",
                 "path": entry.path,
                 "entry_kind": entry.kind,
             }
-            for entry in entries
-        ]
-        return {"observations": observations, "truncated": False}
+            next_chars = returned_chars + _count_string_leaves(observation)
+            if next_chars > call_context.result_char_allowance:
+                truncated = True
+                break
+            observations.append(observation)
+            returned_chars = next_chars
+        return {"observations": observations, "truncated": truncated}
 
     def _handle_search_text(self, request: dict[str, object]) -> dict[str, object]:
         return self._not_implemented(request)
@@ -1007,6 +1081,29 @@ def _validate_request_object(request: object) -> dict[str, object]:
             "Repository context request must be a JSON object.",
         )
     return dict(request)
+
+
+def _validate_list_tree_request(
+    request: dict[str, object],
+) -> tuple[str, int]:
+    path = request.get("path", "")
+    max_entries = request.get("max_entries", 10)
+    if not isinstance(path, str):
+        raise ContextProviderError(
+            "context_request_invalid",
+            "Repository context request must be a JSON object.",
+        )
+    if (
+        isinstance(max_entries, bool)
+        or not isinstance(max_entries, int)
+        or max_entries <= 0
+        or max_entries > _LIST_TREE_MAX_ENTRIES
+    ):
+        raise ContextProviderError(
+            "context_request_invalid",
+            "Repository context request must be a JSON object.",
+        )
+    return path, max_entries
 
 
 def _validate_handler_payload(
@@ -1168,6 +1265,29 @@ def _normalize_artifact_error(exc: ProjectImportError) -> ContextProviderError:
         "onboarding_artifact_conflict",
         "Published onboarding snapshot is invalid.",
     )
+
+
+def _detach_context_provider_error(
+    error: ContextProviderError,
+) -> ContextProviderError:
+    detached = ContextProviderError(
+        error.code,
+        str(error),
+        details=dict(error.details),
+    )
+    detached.operational_signals = tuple(error.operational_signals)
+    detached._terminal_record_attempted = error._terminal_record_attempted
+    return detached
+
+
+def _build_persistence_failure_error() -> ContextProviderError:
+    error = ContextProviderError(
+        "context_observation_persistence_failed",
+        "Repository context observation could not be persisted.",
+    )
+    error._terminal_record_attempted = True
+    error.add_operational_signal("context_observation_persistence_failed")
+    return error
 
 
 def _safe_path_label(value: str) -> str:
