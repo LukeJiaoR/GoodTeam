@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,26 @@ def test_inventory_is_snapshot_bound_and_deterministic(tmp_path: Path) -> None:
             "classification": "heuristic",
         }
     ]
+
+
+def test_inventory_builds_from_dirty_git_snapshot(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    tracked = root / "tracked.py"
+    tracked.write_text("STAGED = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.py"], cwd=root, check=True)
+    tracked.write_text("STAGED = False\n", encoding="utf-8")
+    (root / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    recaptured = capture_repository_snapshot(root, project_key="DEMO")
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+
+    assert snapshot.source_control["dirty"] is True
+    assert recaptured.snapshot_id == snapshot.snapshot_id
+    assert inventory["snapshot_id"] == snapshot.snapshot_id
+    assert inventory["scan"]["files_seen"] == 2
 
 
 def test_inventory_digest_changes_with_a_new_snapshot(tmp_path: Path) -> None:

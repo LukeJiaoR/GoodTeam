@@ -135,6 +135,10 @@ def _scan_repository(
             if entry_count >= max_entries:
                 truncated_by_entries = True
                 return
+            name = PurePosixPath(entry.path).name
+            if entry.kind == "directory" and name in SKIPPED_DIRECTORY_NAMES:
+                entry_count += 1
+                continue
             state = validate_snapshot_path_entry(path_manifest, entry)
             entry_count += 1
             if state is None:
@@ -143,7 +147,6 @@ def _scan_repository(
                 if entry.kind == "symlink" or state.get("reason") == "symlink":
                     symlinks.append(entry.path)
                 continue
-            name = PurePosixPath(entry.path).name
             if entry.kind == "symlink":
                 symlinks.append(entry.path)
                 continue
