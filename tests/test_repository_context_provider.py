@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import inspect
 import json
 import os
@@ -3536,6 +3537,72 @@ def test_git_history_is_path_scoped(tmp_path: Path) -> None:
     assert all(item["commit_sha"] for item in result["observations"])
 
 
+def test_git_pathspec_magic_is_treated_as_literal_path(tmp_path: Path) -> None:
+    import subprocess
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    magic_path = ":(glob)*"
+    (root / magic_path).write_text("literal target\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "--", magic_path], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "literal magic target"], check=True)
+    (root / "outside.txt").write_text("outside tracked\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "outside.txt"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "outside tracked"], check=True)
+    (root / ".env").write_text("TOKEN=tracked-secret\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", ".env"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "sensitive tracked"], check=True)
+    (root / magic_path).write_text("literal target changed\n", encoding="utf-8")
+    (root / "outside.txt").write_text("outside changed\n", encoding="utf-8")
+    (root / ".env").write_text("TOKEN=changed-secret\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    history = fixture["provider"].call(
+        "inspect_git_history", {"path": magic_path, "limit": 10}, model_turn=1
+    )
+    changes = fixture["provider"].call(
+        "inspect_recent_changes", {"path": magic_path, "limit": 10}, model_turn=2
+    )
+
+    assert [item["message"] for item in history["observations"]] == [
+        "literal magic target"
+    ]
+    assert [item["path"] for item in changes["observations"]] == [magic_path]
+    rendered = json.dumps([history, changes])
+    assert "outside.txt" not in rendered
+    assert ".env" not in rendered
+    assert "tracked-secret" not in rendered
+    assert "changed-secret" not in rendered
+
+
+def test_git_literal_path_variants_continue_to_work(tmp_path: Path) -> None:
+    import subprocess
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    (root / "dir with spaces").mkdir()
+    variants = {
+        "dir with spaces/note file.txt": "spaces",
+        "unicodé.txt": "unicode",
+        ":(glob)*": "colon",
+    }
+    for path, marker in variants.items():
+        (root / path).write_text(f"{marker}\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "--", path], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", f"add {marker}"], check=True)
+    _refresh_fixture_snapshot(fixture)
+
+    root_history = fixture["provider"].call(
+        "inspect_git_history", {"path": "", "limit": 10}, model_turn=1
+    )
+    for turn, (path, marker) in enumerate(variants.items(), start=2):
+        history = fixture["provider"].call(
+            "inspect_git_history", {"path": path, "limit": 10}, model_turn=turn
+        )
+        assert [item["message"] for item in history["observations"]] == [f"add {marker}"]
+    assert len(root_history["observations"]) == 4
+
+
 def test_recent_changes_covers_staged_unstaged_and_untracked(tmp_path: Path) -> None:
     import subprocess
 
@@ -3556,6 +3623,88 @@ def test_recent_changes_covers_staged_unstaged_and_untracked(tmp_path: Path) -> 
     assert ("README.md", "unstaged") in changes
     assert ("untracked.py", "untracked") in changes
     assert all(item["diff_hash"].startswith("sha256:") for item in result["observations"])
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "expected_kind"),
+    [
+        ("non-utf8.bin", b"alpha\xffbeta", "non_utf8"),
+        ("binary.bin", b"alpha\x00beta", "binary"),
+    ],
+)
+def test_recent_changes_handles_untracked_non_text_bytes_without_leaking(
+    tmp_path: Path,
+    path: str,
+    payload: bytes,
+    expected_kind: str,
+) -> None:
+    import subprocess
+
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    before_files = {
+        item.relative_to(root).as_posix(): item.read_bytes()
+        for item in root.rglob("*")
+        if item.is_file()
+    }
+    before_status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v1", "-z"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    (root / path).write_bytes(payload)
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "inspect_recent_changes", {"path": path, "limit": 10}, model_turn=1
+    )
+
+    assert [item["path"] for item in result["observations"]] == [path]
+    observation = result["observations"][0]
+    assert observation["change_scope"] == "untracked"
+    assert observation["diff_content_kind"] == expected_kind
+    assert observation["diff_truncated"] is False
+    assert observation["diff_hash"] == "sha256:" + hashlib.sha256(payload).hexdigest()
+    rendered = json.dumps(result)
+    assert "alpha" not in rendered
+    assert "\\u0000" not in rendered
+    assert "\\xff" not in rendered
+    assert payload.decode("latin1") not in rendered
+    after_files = {
+        item.relative_to(root).as_posix(): item.read_bytes()
+        for item in root.rglob("*")
+        if item.is_file()
+    }
+    assert after_files == {**before_files, path: payload}
+    after_status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v1", "-z"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert after_status == before_status + f"?? {path}\0".encode("utf-8")
+
+
+def test_recent_changes_reports_exact_bounded_hash_for_long_untracked_text(
+    tmp_path: Path,
+) -> None:
+    fixture = _git_provider_fixture(tmp_path)
+    root = fixture["root"]
+    path = "long.txt"
+    payload = ("é" * 10000).encode("utf-8")
+    (root / path).write_bytes(payload)
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "inspect_recent_changes", {"path": path, "limit": 10}, model_turn=1
+    )
+
+    observation = result["observations"][0]
+    expected_prefix = payload[: fixture["budget"].limits.max_single_result_chars]
+    assert observation["diff_content_kind"] == "text"
+    assert observation["diff_truncated"] is True
+    assert observation["diff_hash"] == "sha256:" + hashlib.sha256(expected_prefix).hexdigest()
+    assert observation["diff"] == expected_prefix.decode("utf-8")
+    assert observation["diff"] != payload.decode("utf-8")
 
 
 def test_git_output_is_bounded(tmp_path: Path) -> None:
@@ -3732,17 +3881,19 @@ def test_git_operations_ignore_inherited_config_environment(
             "GIT_PAGER",
             "GIT_CONFIG_NOSYSTEM",
             "GIT_CONFIG_GLOBAL",
+            "GIT_LITERAL_PATHSPECS",
             "LC_ALL",
         }
     else:
         assert set(env) == {
-                "PATH",
-                "TMPDIR",
-                "GIT_OPTIONAL_LOCKS",
-                "GIT_TERMINAL_PROMPT",
-                "GIT_PAGER",
-                "GIT_CONFIG_NOSYSTEM",
-                "GIT_CONFIG_GLOBAL",
+            "PATH",
+            "TMPDIR",
+            "GIT_OPTIONAL_LOCKS",
+            "GIT_TERMINAL_PROMPT",
+            "GIT_PAGER",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_LITERAL_PATHSPECS",
             "LC_ALL",
         }
 

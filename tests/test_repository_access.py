@@ -9,6 +9,7 @@ from goodteam_os import repository_access
 from goodteam_os.repository_access import (
     AnchoredRepository,
     RepositoryAccessError,
+    RepositoryBytes,
     canonical_relative_path,
 )
 
@@ -100,6 +101,33 @@ def test_reader_returns_longest_valid_utf8_prefix_without_newline(tmp_path: Path
     assert result.text == "abc"
     assert result.truncated is True
     assert (result.start_line, result.end_line) == (1, 1)
+
+
+def test_raw_reader_returns_exact_bounded_bytes(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    payload = "abc\u00e9z".encode("utf-8")
+    (root / "data.txt").write_bytes(payload)
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        result = repository.read_bytes("data.txt", max_bytes=4)
+    assert result == RepositoryBytes(
+        path="data.txt",
+        data=payload[:4],
+        size=len(payload),
+        truncated=True,
+    )
+
+
+def test_raw_reader_allows_nul_and_invalid_utf8_without_decoding(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    payload = b"alpha\x00beta\xff"
+    (root / "data.bin").write_bytes(payload)
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        result = repository.read_bytes("data.bin", max_bytes=128)
+    assert result.data == payload
+    assert result.size == len(payload)
+    assert result.truncated is False
 
 
 def test_walk_is_deterministic_and_skips_ignored_directories(tmp_path: Path) -> None:
@@ -342,6 +370,50 @@ def test_reader_detects_entry_change_during_read(
     assert changed is True
     assert error.value.code == "repository_entry_changed"
     assert error.value.details == {"path": "README.md"}
+
+
+@pytest.mark.parametrize("path", ["README.md", "linked-file"])
+def test_raw_reader_detects_symlink_or_replacement_during_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    path: str,
+) -> None:
+    root = tmp_path / "repo"
+    external = tmp_path / "external"
+    root.mkdir()
+    external.mkdir()
+    target = root / "README.md"
+    target.write_bytes(b"original\n")
+    (external / "secret.txt").write_text("TOP_SECRET", encoding="utf-8")
+    if path == "linked-file":
+        target.unlink()
+        target.symlink_to(external / "secret.txt")
+        with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+            with pytest.raises(RepositoryAccessError) as error:
+                repository.read_bytes("README.md", max_bytes=128)
+        assert error.value.code == "context_path_rejected"
+        return
+
+    original_read = os.read
+    changed = False
+
+    def changing_read(descriptor: int, size: int) -> bytes:
+        nonlocal changed
+        content = original_read(descriptor, size)
+        if changed:
+            return content
+        changed = True
+        replacement = root / "replacement"
+        replacement.write_bytes(b"changed\n")
+        replacement.replace(target)
+        return content
+
+    monkeypatch.setattr(repository_access.os, "read", changing_read)
+    with AnchoredRepository(root, expected_identity=root_identity(root)) as repository:
+        with pytest.raises(RepositoryAccessError) as error:
+            repository.read_bytes("README.md", max_bytes=128)
+    assert changed is True
+    assert error.value.code == "repository_entry_changed"
 
 
 def test_reader_rechecks_root_after_text_processing(

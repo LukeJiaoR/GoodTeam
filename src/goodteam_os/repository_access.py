@@ -56,6 +56,14 @@ class RepositoryText:
     truncated: bool
 
 
+@dataclass(frozen=True)
+class RepositoryBytes:
+    path: str
+    data: bytes
+    size: int
+    truncated: bool
+
+
 def canonical_relative_path(value: str, allow_root: bool = False) -> str:
     raw_path = str(value)
     if raw_path == "" and allow_root:
@@ -214,39 +222,7 @@ class AnchoredRepository:
         canonical = canonical_relative_path(path)
         if max_bytes < 0:
             raise ValueError("max_bytes must be non-negative")
-        parent_path, name = _split_parent(canonical)
-        parent_fd = self._open_directory(parent_path)
-        descriptor = -1
-        try:
-            before_entry = _lstat_at(parent_fd, name)
-            if stat.S_ISLNK(before_entry.st_mode):
-                raise _symlink_rejected(canonical)
-            descriptor = _open_file_at(parent_fd, name, canonical)
-            before_descriptor = os.fstat(descriptor)
-            if not stat.S_ISREG(before_descriptor.st_mode):
-                raise RepositoryAccessError(
-                    "context_path_rejected",
-                    f"Repository path is not a regular file: {canonical}",
-                    details={"path": canonical},
-                )
-            _require_same_entry(canonical, before_entry, before_descriptor)
-            observed = _read_bounded(descriptor, max_bytes + 1)
-            after_descriptor = os.fstat(descriptor)
-            try:
-                after_entry = _lstat_at(parent_fd, name)
-            except OSError as exc:
-                raise _entry_changed(canonical) from exc
-            _require_unchanged_entry(
-                canonical,
-                before_descriptor,
-                after_descriptor,
-                after_entry,
-            )
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-            os.close(parent_fd)
-        self.verify_root()
+        observed, size = _read_regular_file_bytes(self, canonical, max_bytes=max_bytes)
         returned, truncated = _bounded_text_bytes(
             canonical,
             observed,
@@ -257,10 +233,25 @@ class AnchoredRepository:
             path=canonical,
             text=text,
             content_hash=f"sha256:{hashlib.sha256(returned).hexdigest()}",
-            size=before_descriptor.st_size,
+            size=size,
             start_line=1,
             end_line=_end_line(text),
             truncated=truncated,
+        )
+        self.verify_root()
+        return result
+
+    def read_bytes(self, path: str, *, max_bytes: int) -> RepositoryBytes:
+        canonical = canonical_relative_path(path)
+        if max_bytes < 0:
+            raise ValueError("max_bytes must be non-negative")
+        observed, size = _read_regular_file_bytes(self, canonical, max_bytes=max_bytes)
+        self.verify_root()
+        result = RepositoryBytes(
+            path=canonical,
+            data=observed[:max_bytes],
+            size=size,
+            truncated=len(observed) > max_bytes,
         )
         self.verify_root()
         return result
@@ -356,6 +347,47 @@ def _directory_flags() -> int:
 
 def _file_flags() -> int:
     return os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _read_regular_file_bytes(
+    repository: AnchoredRepository,
+    path: str,
+    *,
+    max_bytes: int,
+) -> tuple[bytes, int]:
+    parent_path, name = _split_parent(path)
+    parent_fd = repository._open_directory(parent_path)
+    descriptor = -1
+    try:
+        before_entry = _lstat_at(parent_fd, name)
+        if stat.S_ISLNK(before_entry.st_mode):
+            raise _symlink_rejected(path)
+        descriptor = _open_file_at(parent_fd, name, path)
+        before_descriptor = os.fstat(descriptor)
+        if not stat.S_ISREG(before_descriptor.st_mode):
+            raise RepositoryAccessError(
+                "context_path_rejected",
+                f"Repository path is not a regular file: {path}",
+                details={"path": path},
+            )
+        _require_same_entry(path, before_entry, before_descriptor)
+        observed = _read_bounded(descriptor, max_bytes + 1)
+        after_descriptor = os.fstat(descriptor)
+        try:
+            after_entry = _lstat_at(parent_fd, name)
+        except OSError as exc:
+            raise _entry_changed(path) from exc
+        _require_unchanged_entry(
+            path,
+            before_descriptor,
+            after_descriptor,
+            after_entry,
+        )
+        return observed, before_descriptor.st_size
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_fd)
 
 
 def _lstat_at(directory_fd: int, name: str) -> os.stat_result:

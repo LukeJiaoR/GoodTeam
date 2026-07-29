@@ -15,6 +15,7 @@ from goodteam_os._repository_content_policy import (
 from goodteam_os.repository_access import (
     AnchoredRepository,
     RepositoryAccessError,
+    RepositoryBytes,
     canonical_relative_path,
 )
 from goodteam_os.repository_context_provider import ContextProviderError
@@ -52,6 +53,14 @@ _SAFE_EXECUTION_ENV_KEYS = frozenset(
 class _ProcessResult:
     stdout: bytes
     returncode: int
+
+
+@dataclass(frozen=True)
+class _ChangeDiff:
+    raw_bytes: bytes
+    display_text: str
+    content_kind: str
+    truncated: bool
 
 
 def inspect_git_history(
@@ -157,7 +166,7 @@ def inspect_recent_changes(
     returned_chars = 0
     truncated = sensitive_paths_omitted or len(eligible_changes) > limit
     for scope, item, revision in eligible_changes[:limit]:
-        raw_diff = _change_diff_bytes(
+        diff = _change_diff(
             root=root,
             snapshot=snapshot,
             process_factory=process_factory,
@@ -166,22 +175,16 @@ def inspect_recent_changes(
             path=str(item["path"]),
             output_allowance=max(1, result_char_allowance - returned_chars),
         )
-        try:
-            diff_text = raw_diff.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ContextProviderError(
-                "context_tool_invalid_output",
-                "Repository context tool produced invalid output.",
-            ) from exc
-        redacted_diff = redact_observation_text(diff_text)[0]
         observation = {
             "kind": "git_change",
             "path": item["path"],
             "change_scope": scope,
             "old_blob": item.get("old_blob"),
             "new_blob": item.get("new_blob"),
-            "diff_hash": hash_bytes(raw_diff),
-            "diff": redacted_diff,
+            "diff_hash": hash_bytes(diff.raw_bytes),
+            "diff": diff.display_text,
+            "diff_content_kind": diff.content_kind,
+            "diff_truncated": diff.truncated,
         }
         next_chars = returned_chars + _string_chars(observation)
         if next_chars > result_char_allowance:
@@ -383,6 +386,7 @@ def _git_environment() -> dict[str, str]:
             "GIT_PAGER": "cat",
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_LITERAL_PATHSPECS": "1",
             "LC_ALL": "C",
         }
     )
@@ -594,7 +598,7 @@ def _parse_nul_paths(value: bytes) -> list[str]:
     return paths
 
 
-def _change_diff_bytes(
+def _change_diff(
     *,
     root,
     snapshot: RepositorySnapshot,
@@ -603,12 +607,16 @@ def _change_diff_bytes(
     revision: str | None,
     path: str,
     output_allowance: int,
-) -> bytes:
+) -> _ChangeDiff:
     if scope == "untracked":
-        with AnchoredRepository(root, expected_identity=snapshot.root_identity) as repository:
-            text = repository.read_text(path, max_bytes=output_allowance)
-        return text.text.encode("utf-8")
-    return _dispatch_git_operation(
+        raw = _read_untracked_bytes(
+            root=root,
+            snapshot=snapshot,
+            path=path,
+            output_allowance=output_allowance,
+        )
+        return _render_untracked_diff(raw)
+    raw_diff = _dispatch_git_operation(
         root=root,
         snapshot=snapshot,
         process_factory=process_factory,
@@ -617,6 +625,69 @@ def _change_diff_bytes(
         revision=revision,
         output_allowance=output_allowance,
     ).stdout
+    try:
+        diff_text = raw_diff.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContextProviderError(
+            "context_tool_invalid_output",
+            "Repository context tool produced invalid output.",
+        ) from exc
+    return _ChangeDiff(
+        raw_bytes=raw_diff,
+        display_text=redact_observation_text(diff_text)[0],
+        content_kind="text",
+        truncated=False,
+    )
+
+
+def _read_untracked_bytes(
+    *,
+    root,
+    snapshot: RepositorySnapshot,
+    path: str,
+    output_allowance: int,
+) -> RepositoryBytes:
+    verify_repository_snapshot(root, snapshot)
+    with AnchoredRepository(root, expected_identity=snapshot.root_identity) as repository:
+        repository.verify_root()
+        result = repository.read_bytes(path, max_bytes=output_allowance)
+        repository.verify_root()
+    verify_repository_snapshot(root, snapshot)
+    return result
+
+
+def _render_untracked_diff(value: RepositoryBytes) -> _ChangeDiff:
+    raw_bytes = value.data
+    truncated = value.truncated
+    if b"\x00" in raw_bytes:
+        return _ChangeDiff(
+            raw_bytes=raw_bytes,
+            display_text="<binary content omitted>",
+            content_kind="binary",
+            truncated=truncated,
+        )
+    try:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        if (
+            truncated
+            and exc.reason == "unexpected end of data"
+            and exc.end == len(raw_bytes)
+        ):
+            text = raw_bytes[: exc.start].decode("utf-8")
+        else:
+            return _ChangeDiff(
+                raw_bytes=raw_bytes,
+                display_text="<non-utf-8 content omitted>",
+                content_kind="non_utf8",
+                truncated=truncated,
+            )
+    return _ChangeDiff(
+        raw_bytes=raw_bytes,
+        display_text=redact_observation_text(text)[0],
+        content_kind="text",
+        truncated=truncated,
+    )
 
 
 def _invalid_output() -> ContextProviderError:
