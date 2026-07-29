@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from goodteam_os import repository_inventory
+from goodteam_os.repository_access import RepositoryEntry
 from goodteam_os.repository_inventory import build_repository_inventory
 from goodteam_os.repository_snapshot import (
     RepositorySnapshotError,
@@ -68,6 +69,124 @@ def test_inventory_builds_from_dirty_git_snapshot(tmp_path: Path) -> None:
     assert recaptured.snapshot_id == snapshot.snapshot_id
     assert inventory["snapshot_id"] == snapshot.snapshot_id
     assert inventory["scan"]["files_seen"] == 2
+
+
+def test_inventory_builds_from_linked_git_worktree_snapshot(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    linked = tmp_path / "linked"
+    primary.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=primary, check=True)
+    (primary / "tracked.py").write_text("TRACKED = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.py"], cwd=primary, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=GoodTeam Test",
+            "-c",
+            "user.email=goodteam@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=primary,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "linked-fixture", linked],
+        cwd=primary,
+        check=True,
+    )
+
+    snapshot = capture_repository_snapshot(linked, project_key="DEMO")
+
+    inventory = build_repository_inventory(linked, snapshot=snapshot)
+    bounded = build_repository_inventory(linked, snapshot=snapshot, max_entries=1)
+
+    assert inventory["snapshot_id"] == snapshot.snapshot_id
+    assert inventory["scan"]["files_seen"] == 1
+    assert bounded["scan"]["entries_seen"] == 1
+    assert bounded["scan"]["files_seen"] == 0
+    assert bounded["scan"]["truncation_reasons"] == ["max_entries"]
+
+
+@pytest.mark.parametrize(
+    ("entry", "source_control", "expected"),
+    [
+        (
+            RepositoryEntry(
+                path=".git",
+                kind="file",
+                size=42,
+                mtime_ns=1,
+            ),
+            {"kind": "git"},
+            True,
+        ),
+        (
+            RepositoryEntry(
+                path="nested/.git",
+                kind="file",
+                size=42,
+                mtime_ns=1,
+            ),
+            {"kind": "git"},
+            False,
+        ),
+        (
+            RepositoryEntry(
+                path=".git",
+                kind="symlink",
+                size=42,
+                mtime_ns=1,
+            ),
+            {"kind": "git"},
+            False,
+        ),
+        (
+            RepositoryEntry(
+                path=".git",
+                kind="file",
+                size=42,
+                mtime_ns=1,
+            ),
+            {"kind": "none"},
+            False,
+        ),
+        (
+            RepositoryEntry(
+                path="node_modules",
+                kind="file",
+                size=42,
+                mtime_ns=1,
+            ),
+            {"kind": "git"},
+            False,
+        ),
+        (
+            RepositoryEntry(
+                path="nested/node_modules",
+                kind="directory",
+                size=0,
+                mtime_ns=1,
+            ),
+            {"kind": "none"},
+            True,
+        ),
+    ],
+)
+def test_inventory_policy_skips_only_allowed_metadata_entries(
+    entry: RepositoryEntry,
+    source_control: dict[str, object],
+    expected: bool,
+) -> None:
+    assert (
+        repository_inventory._is_policy_skipped_entry(
+            entry,
+            source_control=source_control,
+        )
+        is expected
+    )
 
 
 def test_inventory_digest_changes_with_a_new_snapshot(tmp_path: Path) -> None:

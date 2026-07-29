@@ -136,7 +136,10 @@ def _scan_repository(
                 truncated_by_entries = True
                 return
             name = PurePosixPath(entry.path).name
-            if entry.kind == "directory" and name in SKIPPED_DIRECTORY_NAMES:
+            if _is_policy_skipped_entry(
+                entry,
+                source_control=snapshot.source_control,
+            ):
                 entry_count += 1
                 continue
             state = validate_snapshot_path_entry(path_manifest, entry)
@@ -254,6 +257,23 @@ def _scan_repository(
             "read_only": True,
         },
     }
+
+
+def _is_policy_skipped_entry(
+    entry: RepositoryEntry,
+    *,
+    source_control: dict[str, object],
+) -> bool:
+    if (
+        entry.kind == "directory"
+        and PurePosixPath(entry.path).name in SKIPPED_DIRECTORY_NAMES
+    ):
+        return True
+    return (
+        entry.kind == "file"
+        and entry.path == ".git"
+        and source_control.get("kind") == "git"
+    )
 
 
 def _read_inventory_text(
