@@ -106,6 +106,36 @@ def _rebuild_provider(fixture: dict[str, object], provider_type, *, budget=None)
     )
 
 
+def _refresh_fixture_snapshot(fixture: dict[str, object]) -> dict[str, object]:
+    from goodteam_os.repository_context_provider import RepositoryContextProvider
+
+    fixture["snapshot"] = capture_repository_snapshot(
+        fixture["root"],
+        project_key=fixture["project_key"],
+    )
+    OnboardingArtifactStore(
+        fixture["workspace"],
+        fixture["project_key"],
+        fixture["root"],
+    ).publish_snapshot(fixture["snapshot"])
+    fixture["store"] = OnboardingObservationStore(
+        fixture["workspace"],
+        fixture["project_key"],
+        fixture["root"],
+        "job-1",
+        fixture["snapshot"].snapshot_id,
+    )
+    fixture["provider"] = RepositoryContextProvider(
+        workspace=fixture["workspace"],
+        project_key=fixture["project_key"],
+        root=fixture["root"],
+        snapshot=fixture["snapshot"],
+        observation_store=fixture["store"],
+        budget=fixture["budget"],
+    )
+    return fixture
+
+
 def test_provider_rejects_unknown_tool(tmp_path: Path) -> None:
     from goodteam_os.repository_context_provider import ContextProviderError
 
@@ -1204,6 +1234,73 @@ def test_list_tree_request_rejects_unsupported_keys(
     assert record["observations"] == []
     assert record["response_metadata"] == {"error": {"code": "context_request_invalid"}}
 
+def test_read_excerpt_returns_lines_and_redacts_secrets(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    src = fixture["root"] / "src"
+    src.mkdir()
+    (src / "settings.py").write_text(
+        "\n".join(
+            [
+                "DEBUG = False",
+                'STRIPE_KEY = "sk-live-secret"',
+                "SERVICE = 'payments'",
+                "ENABLED = True",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _refresh_fixture_snapshot(fixture)
+
+    response = fixture["provider"].call(
+        "read_file_excerpt",
+        {"path": "src/settings.py", "start_line": 2, "line_count": 3},
+        model_turn=1,
+    )
+
+    assert response["status"] == "ok"
+    assert response["truncated"] is False
+    assert len(response["observations"]) == 1
+    observation = response["observations"][0]
+    assert observation["path"] == "src/settings.py"
+    assert observation["start_line"] == 2
+    assert observation["end_line"] == 4
+    assert observation["content_hash"].startswith("sha256:")
+    assert "sk-live-secret" not in observation["text"]
+    assert "redacted" in observation["text"]
+
+    encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(
+        "utf-8"
+    )
+    assert "sk-live-secret" not in encoded
+
+
+def test_list_tree_is_bounded_and_excludes_generated_content(tmp_path: Path) -> None:
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / "docs").mkdir()
+    (fixture["root"] / "docs" / "guide.md").write_text("guide\n", encoding="utf-8")
+    (fixture["root"] / "src").mkdir()
+    (fixture["root"] / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (fixture["root"] / "src" / "nested").mkdir()
+    (fixture["root"] / "src" / "nested" / "more.py").write_text("pass\n", encoding="utf-8")
+    (fixture["root"] / "node_modules").mkdir()
+    (fixture["root"] / "node_modules" / "left-pad.js").write_text("module.exports = 1;\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
+
+    response = fixture["provider"].call(
+        "list_tree",
+        {"path": "", "depth": 2, "max_entries": 3},
+        model_turn=1,
+    )
+
+    assert response["status"] == "ok"
+    assert response["truncated"] is True
+    assert len(response["observations"]) == 3
+    assert all(
+        not item["path"].startswith("node_modules")
+        for item in response["observations"]
+    )
+
 
 def test_list_tree_reports_truncation_honestly(tmp_path: Path) -> None:
     fixture = _provider_fixture(tmp_path)
@@ -1498,7 +1595,6 @@ def test_call_time_binding_failures_win_without_any_ledger_write(
     "tool",
     [
         "search_text",
-        "read_file_excerpt",
         "inspect_manifest",
         "inspect_git_history",
         "inspect_tests",
