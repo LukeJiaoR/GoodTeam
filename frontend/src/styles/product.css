@@ -1563,13 +1563,15 @@
 .product-shell .work-focus-panel { position: sticky; top: 8.5rem; align-self: start; padding: 1.4rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
 .product-shell .work-focus-panel h2 { margin: 0; font-size: clamp(1.55rem, 3vw, 2.35rem); letter-spacing: -0.04em; line-height: 1.05; }
 .product-shell .work-focus-panel > p:not(.product-eyebrow) { color: var(--product-text-muted); }
+.product-shell .work-focus-panel > .product-button { margin-top: 0.45rem; text-decoration: none; }
 .product-shell .work-feedback { padding-top: 0.8rem; border-top: 1px solid var(--product-border); }
 .product-shell .work-run-controls { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--product-border); }
 .product-shell .work-run-controls summary { font-weight: 620; cursor: pointer; }
 .product-shell .work-run-controls p { color: var(--product-text-muted); font-size: 0.82rem; }
-.product-shell .work-run-selector select { max-width: 16rem; font-family: "Geist Mono Variable", monospace; font-size: 0.75rem; }
+.product-shell .work-run-title { max-width: 22rem; overflow: hidden; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.product-shell .work-run-selector select { max-width: 22rem; font-family: inherit; font-size: 0.875rem; }
 .product-shell .work-historical-view { max-width: 48rem; padding: 1.4rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
-.product-shell .work-historical-view > h2 { margin: 0; font-family: "Geist Mono Variable", monospace; font-size: 1.35rem; }
+.product-shell .work-historical-view > h2 { margin: 0; font-size: 1.35rem; }
 .product-shell .work-historical-view > p:not(.product-eyebrow) { color: var(--product-text-muted); }
 .product-shell .work-historical-view > a { color: var(--product-accent-strong); font-weight: 620; }
 
@@ -1610,12 +1612,23 @@
 .product-shell .review-queue a > span { display: grid; min-width: 0; }
 .product-shell .review-queue small { overflow: hidden; color: var(--product-text-muted); text-overflow: ellipsis; white-space: nowrap; }
 .product-shell .review-artifact { min-width: 0; }
+.product-shell .review-recovery { display: grid; grid-column: span 2; gap: 1rem; min-width: 0; padding: clamp(1.15rem, 3vw, 2rem); background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .review-recovery > h2 { font-size: clamp(1.55rem, 3vw, 2.35rem); line-height: 1.05; }
+.product-shell .review-recovery > p:not(.product-eyebrow):not(.product-boundary-note) { max-width: 58ch; margin: 0; color: var(--product-text-muted); line-height: 1.65; }
+.product-shell .review-recovery label { display: grid; gap: 0.4rem; max-width: 52rem; color: var(--product-text-muted); font-size: 0.82rem; font-weight: 600; }
+.product-shell .review-recovery textarea { width: 100%; }
 .product-shell .review-artifact header { display: flex; gap: 1rem; align-items: end; justify-content: space-between; margin-bottom: 0.8rem; }
 .product-shell .review-view-switcher { display: flex; }
 .product-shell .review-view-switcher button { padding: 0.45rem 0.7rem; color: var(--product-text-muted); background: transparent; border: 1px solid var(--product-border); cursor: pointer; }
 .product-shell .review-view-switcher button.is-active { color: var(--product-text); background: var(--product-surface-muted); }
 .product-shell .review-diff { min-height: 60dvh; overflow: auto; color: var(--product-text); background: var(--product-surface-muted); font-size: 0.8rem; line-height: 1.55; white-space: pre-wrap; }
 .product-shell .review-editor textarea { width: 100%; min-height: 60dvh; padding: 1rem; font-family: "Geist Mono Variable", monospace; font-size: 0.84rem; line-height: 1.6; resize: vertical; }
+.product-shell .review-brief-preview { min-height: 60dvh; padding: clamp(1.15rem, 3vw, 2rem); background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .review-brief-preview h3 { margin: 1.8rem 0 0.6rem; font-size: 1.1rem; }
+.product-shell .review-brief-preview h3:first-child { margin-top: 0; }
+.product-shell .review-brief-preview p { max-width: 68ch; margin: 0.55rem 0; color: var(--product-text-muted); line-height: 1.65; }
+.product-shell .review-brief-preview__item { padding-left: 1.2rem; position: relative; }
+.product-shell .review-brief-preview__item::before { content: "•"; position: absolute; left: 0; color: var(--product-accent-strong); }
 .product-shell .review-inspector { display: grid; gap: 1rem; }
 .product-shell .review-inspector > section,
 .product-shell .review-inspector > details,
@@ -1706,6 +1719,7 @@
 @media (max-width: 1000px) {
   .product-shell .review-workspace { grid-template-columns: minmax(13rem, 0.65fr) minmax(0, 1.35fr); }
   .product-shell .review-inspector { grid-column: 2; }
+  .product-shell .review-recovery { grid-column: 2; }
   .product-shell .work-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 

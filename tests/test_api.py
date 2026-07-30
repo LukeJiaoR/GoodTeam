@@ -1607,6 +1607,31 @@ def test_api_approve_forwards_rejected_note(tmp_path, monkeypatch):
     assert captured["note"] == "Safety validation failed."
 
 
+def test_api_recover_takeover_brief_forwards_optional_note(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_recover(**kwargs):
+        captured.update(kwargs)
+        return {"run_id": "run-1", "recovered": True, "next_node": "await_takeover_approval"}
+
+    monkeypatch.setattr("goodteam_os.web.recover_legacy_takeover_review", fake_recover)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/recover-takeover-brief",
+        {"project_key": "CONTENTOPS", "note": "Explain the main risk."},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 200 in handler.responses
+    assert captured == {
+        "workspace": tmp_path,
+        "project_key": "CONTENTOPS",
+        "note": "Explain the main risk.",
+    }
+    assert json.loads(handler.wfile.getvalue().decode("utf-8"))["recovered"] is True
+
+
 
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"

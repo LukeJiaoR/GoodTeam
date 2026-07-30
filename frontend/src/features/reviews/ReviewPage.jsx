@@ -14,6 +14,27 @@ function reviewTone(review) {
   return 'pending';
 }
 
+function reviewTitle(review, t) {
+  if (review.approval === 'takeover') return t('review.item.takeover');
+  return review.title || review.approval.toUpperCase();
+}
+
+function reviewStatus(review, t) {
+  if (review.recovery?.available) return t('review.queue.recoveryAction');
+  if (review.is_actionable) return t('review.queue.action');
+  const labels = {
+    approved: 'review.status.approved',
+    changes_requested: 'review.status.changesRequested',
+    rejected: 'review.status.rejected',
+    pending: 'review.queue.pending',
+  };
+  return labels[review.decision || review.status] ? t(labels[review.decision || review.status]) : (review.decision || review.status || t('review.queue.pending'));
+}
+
+function reviewPriority(review) {
+  return review.is_current || review.is_actionable || review.recovery?.available ? 0 : 1;
+}
+
 function asObject(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
@@ -35,6 +56,47 @@ function lineDiff(before, after) {
   return lines.join('\n');
 }
 
+function briefHeading(value, t) {
+  const headings = {
+    'What I looked at': 'review.brief.heading.lookedAt',
+    'Key findings': 'review.brief.heading.findings',
+    'My current assessment': 'review.brief.heading.assessment',
+    'Current assessment': 'review.brief.heading.assessment',
+    'Risks and unknowns': 'review.brief.heading.risks',
+    'Questions for you': 'review.brief.heading.questions',
+    'Requested changes': 'review.brief.heading.requestedChanges',
+    'What happens next': 'review.brief.heading.next',
+  };
+  return headings[value] ? t(headings[value]) : value;
+}
+
+function BriefPreview({ content, t }) {
+  return (
+    <section className="review-brief-preview">
+      {String(content || '').split('\n').map((rawLine, index) => {
+        const line = rawLine.trim();
+        if (!line) return null;
+        const heading = line.match(/^#{1,6}\s+(.+)$/);
+        if (heading) return line.startsWith('# ') ? null : <h3 key={index}>{briefHeading(heading[1], t)}</h3>;
+        const item = line.match(/^[-*]\s+(.+)$/) || line.match(/^\d+[.)]\s+(.+)$/);
+        if (item) return <p className="review-brief-preview__item" key={index}>{item[1]}</p>;
+        return <p key={index}>{line}</p>;
+      })}
+    </section>
+  );
+}
+
+function recommendationVerdict(value, t) {
+  const key = `review.recommendation.verdict.${value}`;
+  const translated = t(key);
+  return translated === key ? value : translated;
+}
+
+function recommendationReason(reason, t) {
+  if (reason?.kind === 'clean') return t('review.recommendation.reason.clean');
+  return reason?.text || reason;
+}
+
 function ReviewList({ projectKey, reviews, selected, t }) {
   return (
     <aside className="review-queue" aria-label={t('review.queue.label')}>
@@ -42,8 +104,8 @@ function ReviewList({ projectKey, reviews, selected, t }) {
       {reviews.length ? <ol>{reviews.map((review) => (
         <li key={review.approval}>
           <Link className={selected === review.approval ? 'is-active' : ''} to={routes.projectReviewItem(projectKey, review.approval)}>
-            <span><strong>{review.title || review.approval.toUpperCase()}</strong><small>{review.artifact || t('review.queue.noArtifact')}</small></span>
-            <StatusBadge tone={reviewTone(review)}>{review.is_actionable ? t('review.queue.action') : (review.decision || review.status || t('review.queue.pending'))}</StatusBadge>
+            <span><strong>{reviewTitle(review, t)}</strong><small>{review.recovery?.available ? t('review.queue.recoveryNeeded') : (review.artifact_path ? t('review.queue.artifactReady') : t('review.queue.noArtifact'))}</small></span>
+            <StatusBadge tone={reviewTone(review)}>{reviewStatus(review, t)}</StatusBadge>
           </Link>
         </li>
       ))}</ol> : <p className="product-empty-copy">{t('review.queue.empty')}</p>}
@@ -51,13 +113,29 @@ function ReviewList({ projectKey, reviews, selected, t }) {
   );
 }
 
+function TakeoverRecovery({ busy, error, onRecover, review, t }) {
+  const [note, setNote] = useState(review.recovery?.note || '');
+  return (
+    <article className="review-recovery">
+      <p className="product-eyebrow">{t('review.recovery.eyebrow')}</p>
+      <h2>{t('review.recovery.title')}</h2>
+      <p>{t('review.recovery.description')}</p>
+      <label><span>{t('review.recovery.note')}</span><textarea rows="4" value={note} onChange={(event) => setNote(event.target.value)} /></label>
+      <Button busy={busy === 'recover'} disabled={!note.trim()} onClick={() => onRecover(note)}>{t('review.recovery.action')}</Button>
+      <p className="product-boundary-note">{t('review.recovery.hint')}</p>
+      {error ? <ProductError error={error} t={t} /> : null}
+    </article>
+  );
+}
+
 function ArtifactPanel({ onChange, review, t, value }) {
-  const [view, setView] = useState('artifact');
+  const isBrief = review.approval === 'takeover';
+  const [view, setView] = useState(isBrief ? 'preview' : 'edit');
   const baseline = typeof review.content === 'string' ? review.content : '';
   return (
     <article className="review-artifact">
-      <header><div><p className="product-eyebrow">{review.artifact || review.approval}</p><h2>{review.title || review.approval.toUpperCase()}</h2></div><div className="review-view-switcher"><button className={view === 'artifact' ? 'is-active' : ''} onClick={() => setView('artifact')}>{t('review.artifact.view')}</button><button className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}>{t('review.artifact.diff')}</button></div></header>
-      {view === 'artifact' ? <label className="review-editor"><span className="sr-only">{t('review.artifact.content')}</span><textarea spellCheck="false" value={value} onChange={(event) => onChange(event.target.value)} /></label> : <pre className="review-diff" aria-label={t('review.artifact.diff')}>{lineDiff(baseline, value)}</pre>}
+      <header><div><p className="product-eyebrow">{t('review.artifact.eyebrow')}</p><h2>{reviewTitle(review, t)}</h2></div><div className="review-view-switcher">{isBrief ? <button className={view === 'preview' ? 'is-active' : ''} onClick={() => setView('preview')}>{t('review.artifact.read')}</button> : null}<button className={view === 'edit' ? 'is-active' : ''} onClick={() => setView('edit')}>{t('review.artifact.edit')}</button><button className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}>{t('review.artifact.diff')}</button></div></header>
+      {view === 'preview' ? <BriefPreview content={value} t={t} /> : view === 'edit' ? <label className="review-editor"><span className="sr-only">{t('review.artifact.content')}</span><textarea spellCheck="false" value={value} onChange={(event) => onChange(event.target.value)} /></label> : <pre className="review-diff" aria-label={t('review.artifact.diff')}>{lineDiff(baseline, value)}</pre>}
     </article>
   );
 }
@@ -72,10 +150,10 @@ function Inspector({ busy, error, onAccept, onAnswer, onDecision, onDiscard, onR
   return (
     <aside className="review-inspector">
       <section><h2>{t('review.recommendation.title')}</h2>
-        <p className="review-verdict">{recommendation.verdict || t('review.recommendation.none')}</p>
-        {recommendation.reasons?.map?.((reason, index) => <p key={index}>{reason.text || reason}</p>)}
+        <p className="review-verdict">{recommendation.verdict ? recommendationVerdict(recommendation.verdict, t) : t('review.recommendation.none')}</p>
+        {recommendation.reasons?.map?.((reason, index) => <p key={index}>{recommendationReason(reason, t)}</p>)}
       </section>
-      <details open><summary>{t('review.evidence.title')}</summary><pre>{JSON.stringify(evidence, null, 2)}</pre></details>
+      <details><summary>{t('review.evidence.title')}</summary><pre>{JSON.stringify(evidence, null, 2)}</pre></details>
       <details><summary>{t('review.provenance.title')}</summary><pre>{JSON.stringify(provenance, null, 2)}</pre></details>
       <details><summary>{t('review.dissent.title')}</summary>{dissent.length ? dissent.map((reason, index) => <p key={index}>{reason.text || reason}</p>) : <p>{t('review.dissent.none')}</p>}{review.multi_reviewer_projection ? <pre>{JSON.stringify(review.multi_reviewer_projection, null, 2)}</pre> : null}</details>
       {review.committee?.messages?.length ? <details><summary>{t('review.debate.title')}</summary><ol>{review.committee.messages.map((message) => <li key={message.id}><strong>{message.from_role}</strong><p>{message.body}</p></li>)}</ol></details> : null}
@@ -105,7 +183,9 @@ export default function ReviewPage() {
   const navigate = useNavigate();
   const api = useMemo(() => ({ getProjectState: reviewApi.getReviewState }), []);
   const { data, error, refresh, status } = useProjectState(projectKey, { api });
-  const reviews = data?.approval_reviews || [];
+  const reviews = (data?.approval_reviews || [])
+    .filter((review) => review.is_actionable || review.artifact_path || review.content || !review.is_pending)
+    .sort((left, right) => reviewPriority(left) - reviewPriority(right));
   const selected = reviews.find((item) => item.approval === reviewId)
     || reviews.find((item) => item.is_actionable)
     || reviews[0];
@@ -121,6 +201,7 @@ export default function ReviewPage() {
 
   useEffect(() => {
     if (!selected) { queueMicrotask(() => setContent('')); return undefined; }
+    if (selected.recovery?.available) { queueMicrotask(() => setContent('')); return undefined; }
     if (typeof selected.content === 'string') { queueMicrotask(() => setContent(selected.content)); return undefined; }
     if (!selected.artifact) return undefined;
     const controller = new AbortController();
@@ -131,13 +212,14 @@ export default function ReviewPage() {
   }, [projectKey, selected]);
 
   useEffect(() => {
+    if (selected?.recovery?.available) { queueMicrotask(() => setQuestions([])); return undefined; }
     if (!selected?.artifact || !selected?.artifact_path) { queueMicrotask(() => setQuestions([])); return undefined; }
     const controller = new AbortController();
     reviewApi.getOpenQuestions(projectKey, selected.artifact, { signal: controller.signal })
       .then((payload) => setQuestions(payload.questions || []))
       .catch((caught) => { if (caught.name !== 'AbortError') setMutationError(caught); });
     return () => controller.abort();
-  }, [projectKey, selected?.artifact, selected?.artifact_path]);
+  }, [projectKey, selected?.artifact, selected?.artifact_path, selected?.recovery?.available]);
 
   const mutate = async (name, operation) => {
     setBusy(name); setMutationError(null);
@@ -178,15 +260,19 @@ export default function ReviewPage() {
       {!selected ? <p className="product-empty-copy">{t('review.empty')}</p> : (
         <div className="review-workspace">
           <ReviewList projectKey={projectKey} reviews={reviews} selected={selected.approval} t={t} />
-          <ArtifactPanel review={selected} value={content} onChange={setContent} t={t} />
-          <Inspector busy={busy} error={mutationError} proposed={proposed} questions={questions} review={selected} t={t}
-            onSave={() => mutate('save', () => reviewApi.saveArtifact(projectKey, selected.artifact, content))}
-            onRefine={refine}
-            onAnswer={answer}
-            onAccept={accept}
-            onDiscard={discard}
-            onDecision={(decision, note) => mutate(decision, () => reviewApi.decideReview(projectKey, selected.approval, decision, note))}
-          />
+          {selected.recovery?.available ? <TakeoverRecovery key={selected.approval} busy={busy} error={mutationError} review={selected} t={t}
+            onRecover={(note) => mutate('recover', () => reviewApi.recoverTakeoverBrief(projectKey, note))}
+          /> : <>
+            <ArtifactPanel key={selected.approval} review={selected} value={content} onChange={setContent} t={t} />
+            <Inspector busy={busy} error={mutationError} proposed={proposed} questions={questions} review={selected} t={t}
+              onSave={() => mutate('save', () => reviewApi.saveArtifact(projectKey, selected.artifact, content))}
+              onRefine={refine}
+              onAnswer={answer}
+              onAccept={accept}
+              onDiscard={discard}
+              onDecision={(decision, note) => mutate(decision, () => reviewApi.decideReview(projectKey, selected.approval, decision, note))}
+            />
+          </>}
         </div>
       )}
     </main>

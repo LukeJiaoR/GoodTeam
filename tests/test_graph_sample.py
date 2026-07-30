@@ -92,6 +92,36 @@ def test_extract_open_questions_from_risks_and_open_questions_section():
     ]
 
 
+def test_extract_open_questions_from_takeover_brief_questions_for_you_section():
+    content = """# Takeover Brief
+
+## Questions for you
+
+- Which customer workflow matters most this quarter?
+- Is deployment ownership still shared with the platform team?
+
+## Supporting material
+
+- This is not a question.
+"""
+
+    assert extract_open_questions(content) == [
+        "Which customer workflow matters most this quarter?",
+        "Is deployment ownership still shared with the platform team?",
+    ]
+
+
+def test_extract_open_questions_from_chinese_takeover_brief_question_section():
+    content = """# 接管简报
+
+## 需要你确认的问题
+
+- 当前最重要的客户工作流是什么？
+"""
+
+    assert extract_open_questions(content) == ["当前最重要的客户工作流是什么？"]
+
+
 def test_extract_open_questions_returns_empty_without_section():
     assert extract_open_questions("# PRD\n\n## Risks\n\n- Missing vendor decision.\n") == []
 
@@ -214,6 +244,10 @@ def test_adoption_graph_reaches_takeover_review_gate(tmp_path):
     assert result.current_node == "takeover_review_gate"
     assert result.next_node == "await_takeover_approval"
     assert "takeover" in result.artifacts
+    assert "takeover_context" in result.artifacts
+    assert Path(result.artifacts["takeover"]).name == "takeover-brief.md"
+    assert Path(result.artifacts["takeover_context"]).name == "takeover-context.md"
+    assert result.resources["takeover"].title == "Takeover Brief"
     assert result.approvals["takeover"] == "pending"
     assert "prd" not in result.artifacts
     assert (tmp_path / ".goodteam" / "tasks" / "tasks.json").is_file()
@@ -250,6 +284,8 @@ def write_project_fixture(tmp_path: Path) -> Path:
                 f"  docs: {docs}",
                 f"  backend: {backend}",
                 f"  frontend: {frontend}",
+                "worker_backend:",
+                "  mode: fake",
             ]
         ),
         encoding="utf-8",
@@ -1129,15 +1165,155 @@ def test_rfc_template_is_generic_for_contentops_ideas(tmp_path):
     assert "Use existing persistence models" in rfc
 
 
-def test_takeover_context_does_not_include_prd_review_prompt(tmp_path):
+def test_takeover_keeps_ai_context_separate_from_human_brief(tmp_path):
     project_config = write_project_fixture(tmp_path)
     state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
 
     result = run_adoption_until_next_gate(state=state, workspace=tmp_path, project_config=project_config)
-    takeover = Path(result.artifacts["takeover"]).read_text(encoding="utf-8")
+    context = Path(result.artifacts["takeover_context"]).read_text(encoding="utf-8")
+    brief = Path(result.artifacts["takeover"]).read_text(encoding="utf-8")
 
-    assert "Write a decision-ready PRD, not a template." not in takeover
-    assert "## Multi-Role PRD Review" not in takeover
+    assert "docs/codex.md" in context
+    assert "docs/codex.md" not in brief
+    assert "# Takeover Brief" in brief
+    assert "## Questions for you" in brief
+    assert "Write a decision-ready PRD, not a template." not in context
+    assert "## Multi-Role PRD Review" not in context
+
+
+def test_adoption_uses_configured_worker_for_human_takeover_brief(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "接管内容工作流")
+    state.role_models["project_intake"] = {"primary": "codex:gpt-5.5"}
+    seen: dict[str, object] = {}
+
+    def fake_create_job(self, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-1", **kwargs}
+
+    def fake_run_job(self, job_id):
+        job_root = self.root / job_id
+        job_root.mkdir(parents=True, exist_ok=True)
+        result_path = job_root / "result.md"
+        result_path.write_text(
+            "# Takeover Brief\n\n## Key findings\n\n- 当前 Worker 已经能产出可读判断。\n\n"
+            "## Questions for you\n\n- 这个季度最重要的目标是什么？\n",
+            encoding="utf-8",
+        )
+        return {
+            "job_id": job_id,
+            "run_id": state.run_id,
+            "role": "project_intake",
+            "status": "completed",
+            "summary": "completed",
+            "result_path": str(result_path),
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fake_create_job)
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    result = run_adoption_until_next_gate(state=state, workspace=tmp_path, project_config=project_config)
+    brief = Path(result.artifacts["takeover"]).read_text(encoding="utf-8")
+
+    assert seen["role"] == "project_intake"
+    assert seen["adapter"] == "codex"
+    assert seen["model"] == "gpt-5.5"
+    assert "human review document" in str(seen["task"])
+    assert result.artifacts["takeover_context"] in str(seen["context"])
+    assert brief.startswith("# Takeover Brief")
+    assert "当前 Worker 已经能产出可读判断" in brief
+    assert result.artifacts["takeover_context"] != result.artifacts["takeover"]
+
+
+def test_takeover_changes_requested_regenerates_human_brief_and_reopens_review(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "接管内容工作流")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = "pending"
+    legacy_context = tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-context.md"
+    legacy_context.parent.mkdir(parents=True, exist_ok=True)
+    legacy_context.write_text("# Internal source packet\n\n/path/for/ai-only-use\n", encoding="utf-8")
+    state.artifacts["takeover"] = str(legacy_context)
+    StateStore(tmp_path).write_project_current(state)
+    seen: dict[str, object] = {}
+
+    def fake_create_job(self, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-1", **kwargs}
+
+    def fake_run_job(self, job_id):
+        job_root = self.root / job_id
+        job_root.mkdir(parents=True, exist_ok=True)
+        result_path = job_root / "result.md"
+        result_path.write_text(
+            "# Takeover Brief\n\n## Key findings\n\n- 已根据反馈重新检查了项目。\n\n"
+            "## Questions for you\n\n- 这个季度最重要的目标是什么？\n",
+            encoding="utf-8",
+        )
+        return {
+            "job_id": job_id,
+            "run_id": state.run_id,
+            "role": "project_intake",
+            "status": "completed",
+            "summary": "completed",
+            "result_path": str(result_path),
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fake_create_job)
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="takeover",
+        decision="changes_requested",
+        note="请说明当前最重要的风险。",
+    )
+
+    assert payload["current_node"] == "takeover_review_gate"
+    assert payload["next_node"] == "await_takeover_approval"
+    assert payload["approvals"]["takeover"] == "pending"
+    assert "请说明当前最重要的风险。" in str(seen["task"])
+    assert "takeover" not in payload["change_requests"]
+    revised_brief = Path(payload["artifacts"]["takeover"])
+    assert revised_brief.name == "takeover-brief.md"
+    assert "# Takeover Brief" in revised_brief.read_text(encoding="utf-8")
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(action["action"] == "takeover_revised" for action in actions)
+
+
+def test_takeover_changes_requested_keeps_visible_feedback_when_intake_worker_fails(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "接管内容工作流")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = "pending"
+    StateStore(tmp_path).write_project_current(state)
+
+    monkeypatch.setattr("goodteam_os.graph.generate_artifact_via_worker", lambda **kwargs: None)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="takeover",
+        decision="changes_requested",
+        note="请说明当前最重要的风险。",
+    )
+
+    assert payload["next_node"] == "await_takeover_approval"
+    assert payload["approvals"]["takeover"] == "pending"
+    assert payload["change_requests"]["takeover"] == "请说明当前最重要的风险。"
+    fallback = Path(payload["artifacts"]["takeover"]).read_text(encoding="utf-8")
+    assert "## Requested changes" in fallback
+    assert "请说明当前最重要的风险。" in fallback
 
 
 def test_collect_project_context_reads_configured_sources(tmp_path):

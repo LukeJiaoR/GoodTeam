@@ -20,9 +20,10 @@ export const refineArtifact = (projectKey, artifact, content, options) => post('
 export const acceptRefinement = (projectKey, artifact, options) => post('/api/accept-refinement', { project_key: projectKey, artifact }, options);
 export const discardRefinement = (projectKey, artifact, options) => post('/api/discard-refinement', { project_key: projectKey, artifact }, options);
 export const decideReview = (projectKey, approval, decision, note = '', options) => post('/api/approve', { project_key: projectKey, approval, decision, ...(note ? { note } : {}) }, options);
+export const recoverTakeoverBrief = (projectKey, note = '', options) => post('/api/recover-takeover-brief', { project_key: projectKey, ...(note ? { note } : {}) }, options);
 export const answerOpenQuestions = (projectKey, artifact, answers, options) => post('/api/answer-open-questions', { project_key: projectKey, artifact, answers }, options);
 
 export const reviewApi = {
   acceptRefinement, answerOpenQuestions, decideReview, discardRefinement, getArtifact, getOpenQuestions,
-  getReviewState, refineArtifact, saveArtifact,
+  getReviewState, recoverTakeoverBrief, refineArtifact, saveArtifact,
 };
