@@ -1567,9 +1567,10 @@
 .product-shell .work-run-controls { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--product-border); }
 .product-shell .work-run-controls summary { font-weight: 620; cursor: pointer; }
 .product-shell .work-run-controls p { color: var(--product-text-muted); font-size: 0.82rem; }
-.product-shell .work-run-selector select { max-width: 16rem; font-family: "Geist Mono Variable", monospace; font-size: 0.75rem; }
+.product-shell .work-run-title { max-width: 22rem; overflow: hidden; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.product-shell .work-run-selector select { max-width: 22rem; font-family: inherit; font-size: 0.875rem; }
 .product-shell .work-historical-view { max-width: 48rem; padding: 1.4rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
-.product-shell .work-historical-view > h2 { margin: 0; font-family: "Geist Mono Variable", monospace; font-size: 1.35rem; }
+.product-shell .work-historical-view > h2 { margin: 0; font-size: 1.35rem; }
 .product-shell .work-historical-view > p:not(.product-eyebrow) { color: var(--product-text-muted); }
 .product-shell .work-historical-view > a { color: var(--product-accent-strong); font-weight: 620; }
 

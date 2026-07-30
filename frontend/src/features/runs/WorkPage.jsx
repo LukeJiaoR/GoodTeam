@@ -16,6 +16,26 @@ function tone(status) {
   return 'pending';
 }
 
+function shortRunId(runId) {
+  return String(runId || '').trim().slice(0, 8);
+}
+
+function runTitle(run, t) {
+  const title = [run?.title, run?.idea, run?.goal]
+    .map((value) => String(value || '').trim())
+    .find(Boolean);
+  return title || t('work.history.untitled', { runId: shortRunId(run?.run_id) });
+}
+
+function runOptionLabel(run, t) {
+  const statusKey = run.status === 'active'
+    ? 'work.history.activeOption'
+    : run.status === 'complete'
+      ? 'work.history.completedOption'
+      : 'work.history.archivedOption';
+  return t(statusKey, { title: runTitle(run, t) });
+}
+
 function WorkSkeleton({ t }) {
   return (
     <div className="product-workspace-skeleton" aria-label={t('product.states.loading')} role="status">
@@ -63,7 +83,7 @@ function StageRail({ steps, t }) {
   );
 }
 
-function CurrentView({ data, onRetry, onTerminate, retrying, t, terminating }) {
+function CurrentView({ data, onRetry, onTerminate, retrying, runTitle, t, terminating }) {
   const current = data.workflow_steps?.find((step) => ['active', 'blocked'].includes(step.status))
     || data.workflow_steps?.find((step) => step.status !== 'complete');
   return (
@@ -78,7 +98,7 @@ function CurrentView({ data, onRetry, onTerminate, retrying, t, terminating }) {
         ) : null}
         <details className="work-run-controls">
           <summary>{t('work.actions.runControls')}</summary>
-          <p>{t('work.actions.terminateScope', { runId: data.state?.run_id || '' })}</p>
+          <p>{t('work.actions.terminateScope', { runTitle })}</p>
           <Button busy={terminating} variant="danger" onClick={onTerminate}>{t('work.actions.terminate')}</Button>
         </details>
       </section>
@@ -94,10 +114,11 @@ function CurrentView({ data, onRetry, onTerminate, retrying, t, terminating }) {
 
 function HistoricalRunView({ detail, projectKey, summary, t }) {
   const state = detail?.state || {};
+  const title = runTitle({ ...state, ...summary }, t);
   return (
     <section className="work-historical-view">
       <p className="product-eyebrow">{t('work.history.title')}</p>
-      <h2>{summary.run_id}</h2>
+      <h2>{title}</h2>
       <p>{t('work.history.readOnly')}</p>
       <dl className="settings-data-list">
         <div><dt>{t('work.history.goal')}</dt><dd>{summary.idea || state.idea || '—'}</dd></div>
@@ -239,6 +260,7 @@ export default function WorkPage() {
   const [historyError, setHistoryError] = useState(null);
   const [historicalDetail, setHistoricalDetail] = useState(null);
   const currentRunId = data?.state?.run_id || '';
+  const currentRunTitle = runTitle(data?.state, t);
   const selectedSummary = runHistory.find((item) => item.run_id === runId);
   const isHistorical = Boolean(runId && selectedSummary && selectedSummary.status !== 'active');
   const selectedKnown = !runId || historyStatus !== 'ready' || Boolean(selectedSummary);
@@ -305,11 +327,11 @@ export default function WorkPage() {
       <header className="product-page-header">
         <div><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
-          {data?.active_run ? <><StatusBadge tone="active">{t('work.active')}</StatusBadge><code>{currentRunId}</code></> : <StatusBadge>{t('work.noRun')}</StatusBadge>}
+          {data?.active_run ? <><StatusBadge tone="active">{t('work.active')}</StatusBadge><strong className="work-run-title">{currentRunTitle}</strong></> : <StatusBadge>{t('work.noRun')}</StatusBadge>}
           {runHistory.length ? (
             <label className="work-run-selector"><span className="sr-only">{t('work.history.selector')}</span>
               <select value={runId || currentRunId} onChange={(event) => navigate(routes.projectRun(projectKey, event.target.value))}>
-                {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{t(item.status === 'active' ? 'work.history.activeOption' : item.status === 'complete' ? 'work.history.completedOption' : 'work.history.archivedOption', { runId: item.run_id })}</option>)}
+                {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
               </select>
             </label>
           ) : null}
@@ -324,7 +346,7 @@ export default function WorkPage() {
             {tabs.map(({ item, label }) => <button className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
           </nav>
           {mutationError ? <ProductError error={mutationError} t={t} /> : null}
-          {view === 'current' ? <CurrentView data={data} retrying={busy === 'retry'} terminating={busy === 'terminate'} onRetry={() => mutate('retry', () => runApi.retryRun(projectKey))} onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey))} t={t} /> : null}
+          {view === 'current' ? <CurrentView data={data} retrying={busy === 'retry'} runTitle={currentRunTitle} terminating={busy === 'terminate'} onRetry={() => mutate('retry', () => runApi.retryRun(projectKey))} onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey))} t={t} /> : null}
           {view === 'plan' ? <PlanView board={data.agile_board} t={t} /> : null}
           {view === 'execution' ? <ExecutionView jobs={data.worker_jobs || []} onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))} t={t} /> : null}
           {view === 'messages' ? <MessagesView data={data} projectKey={projectKey} t={t} /> : null}
