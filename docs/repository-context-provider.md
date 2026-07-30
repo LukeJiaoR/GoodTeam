@@ -142,9 +142,14 @@ Request shape:
 Current behavior:
 
 - literal mode walks and reads bounded files inside the anchored repository;
-- regex mode shells out only to `rg --json` with `--no-follow` and exclusion globs for ignored and sensitive paths;
-- regex mode fails as `context_tool_unsupported` when `rg` is unavailable;
-- regex mode times out after 2.0 seconds;
+- regex mode uses the same parent-side descriptor-anchored, bounded walk/read
+  boundary and sends only the pattern plus bounded single-line text records to
+  an internal isolated standard-library regex worker;
+- regex mode never resolves or executes external `rg`, inherited `PATH`, or a
+  target-project executable;
+- the worker inherits no target repository descriptor, has a 2.0-second total
+  deadline, communicates through bounded pipes, and is terminated, killed when
+  necessary, waited, and closed on every terminal path;
 - both modes redact returned matches and omit sensitive paths.
 
 Literal mode also derives tighter per-call scan caps from the result allowance:

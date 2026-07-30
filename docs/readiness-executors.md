@@ -38,10 +38,13 @@ Track 1 additionally provides a safe, read-only, snapshot-bound Repository
 Context Provider with an immutable snapshot, matching inventory, and
 snapshot-locked observation ledger. Its seven allowlisted tools are bounded by
 turn, call, file, character, elapsed-time, token, and cost ceilings; requests and
-results pass sensitive-path filtering and redaction. Git snapshot inspection uses
-only provenance-checked system Git from fixed system locations and a fixed
-environment, never inherited `PATH`. Stable repository, snapshot, artifact,
-provider, and budget error families fail closed.
+results pass sensitive-path filtering and redaction. Regex search performs
+descriptor-anchored bounded reads in the parent and isolates only pattern
+matching in an internal worker; it executes no external `rg`, inherited `PATH`,
+or project executable. Git snapshot inspection uses only provenance-checked
+system Git from fixed system locations and a fixed environment, never inherited
+`PATH`. Stable repository, snapshot, artifact, provider, and budget error
+families fail closed.
 
 This foundation invokes no model, runs no target-project command, creates no final
 project profile, and does not mean AI onboarding completed. Readiness schema 2 and
