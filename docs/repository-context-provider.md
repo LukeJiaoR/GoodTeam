@@ -332,25 +332,32 @@ The fail-closed rules verified in current tests are:
 - unsupported or malformed handler output is treated as an error, not partial success;
 - non-Git snapshots reject Git tools as unsupported rather than inferring replacements.
 
-## Track 2 handoff and deliberately absent pieces
+## Track 2A runner handoff and deliberately absent pieces
 
-This foundation is intentionally incomplete until a later track adds a real model loop on top of the snapshot-locked provider.
+Track 2A adds an internal, non-promoting runner on top of this snapshot-locked
+provider. It can drive the fixed tool-loop contract with a scripted test adapter,
+checkpoint a snapshot-bound job, and validate/persist a canonical profile bundle
+in the GoodTeam workspace. It does not make the profile a readiness decision or
+invoke a production external model. See
+[project-onboarding-runner.md](project-onboarding-runner.md) for the runner,
+workspace-artifact, recovery, and adapter boundaries.
 
-What remains absent today:
+The provider remains deliberately incomplete as a product onboarding flow.
 
-- no model-driven tool loop;
-- no `project_profile.v1`;
+What remains absent from Track 2A:
+
+- no production external model adapter or verified external invocation;
 - no model-reviewed command or constraint semantics;
 - no readiness schema change beyond the existing schema 2 compatibility path;
 - no claim that inventory extraction equals repository understanding;
 - no automatic readiness promotion based on model output.
 
-Track 2+ must add the Project Onboarding Worker, authoritative claims and
-evidence, `accept_limited`, profile review, and readiness ownership. A later
-Worker may use observations as bounded evidence, but before acting on repository
-content it must re-read the relevant file from the current repository SHA. It
-must not execute or make a readiness decision from stale observation bytes
-captured under an older snapshot.
+Later tracks must add real external-invocation authority, `accept_limited`,
+profile review, and readiness ownership. A later Worker may use observations and
+a Track 2A profile as bounded evidence, but before acting on repository content
+it must re-read the relevant file from the current repository SHA. It must not
+execute or make a readiness decision from stale observation bytes captured under
+an older snapshot.
 
-Until those pieces exist, the Repository Context Provider is a bounded, read-only
-substrate for future work rather than an active onboarding engine.
+Until those pieces exist, this remains a bounded research substrate rather than
+an active readiness engine.

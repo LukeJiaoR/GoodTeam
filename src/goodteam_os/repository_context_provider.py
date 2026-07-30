@@ -385,6 +385,211 @@ class OnboardingBudget:
                 "total_observation_chars_used": self._total_observation_chars,
             }
 
+    def checkpoint(self) -> dict[str, object]:
+        """Return the complete, validated state needed to resume one job budget.
+
+        The public ``as_dict`` projection intentionally omits turn-level usage
+        provenance.  A resumable onboarding runner needs that provenance so a
+        restart cannot reset a cost, token, file, or turn ceiling.  Checkpoints
+        are written only at terminal boundaries between model/tool operations;
+        reservations must therefore be empty before a checkpoint is emitted.
+        """
+
+        with self._lock:
+            self._refresh_elapsed()
+            if self._result_reservations:
+                raise self._budget_invalid("result_reservations")
+            self._update_close_requested()
+            return {
+                "schema": "onboarding_budget_state.v1",
+                "limits": self.limits.as_dict(),
+                "elapsed_seconds": self._elapsed_seconds_cached,
+                "monotonic_checkpoint": _validate_checkpoint_float(self._clock()),
+                "last_model_turn": self._last_model_turn,
+                "unique_turns": sorted(self._unique_turns),
+                "tool_calls_used": self._tool_calls_used,
+                "total_observation_chars_used": self._total_observation_chars,
+                "peak_single_result_chars": self._peak_single_result_chars,
+                "observed_files": sorted(self._observed_files),
+                "observed_file_chars": dict(self._observed_file_chars),
+                "usage_by_turn": [
+                    {"turn": turn, **dict(self._usage_by_turn[turn])}
+                    for turn in sorted(self._usage_by_turn)
+                ],
+            }
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        payload: object,
+        *,
+        monotonic_clock=time.monotonic,
+    ) -> OnboardingBudget:
+        """Restore an ``OnboardingBudget`` without relaxing any hard limit."""
+
+        if not isinstance(payload, dict):
+            raise ContextProviderError(
+                "onboarding_budget_invalid",
+                "Onboarding budget checkpoint is invalid.",
+            )
+        expected_keys = {
+            "schema",
+            "limits",
+            "elapsed_seconds",
+            "monotonic_checkpoint",
+            "last_model_turn",
+            "unique_turns",
+            "tool_calls_used",
+            "total_observation_chars_used",
+            "peak_single_result_chars",
+            "observed_files",
+            "observed_file_chars",
+            "usage_by_turn",
+        }
+        if set(payload) != expected_keys or payload.get("schema") != "onboarding_budget_state.v1":
+            raise ContextProviderError(
+                "onboarding_budget_invalid",
+                "Onboarding budget checkpoint is invalid.",
+            )
+
+        try:
+            limits = payload["limits"]
+            budget = cls(limits, monotonic_clock=monotonic_clock)
+            elapsed = _validate_checkpoint_float(payload["elapsed_seconds"])
+            checkpoint_clock = _validate_checkpoint_float(
+                payload["monotonic_checkpoint"]
+            )
+            current_clock = _validate_checkpoint_float(monotonic_clock())
+            elapsed += max(0.0, current_clock - checkpoint_clock)
+            last_turn = _validate_nonnegative_integer(
+                "last_model_turn", payload["last_model_turn"]
+            )
+            unique_raw = payload["unique_turns"]
+            if not isinstance(unique_raw, list):
+                raise ValueError("unique_turns")
+            unique_turns = {
+                _validate_nonnegative_integer("unique_turn", value)
+                for value in unique_raw
+            }
+            if 0 in unique_turns or len(unique_turns) != len(unique_raw):
+                raise ValueError("unique_turns")
+            if unique_turns != set(range(1, last_turn + 1)):
+                raise ValueError("unique_turns")
+            if len(unique_turns) > budget.limits.max_model_turns:
+                raise ValueError("unique_turns")
+
+            tool_calls = _validate_nonnegative_integer(
+                "tool_calls_used", payload["tool_calls_used"]
+            )
+            total_chars = _validate_nonnegative_integer(
+                "total_observation_chars_used", payload["total_observation_chars_used"]
+            )
+            peak_chars = _validate_nonnegative_integer(
+                "peak_single_result_chars", payload["peak_single_result_chars"]
+            )
+            observed_raw = payload["observed_files"]
+            if not isinstance(observed_raw, list) or any(
+                not isinstance(value, str) or not value for value in observed_raw
+            ):
+                raise ValueError("observed_files")
+            observed_files = set(observed_raw)
+            if len(observed_files) != len(observed_raw):
+                raise ValueError("observed_files")
+            file_chars_raw = payload["observed_file_chars"]
+            if not isinstance(file_chars_raw, dict) or any(
+                not isinstance(path, str) or not path
+                for path in file_chars_raw
+            ):
+                raise ValueError("observed_file_chars")
+            file_chars = {
+                path: _validate_nonnegative_integer("observed_file_chars", chars)
+                for path, chars in file_chars_raw.items()
+            }
+            if not set(file_chars).issubset(observed_files):
+                raise ValueError("observed_file_chars")
+
+            usage_raw = payload["usage_by_turn"]
+            if not isinstance(usage_raw, list):
+                raise ValueError("usage_by_turn")
+            usage_by_turn: dict[int, dict[str, float | bool]] = {}
+            for raw_usage in usage_raw:
+                if not isinstance(raw_usage, dict) or set(raw_usage) != {
+                    "turn",
+                    "input_tokens",
+                    "input_authoritative",
+                    "output_tokens",
+                    "output_authoritative",
+                    "cost_usd",
+                }:
+                    raise ValueError("usage_by_turn")
+                turn = _validate_nonnegative_integer("turn", raw_usage["turn"])
+                if turn < 1 or turn not in unique_turns or turn in usage_by_turn:
+                    raise ValueError("usage_by_turn")
+                input_tokens = _validate_checkpoint_float(raw_usage["input_tokens"])
+                output_tokens = _validate_checkpoint_float(raw_usage["output_tokens"])
+                cost_usd = _validate_checkpoint_float(raw_usage["cost_usd"])
+                input_authoritative = raw_usage["input_authoritative"]
+                output_authoritative = raw_usage["output_authoritative"]
+                if not isinstance(input_authoritative, bool) or not isinstance(
+                    output_authoritative, bool
+                ):
+                    raise ValueError("usage_by_turn")
+                usage_by_turn[turn] = {
+                    "input_tokens": input_tokens,
+                    "input_authoritative": input_authoritative,
+                    "output_tokens": output_tokens,
+                    "output_authoritative": output_authoritative,
+                    "cost_usd": cost_usd,
+                }
+
+            if tool_calls > budget.limits.max_tool_calls:
+                raise ValueError("tool_calls_used")
+            if total_chars > budget.limits.max_total_observation_chars:
+                raise ValueError("total_observation_chars_used")
+            if peak_chars > budget.limits.max_single_result_chars:
+                raise ValueError("peak_single_result_chars")
+            if peak_chars > total_chars:
+                raise ValueError("peak_single_result_chars")
+            if len(observed_files) > budget.limits.max_files_observed:
+                raise ValueError("observed_files")
+            if any(
+                chars > budget.limits.max_file_cumulative_chars
+                for chars in file_chars.values()
+            ):
+                raise ValueError("observed_file_chars")
+            if sum(file_chars.values()) > total_chars:
+                raise ValueError("observed_file_chars")
+            if sum(value["input_tokens"] for value in usage_by_turn.values()) > budget.limits.max_estimated_input_tokens:
+                raise ValueError("usage_by_turn")
+            if sum(value["output_tokens"] for value in usage_by_turn.values()) > budget.limits.max_estimated_output_tokens:
+                raise ValueError("usage_by_turn")
+            if sum(value["cost_usd"] for value in usage_by_turn.values()) > budget.limits.max_cost_usd:
+                raise ValueError("usage_by_turn")
+        except (KeyError, TypeError, ValueError, ContextProviderError) as exc:
+            if isinstance(exc, ContextProviderError):
+                raise ContextProviderError(
+                    "onboarding_budget_invalid",
+                    "Onboarding budget checkpoint is invalid.",
+                ) from None
+            raise ContextProviderError(
+                "onboarding_budget_invalid",
+                "Onboarding budget checkpoint is invalid.",
+            ) from exc
+
+        with budget._lock:
+            budget._started_at = current_clock - elapsed
+            budget._elapsed_seconds_cached = elapsed
+            budget._last_model_turn = last_turn
+            budget._unique_turns = unique_turns
+            budget._tool_calls_used = tool_calls
+            budget._total_observation_chars = total_chars
+            budget._peak_single_result_chars = peak_chars
+            budget._observed_files = observed_files
+            budget._observed_file_chars = file_chars
+            budget._usage_by_turn = usage_by_turn
+            budget._update_close_requested()
+        return budget
+
     def _resolve_limits(
         self,
         requested_limits: OnboardingBudgetLimits | dict[str, object] | None,
@@ -1240,6 +1445,17 @@ def _validate_optional_usage_float(name: str, value: object) -> float | None:
             "Onboarding budget configuration is invalid.",
             details={"limit": name},
         )
+    return numeric
+
+
+def _validate_checkpoint_float(value: object) -> float:
+    """Validate a non-negative finite value loaded from persistent state."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("checkpoint_float")
+    numeric = float(value)
+    if numeric < 0.0 or not math.isfinite(numeric):
+        raise ValueError("checkpoint_float")
     return numeric
 
 

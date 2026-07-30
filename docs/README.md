@@ -18,6 +18,7 @@ index to find the right document for the job.
 | Run live smoke safely | [`live-smoke-playbook.md`](live-smoke-playbook.md) |
 | Configure a project | [`config-reference.md`](config-reference.md) |
 | Understand worker dispatch | [`worker-backends.md`](worker-backends.md) |
+| Understand bounded existing-project onboarding | [`repository-context-provider.md`](repository-context-provider.md), [`project-onboarding-runner.md`](project-onboarding-runner.md) |
 | Understand execution identity | [`execution-identity.md`](execution-identity.md) |
 | Understand memory and provenance | [`memory-model.md`](memory-model.md), [`provenance-ledger.md`](provenance-ledger.md) |
 | Choose the right PR verification | [`testing-strategy.md`](testing-strategy.md) |
@@ -90,6 +91,9 @@ flowchart TD
   rules.
 - [`worker-backends.md`](worker-backends.md): backend lifecycle, dispatch packet
   shape, readiness checks, result semantics, and failure handling.
+- [`repository-context-provider.md`](repository-context-provider.md) and
+  [`project-onboarding-runner.md`](project-onboarding-runner.md): snapshot-bound
+  repository retrieval and the non-promoting Track 2A onboarding-runner boundary.
 - [`execution-identity.md`](execution-identity.md): issue/attempt/execution/
   branch/PR/SHA/CI/ledger identity chain.
 - [`memory-model.md`](memory-model.md): local run-history memory model.
