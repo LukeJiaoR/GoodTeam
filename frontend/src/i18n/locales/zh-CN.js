@@ -152,7 +152,7 @@ export const zhCN = {
   'newProject.sourceMode.adoption': '接入',
   'newProject.sourceMode.newProject': '新项目',
   'newProject.dryRun': '干跑模拟',
-  'newProject.modeHint.adopt': '接入模式会先读取项目配置，并在 PRD 前生成 takeover-context.md。',
+  'newProject.modeHint.adopt': '接入模式会先读取项目，并在 PRD 前生成给人审阅的接管简报。',
   'newProject.modeHint.new': '新项目模式会在目标 artifacts 目录中生成标准 prd.md。',
   'newProject.actions.createConfig': '创建本地配置',
   'newProject.actions.starting': '启动中...',

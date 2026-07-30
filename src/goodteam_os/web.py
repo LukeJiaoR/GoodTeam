@@ -3311,7 +3311,7 @@ def start_workflow(
 
     if dry_run:
         if source_type == "existing_project":
-            planned_artifacts = {"takeover": str(workspace / "artifacts" / "runs" / state.run_id / "takeover" / "takeover-context.md")}
+            planned_artifacts = {"takeover": str(workspace / "artifacts" / "runs" / state.run_id / "takeover" / "takeover-brief.md")}
             state.current_node = "takeover_review_gate"
             state.next_node = "await_takeover_approval"
             state.approvals["takeover"] = ApprovalDecision.PENDING

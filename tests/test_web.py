@@ -2089,7 +2089,7 @@ def test_build_workflow_steps_for_existing_project_starts_with_takeover_review()
     state.source_type = "existing_project"
     state.current_node = "takeover_review_gate"
     state.next_node = "await_takeover_approval"
-    state.artifacts["takeover"] = "/tmp/takeover-context.md"
+    state.artifacts["takeover"] = "/tmp/takeover-brief.md"
     state.approvals["takeover"] = "pending"
 
     steps = build_workflow_steps(state)
@@ -2099,7 +2099,7 @@ def test_build_workflow_steps_for_existing_project_starts_with_takeover_review()
     assert takeover["key"] == "takeover_review"
     assert takeover["status"] == "review-needed"
     assert takeover["action_label"] == "Review TAKEOVER"
-    assert takeover["artifact_path"] == "/tmp/takeover-context.md"
+    assert takeover["artifact_path"] == "/tmp/takeover-brief.md"
     assert prd["status"] == "not-started"
 
 
@@ -2459,7 +2459,7 @@ def test_render_markdown_preview_outputs_readable_safe_html():
 
 
 def test_read_artifact_reads_current_run_artifact(tmp_path):
-    artifact = tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-context.md"
+    artifact = tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-brief.md"
     artifact.parent.mkdir(parents=True)
     artifact.write_text("# Takeover\n\nReview me", encoding="utf-8")
     state = create_initial_state("run-1", "CONTENTOPS", "Take over the AI content studio")
@@ -3404,7 +3404,7 @@ def test_start_workflow_can_adopt_existing_project_first(tmp_path):
         encoding="utf-8",
     )
     project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\nworker_backend:\n  mode: fake\n",
         encoding="utf-8",
     )
 
@@ -3485,7 +3485,7 @@ def test_start_workflow_notifies_when_takeover_approval_gate_is_ready(tmp_path, 
     docs = tmp_path / "content-research"
     docs.mkdir()
     project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\nworker_backend:\n  mode: fake\n",
         encoding="utf-8",
     )
 
@@ -4340,7 +4340,7 @@ def test_decide_approval_approves_takeover_and_generates_prd(tmp_path):
     state.current_node = "takeover_review_gate"
     state.next_node = "await_takeover_approval"
     state.approvals["takeover"] = "pending"
-    state.artifacts["takeover"] = str(tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-context.md")
+    state.artifacts["takeover"] = str(tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-brief.md")
     StateStore(tmp_path).write_project_current(state)
 
     payload = decide_approval(

@@ -457,7 +457,7 @@ def test_cli_start_can_adopt_existing_project(tmp_path):
     )
     project_config = tmp_path / "project.local.yaml"
     project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\n",
+        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\nworker_backend:\n  mode: fake\n",
         encoding="utf-8",
     )
     command = [

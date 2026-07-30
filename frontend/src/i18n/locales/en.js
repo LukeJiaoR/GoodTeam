@@ -152,7 +152,7 @@ export const en = {
   'newProject.sourceMode.adoption': 'Adoption',
   'newProject.sourceMode.newProject': 'New Project',
   'newProject.dryRun': 'Dry run simulation',
-  'newProject.modeHint.adopt': 'Adopt mode reads the project config first and generates takeover-context.md before PRD.',
+  'newProject.modeHint.adopt': 'Adopt mode reads the project first and generates a human-readable Takeover Brief before PRD.',
   'newProject.modeHint.new': 'New project mode generates standard prd.md inside target artifacts folder.',
   'newProject.actions.createConfig': 'Create Local Config',
   'newProject.actions.starting': 'Starting...',
