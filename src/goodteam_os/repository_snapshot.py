@@ -20,15 +20,17 @@ from goodteam_os.repository_access import (
     RepositoryText,
     canonical_relative_path,
 )
+from goodteam_os._trusted_system_executable import (
+    ExecutableIdentity as _ExecutableIdentity,
+    SYSTEM_GIT_CANDIDATES as _SYSTEM_GIT_CANDIDATES,
+    TrustedExecutableError,
+    open_verified_executable,
+    resolve_trusted_system_git,
+)
 
 
 _GIT_OUTPUT_LIMIT = 32 * 1024 * 1024
 _GIT_TIMEOUT_SECONDS = 5.0
-_SYSTEM_GIT_CANDIDATES = (
-    ("/usr/bin/git", "/usr"),
-    ("/bin/git", "/"),
-)
-_SYSTEM_EXECUTION_PATH = "/usr/bin:/bin"
 _PATH_MANIFEST_SCHEMA = "repository_snapshot.v1.path_manifest"
 _PATH_MANIFEST_KEYS = frozenset(
     {"complete", "entries", "excluded", "omitted", "omitted_paths"}
@@ -1170,13 +1172,6 @@ class _ProcessResult:
     stderr: bytes
 
 
-@dataclass(frozen=True)
-class _ExecutableIdentity:
-    device: int
-    inode: int
-    mode: int
-
-
 def _run_git(root: Path, arguments: list[str]) -> _ProcessResult:
     operation = arguments[0] if arguments else "unknown"
     executable, trusted_path, executable_identity = _trusted_git_executable(
@@ -1281,59 +1276,14 @@ def _trusted_git_executable(
     root: Path,
     operation: str,
 ) -> tuple[str, str, _ExecutableIdentity]:
-    root_value = os.path.realpath(root)
-    for candidate, trusted_root in _SYSTEM_GIT_CANDIDATES:
-        executable = os.path.realpath(candidate)
-        canonical_trusted_root = os.path.realpath(trusted_root)
-        if (
-            not _path_is_within(executable, canonical_trusted_root)
-            or _path_is_within(executable, root_value)
-            or not _trusted_system_path(executable, canonical_trusted_root)
-        ):
-            continue
-        try:
-            descriptor = os.open(
-                executable,
-                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-            )
-        except OSError:
-            continue
-        try:
-            value = os.fstat(descriptor)
-            if not stat.S_ISREG(value.st_mode) or not value.st_mode & 0o111:
-                continue
-            identity = _ExecutableIdentity(value.st_dev, value.st_ino, value.st_mode)
-        finally:
-            os.close(descriptor)
-        return executable, _SYSTEM_EXECUTION_PATH, identity
-    raise RepositorySnapshotError(
-        "repository_snapshot_failed",
-        "Trusted Git executable was not available.",
-        details={"operation": operation},
-    )
-
-
-def _trusted_system_path(executable: str, trusted_root: str) -> bool:
-    current = trusted_root
-    paths = [current]
-    relative = os.path.relpath(os.path.dirname(executable), trusted_root)
-    if relative != ".":
-        for component in relative.split(os.sep):
-            current = os.path.join(current, component)
-            paths.append(current)
-    paths.append(executable)
-    for path in paths:
-        try:
-            value = os.stat(path, follow_symlinks=False)
-        except OSError:
-            return False
-        if value.st_uid != 0 or value.st_mode & 0o022:
-            return False
     try:
-        executable_stat = os.stat(executable, follow_symlinks=False)
-    except OSError:
-        return False
-    return stat.S_ISREG(executable_stat.st_mode) and bool(executable_stat.st_mode & 0o111)
+        return resolve_trusted_system_git(root, candidates=_SYSTEM_GIT_CANDIDATES)
+    except TrustedExecutableError as exc:
+        raise RepositorySnapshotError(
+            "repository_snapshot_failed",
+            "Trusted Git executable was not available.",
+            details={"operation": operation},
+        ) from exc
 
 
 def _open_verified_executable(
@@ -1342,33 +1292,13 @@ def _open_verified_executable(
     operation: str,
 ) -> int:
     try:
-        descriptor = os.open(
-            executable,
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-        )
-    except OSError as exc:
+        return open_verified_executable(executable, expected)
+    except TrustedExecutableError as exc:
         raise RepositorySnapshotError(
             "repository_snapshot_failed",
             "Trusted Git executable changed before use.",
             details={"operation": operation},
         ) from exc
-    value = os.fstat(descriptor)
-    actual = _ExecutableIdentity(value.st_dev, value.st_ino, value.st_mode)
-    if actual != expected or not stat.S_ISREG(value.st_mode):
-        os.close(descriptor)
-        raise RepositorySnapshotError(
-            "repository_snapshot_failed",
-            "Trusted Git executable changed before use.",
-            details={"operation": operation},
-        )
-    return descriptor
-
-
-def _path_is_within(candidate: str, root: str) -> bool:
-    try:
-        return os.path.commonpath((candidate, root)) == root
-    except ValueError:
-        return False
 
 
 def _kill_process_group(process: subprocess.Popen[bytes]) -> None:

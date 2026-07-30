@@ -3516,9 +3516,10 @@ def test_git_history_uses_read_only_argv(tmp_path: Path) -> None:
 
     assert len(result["observations"]) <= 5
     forbidden = {"add", "commit", "checkout", "reset", "clean"}
-    assert recorded and all(command[0][0] == "git" for command in recorded)
+    assert recorded and all(command[0][0] in {"/usr/bin/git", "/bin/git"} for command in recorded)
     assert not any(word in forbidden for command, _ in recorded for word in command)
     assert all(kwargs["shell"] is False for _, kwargs in recorded)
+    assert all(kwargs["start_new_session"] is True for _, kwargs in recorded)
     assert all("--" in command for command, _ in recorded)
     assert all("core.fsmonitor=false" in command for command, _ in recorded)
 
@@ -3907,7 +3908,6 @@ def test_git_operations_ignore_inherited_config_environment(
     else:
         assert set(env) == {
             "PATH",
-            "TMPDIR",
             "GIT_OPTIONAL_LOCKS",
             "GIT_TERMINAL_PROMPT",
             "GIT_PAGER",
@@ -3916,6 +3916,137 @@ def test_git_operations_ignore_inherited_config_environment(
             "GIT_LITERAL_PATHSPECS",
             "LC_ALL",
         }
+        assert env["PATH"] == "/usr/bin:/bin"
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["inspect_git_history", "inspect_recent_changes"],
+)
+@pytest.mark.parametrize(
+    "placement",
+    ["relative", "target-bin", "directory-symlink", "executable-symlink", "hardlink"],
+)
+def test_git_tools_ignore_untrusted_path_executables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    placement: str,
+) -> None:
+    import subprocess
+
+    fixture = _provider_fixture(tmp_path)
+    root = fixture["root"]
+    attacker = root / "attacker"
+    attacker.mkdir()
+    fake_git = attacker / "fake-git"
+    marker = tmp_path / f"{tool}-{placement}.marker"
+    fake_git.write_text(
+        f"#!/bin/sh\nprintf attacked > {marker.as_posix()!r}\nexit 97\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    target_git = attacker / "git"
+    target_git.write_bytes(fake_git.read_bytes())
+    target_git.chmod(0o755)
+    subprocess.run(["/usr/bin/git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        ["/usr/bin/git", "-C", str(root), "config", "user.name", "GoodTeam Test"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "/usr/bin/git",
+            "-C",
+            str(root),
+            "config",
+            "user.email",
+            "test@example.invalid",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "/usr/bin/git",
+            "-C",
+            str(root),
+            "add",
+            "README.md",
+            "attacker/fake-git",
+            "attacker/git",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["/usr/bin/git", "-C", str(root), "commit", "-qm", "initial"],
+        check=True,
+    )
+    _refresh_fixture_snapshot(fixture)
+    path_entry = attacker
+    git_path = tmp_path / "git"
+    if placement == "relative":
+        monkeypatch.chdir(root)
+        monkeypatch.setenv("PATH", "attacker:/usr/bin:/bin")
+    elif placement == "target-bin":
+        monkeypatch.setenv("PATH", f"{attacker}:/usr/bin:/bin")
+    elif placement == "directory-symlink":
+        linked = tmp_path / "linked-bin"
+        linked.symlink_to(attacker, target_is_directory=True)
+        path_entry = linked
+        monkeypatch.setenv("PATH", f"{path_entry}:/usr/bin:/bin")
+    elif placement == "executable-symlink":
+        git_path.symlink_to(fake_git)
+        monkeypatch.setenv("PATH", f"{attacker}:/usr/bin:/bin")
+    else:
+        try:
+            os.link(fake_git, git_path)
+        except OSError:
+            pytest.skip("hard links are unavailable")
+        monkeypatch.setenv("PATH", f"{attacker}:/usr/bin:/bin")
+    monkeypatch.setenv("LD_LIBRARY_PATH", str(attacker))
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", str(attacker))
+    monkeypatch.setenv("PYTHONPATH", str(attacker))
+    request = {"path": "", "limit": 5}
+    result = fixture["provider"].call(tool, request, model_turn=1)
+
+    assert isinstance(result["observations"], list)
+    assert not marker.exists()
+
+
+def test_git_output_overflow_kills_descendant_process_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    import sys
+
+    import goodteam_os._repository_git_tools as git_tools
+    from goodteam_os.repository_context_provider import ContextProviderError
+
+    marker = tmp_path / "descendant.marker"
+    program = (
+        "import os,time\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        " time.sleep(.4)\n"
+        f" open({str(marker)!r},'w').write('escaped')\n"
+        " os._exit(0)\n"
+        "os.write(1,b'x'*4096)\n"
+        "time.sleep(5)\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", program],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    with pytest.raises(ContextProviderError) as captured:
+        git_tools._read_process_bounded(process, output_allowance=32)
+    git_tools._close_process_streams(process)
+    time.sleep(0.6)
+
+    assert captured.value.code == "context_tool_limit_exceeded"
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize(

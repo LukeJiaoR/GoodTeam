@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import selectors
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -20,6 +21,11 @@ from goodteam_os.repository_access import (
 )
 from goodteam_os.repository_context_provider import ContextProviderError
 from goodteam_os.repository_snapshot import RepositorySnapshot, verify_repository_snapshot
+from goodteam_os._trusted_system_executable import (
+    TrustedExecutableError,
+    open_verified_executable,
+    resolve_trusted_system_git,
+)
 
 
 _GIT_TIMEOUT_SECONDS = 5.0
@@ -29,26 +35,6 @@ _ZERO_OID = re.compile(r"^0+$")
 _RAW_MODE = re.compile(rb"^[0-7]{6}$")
 _RAW_OID = re.compile(rb"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _RAW_STATUS = re.compile(rb"^[A-Z]$")
-_SAFE_EXECUTION_ENV_KEYS = frozenset(
-    {
-        "PATH",
-        "LD_LIBRARY_PATH",
-        "DYLD_LIBRARY_PATH",
-        "DYLD_FALLBACK_LIBRARY_PATH",
-        "LIBPATH",
-        "PATHEXT",
-        "SYSTEMROOT",
-        "SystemRoot",
-        "WINDIR",
-        "COMSPEC",
-        "ComSpec",
-        "TMP",
-        "TEMP",
-        "TMPDIR",
-    }
-)
-
-
 @dataclass(frozen=True)
 class _ProcessResult:
     stdout: bytes
@@ -245,7 +231,15 @@ def _dispatch_git_operation(
     limit: int | None = None,
     revision: str | None = None,
 ) -> _ProcessResult:
+    try:
+        executable, trusted_path, executable_identity = resolve_trusted_system_git(root)
+    except TrustedExecutableError as exc:
+        raise ContextProviderError(
+            "context_tool_unsupported",
+            "Repository context tool is unsupported.",
+        ) from exc
     argv = _build_git_argv(
+        executable=executable,
         operation=operation,
         path=path,
         limit=limit,
@@ -258,21 +252,27 @@ def _dispatch_git_operation(
         process = None
         pending_error: Exception | None = None
         result: _ProcessResult | None = None
+        executable_fd = None
         try:
+            executable_fd = open_verified_executable(executable, executable_identity)
             process = process_factory(
                 argv,
                 cwd=str(root),
-                env=_git_environment(),
+                env=_git_environment(trusted_path),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 shell=False,
+                start_new_session=True,
             )
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, TrustedExecutableError) as exc:
             raise ContextProviderError(
                 "context_tool_unsupported",
                 "Repository context tool is unsupported.",
             ) from exc
+        finally:
+            if executable_fd is not None:
+                os.close(executable_fd)
         try:
             repository.verify_root()
             result = _read_process_bounded(process, output_allowance=max(1, output_allowance))
@@ -317,10 +317,10 @@ def _verify_git_path(repository: AnchoredRepository, path: str) -> None:
 
 
 def _build_git_argv(
-    *, operation: str, path: str, limit: int | None, revision: str | None
+    *, executable: str, operation: str, path: str, limit: int | None, revision: str | None
 ) -> list[str]:
     base = [
-        "git",
+        executable,
         "--no-pager",
         "-c",
         "color.ui=false",
@@ -370,17 +370,9 @@ def _build_git_argv(
     raise RuntimeError("unknown internal Git operation")
 
 
-def _git_environment() -> dict[str, str]:
-    # Preserve only execution-time variables that can be required to locate the
-    # binary or load its runtime on supported platforms. All config-bearing
-    # variables, including HOME and XDG_CONFIG_HOME, are omitted on purpose.
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key in _SAFE_EXECUTION_ENV_KEYS and value
-    }
-    environment.update(
-        {
+def _git_environment(trusted_path: str) -> dict[str, str]:
+    return {
+            "PATH": trusted_path,
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_PAGER": "cat",
@@ -389,8 +381,6 @@ def _git_environment() -> dict[str, str]:
             "GIT_LITERAL_PATHSPECS": "1",
             "LC_ALL": "C",
         }
-    )
-    return environment
 
 
 def _read_process_bounded(process, *, output_allowance: int) -> _ProcessResult:
@@ -481,12 +471,26 @@ def _read_process_bounded(process, *, output_allowance: int) -> _ProcessResult:
 def _terminate_process(process) -> None:
     try:
         if process.poll() is None:
-            process.terminate()
+            pid = getattr(process, "pid", None)
+            if isinstance(pid, int) and pid > 0:
+                try:
+                    os.killpg(pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    process.terminate()
+            else:
+                process.terminate()
         try:
             process.wait(timeout=0.2)
         except subprocess.TimeoutExpired:
             if process.poll() is None:
-                process.kill()
+                pid = getattr(process, "pid", None)
+                if isinstance(pid, int) and pid > 0:
+                    try:
+                        os.killpg(pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        process.kill()
+                else:
+                    process.kill()
             process.wait(timeout=1.0)
     except Exception:
         try:
