@@ -86,7 +86,7 @@ from goodteam_os.review_provenance import (
     reviewer_profile_for_approval,
 )
 from goodteam_os.review_policy import evaluate_review_evidence_policy
-from goodteam_os.roles import approval_artifact_map, list_role_definitions, workflow_steps_for_source
+from goodteam_os.roles import artifact_contract, approval_artifact_map, list_role_definitions, workflow_steps_for_source
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import read_messages
 from goodteam_os.staging import (
@@ -4168,6 +4168,21 @@ def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_k
     }
 
 
+def _approval_review_title(state: AgileDevState, artifact: str) -> str:
+    resource = state.resources.get(artifact)
+    if isinstance(resource, Mapping):
+        title = str(resource.get("title", "") or "").strip()
+    else:
+        title = str(getattr(resource, "title", "") or "").strip()
+    if title:
+        return title
+    try:
+        contract = artifact_contract(artifact)
+    except ValueError:
+        return artifact.replace("_", " ").title()
+    return str(contract.get("title", "") or "").strip() or artifact.replace("_", " ").title()
+
+
 def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Path(".")) -> list[dict[str, object]]:
     if state is None:
         return []
@@ -4186,6 +4201,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
         artifact_version = artifact_version_for_path(artifact_path)
         review = {
             "approval": approval,
+            "title": _approval_review_title(state, artifact),
             "decision": str(decision),
             "is_pending": str(decision) == ApprovalDecision.PENDING,
             "is_actionable": str(decision) == ApprovalDecision.PENDING and state.next_node == f"await_{approval}_approval",

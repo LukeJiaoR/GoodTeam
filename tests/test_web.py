@@ -2144,6 +2144,22 @@ def test_build_approval_reviews_reads_prd_artifact(tmp_path):
     assert rfc_review["is_actionable"] is False
 
 
+def test_build_approval_reviews_titles_takeover_for_humans(tmp_path):
+    takeover = tmp_path / "takeover-brief.md"
+    takeover.write_text("# Takeover Brief\n\nReview me", encoding="utf-8")
+    state = create_initial_state("run-1", "GTO", "Take over the existing project")
+    state.source_type = "existing_project"
+    state.approvals["takeover"] = ApprovalDecision.PENDING
+    state.artifacts["takeover"] = str(takeover)
+    state.next_node = "await_takeover_approval"
+
+    reviews = build_approval_reviews(state)
+    takeover_review = next(review for review in reviews if review["approval"] == "takeover")
+
+    assert takeover_review["title"] == "Takeover Brief"
+    assert takeover_review["is_actionable"] is True
+
+
 def test_build_approval_reviews_includes_multi_role_prd_reviewers(tmp_path):
     prd = tmp_path / "prd.md"
     prd.write_text("# PRD\n\nReview me", encoding="utf-8")

@@ -310,24 +310,22 @@
   },
   "artifact_contracts": {
     "takeover": {
-      "title": "Takeover Context",
+      "title": "Takeover Brief",
       "role": "project_intake",
-      "purpose": "Verify project evidence and operating boundaries before role work begins.",
+      "purpose": "Give a human a concise, decision-ready understanding of the project before downstream work begins.",
       "sections": [
         {
-          "title": "Evidence Checklist",
+          "title": "What I Looked At",
           "items": [
-            "Confirm configured repository paths exist.",
-            "Confirm durable docs and tracker rules are current enough for downstream roles.",
-            "Confirm ownership boundaries for docs, backend, frontend, deployment, and API contracts.",
-            "Confirm generated state, local configs, credentials, and run artifacts remain local-only unless explicitly exported."
+            "State which repository areas, docs, task history, and configured sources were checked.",
+            "Call out important sources that were unavailable, stale, or not inspected."
           ]
         },
         {
-          "title": "Review Decision",
+          "title": "Key Findings And Questions",
           "items": [
-            "Approve only when the listed sources are sufficient for product, architecture, planning, and implementation roles.",
-            "Request changes when more docs, repository checks, task history, or tracker comments are required first."
+            "Summarize the current product and technical picture in plain language.",
+            "Separate confirmed facts from assumptions, risks, and questions that need a human answer before continuing."
           ]
         }
       ]

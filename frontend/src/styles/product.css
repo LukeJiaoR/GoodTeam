@@ -1563,6 +1563,7 @@
 .product-shell .work-focus-panel { position: sticky; top: 8.5rem; align-self: start; padding: 1.4rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
 .product-shell .work-focus-panel h2 { margin: 0; font-size: clamp(1.55rem, 3vw, 2.35rem); letter-spacing: -0.04em; line-height: 1.05; }
 .product-shell .work-focus-panel > p:not(.product-eyebrow) { color: var(--product-text-muted); }
+.product-shell .work-focus-panel > .product-button { margin-top: 0.45rem; text-decoration: none; }
 .product-shell .work-feedback { padding-top: 0.8rem; border-top: 1px solid var(--product-border); }
 .product-shell .work-run-controls { margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--product-border); }
 .product-shell .work-run-controls summary { font-weight: 620; cursor: pointer; }
@@ -1617,6 +1618,12 @@
 .product-shell .review-view-switcher button.is-active { color: var(--product-text); background: var(--product-surface-muted); }
 .product-shell .review-diff { min-height: 60dvh; overflow: auto; color: var(--product-text); background: var(--product-surface-muted); font-size: 0.8rem; line-height: 1.55; white-space: pre-wrap; }
 .product-shell .review-editor textarea { width: 100%; min-height: 60dvh; padding: 1rem; font-family: "Geist Mono Variable", monospace; font-size: 0.84rem; line-height: 1.6; resize: vertical; }
+.product-shell .review-brief-preview { min-height: 60dvh; padding: clamp(1.15rem, 3vw, 2rem); background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .review-brief-preview h3 { margin: 1.8rem 0 0.6rem; font-size: 1.1rem; }
+.product-shell .review-brief-preview h3:first-child { margin-top: 0; }
+.product-shell .review-brief-preview p { max-width: 68ch; margin: 0.55rem 0; color: var(--product-text-muted); line-height: 1.65; }
+.product-shell .review-brief-preview__item { padding-left: 1.2rem; position: relative; }
+.product-shell .review-brief-preview__item::before { content: "•"; position: absolute; left: 0; color: var(--product-accent-strong); }
 .product-shell .review-inspector { display: grid; gap: 1rem; }
 .product-shell .review-inspector > section,
 .product-shell .review-inspector > details,

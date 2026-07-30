@@ -63,3 +63,30 @@ test('labels the active run and run selector with task titles instead of raw IDs
   ]);
   expect(screen.queryByText('run-active')).not.toBeInTheDocument();
 });
+
+test('makes an actionable takeover review the primary next step', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: { run_id: 'run-active' },
+      agile_board: { counts: { blocked: 0 } },
+      approval_reviews: [{ approval: 'takeover', artifact: 'takeover', is_actionable: true }],
+      start_context: { project_name: 'Demo project' },
+      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
+      workflow_steps: [{ status: 'review-needed', title: 'Takeover Context' }],
+    },
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
+  });
+
+  renderWorkPage();
+
+  expect(screen.getByText('Review the takeover brief', { selector: 'h2' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Review takeover brief' }))
+    .toHaveAttribute('href', '/projects/DEMO/review/takeover');
+  expect(screen.getByText('Stop or abandon this run')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Terminate this run' })).not.toBeVisible();
+});
