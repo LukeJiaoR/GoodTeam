@@ -3,16 +3,17 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import multiprocessing
 import os
 import selectors
-import time
 import subprocess
+import time
+from dataclasses import dataclass
 
 from goodteam_os._repository_content_policy import (
     FILE_READ_MAX_BYTES,
     QUERY_LENGTH_MAX,
     SEARCH_MATCHES_MAX,
-    SENSITIVE_PATH_PATTERNS,
     TREE_DEPTH_MAX,
     TREE_ENTRIES_MAX,
     hash_bytes,
@@ -356,46 +357,156 @@ def _search_text_regex(
     target = path or "."
     with AnchoredRepository(root, expected_identity=snapshot.root_identity) as repository:
         repository.verify_root()
-        try:
-            process = _spawn_rg_process(root=root, query=query, target=target)
-        except FileNotFoundError as exc:
-            raise ContextProviderError(
-                "context_tool_unsupported",
-                "Repository context tool is unsupported.",
-            ) from exc
-        try:
-            result = _stream_regex_matches(
-                process=process,
-                result_char_allowance=result_char_allowance,
-                max_matches=max_matches,
-            )
-        finally:
-            _reap_process(process)
+    try:
+        process = _spawn_rg_process(
+            root=root,
+            snapshot=snapshot,
+            query=query,
+            target=target,
+            result_char_allowance=result_char_allowance,
+            max_matches=max_matches,
+        )
+    except FileNotFoundError as exc:
+        raise ContextProviderError(
+            "context_tool_unsupported",
+            "Repository context tool is unsupported.",
+        ) from exc
+    try:
+        result = _stream_regex_matches(
+            process=process,
+            result_char_allowance=result_char_allowance,
+            max_matches=max_matches,
+        )
+    finally:
+        _reap_process(process)
+        with AnchoredRepository(
+            root,
+            expected_identity=snapshot.root_identity,
+        ) as repository:
             repository.verify_root()
     return result
 
 
-def _spawn_rg_process(*, root, query: str, target: str):
-    globs: list[str] = []
-    for ignored in sorted(DEFAULT_IGNORED_DIRECTORIES):
-        globs.extend(["--glob", f"!{ignored}/**"])
-    for sensitive in SENSITIVE_PATH_PATTERNS:
-        globs.extend(["--glob", f"!{sensitive}"])
-    return subprocess.Popen(
-        [
-            "rg",
-            "--json",
-            "--no-follow",
-            "--color",
-            "never",
-            *globs,
-            query,
-            target,
-        ],
-        cwd=str(root),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+def _spawn_rg_process(
+    *,
+    root,
+    snapshot: RepositorySnapshot,
+    query: str,
+    target: str,
+    result_char_allowance: int,
+    max_matches: int,
+):
+    scan_limits = _literal_search_scan_limits(
+        result_char_allowance=result_char_allowance,
+        max_matches=max_matches,
     )
+    path = "" if target == "." else target
+    lines: list[tuple[str, int, str]] = []
+    with AnchoredRepository(root, expected_identity=snapshot.root_identity) as repository:
+        entries = repository.walk(path, max_entries=scan_limits["walk_max_entries"] + 1)
+        scanned_files = 0
+        remaining_read_bytes = scan_limits["max_read_bytes"]
+        for entry in entries[: scan_limits["walk_max_entries"]]:
+            if _entry_is_sensitive(entry.path) or entry.kind != "file":
+                continue
+            if scanned_files >= scan_limits["max_files"] or remaining_read_bytes <= 0:
+                break
+            text = repository.read_text(
+                entry.path,
+                max_bytes=min(FILE_READ_MAX_BYTES, remaining_read_bytes),
+            )
+            scanned_files += 1
+            remaining_read_bytes -= len(text.text.encode("utf-8"))
+            lines.extend(
+                (entry.path, line_number, line)
+                for line_number, line in enumerate(
+                    text.text.splitlines(keepends=True),
+                    start=1,
+                )
+            )
+    stdout_read, stdout_write = os.pipe()
+    stderr_read, stderr_write = os.pipe()
+    process = multiprocessing.get_context("fork").Process(
+        target=_regex_worker,
+        args=(query, lines, stdout_write, stderr_write),
+        daemon=True,
+    )
+    try:
+        process.start()
+    except Exception:
+        os.close(stdout_read)
+        os.close(stdout_write)
+        os.close(stderr_read)
+        os.close(stderr_write)
+        raise
+    os.close(stdout_write)
+    os.close(stderr_write)
+    return _RegexWorkerProcess(
+        process=process,
+        stdout=os.fdopen(stdout_read, "rb", buffering=0),
+        stderr=os.fdopen(stderr_read, "rb", buffering=0),
+    )
+
+
+def _regex_worker(
+    query: str,
+    lines: list[tuple[str, int, str]],
+    stdout_fd: int,
+    stderr_fd: int,
+) -> None:
+    import re
+    try:
+        pattern = re.compile(query)
+    except re.error:
+        os.write(stderr_fd, b"invalid regex")
+        raise SystemExit(2)
+    try:
+        for path, line_number, line in lines:
+            if pattern.search(line) is None:
+                continue
+            payload = {
+                "type": "match",
+                "data": {
+                    "path": {"text": path},
+                    "line_number": line_number,
+                    "lines": {"text": line},
+                },
+            }
+            os.write(
+                stdout_fd,
+                json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n",
+            )
+    finally:
+        os.close(stdout_fd)
+        os.close(stderr_fd)
+
+
+@dataclass
+class _RegexWorkerProcess:
+    process: object
+    stdout: object
+    stderr: object
+
+    @property
+    def returncode(self):
+        return self.process.exitcode
+
+    def poll(self):
+        return self.process.exitcode
+
+    def wait(self, timeout=None):
+        self.process.join(timeout)
+        if self.process.is_alive():
+            raise subprocess.TimeoutExpired("regex-worker", timeout)
+        return self.process.exitcode
+
+    def terminate(self):
+        if self.process.is_alive():
+            self.process.terminate()
+
+    def kill(self):
+        if self.process.is_alive():
+            self.process.kill()
 
 
 def _stream_regex_matches(

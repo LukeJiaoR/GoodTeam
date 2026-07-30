@@ -1997,8 +1997,8 @@ def test_regex_search_times_out(
         final_returncode=0,
     )
 
-    def fake_spawn_rg_process(*, root, query: str, target: str):
-        del root, query, target
+    def fake_spawn_rg_process(**kwargs):
+        del kwargs
         return fake_process
 
     monkeypatch.setattr(
@@ -2035,8 +2035,8 @@ def test_regex_search_returns_unsupported_when_rg_is_unavailable(
 
     fixture = _provider_fixture(tmp_path)
 
-    def missing_rg(*, root, query: str, target: str):
-        del root, query, target
+    def missing_rg(**kwargs):
+        del kwargs
         raise FileNotFoundError("rg")
 
     monkeypatch.setattr(content_tools, "_spawn_rg_process", missing_rg)
@@ -2053,6 +2053,53 @@ def test_regex_search_returns_unsupported_when_rg_is_unavailable(
     assert record["response_metadata"] == {
         "error": {"code": "context_tool_unsupported"}
     }
+
+
+@pytest.mark.parametrize(
+    "path_bypass",
+    ["relative", "target_absolute", "directory_symlink", "hardlink"],
+)
+def test_regex_search_never_executes_target_controlled_path_rg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path_bypass: str,
+) -> None:
+    fixture = _provider_fixture(tmp_path)
+    root = fixture["root"]
+    target_bin = root / "bin"
+    target_bin.mkdir()
+    marker = tmp_path / f"{path_bypass}-rg-executed"
+    target_rg = target_bin / "rg"
+    target_rg.write_text(f"#!/bin/sh\n: > {marker}\nexit 0\n", encoding="utf-8")
+    target_rg.chmod(0o755)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if path_bypass == "relative":
+        (root / "rg").write_bytes(target_rg.read_bytes())
+        (root / "rg").chmod(0o755)
+        path_value = "."
+    elif path_bypass == "target_absolute":
+        path_value = str(target_bin)
+    elif path_bypass == "directory_symlink":
+        linked = outside / "linked-bin"
+        linked.symlink_to(target_bin, target_is_directory=True)
+        path_value = str(linked)
+    else:
+        alias_bin = outside / "alias-bin"
+        alias_bin.mkdir()
+        os.link(target_rg, alias_bin / "rg")
+        path_value = str(alias_bin)
+    monkeypatch.setenv("PATH", path_value)
+    _refresh_fixture_snapshot(fixture)
+
+    result = fixture["provider"].call(
+        "search_text",
+        {"path": "", "query": "alpha", "mode": "regex", "max_matches": 5},
+        model_turn=1,
+    )
+
+    assert result["status"] == "ok"
+    assert not marker.exists()
 
 
 def test_regex_search_rejects_parent_escape_before_spawn(
@@ -2266,51 +2313,26 @@ def test_regex_real_pipe_enforces_deadline_while_waiting_for_stdout(
     writer.join(timeout=5.0)
 
 
-def test_regex_spawn_excludes_default_ignored_and_sensitive_patterns(
-    monkeypatch: pytest.MonkeyPatch,
+def test_regex_worker_never_spawns_external_process_and_omits_sensitive_paths(
+    tmp_path: Path,
 ) -> None:
-    import goodteam_os._repository_content_tools as content_tools
+    fixture = _provider_fixture(tmp_path)
+    (fixture["root"] / ".env").write_text("MATCH_ME=secret\n", encoding="utf-8")
+    (fixture["root"] / "visible.txt").write_text("MATCH_ME=visible\n", encoding="utf-8")
+    _refresh_fixture_snapshot(fixture)
 
-    captured: dict[str, object] = {}
+    result = fixture["provider"].call(
+        "search_text",
+        {"path": "", "query": "MATCH_ME", "mode": "regex", "max_matches": 5},
+        model_turn=1,
+    )
 
-    class FakeProcess:
-        pass
-
-    def fake_popen(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["kwargs"] = kwargs
-        return FakeProcess()
-
-    monkeypatch.setattr(content_tools.subprocess, "Popen", fake_popen)
-
-    content_tools._spawn_rg_process(root=Path("/tmp/repo"), query="alpha", target="src")
-
-    argv = captured["argv"]
-    for ignored in (".git", ".hg", ".next", ".svn", ".venv", "__pycache__", "build", "coverage", "dist", "node_modules"):
-        assert f"!{ignored}/**" in argv
-    for sensitive in (
-        "!.env",
-        "!.env.*",
-        "!.npmrc",
-        "!.pypirc",
-        "!.netrc",
-        "!credentials.json",
-        "!credentials.*",
-        "!secrets.*",
-        "!id_rsa",
-        "!id_ed25519",
-        "!*.pem",
-        "!*.key",
-        "!*.p12",
-        "!*.pfx",
-    ):
-        assert sensitive in argv
+    assert [item["path"] for item in result["observations"]] == ["visible.txt"]
 
 
-def test_regex_root_search_normalizes_dot_slash_paths_with_real_rg(tmp_path: Path) -> None:
-    if shutil.which("rg") is None:
-        pytest.skip("rg unavailable")
-
+def test_regex_root_search_normalizes_dot_slash_paths_with_internal_worker(
+    tmp_path: Path,
+) -> None:
     fixture = _provider_fixture(tmp_path)
     (fixture["root"] / "ascii.txt").write_text("ROOT_MATCH\n", encoding="utf-8")
     _refresh_fixture_snapshot(fixture)
