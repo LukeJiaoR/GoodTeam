@@ -3249,6 +3249,7 @@ def test_product_frontend_replaces_legacy_dashboard_contracts():
     ]:
         assert endpoint in run_api
     assert "/api/approve" in review_api
+    assert "/api/recover-takeover-brief" in review_api
     assert "/api/artifact" in review_api
     assert "/api/artifact" in knowledge_api
     assert "/api/project-config" in settings_api
@@ -4371,6 +4372,78 @@ def test_decide_approval_approves_takeover_and_generates_prd(tmp_path):
     assert payload["next_node"] == "await_prd_approval"
     assert Path(payload["artifacts"]["prd"]).is_file()
     assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", "run-1", "prd_review_gate").is_file()
+
+
+def test_legacy_takeover_review_recovers_a_human_brief_without_exposing_source_packet(tmp_path):
+    docs = tmp_path / "content-research"
+    docs.mkdir()
+    (docs / "README.md").write_text("# Project notes\n\n- Demo project context.\n", encoding="utf-8")
+    project_config = tmp_path / "project.local.yaml"
+    project_config.write_text(
+        f"name: AI Content Studio\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
+        encoding="utf-8",
+    )
+    context = tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-context.md"
+    context.parent.mkdir(parents=True)
+    context.write_text("# AI-only source packet\n\n/private/path/that-is-not-a-brief\n", encoding="utf-8")
+    state = create_initial_state("run-1", "CONTENTOPS", "Take over the existing project")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "takeover_review_gate"
+    state.next_node = "revise_takeover"
+    state.approvals["takeover"] = ApprovalDecision.CHANGES_REQUESTED
+    state.artifacts["takeover"] = str(context)
+    StateStore(tmp_path).write_project_current(state)
+    web.append_action(
+        tmp_path,
+        run_id="run-1",
+        actor="human",
+        action="approval_decided",
+        project_key="CONTENTOPS",
+        gate="takeover",
+        decision="changes_requested",
+        before_node="await_takeover_approval",
+        after_node="revise_takeover",
+        note="Please explain the most important current risk.",
+    )
+
+    review = next(item for item in build_approval_reviews(state, workspace=tmp_path) if item["approval"] == "takeover")
+
+    assert review["presentation"] == "legacy_takeover_context"
+    assert review["content"] == ""
+    assert review["is_current"] is True
+    assert review["recovery"] == {
+        "available": True,
+        "action": "regenerate_takeover_brief",
+        "note": "Please explain the most important current risk.",
+    }
+
+    payload = web.recover_legacy_takeover_review(workspace=tmp_path, project_key="CONTENTOPS")
+
+    assert payload["recovered"] is True
+    assert payload["approvals"]["takeover"] == "pending"
+    assert payload["current_node"] == "takeover_review_gate"
+    assert payload["next_node"] == "await_takeover_approval"
+    brief = Path(payload["artifacts"]["takeover"])
+    assert brief.name == "takeover-brief.md"
+    content = brief.read_text(encoding="utf-8")
+    assert "/private/path/that-is-not-a-brief" not in content
+    assert "Please explain the most important current risk." in content
+    actions = build_action_items(tmp_path, project_key="CONTENTOPS")
+    assert actions[0]["action"] == "takeover_recovery_reopened"
+    assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", "run-1", "takeover_review_gate").is_file()
+
+
+def test_legacy_takeover_recovery_rejects_any_other_state(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Take over the existing project")
+    state.source_type = "existing_project"
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = ApprovalDecision.PENDING
+    StateStore(tmp_path).write_project_current(state)
+
+    with pytest.raises(ValueError, match="does not need recovery"):
+        web.recover_legacy_takeover_review(workspace=tmp_path, project_key="CONTENTOPS", note="Anything")
 
 
 def test_decide_approval_can_request_changes(tmp_path):

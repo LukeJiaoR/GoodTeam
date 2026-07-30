@@ -90,3 +90,29 @@ test('makes an actionable takeover review the primary next step', async () => {
   expect(screen.getByText('Stop or abandon this run')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Terminate this run' })).not.toBeVisible();
 });
+
+test('routes a legacy takeover revision to the brief recovery screen', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: { run_id: 'run-active' },
+      agile_board: { counts: { blocked: 0 } },
+      approval_reviews: [{ approval: 'takeover', recovery: { available: true }, is_actionable: false }],
+      start_context: { project_name: 'Demo project' },
+      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
+      workflow_steps: [{ status: 'blocked', title: 'Takeover Context' }],
+    },
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
+  });
+
+  renderWorkPage();
+
+  expect(screen.getByText('Regenerate the takeover brief', { selector: 'h2' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Regenerate takeover brief' }))
+    .toHaveAttribute('href', '/projects/DEMO/review/takeover');
+  expect(screen.queryByRole('button', { name: 'Retry blocked work' })).not.toBeInTheDocument();
+});

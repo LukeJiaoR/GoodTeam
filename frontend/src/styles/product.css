@@ -1612,6 +1612,11 @@
 .product-shell .review-queue a > span { display: grid; min-width: 0; }
 .product-shell .review-queue small { overflow: hidden; color: var(--product-text-muted); text-overflow: ellipsis; white-space: nowrap; }
 .product-shell .review-artifact { min-width: 0; }
+.product-shell .review-recovery { display: grid; grid-column: span 2; gap: 1rem; min-width: 0; padding: clamp(1.15rem, 3vw, 2rem); background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
+.product-shell .review-recovery > h2 { font-size: clamp(1.55rem, 3vw, 2.35rem); line-height: 1.05; }
+.product-shell .review-recovery > p:not(.product-eyebrow):not(.product-boundary-note) { max-width: 58ch; margin: 0; color: var(--product-text-muted); line-height: 1.65; }
+.product-shell .review-recovery label { display: grid; gap: 0.4rem; max-width: 52rem; color: var(--product-text-muted); font-size: 0.82rem; font-weight: 600; }
+.product-shell .review-recovery textarea { width: 100%; }
 .product-shell .review-artifact header { display: flex; gap: 1rem; align-items: end; justify-content: space-between; margin-bottom: 0.8rem; }
 .product-shell .review-view-switcher { display: flex; }
 .product-shell .review-view-switcher button { padding: 0.45rem 0.7rem; color: var(--product-text-muted); background: transparent; border: 1px solid var(--product-border); cursor: pointer; }
@@ -1714,6 +1719,7 @@
 @media (max-width: 1000px) {
   .product-shell .review-workspace { grid-template-columns: minmax(13rem, 0.65fr) minmax(0, 1.35fr); }
   .product-shell .review-inspector { grid-column: 2; }
+  .product-shell .review-recovery { grid-column: 2; }
   .product-shell .work-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 

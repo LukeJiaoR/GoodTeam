@@ -37,6 +37,14 @@ function runOptionLabel(run, t) {
 }
 
 function reviewPrompt(review, t) {
+  if (review?.recovery?.available) {
+    return {
+      action: t('work.review.recovery.action'),
+      description: t('work.review.recovery.description'),
+      eyebrow: t('work.review.eyebrow'),
+      title: t('work.review.recovery.title'),
+    };
+  }
   if (review?.approval === 'takeover') {
     return {
       action: t('work.review.takeover.action'),
@@ -104,7 +112,9 @@ function CurrentView({ data, onRetry, onTerminate, projectKey, retrying, runTitl
   const current = data.workflow_steps?.find((step) => ['active', 'blocked'].includes(step.status))
     || data.workflow_steps?.find((step) => step.status !== 'complete');
   const actionableReview = data.approval_reviews?.find((review) => review.is_actionable);
-  const prompt = actionableReview ? reviewPrompt(actionableReview, t) : null;
+  const recoverableReview = data.approval_reviews?.find((review) => review.recovery?.available);
+  const priorityReview = actionableReview || recoverableReview;
+  const prompt = priorityReview ? reviewPrompt(priorityReview, t) : null;
   return (
     <div className="work-primary-view">
       <section className="work-focus-panel">
@@ -113,7 +123,7 @@ function CurrentView({ data, onRetry, onTerminate, projectKey, retrying, runTitl
             <p className="product-eyebrow">{prompt.eyebrow}</p>
             <h2>{prompt.title}</h2>
             <p>{prompt.description}</p>
-            <Link className="product-button product-button--primary" to={routes.projectReviewItem(projectKey, actionableReview.approval)}>{prompt.action}</Link>
+            <Link className="product-button product-button--primary" to={routes.projectReviewItem(projectKey, priorityReview.approval)}>{prompt.action}</Link>
           </>
         ) : (
           <>
@@ -123,11 +133,11 @@ function CurrentView({ data, onRetry, onTerminate, projectKey, retrying, runTitl
             {current?.feedback ? <p className="work-feedback">{current.feedback}</p> : null}
           </>
         )}
-        {!actionableReview && data.agile_board?.counts?.blocked > 0 ? (
+        {!priorityReview && data.agile_board?.counts?.blocked > 0 ? (
           <Button busy={retrying} onClick={onRetry}>{t('work.actions.retryBlocked')}</Button>
         ) : null}
         <details className="work-run-controls">
-          <summary>{t(actionableReview ? 'work.actions.abandonRun' : 'work.actions.runControls')}</summary>
+          <summary>{t(priorityReview ? 'work.actions.abandonRun' : 'work.actions.runControls')}</summary>
           <p>{t('work.actions.terminateScope', { runTitle })}</p>
           <Button busy={terminating} variant="danger" onClick={onTerminate}>{t('work.actions.terminate')}</Button>
         </details>

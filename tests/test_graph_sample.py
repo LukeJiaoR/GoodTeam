@@ -1225,6 +1225,97 @@ def test_adoption_uses_configured_worker_for_human_takeover_brief(tmp_path, monk
     assert result.artifacts["takeover_context"] != result.artifacts["takeover"]
 
 
+def test_takeover_changes_requested_regenerates_human_brief_and_reopens_review(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "接管内容工作流")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = "pending"
+    legacy_context = tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-context.md"
+    legacy_context.parent.mkdir(parents=True, exist_ok=True)
+    legacy_context.write_text("# Internal source packet\n\n/path/for/ai-only-use\n", encoding="utf-8")
+    state.artifacts["takeover"] = str(legacy_context)
+    StateStore(tmp_path).write_project_current(state)
+    seen: dict[str, object] = {}
+
+    def fake_create_job(self, **kwargs):
+        seen.update(kwargs)
+        return {"id": "job-1", **kwargs}
+
+    def fake_run_job(self, job_id):
+        job_root = self.root / job_id
+        job_root.mkdir(parents=True, exist_ok=True)
+        result_path = job_root / "result.md"
+        result_path.write_text(
+            "# Takeover Brief\n\n## Key findings\n\n- 已根据反馈重新检查了项目。\n\n"
+            "## Questions for you\n\n- 这个季度最重要的目标是什么？\n",
+            encoding="utf-8",
+        )
+        return {
+            "job_id": job_id,
+            "run_id": state.run_id,
+            "role": "project_intake",
+            "status": "completed",
+            "summary": "completed",
+            "result_path": str(result_path),
+        }
+
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fake_create_job)
+    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="takeover",
+        decision="changes_requested",
+        note="请说明当前最重要的风险。",
+    )
+
+    assert payload["current_node"] == "takeover_review_gate"
+    assert payload["next_node"] == "await_takeover_approval"
+    assert payload["approvals"]["takeover"] == "pending"
+    assert "请说明当前最重要的风险。" in str(seen["task"])
+    assert "takeover" not in payload["change_requests"]
+    revised_brief = Path(payload["artifacts"]["takeover"])
+    assert revised_brief.name == "takeover-brief.md"
+    assert "# Takeover Brief" in revised_brief.read_text(encoding="utf-8")
+    actions = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(action["action"] == "takeover_revised" for action in actions)
+
+
+def test_takeover_changes_requested_keeps_visible_feedback_when_intake_worker_fails(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path)
+    state = create_initial_state("run-1", "CONTENTOPS", "接管内容工作流")
+    state.source_type = "existing_project"
+    state.source_ref = str(project_config)
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = "pending"
+    StateStore(tmp_path).write_project_current(state)
+
+    monkeypatch.setattr("goodteam_os.graph.generate_artifact_via_worker", lambda **kwargs: None)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="takeover",
+        decision="changes_requested",
+        note="请说明当前最重要的风险。",
+    )
+
+    assert payload["next_node"] == "await_takeover_approval"
+    assert payload["approvals"]["takeover"] == "pending"
+    assert payload["change_requests"]["takeover"] == "请说明当前最重要的风险。"
+    fallback = Path(payload["artifacts"]["takeover"]).read_text(encoding="utf-8")
+    assert "## Requested changes" in fallback
+    assert "请说明当前最重要的风险。" in fallback
+
+
 def test_collect_project_context_reads_configured_sources(tmp_path):
     project_config = write_project_fixture(tmp_path)
     context = collect_project_context(project_config)

@@ -3570,6 +3570,31 @@ def decide_approval(
             artifact=approval_artifact_map().get(approval, approval),
             artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
         )
+    elif approval == "takeover" and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
+        revision_note = note.strip()
+        regenerate_before_node = state.next_node
+        state.change_requests[approval] = revision_note
+        state.approvals[approval] = ApprovalDecision.PENDING
+        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+        if project_config is None and project_key:
+            try:
+                project_config = _project_config_for_key(workspace, project_key)
+            except ValueError:
+                project_config = None
+        state = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+        append_action(
+            workspace,
+            run_id=state.run_id,
+            actor="system",
+            action="takeover_revised",
+            project_key=key,
+            gate=approval,
+            before_node=regenerate_before_node,
+            after_node=state.next_node,
+            artifact="takeover",
+            artifact_path=state.artifacts.get("takeover", ""),
+            note=revision_note,
+        )
     elif approval in {"prd", "rfc"} and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
         revision_note = note.strip()
         regenerate_before_node = state.next_node
@@ -3626,6 +3651,65 @@ def decide_approval(
 
     payload = asdict(state)
     payload["decision"] = str(approval_decision)
+    return payload
+
+
+def recover_legacy_takeover_review(
+    *,
+    workspace: Path,
+    project_key: str,
+    note: str = "",
+) -> dict[str, object]:
+    """Turn one persisted pre-brief Takeover revision into a normal review.
+
+    Old Takeover runs could persist a machine-oriented context packet as the
+    approval artifact after ``changes_requested``.  Recovery is deliberately
+    explicit and limited to that exact legacy state; reads never mutate it.
+    """
+
+    key = normalize_project_key(project_key)
+    state_store = StateStore(workspace)
+    state = state_store.read_project_current(key)
+    if state is None:
+        raise ValueError(f"No active run for project: {key}")
+    if not _is_legacy_takeover_change_request(state, "takeover"):
+        raise ValueError("The current Takeover review does not need recovery.")
+
+    revision_note = note.strip() or _latest_takeover_change_request_note(workspace, state)
+    if not revision_note:
+        raise ValueError("Describe the requested Takeover changes before regenerating the brief.")
+
+    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
+    if project_config is None or not project_config.is_file():
+        try:
+            project_config = _project_config_for_key(workspace, key)
+        except ValueError:
+            project_config = None
+    if project_config is None or not project_config.is_file():
+        raise ValueError("The configured project source is unavailable, so GoodTeam cannot regenerate the Takeover Brief.")
+
+    before_node = state.next_node
+    state.change_requests["takeover"] = revision_note
+    state.approvals["takeover"] = ApprovalDecision.PENDING
+    state = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+    append_action(
+        workspace,
+        run_id=state.run_id,
+        actor="human",
+        action="takeover_recovery_reopened",
+        project_key=key,
+        gate="takeover",
+        before_node=before_node,
+        after_node=state.next_node,
+        artifact="takeover",
+        artifact_path=state.artifacts.get("takeover", ""),
+        note=revision_note,
+    )
+    state_store.write_project_current(state, key)
+    state_store.write_project_checkpoint(state, key)
+    notify_current_approval_gate(state, workspace=workspace)
+    payload = asdict(state)
+    payload["recovered"] = True
     return payload
 
 
@@ -4183,6 +4267,27 @@ def _approval_review_title(state: AgileDevState, artifact: str) -> str:
     return str(contract.get("title", "") or "").strip() or artifact.replace("_", " ").title()
 
 
+def _is_legacy_takeover_change_request(state: AgileDevState, approval: str) -> bool:
+    return (
+        approval == "takeover"
+        and str(state.approvals.get("takeover", "")) == ApprovalDecision.CHANGES_REQUESTED
+        and state.current_node == "takeover_review_gate"
+        and state.next_node == "revise_takeover"
+    )
+
+
+def _latest_takeover_change_request_note(workspace: Path, state: AgileDevState) -> str:
+    for action in build_action_items(workspace, project_key=state.project_key):
+        if (
+            action.get("run_id") == state.run_id
+            and action.get("action") == "approval_decided"
+            and action.get("gate") == "takeover"
+            and action.get("decision") == ApprovalDecision.CHANGES_REQUESTED
+        ):
+            return str(action.get("note", "") or "").strip()
+    return ""
+
+
 def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Path(".")) -> list[dict[str, object]]:
     if state is None:
         return []
@@ -4199,16 +4304,24 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
         artifact = approval_artifacts.get(approval, approval)
         artifact_path = state.artifacts.get(artifact, "")
         artifact_version = artifact_version_for_path(artifact_path)
+        legacy_takeover_recovery = _is_legacy_takeover_change_request(state, approval)
         review = {
             "approval": approval,
             "title": _approval_review_title(state, artifact),
             "decision": str(decision),
             "is_pending": str(decision) == ApprovalDecision.PENDING,
             "is_actionable": str(decision) == ApprovalDecision.PENDING and state.next_node == f"await_{approval}_approval",
+            "is_current": state.current_node == f"{approval}_review_gate",
             "artifact": artifact,
             "artifact_path": artifact_path,
             "artifact_version": artifact_version,
-            "content": read_artifact_preview(artifact_path),
+            "content": "" if legacy_takeover_recovery else read_artifact_preview(artifact_path),
+            "presentation": "legacy_takeover_context" if legacy_takeover_recovery else "review_artifact",
+            "recovery": {
+                "available": legacy_takeover_recovery,
+                "action": "regenerate_takeover_brief" if legacy_takeover_recovery else "",
+                "note": _latest_takeover_change_request_note(workspace, state) if legacy_takeover_recovery else "",
+            },
             "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
         }
         reviewer_profile = reviewer_profile_for_approval(reviewer_target, approval)
@@ -6669,7 +6782,7 @@ def serve(
                 re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision)", normalized_path)
             )
 
-            if not is_project_path and not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose", "/fs/mkdir", "/server-actions/run", "/git-init"}:
+            if not is_project_path and not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/recover-takeover-brief", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose", "/fs/mkdir", "/server-actions/run", "/git-init"}:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -6794,6 +6907,12 @@ def serve(
                         approval=str(request.get("approval", "")),
                         decision=str(request.get("decision", "")),
                         debate_ref=str(request.get("debate_ref", "")),
+                        note=str(request.get("note", "")),
+                    )
+                elif normalized_path == "/recover-takeover-brief":
+                    result = recover_legacy_takeover_review(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
                         note=str(request.get("note", "")),
                     )
                 elif normalized_path == "/reviewer-jobs/run":
