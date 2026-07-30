@@ -250,18 +250,21 @@ Current behavior:
 
 ### Fixed system Git boundary
 
-Snapshot capture does not resolve Git from caller-controlled `PATH`. It considers
-only `/usr/bin/git` and `/bin/git`, canonicalizes the candidate, and requires the
-trusted directory chain and executable to be root-owned and not group- or
-world-writable. The executable must be a regular executable outside the target
-root. Git receives a fixed `/usr/bin:/bin` execution path,
+Snapshot capture and the Provider's Git history and recent-change tools share one
+trusted executable resolver and do not resolve Git from caller-controlled
+`PATH`. They consider only `/usr/bin/git` and `/bin/git`, canonicalize the
+candidate, and require the trusted directory chain and executable to be
+root-owned and not group- or world-writable. The executable must be a regular
+executable outside the target root and its descriptor identity is rechecked
+immediately before each process spawn. Git receives a fixed `/usr/bin:/bin` path,
 `core.fsmonitor=false`, disabled prompts and optional locks, and isolated
-global/system configuration. Snapshot Git output is read through bounded pipes;
-stdout and stderr share one aggregate limit, timeout or overflow kills the whole
-process group, and target hooks, helpers, aliases, and project commands are not
-executed. If a trusted system Git is unavailable, capture fails with the stable
-`repository_snapshot_failed` boundary instead of falling back to Homebrew,
-`/usr/local`, or the inherited environment.
+global/system configuration; caller loader and Python environment variables are
+not inherited. Git output is read through bounded pipes; stdout and stderr share
+one aggregate limit, timeout or overflow kills the whole process group, and
+target hooks, helpers, aliases, and project commands are not executed. If a
+trusted system Git is unavailable, snapshot capture fails with
+`repository_snapshot_failed` and Provider Git tools fail as unsupported rather
+than falling back to Homebrew, `/usr/local`, or the inherited environment.
 
 ## Immutable workspace snapshot and inventory artifacts
 

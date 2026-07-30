@@ -41,9 +41,10 @@ turn, call, file, character, elapsed-time, token, and cost ceilings; requests an
 results pass sensitive-path filtering and redaction. Regex search performs
 descriptor-anchored bounded reads in the parent and isolates only pattern
 matching in an internal worker; it executes no external `rg`, inherited `PATH`,
-or project executable. Git snapshot inspection uses only provenance-checked
-system Git from fixed system locations and a fixed environment, never inherited
-`PATH`. Stable repository, snapshot, artifact, provider, and budget error
+or project executable. Git snapshot inspection and both Provider Git tools share
+the same provenance-checked system Git resolver, fixed environment, and
+process-group cleanup boundary; they never use inherited `PATH` or loader
+variables. Stable repository, snapshot, artifact, provider, and budget error
 families fail closed.
 
 This foundation invokes no model, runs no target-project command, creates no final
