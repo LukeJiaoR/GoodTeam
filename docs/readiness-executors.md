@@ -4,6 +4,9 @@ GoodTeam owns project readiness state. The browser renders the persisted state
 returned by the server; it never marks a project ready or enables workflow start
 on its own.
 
+For the current bounded existing-project foundation behind `repository_understanding`,
+see [repository-context-provider.md](repository-context-provider.md).
+
 ## Lifecycle and persistence
 
 Readiness is stored at `WORKSPACE/state/projects/PROJECT_KEY/readiness.json`.
@@ -23,9 +26,36 @@ steps.
 
 Existing-project understanding opens the imported root with `O_NOFOLLOW`, verifies
 the stored device/inode, traverses a bounded number of entries, skips symlinks, and
-reads only bounded regular files needed for manifests and key documentation. It
-does not install dependencies, execute discovered commands, modify configuration,
-or write into the target repository.
+reads only bounded regular files needed for manifests and key documentation. In
+schema version 2, the existing `scan_existing_project()` entry point remains only
+as a compatibility wrapper over `repository_snapshot.v1` capture plus
+`repository_inventory.v1` extraction. Current "repository understanding" wording
+therefore means bounded inventory behavior, not model understanding. It does not
+install dependencies, execute discovered commands, modify configuration, or write
+into the target repository.
+
+Track 1 additionally provides a safe, read-only, snapshot-bound Repository
+Context Provider with an immutable snapshot, matching inventory, and
+snapshot-locked observation ledger. Its seven allowlisted tools are bounded by
+turn, call, file, character, elapsed-time, token, and cost ceilings; requests and
+results pass sensitive-path filtering and redaction. Regex search performs
+descriptor-anchored bounded reads in the parent and isolates only pattern
+matching in an internal worker; it executes no external `rg`, inherited `PATH`,
+or project executable. Git snapshot inspection and both Provider Git tools share
+the same provenance-checked system Git resolver, fixed environment, and
+process-group cleanup boundary; they never use inherited `PATH` or loader
+variables. Stable repository, snapshot, artifact, provider, and budget error
+families fail closed.
+
+This foundation invokes no model, runs no target-project command, creates no final
+project profile, and does not mean AI onboarding completed. Readiness schema 2 and
+the current human-confirmed compatibility path remain authoritative.
+
+Tracks 2 and later must add the Project Onboarding Worker, claim/evidence
+production, `accept_limited`, profile review, and the readiness transition. A
+later Worker must re-read any file it relies on at the current repository SHA;
+observation bytes from an older snapshot are evidence records, not current file
+authority.
 
 Discovered commands are candidates only. They carry stable IDs and require explicit
 confirmation. Worker preflight is local and dry-run only. A warning requires user

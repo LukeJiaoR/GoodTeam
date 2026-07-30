@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +11,7 @@ import pytest
 import goodteam_os.project_readiness_executor as readiness_executor_module
 from goodteam_os.project_import import import_project, mutate_project_readiness
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
+from goodteam_os.repository_access import RepositoryAccessError
 from goodteam_os.project_readiness_executor import (
     MAX_ENTRIES,
     ProjectReadinessExecutor,
@@ -759,27 +759,30 @@ def test_scanner_does_not_follow_replaced_root_symlink(tmp_path: Path) -> None:
     assert captured.value.code == "project_root_changed"
 
 
-def test_manifest_replacement_between_stat_and_open_fails_closed(tmp_path: Path) -> None:
+def test_scanner_translates_repository_entry_change_for_schema_2(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "repo"
     root.mkdir()
-    manifest = root / "package.json"
-    manifest.write_text('{"scripts":{"test":"safe"}}', encoding="utf-8")
-    expected = manifest.stat(follow_symlinks=False)
-    manifest.rename(root / "package.original.json")
-    manifest.write_text('{"scripts":{"test":"replacement"}}', encoding="utf-8")
-    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        with pytest.raises(ReadinessExecutionError) as captured:
-            readiness_executor_module._read_regular_file(
-                root_fd,
-                "package.json",
-                expected_stat=expected,
-                relative_path="package.json",
-            )
-    finally:
-        os.close(root_fd)
+
+    def fail_capture(*_args, **_kwargs):
+        raise RepositoryAccessError(
+            "repository_entry_changed",
+            "entry changed",
+            details={"path": "package.json"},
+        )
+
+    monkeypatch.setattr(
+        readiness_executor_module,
+        "capture_repository_snapshot",
+        fail_capture,
+    )
+    with pytest.raises(ReadinessExecutionError) as captured:
+        scan_existing_project(root)
 
     assert captured.value.code == "project_entry_changed"
+    assert captured.value.details == {"path": "package.json"}
 
 
 def test_root_replacement_during_executor_scan_persists_bound_failure(

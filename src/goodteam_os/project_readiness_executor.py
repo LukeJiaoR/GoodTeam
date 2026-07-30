@@ -4,12 +4,9 @@ import errno
 import hashlib
 import json
 import os
-import stat
 import threading
-import tomllib
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from itertools import islice
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -21,6 +18,17 @@ from goodteam_os.project_import import (
 )
 from goodteam_os.project_readiness import MODE_STEPS
 from goodteam_os.projects import load_project_target
+from goodteam_os.repository_access import RepositoryAccessError
+from goodteam_os.repository_inventory import (
+    MAX_DEPTH as MAX_DEPTH,
+    MAX_ENTRIES as MAX_ENTRIES,
+    MAX_READ_BYTES as MAX_READ_BYTES,
+    build_repository_inventory,
+)
+from goodteam_os.repository_snapshot import (
+    RepositorySnapshotError,
+    capture_repository_snapshot,
+)
 from goodteam_os.state import normalize_project_key
 from goodteam_os.workers import worker_backend_local_preflight
 
@@ -38,53 +46,6 @@ STEP_DEFAULTS: dict[str, dict[str, object]] = {
 }
 TERMINAL_EXECUTION_STATUSES = {"complete", "failed", "cancelled"}
 ACTIVE_EXECUTION_STATUSES = {"running", "needs_input"}
-MAX_ENTRIES = 1_500
-MAX_DEPTH = 4
-MAX_READ_BYTES = 256 * 1024
-SKIPPED_DIRECTORY_NAMES = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".venv",
-    "node_modules",
-    "dist",
-    "build",
-    "coverage",
-    "__pycache__",
-}
-DOCUMENT_NAMES = {
-    "README",
-    "README.md",
-    "README.rst",
-    "AGENTS.md",
-    "CONTRIBUTING.md",
-    "CLAUDE.md",
-    "CODE_OF_CONDUCT.md",
-    "SECURITY.md",
-}
-ENTRY_NAMES = {
-    "main.py",
-    "app.py",
-    "server.py",
-    "manage.py",
-    "index.js",
-    "index.ts",
-    "main.js",
-    "main.ts",
-    "main.tsx",
-    "main.jsx",
-}
-MANIFEST_TECH = {
-    "package.json": "Node.js / JavaScript",
-    "pyproject.toml": "Python",
-    "requirements.txt": "Python",
-    "go.mod": "Go",
-    "Cargo.toml": "Rust",
-    "pom.xml": "Java / Maven",
-    "build.gradle": "Java / Gradle",
-    "Gemfile": "Ruby",
-    "composer.json": "PHP",
-}
 
 
 class ReadinessExecutionError(ValueError):
@@ -1384,416 +1345,21 @@ def scan_existing_project(
     *,
     expected_identity: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    root = Path(root).expanduser()
     try:
-        root_fd = os.open(
+        snapshot = capture_repository_snapshot(
             root,
-            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+            project_key="LEGACY-READINESS",
+            expected_identity=expected_identity,
         )
-    except OSError as exc:
-        if exc.errno not in {errno.ELOOP, errno.ENOTDIR, errno.ENOENT}:
-            raise
+        return build_repository_inventory(root, snapshot=snapshot)
+    except (RepositoryAccessError, RepositorySnapshotError) as exc:
+        legacy_code = {
+            "repository_root_changed": "project_root_changed",
+            "repository_entry_changed": "project_entry_changed",
+        }.get(exc.code, exc.code)
         raise ReadinessExecutionError(
-            "project_root_changed",
-            "The project root changed before GoodTeam could read it.",
-            recovery=["reload_project", "retry_readiness"],
+            legacy_code,
+            str(exc),
+            details=exc.details,
+            recovery=["retry_readiness", "reload_project"],
         ) from exc
-    try:
-        root_stat = os.fstat(root_fd)
-        if isinstance(expected_identity, dict) and (
-            expected_identity.get("device") != root_stat.st_dev
-            or expected_identity.get("inode") != root_stat.st_ino
-        ):
-            raise ReadinessExecutionError(
-                "project_root_changed",
-                "The project root no longer matches the imported directory.",
-                recovery=["reload_project", "retry_readiness"],
-            )
-        files: list[str] = []
-        directories: list[str] = []
-        symlinks: list[str] = []
-        manifests: dict[str, str] = {}
-        document_contents: dict[str, str] = {}
-        documents: list[str] = []
-        entries: list[str] = []
-        extension_counts: dict[str, int] = {}
-        entry_count = 0
-        truncated = False
-
-        def visit(directory_fd: int, prefix: str, depth: int) -> None:
-            nonlocal entry_count, truncated
-            if entry_count >= MAX_ENTRIES or depth > MAX_DEPTH:
-                truncated = True
-                return
-            remaining = MAX_ENTRIES - entry_count
-            with os.scandir(directory_fd) as iterator:
-                listed = list(islice(iterator, remaining + 1))
-            if len(listed) > remaining:
-                truncated = True
-                listed = listed[:remaining]
-            listed.sort(key=lambda item: item.name.lower())
-            for entry in listed:
-                if entry_count >= MAX_ENTRIES:
-                    truncated = True
-                    return
-                entry_count += 1
-                relative = f"{prefix}/{entry.name}" if prefix else entry.name
-                try:
-                    entry_stat = entry.stat(follow_symlinks=False)
-                except OSError:
-                    continue
-                if stat.S_ISLNK(entry_stat.st_mode):
-                    symlinks.append(relative)
-                    continue
-                if stat.S_ISDIR(entry_stat.st_mode):
-                    directories.append(relative)
-                    if entry.name in SKIPPED_DIRECTORY_NAMES:
-                        continue
-                    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
-                    try:
-                        child_fd = os.open(entry.name, flags, dir_fd=directory_fd)
-                    except OSError:
-                        continue
-                    try:
-                        child_stat = os.fstat(child_fd)
-                        if (
-                            child_stat.st_dev != entry_stat.st_dev
-                            or child_stat.st_ino != entry_stat.st_ino
-                            or not stat.S_ISDIR(child_stat.st_mode)
-                        ):
-                            raise ReadinessExecutionError(
-                                "project_entry_changed",
-                                "A project directory changed while GoodTeam was reading it.",
-                                details={"path": relative},
-                                recovery=["retry_readiness", "reload_project"],
-                            )
-                        visit(child_fd, relative, depth + 1)
-                    finally:
-                        os.close(child_fd)
-                    continue
-                if not stat.S_ISREG(entry_stat.st_mode):
-                    continue
-                files.append(relative)
-                suffix = Path(entry.name).suffix.lower()
-                if suffix:
-                    extension_counts[suffix] = extension_counts.get(suffix, 0) + 1
-                if entry.name in ENTRY_NAMES:
-                    entries.append(relative)
-                if entry.name in DOCUMENT_NAMES or (prefix == "docs" and suffix in {".md", ".rst", ".txt"}):
-                    documents.append(relative)
-                    content = _read_regular_file(
-                        directory_fd,
-                        entry.name,
-                        expected_stat=entry_stat,
-                        relative_path=relative,
-                    )
-                    if content is not None:
-                        document_contents[relative] = content
-                if entry.name in MANIFEST_TECH or entry.name in {"Makefile", "justfile"}:
-                    content = _read_regular_file(
-                        directory_fd,
-                        entry.name,
-                        expected_stat=entry_stat,
-                        relative_path=relative,
-                    )
-                    if content is not None:
-                        manifests[relative] = content
-
-        visit(root_fd, "", 0)
-        current = os.stat(root, follow_symlinks=False)
-        if stat.S_ISLNK(current.st_mode) or (current.st_dev, current.st_ino) != (
-            root_stat.st_dev,
-            root_stat.st_ino,
-        ):
-            raise ReadinessExecutionError(
-                "project_root_changed",
-                "The project root changed while GoodTeam was reading it.",
-                recovery=["reload_project", "retry_readiness"],
-            )
-        stack = sorted(
-            {
-                MANIFEST_TECH[Path(path).name]
-                for path in manifests
-                if Path(path).name in MANIFEST_TECH
-            }
-        )
-        commands = _discover_commands(manifests)
-        constraints = _extract_constraints(document_contents)
-        risks = []
-        if symlinks:
-            risks.append(f"Skipped {len(symlinks)} symbolic link(s) during the read-only scan.")
-        if truncated:
-            risks.append("Repository scan reached the bounded entry limit; deeper indexing is recommended.")
-        if not commands:
-            risks.append("No run, test, lint, build, format, or check commands were discovered safely.")
-        return {
-            "technology_stack": stack or _stack_from_extensions(extension_counts),
-            "directory_structure": directories[:120],
-            "entry_points": entries[:80],
-            "commands": commands,
-            "key_documents": documents[:80],
-            "constraints": constraints,
-            "risks": risks,
-            "next_steps": [
-                "Confirm the discovered commands and project constraints.",
-                "Run Worker preflight after confirmation.",
-            ],
-            "scan": {
-                "files_seen": len(files),
-                "directories_seen": len(directories),
-                "entries_seen": entry_count,
-                "symlinks_skipped": symlinks[:80],
-                "max_depth": MAX_DEPTH,
-                "max_entries": MAX_ENTRIES,
-                "read_only": True,
-            },
-        }
-    finally:
-        os.close(root_fd)
-
-
-def _read_regular_file(
-    directory_fd: int,
-    name: str,
-    *,
-    expected_stat: os.stat_result,
-    relative_path: str,
-) -> str | None:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(name, flags, dir_fd=directory_fd)
-    except OSError as exc:
-        if exc.errno in {errno.ELOOP, errno.ENOENT, errno.ENOTDIR}:
-            raise ReadinessExecutionError(
-                "project_entry_changed",
-                "A project file changed while GoodTeam was reading it.",
-                details={"path": relative_path},
-                recovery=["retry_readiness", "reload_project"],
-            ) from exc
-        return None
-    try:
-        value = os.fstat(descriptor)
-        if (
-            value.st_dev != expected_stat.st_dev
-            or value.st_ino != expected_stat.st_ino
-            or not stat.S_ISREG(value.st_mode)
-            or value.st_size != expected_stat.st_size
-            or value.st_mtime_ns != expected_stat.st_mtime_ns
-        ):
-            raise ReadinessExecutionError(
-                "project_entry_changed",
-                "A project file was replaced while GoodTeam was reading it.",
-                details={"path": relative_path},
-                recovery=["retry_readiness", "reload_project"],
-            )
-        if not stat.S_ISREG(value.st_mode) or value.st_size > MAX_READ_BYTES:
-            return None
-        with os.fdopen(os.dup(descriptor), "r", encoding="utf-8", errors="replace") as handle:
-            content = handle.read(MAX_READ_BYTES)
-        after = os.fstat(descriptor)
-        if (
-            after.st_dev != value.st_dev
-            or after.st_ino != value.st_ino
-            or after.st_size != value.st_size
-            or after.st_mtime_ns != value.st_mtime_ns
-        ):
-            raise ReadinessExecutionError(
-                "project_entry_changed",
-                "A project file changed while GoodTeam was reading it.",
-                details={"path": relative_path},
-                recovery=["retry_readiness", "reload_project"],
-            )
-        return content
-    finally:
-        os.close(descriptor)
-
-
-def _extract_constraints(document_contents: dict[str, str]) -> list[str]:
-    constraint_names = {"AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "SECURITY.md"}
-    constraints: list[str] = []
-    for path, content in sorted(document_contents.items()):
-        if Path(path).name not in constraint_names:
-            continue
-        excerpts: list[str] = []
-        for raw_line in content.splitlines():
-            line = raw_line.strip().lstrip("#*- ").strip()
-            if not line or line.startswith(("![", "[![")):
-                continue
-            excerpts.append(line[:240])
-            if len(excerpts) >= 12:
-                break
-        if not excerpts:
-            constraints.append(f"{path}: review this project constraint document")
-        else:
-            constraints.extend(f"{path}: {excerpt}" for excerpt in excerpts)
-    return constraints[:80]
-
-
-def _discover_commands(manifests: dict[str, str]) -> list[dict[str, object]]:
-    commands: list[dict[str, object]] = []
-    seen: set[tuple[str, str]] = set()
-
-    def add(
-        path: str,
-        kind: str,
-        command: str,
-        *,
-        declared_command: str | None = None,
-    ) -> None:
-        identity = (path, command)
-        if identity in seen:
-            return
-        seen.add(identity)
-        candidate: dict[str, object] = {
-            "id": hashlib.sha256(
-                f"readiness-command:v1\0{path}\0{command}".encode()
-            ).hexdigest()[:16],
-            "kind": kind,
-            "command": command,
-            "source": path,
-            "requires_confirmation": True,
-        }
-        if declared_command is not None:
-            candidate["declared_command"] = declared_command
-        commands.append(candidate)
-
-    def safe_name(value: str) -> bool:
-        return bool(value) and value.replace("-", "").replace("_", "").replace(
-            ".", ""
-        ).isalnum()
-
-    for path, content in sorted(manifests.items()):
-        name = Path(path).name
-        if name == "package.json":
-            try:
-                scripts = dict(json.loads(content).get("scripts", {}) or {})
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                scripts = {}
-            for script_name, value in sorted(scripts.items()):
-                kind = _command_kind(str(script_name))
-                if kind is None:
-                    continue
-                add(
-                    path,
-                    kind,
-                    f"npm run {script_name}",
-                    declared_command=str(value),
-                )
-        elif name == "pyproject.toml":
-            try:
-                project = tomllib.loads(content)
-            except (tomllib.TOMLDecodeError, TypeError):
-                project = {}
-            project_metadata = project.get("project", {})
-            scripts = (
-                project_metadata.get("scripts", {})
-                if isinstance(project_metadata, dict)
-                else {}
-            )
-            if isinstance(scripts, dict):
-                for script_name, entry_point in sorted(scripts.items()):
-                    if (
-                        not isinstance(script_name, str)
-                        or not safe_name(script_name)
-                        or not isinstance(entry_point, str)
-                    ):
-                        continue
-                    add(
-                        path,
-                        "run",
-                        script_name,
-                        declared_command=entry_point,
-                    )
-            tools = project.get("tool", {})
-            if isinstance(tools, dict):
-                if isinstance(tools.get("pytest"), dict):
-                    add(path, "test", "python -m pytest")
-                if isinstance(tools.get("ruff"), dict):
-                    add(path, "lint", "python -m ruff check .")
-                    if isinstance(tools["ruff"].get("format"), dict):
-                        add(path, "format", "python -m ruff format --check .")
-                if isinstance(tools.get("mypy"), dict):
-                    add(path, "check", "python -m mypy .")
-            if isinstance(project.get("build-system"), dict):
-                add(path, "build", "python -m build")
-        elif name == "Cargo.toml":
-            try:
-                cargo = tomllib.loads(content)
-            except (tomllib.TOMLDecodeError, TypeError):
-                cargo = {}
-            if isinstance(cargo.get("package"), dict) or isinstance(
-                cargo.get("workspace"), dict
-            ):
-                add(path, "check", "cargo check")
-                add(path, "test", "cargo test")
-                add(path, "build", "cargo build")
-                add(path, "format", "cargo fmt --check")
-                add(path, "lint", "cargo clippy --all-targets --all-features")
-                binaries = cargo.get("bin", [])
-                if isinstance(binaries, list):
-                    for binary in binaries:
-                        if not isinstance(binary, dict):
-                            continue
-                        binary_name = binary.get("name")
-                        if isinstance(binary_name, str) and safe_name(binary_name):
-                            add(path, "run", f"cargo run --bin {binary_name}")
-        elif name == "go.mod":
-            module_lines = [
-                line.strip()
-                for line in content.splitlines()
-                if line.strip() and not line.lstrip().startswith("//")
-            ]
-            if (
-                module_lines
-                and module_lines[0].startswith("module ")
-                and module_lines[0].removeprefix("module ").strip()
-            ):
-                add(path, "test", "go test ./...")
-                add(path, "check", "go vet ./...")
-                add(path, "build", "go build ./...")
-                add(path, "format", "gofmt -l .")
-        elif name == "Makefile":
-            for line in content.splitlines():
-                if not line or line.startswith(("\t", " ", "#", ".")) or ":" not in line:
-                    continue
-                target = line.split(":", 1)[0].strip()
-                kind = _command_kind(target)
-                if kind is None or not target.replace("-", "").replace("_", "").isalnum():
-                    continue
-                add(path, kind, f"make {target}")
-        elif name == "justfile":
-            for line in content.splitlines():
-                if not line or line.startswith((" ", "\t", "#")) or ":" not in line:
-                    continue
-                target = line.split(":", 1)[0].strip()
-                kind = _command_kind(target)
-                if kind:
-                    add(path, kind, f"just {target}")
-    return commands[:120]
-
-
-def _command_kind(name: str) -> str | None:
-    lowered = name.lower()
-    for kind in ("test", "lint", "format", "build", "check"):
-        if kind in lowered:
-            return kind
-    if any(token in lowered for token in ("start", "serve", "dev", "run")):
-        return "run"
-    return None
-
-
-def _stack_from_extensions(counts: dict[str, int]) -> list[str]:
-    labels = {
-        ".py": "Python",
-        ".js": "JavaScript",
-        ".jsx": "React / JavaScript",
-        ".ts": "TypeScript",
-        ".tsx": "React / TypeScript",
-        ".go": "Go",
-        ".rs": "Rust",
-        ".java": "Java",
-        ".rb": "Ruby",
-        ".php": "PHP",
-    }
-    ranked = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
-    return [labels[suffix] for suffix, _count in ranked if suffix in labels][:8]
