@@ -52,6 +52,27 @@ def init_git_repo(root: Path) -> Path:
     return root
 
 
+def use_fake_git(
+    monkeypatch: pytest.MonkeyPatch,
+    executable: Path,
+) -> None:
+    value = executable.stat()
+    identity = repository_snapshot._ExecutableIdentity(
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+    )
+    monkeypatch.setattr(
+        repository_snapshot,
+        "_trusted_git_executable",
+        lambda _root, _operation: (
+            str(executable),
+            "/usr/bin:/bin",
+            identity,
+        ),
+    )
+
+
 def test_clean_git_snapshot_is_deterministic(tmp_path: Path) -> None:
     root = init_git_repo(tmp_path / "repo")
     first = capture_repository_snapshot(root, project_key="DEMO")
@@ -158,12 +179,13 @@ def test_git_executable_identity_change_before_spawn_fails_closed(
         nonlocal opens
         if os.path.abspath(os.fspath(path)) == str(executable):
             opens += 1
-            if opens == 2:
+            if opens == 1:
                 replacement.replace(executable)
         return real_open(path, flags, *args, **kwargs)
 
     monkeypatch.setenv("PATH", str(fake_bin))
     monkeypatch.setattr(repository_snapshot.os, "open", replacing_open)
+    use_fake_git(monkeypatch, executable)
 
     with pytest.raises(RepositorySnapshotError) as captured:
         repository_snapshot._run_git(root, ["status"])
@@ -171,6 +193,72 @@ def test_git_executable_identity_change_before_spawn_fails_closed(
     assert captured.value.code == "repository_snapshot_failed"
     assert captured.value.details == {"operation": "status"}
     assert not marker.exists()
+
+
+def test_git_snapshot_ignores_path_containing_only_fake_git(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    marker = tmp_path / "path-fake-executed"
+    fake_git = fake_bin / "git"
+    fake_git.write_text(f"#!/bin/sh\n: > {marker}\nexit 99\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    assert snapshot.source_control["kind"] == "git"
+    assert not marker.exists()
+
+
+def test_git_snapshot_rejects_external_hardlink_to_target_script(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    target_script = root / "project-script"
+    marker = tmp_path / "hardlink-executed"
+    target_script.write_text(f"#!/bin/sh\n: > {marker}\nexit 99\n", encoding="utf-8")
+    target_script.chmod(0o755)
+    fake_bin = tmp_path / "hardlink-bin"
+    fake_bin.mkdir()
+    os.link(target_script, fake_bin / "git")
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+
+    assert snapshot.source_control["kind"] == "git"
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o777])
+def test_git_snapshot_rejects_untrusted_candidate_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mode: int,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    candidate_root = tmp_path / "candidate-root"
+    candidate_bin = candidate_root / "bin"
+    candidate_bin.mkdir(parents=True)
+    candidate = candidate_bin / "git"
+    candidate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    candidate.chmod(mode)
+    monkeypatch.setattr(
+        repository_snapshot,
+        "_SYSTEM_GIT_CANDIDATES",
+        ((str(candidate), str(candidate_root)),),
+    )
+
+    with pytest.raises(RepositorySnapshotError) as captured:
+        repository_snapshot._run_git(root, ["status"])
+
+    assert captured.value.code == "repository_snapshot_failed"
+    assert captured.value.details == {"operation": "status"}
 
 
 def test_clean_git_capture_does_not_read_tracked_file_content(
@@ -713,6 +801,7 @@ def test_git_process_output_limit_is_combined(
     fake_git.chmod(0o755)
     root = tmp_path / "repo"
     root.mkdir()
+    use_fake_git(monkeypatch, fake_git)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}/bin")
     monkeypatch.setattr(repository_snapshot, "_GIT_OUTPUT_LIMIT", 10)
 
@@ -742,6 +831,7 @@ def test_git_output_limit_kills_process_group_descendants(
     fake_git.chmod(0o755)
     root = tmp_path / "repo"
     root.mkdir()
+    use_fake_git(monkeypatch, fake_git)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}/bin")
     monkeypatch.setattr(repository_snapshot, "_GIT_OUTPUT_LIMIT", 1024)
 
@@ -763,6 +853,7 @@ def test_git_failure_reports_explicit_operation(
     fake_git.chmod(0o755)
     root = tmp_path / "repo"
     root.mkdir()
+    use_fake_git(monkeypatch, fake_git)
     monkeypatch.setenv("PATH", str(fake_bin))
 
     with pytest.raises(RepositorySnapshotError) as captured:

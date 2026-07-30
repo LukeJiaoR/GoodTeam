@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import select
-import shutil
 import signal
 import stat
 import subprocess
@@ -25,6 +24,11 @@ from goodteam_os.repository_access import (
 
 _GIT_OUTPUT_LIMIT = 32 * 1024 * 1024
 _GIT_TIMEOUT_SECONDS = 5.0
+_SYSTEM_GIT_CANDIDATES = (
+    ("/usr/bin/git", "/usr"),
+    ("/bin/git", "/"),
+)
+_SYSTEM_EXECUTION_PATH = "/usr/bin:/bin"
 _PATH_MANIFEST_SCHEMA = "repository_snapshot.v1.path_manifest"
 _PATH_MANIFEST_KEYS = frozenset(
     {"complete", "entries", "excluded", "omitted", "omitted_paths"}
@@ -1278,24 +1282,14 @@ def _trusted_git_executable(
     operation: str,
 ) -> tuple[str, str, _ExecutableIdentity]:
     root_value = os.path.realpath(root)
-    canonical_entries = []
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
-        if not entry or not os.path.isabs(entry):
-            continue
-        canonical_entry = os.path.realpath(entry)
-        if _path_is_within(canonical_entry, root_value):
-            continue
-        if canonical_entry not in canonical_entries:
-            canonical_entries.append(canonical_entry)
-    trusted_entries = []
-    selected: tuple[str, _ExecutableIdentity] | None = None
-    for entry in canonical_entries:
-        candidate = shutil.which("git", path=entry)
-        if candidate is None:
-            trusted_entries.append(entry)
-            continue
+    for candidate, trusted_root in _SYSTEM_GIT_CANDIDATES:
         executable = os.path.realpath(candidate)
-        if _path_is_within(executable, root_value):
+        canonical_trusted_root = os.path.realpath(trusted_root)
+        if (
+            not _path_is_within(executable, canonical_trusted_root)
+            or _path_is_within(executable, root_value)
+            or not _trusted_system_path(executable, canonical_trusted_root)
+        ):
             continue
         try:
             descriptor = os.open(
@@ -1311,16 +1305,35 @@ def _trusted_git_executable(
             identity = _ExecutableIdentity(value.st_dev, value.st_ino, value.st_mode)
         finally:
             os.close(descriptor)
-        trusted_entries.append(entry)
-        if selected is None:
-            selected = (executable, identity)
-    if selected is not None:
-        return selected[0], os.pathsep.join(trusted_entries), selected[1]
+        return executable, _SYSTEM_EXECUTION_PATH, identity
     raise RepositorySnapshotError(
         "repository_snapshot_failed",
         "Trusted Git executable was not available.",
         details={"operation": operation},
     )
+
+
+def _trusted_system_path(executable: str, trusted_root: str) -> bool:
+    current = trusted_root
+    paths = [current]
+    relative = os.path.relpath(os.path.dirname(executable), trusted_root)
+    if relative != ".":
+        for component in relative.split(os.sep):
+            current = os.path.join(current, component)
+            paths.append(current)
+    paths.append(executable)
+    for path in paths:
+        try:
+            value = os.stat(path, follow_symlinks=False)
+        except OSError:
+            return False
+        if value.st_uid != 0 or value.st_mode & 0o022:
+            return False
+    try:
+        executable_stat = os.stat(executable, follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISREG(executable_stat.st_mode) and bool(executable_stat.st_mode & 0o111)
 
 
 def _open_verified_executable(
