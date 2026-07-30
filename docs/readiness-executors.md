@@ -4,8 +4,10 @@ GoodTeam owns project readiness state. The browser renders the persisted state
 returned by the server; it never marks a project ready or enables workflow start
 on its own.
 
-For the current bounded existing-project foundation behind `repository_understanding`,
-see [repository-context-provider.md](repository-context-provider.md).
+For the bounded existing-project foundation behind `repository_understanding`,
+see [repository-context-provider.md](repository-context-provider.md). For the
+separate internal, non-promoting Track 2A runner, see
+[project-onboarding-runner.md](project-onboarding-runner.md).
 
 ## Lifecycle and persistence
 
@@ -47,15 +49,17 @@ process-group cleanup boundary; they never use inherited `PATH` or loader
 variables. Stable repository, snapshot, artifact, provider, and budget error
 families fail closed.
 
-This foundation invokes no model, runs no target-project command, creates no final
-project profile, and does not mean AI onboarding completed. Readiness schema 2 and
-the current human-confirmed compatibility path remain authoritative.
+The Track 1 provider itself invokes no model. Track 2A can exercise its fixed
+tool-loop contract using a test-only scripted adapter and can persist a
+snapshot-bound canonical profile artifact, but it has no readiness authority and
+does not mean AI onboarding completed. It runs no target-project command and
+does not write to the target repository. Readiness schema 2 and the current
+human-confirmed compatibility path remain authoritative.
 
-Tracks 2 and later must add the Project Onboarding Worker, claim/evidence
-production, `accept_limited`, profile review, and the readiness transition. A
-later Worker must re-read any file it relies on at the current repository SHA;
-observation bytes from an older snapshot are evidence records, not current file
-authority.
+Later tracks must add a real external adapter, `accept_limited`, profile review,
+and the readiness transition. A later Worker must re-read any file it relies on
+at the current repository SHA; observation bytes from an older snapshot are
+evidence records, not current file authority.
 
 Discovered commands are candidates only. They carry stable IDs and require explicit
 confirmation. Worker preflight is local and dry-run only. A warning requires user

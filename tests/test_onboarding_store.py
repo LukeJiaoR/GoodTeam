@@ -12,9 +12,16 @@ import pytest
 from goodteam_os import onboarding_store
 from goodteam_os.onboarding_store import (
     OnboardingArtifactStore,
+    OnboardingJobStore,
     OnboardingObservationStore,
+    checkpoint_path,
     inventory_path,
+    job_metadata_path,
+    job_status_path,
+    model_event_path,
     observation_path,
+    profile_manifest_path,
+    profile_path,
     snapshot_path,
 )
 from goodteam_os.project_import import ProjectImportError, import_project
@@ -36,6 +43,37 @@ def _published_snapshot(tmp_path: Path):
     snapshot = capture_repository_snapshot(root, project_key=key)
     OnboardingArtifactStore(workspace, key, root).publish_snapshot(snapshot)
     return workspace, root, key, snapshot
+
+
+def _created_onboarding_job(tmp_path: Path):
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    store = OnboardingJobStore(workspace, key, root)
+    store.create_job(
+        "job-1",
+        snapshot.snapshot_id,
+        {
+            "adapter": "scripted",
+            "provider": "test",
+            "model": "deterministic",
+            "external_invocation": False,
+            "preflight": {"available": True},
+        },
+    )
+    return workspace, root, key, snapshot, store
+
+
+def _profile_payload(
+    *, profile_id: str, key: str, snapshot_id: str
+) -> dict[str, object]:
+    return {
+        "schema": "project_profile.v1",
+        "profile_id": profile_id,
+        "project_key": key,
+        "snapshot_id": snapshot_id,
+        "generated_by": {"job_id": "job-1", "adapter": "scripted"},
+        "claims": [],
+        "evidence": [],
+    }
 
 
 def _target_files(root: Path) -> dict[Path, bytes]:
@@ -243,7 +281,10 @@ def test_publish_inventory_rejects_malformed_existing_snapshot_artifact(
     ("payload", "expected_message"),
     [
         (b"[]", "Published onboarding snapshot is invalid."),
-        (b"{\"schema\":\"repository_snapshot.v1\"}", "Published onboarding snapshot is invalid."),
+        (
+            b'{"schema":"repository_snapshot.v1"}',
+            "Published onboarding snapshot is invalid.",
+        ),
     ],
 )
 def test_observation_store_init_rejects_malformed_existing_snapshot_artifact(
@@ -447,7 +488,9 @@ def test_append_rejects_leaf_swap_after_first_identity_check(
                 observations.rename(replaced)
             observations.write_text('{"foreign":true}\n', encoding="utf-8")
 
-    monkeypatch.setattr(onboarding_store, "_verify_file_identity", swap_after_first_verify)
+    monkeypatch.setattr(
+        onboarding_store, "_verify_file_identity", swap_after_first_verify
+    )
 
     with pytest.raises(ProjectImportError) as captured:
         store.append({"tool_call_id": "obs-1", "snapshot_id": snapshot.snapshot_id})
@@ -538,7 +581,9 @@ def test_publish_inventory_rejects_snapshot_leaf_swap_after_first_identity_check
                 artifact.rename(replaced)
             artifact.write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr(onboarding_store, "_verify_file_identity", swap_after_first_verify)
+    monkeypatch.setattr(
+        onboarding_store, "_verify_file_identity", swap_after_first_verify
+    )
 
     with pytest.raises(ProjectImportError) as captured:
         OnboardingArtifactStore(workspace, key, root).publish_inventory(inventory)
@@ -624,3 +669,355 @@ def test_read_all_reports_malformed_json_line(tmp_path: Path) -> None:
         store.read_all()
 
     assert captured.value.code == "onboarding_observation_invalid"
+
+
+def test_artifact_store_reads_only_digest_and_snapshot_bound_inventory(
+    tmp_path: Path,
+) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    before_root = _target_files(root)
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+    artifacts = OnboardingArtifactStore(workspace, key, root)
+    artifacts.publish_inventory(inventory)
+
+    assert artifacts.read_inventory(snapshot.snapshot_id) == inventory
+    assert _target_files(root) == before_root
+
+
+def test_artifact_store_read_inventory_rejects_replaced_leaf(tmp_path: Path) -> None:
+    workspace, root, key, snapshot = _published_snapshot(tmp_path)
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+    artifacts = OnboardingArtifactStore(workspace, key, root)
+    artifacts.publish_inventory(inventory)
+    path = inventory_path(workspace, key, snapshot.snapshot_id)
+    original = path.with_name("inventory-original.json")
+    path.rename(original)
+    path.symlink_to(original)
+
+    with pytest.raises(ProjectImportError) as captured:
+        artifacts.read_inventory(snapshot.snapshot_id)
+
+    assert captured.value.code == "onboarding_artifact_conflict"
+    assert path.is_symlink()
+
+
+def test_job_store_persists_redacted_bound_workspace_only_records(
+    tmp_path: Path,
+) -> None:
+    workspace, root, key, snapshot, store = _created_onboarding_job(tmp_path)
+    before_root = _target_files(root)
+    lease = store.acquire_lease("job-1", snapshot.snapshot_id, "runner-1")
+    token = str(lease["lease_token"])
+
+    store.write_status(
+        "job-1",
+        snapshot.snapshot_id,
+        {
+            "status": "running",
+            "adapter": "scripted",
+            "error": f"target was {root}; api_key=sk-abcdefghijklmnopqrstuvwxyz",
+            "usage": {"input_tokens": 12},
+        },
+        owner="runner-1",
+        lease_token=token,
+    )
+    store.write_checkpoint(
+        "job-1",
+        snapshot.snapshot_id,
+        {"turn": 1, "provider": "test", "resume": True},
+        owner="runner-1",
+        lease_token=token,
+    )
+    store.publish_prompt(
+        "job-1",
+        snapshot.snapshot_id,
+        {"messages": [{"role": "system", "content": f"never open {root}"}]},
+    )
+    store.append_model_event(
+        "job-1",
+        snapshot.snapshot_id,
+        {
+            "event_type": "adapter_response",
+            "text": f"received / path {root}/README.md",
+            "authorization": "Bearer secret-value",
+        },
+        owner="runner-1",
+        lease_token=token,
+    )
+    profile = _profile_payload(
+        profile_id="profile-1",
+        key=key,
+        snapshot_id=snapshot.snapshot_id,
+    )
+    published = store.publish_profile(
+        "profile-1",
+        "job-1",
+        snapshot.snapshot_id,
+        profile,
+        {"projections": ["project-overview.md"], "source": f"{root}/README.md"},
+        owner="runner-1",
+        lease_token=token,
+    )
+
+    job = store.read_job("job-1", snapshot.snapshot_id)
+    status = store.read_status("job-1", snapshot.snapshot_id)
+    checkpoint = store.read_checkpoint("job-1", snapshot.snapshot_id)
+    prompt = store.read_prompt("job-1", snapshot.snapshot_id)
+    events = store.read_model_events("job-1", snapshot.snapshot_id)
+    bundle = store.read_profile("profile-1", "job-1", snapshot.snapshot_id)
+
+    assert job["canonical_root"] == str(root)
+    assert status is not None and status["status"] == "running"
+    assert checkpoint is not None and checkpoint["turn"] == 1
+    assert prompt is not None
+    assert events[0]["event_type"] == "adapter_response"
+    assert published == profile_path(workspace, key, "profile-1")
+    assert bundle["profile"] == profile
+    assert bundle["manifest"]["manifest"]["projections"] == ["project-overview.md"]
+    assert job_metadata_path(workspace, key, "job-1").is_file()
+    assert job_status_path(workspace, key, "job-1").is_file()
+    assert checkpoint_path(workspace, key, "job-1").is_file()
+    assert model_event_path(workspace, key, "job-1").is_file()
+    assert profile_manifest_path(workspace, key, "profile-1").is_file()
+    assert str(root) not in json.dumps(status)
+    assert str(root) not in json.dumps(prompt)
+    assert str(root) not in json.dumps(events)
+    assert "secret-value" not in json.dumps(events)
+    assert str(root) not in json.dumps(bundle["manifest"])
+    assert _target_files(root) == before_root
+
+    store.release_lease("job-1", snapshot.snapshot_id, "runner-1", token)
+    with pytest.raises(ProjectImportError) as captured:
+        store.write_status(
+            "job-1",
+            snapshot.snapshot_id,
+            {"status": "completed"},
+            owner="runner-1",
+            lease_token=token,
+        )
+    assert captured.value.code == "onboarding_lease_stale"
+
+
+def test_job_store_rejects_cross_snapshot_state_and_lease_owner(
+    tmp_path: Path,
+) -> None:
+    workspace, root, key, first, store = _created_onboarding_job(tmp_path)
+    lease = store.acquire_lease("job-1", first.snapshot_id, "runner-1")
+    token = str(lease["lease_token"])
+    (root / "changed.py").write_text("VALUE = 1\n", encoding="utf-8")
+    second = capture_repository_snapshot(root, project_key=key)
+    OnboardingArtifactStore(workspace, key, root).publish_snapshot(second)
+
+    with pytest.raises(ProjectImportError) as captured:
+        store.write_status(
+            "job-1",
+            second.snapshot_id,
+            {"status": "running"},
+            owner="runner-1",
+            lease_token=token,
+        )
+    assert captured.value.code == "onboarding_job_mismatch"
+
+    with pytest.raises(ProjectImportError) as captured:
+        store.write_checkpoint(
+            "job-1",
+            first.snapshot_id,
+            {"turn": 2},
+            owner="runner-2",
+            lease_token=token,
+        )
+    assert captured.value.code == "onboarding_lease_stale"
+    assert not job_status_path(workspace, key, "job-1").exists()
+
+
+def test_job_store_lease_acquisition_is_single_owner_under_race(
+    tmp_path: Path,
+) -> None:
+    _workspace, _root, _key, snapshot, store = _created_onboarding_job(tmp_path)
+
+    def acquire(index: int) -> tuple[str, str]:
+        try:
+            lease = store.acquire_lease(
+                "job-1",
+                snapshot.snapshot_id,
+                f"runner-{index}",
+            )
+        except ProjectImportError as exc:
+            return "error", exc.code
+        return "lease", str(lease["owner"])
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        outcomes = list(executor.map(acquire, range(8)))
+
+    assert sum(kind == "lease" for kind, _value in outcomes) == 1
+    assert {value for kind, value in outcomes if kind == "error"} == {
+        "onboarding_lease_conflict"
+    }
+
+
+def test_job_store_rejects_status_leaf_replacement_after_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, root, key, snapshot, store = _created_onboarding_job(tmp_path)
+    before_root = _target_files(root)
+    lease = store.acquire_lease("job-1", snapshot.snapshot_id, "runner-1")
+    token = str(lease["lease_token"])
+    store.write_status(
+        "job-1",
+        snapshot.snapshot_id,
+        {"status": "running"},
+        owner="runner-1",
+        lease_token=token,
+    )
+    status_path = job_status_path(workspace, key, "job-1")
+    replaced = status_path.with_name("status-replaced.json")
+    real_verify = onboarding_store._verify_file_identity
+    swapped = False
+
+    def swap_status_after_verify(directory_fd: int, name: str, descriptor: int) -> None:
+        nonlocal swapped
+        real_verify(directory_fd, name, descriptor)
+        if not swapped and name == "status.json":
+            swapped = True
+            status_path.rename(replaced)
+            status_path.write_text('{"foreign":true}', encoding="utf-8")
+
+    monkeypatch.setattr(
+        onboarding_store,
+        "_verify_file_identity",
+        swap_status_after_verify,
+    )
+
+    with pytest.raises(ProjectImportError) as captured:
+        store.write_status(
+            "job-1",
+            snapshot.snapshot_id,
+            {"status": "completed"},
+            owner="runner-1",
+            lease_token=token,
+        )
+
+    assert swapped
+    assert captured.value.code == "onboarding_status_invalid"
+    assert status_path.read_text(encoding="utf-8") == '{"foreign":true}'
+    assert _target_files(root) == before_root
+
+
+def test_job_store_rejects_profile_missing_final_manifest_marker(
+    tmp_path: Path,
+) -> None:
+    workspace, root, key, snapshot, store = _created_onboarding_job(tmp_path)
+    before_root = _target_files(root)
+    profile = _profile_payload(
+        profile_id="profile-1",
+        key=key,
+        snapshot_id=snapshot.snapshot_id,
+    )
+    incomplete = profile_path(workspace, key, "profile-1")
+    incomplete.parent.mkdir(parents=True)
+    incomplete.write_text(json.dumps(profile), encoding="utf-8")
+
+    with pytest.raises(ProjectImportError) as captured:
+        store.read_profile("profile-1", "job-1", snapshot.snapshot_id)
+
+    assert captured.value.code == "onboarding_profile_invalid"
+    assert not profile_manifest_path(workspace, key, "profile-1").exists()
+    assert _target_files(root) == before_root
+
+
+def test_job_store_recovers_matching_profile_body_missing_final_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, root, key, snapshot, store = _created_onboarding_job(tmp_path)
+    before_root = _target_files(root)
+    lease = store.acquire_lease("job-1", snapshot.snapshot_id, "runner-1")
+    token = str(lease["lease_token"])
+    profile = _profile_payload(
+        profile_id="profile-1",
+        key=key,
+        snapshot_id=snapshot.snapshot_id,
+    )
+    original_publish = onboarding_store._publish_immutable_json
+    failures_remaining = 1
+
+    def fail_manifest_once(
+        directory_fd: int,
+        name: str,
+        encoded: bytes,
+        *,
+        equivalent,
+    ) -> None:
+        nonlocal failures_remaining
+        if name == "artifact-manifest.json" and failures_remaining:
+            failures_remaining -= 1
+            raise OSError("interrupted between profile body and manifest")
+        original_publish(directory_fd, name, encoded, equivalent=equivalent)
+
+    monkeypatch.setattr(
+        onboarding_store,
+        "_publish_immutable_json",
+        fail_manifest_once,
+    )
+
+    with pytest.raises(OSError):
+        store.publish_profile(
+            "profile-1",
+            "job-1",
+            snapshot.snapshot_id,
+            profile,
+            {"track": "test"},
+            owner="runner-1",
+            lease_token=token,
+        )
+
+    assert profile_path(workspace, key, "profile-1").is_file()
+    assert not profile_manifest_path(workspace, key, "profile-1").exists()
+
+    published = store.publish_profile(
+        "profile-1",
+        "job-1",
+        snapshot.snapshot_id,
+        profile,
+        {"track": "test"},
+        owner="runner-1",
+        lease_token=token,
+    )
+
+    assert published == profile_path(workspace, key, "profile-1")
+    assert profile_manifest_path(workspace, key, "profile-1").is_file()
+    assert store.read_profile("profile-1", "job-1", snapshot.snapshot_id)["profile"] == profile
+    assert _target_files(root) == before_root
+
+
+def test_job_store_rejects_conflicting_partial_profile_body(tmp_path: Path) -> None:
+    workspace, root, key, snapshot, store = _created_onboarding_job(tmp_path)
+    before_root = _target_files(root)
+    lease = store.acquire_lease("job-1", snapshot.snapshot_id, "runner-1")
+    token = str(lease["lease_token"])
+    profile = _profile_payload(
+        profile_id="profile-1",
+        key=key,
+        snapshot_id=snapshot.snapshot_id,
+    )
+    partial_path = profile_path(workspace, key, "profile-1")
+    partial_path.parent.mkdir(parents=True)
+    partial_path.write_text(json.dumps(profile), encoding="utf-8")
+    conflicting = {**profile, "claims": [{"text": "conflicting"}]}
+
+    with pytest.raises(ProjectImportError) as captured:
+        store.publish_profile(
+            "profile-1",
+            "job-1",
+            snapshot.snapshot_id,
+            conflicting,
+            {"track": "test"},
+            owner="runner-1",
+            lease_token=token,
+        )
+
+    assert captured.value.code == "onboarding_artifact_conflict"
+    assert partial_path.read_text(encoding="utf-8") == json.dumps(profile)
+    assert not profile_manifest_path(workspace, key, "profile-1").exists()
+    assert _target_files(root) == before_root

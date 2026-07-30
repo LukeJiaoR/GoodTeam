@@ -522,6 +522,97 @@ def test_budget_as_dict_refreshes_elapsed_and_close_requested() -> None:
     assert state["close_requested"] is True
 
 
+def test_budget_checkpoint_restores_consumed_limits_without_resetting_elapsed() -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+    )
+
+    now = [0.0]
+    budget = OnboardingBudget(
+        requested_limits={
+            "max_elapsed_seconds": 10.0,
+            "max_model_turns": 2,
+            "max_tool_calls": 2,
+            "max_total_observation_chars": 20,
+            "max_single_result_chars": 20,
+            "max_file_cumulative_chars": 20,
+            "max_files_observed": 2,
+            "max_estimated_input_tokens": 20,
+            "max_estimated_output_tokens": 20,
+            "max_cost_usd": 2.0,
+        },
+        monotonic_clock=lambda: now[0],
+    )
+    budget.begin_model_turn(1)
+    budget.begin_tool_call()
+    budget.record_observation(path="README.md", chars=5, count_toward_file=True)
+    budget.record_model_usage(
+        turn_number=1,
+        actual_input_tokens=3,
+        actual_output_tokens=2,
+        cost_usd=0.25,
+    )
+    now[0] = 4.0
+
+    checkpoint = budget.checkpoint()
+    assert checkpoint["schema"] == "onboarding_budget_state.v1"
+    assert checkpoint["elapsed_seconds"] == 4.0
+    expected_state = budget.as_dict()
+
+    restored_now = [4.0]
+    restored = OnboardingBudget.from_checkpoint(
+        checkpoint,
+        monotonic_clock=lambda: restored_now[0],
+    )
+    assert restored.as_dict() == expected_state
+
+    restored.begin_model_turn(2)
+    restored.begin_tool_call()
+    restored_now[0] = 10.1
+    with pytest.raises(ContextProviderError) as captured:
+        restored.begin_tool_call()
+    assert captured.value.code == "onboarding_budget_exceeded"
+
+    resumed_after_downtime = OnboardingBudget.from_checkpoint(
+        checkpoint,
+        monotonic_clock=lambda: 100.0,
+    )
+    assert resumed_after_downtime.as_dict()["elapsed_seconds"] == 100.0
+    with pytest.raises(ContextProviderError) as captured:
+        resumed_after_downtime.begin_model_turn(2)
+    assert captured.value.code == "onboarding_budget_exceeded"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema", "other.v1"),
+        ("unique_turns", [1, 1]),
+        ("observed_files", ["README.md", "README.md"]),
+        ("elapsed_seconds", float("nan")),
+        ("monotonic_checkpoint", float("nan")),
+    ],
+)
+def test_budget_checkpoint_rejects_malformed_persistent_state(
+    field: str,
+    value: object,
+) -> None:
+    from goodteam_os.repository_context_provider import (
+        ContextProviderError,
+        OnboardingBudget,
+    )
+
+    budget = OnboardingBudget(monotonic_clock=lambda: 0.0)
+    budget.begin_model_turn(1)
+    checkpoint = budget.checkpoint()
+    checkpoint[field] = value
+
+    with pytest.raises(ContextProviderError) as captured:
+        OnboardingBudget.from_checkpoint(checkpoint, monotonic_clock=lambda: 0.0)
+    assert captured.value.code == "onboarding_budget_invalid"
+
+
 def test_budget_replaces_estimates_with_authoritative_model_usage() -> None:
     from goodteam_os.repository_context_provider import OnboardingBudget
 
