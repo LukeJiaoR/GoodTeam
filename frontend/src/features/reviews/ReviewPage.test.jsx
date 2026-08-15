@@ -98,6 +98,8 @@ test('guards navigation away from unsaved review edits with a dialog', async () 
   const editor = await screen.findByRole('textbox', { name: t('review.artifact.content') });
   await user.type(editor, ' + extra edit');
 
+  expect(screen.getByRole('link', { name: /PRD/ })).toHaveAttribute('aria-current', 'true');
+
   await user.click(screen.getByRole('link', { name: /RFC/ }));
   expect(await screen.findByRole('dialog')).toBeVisible();
   expect(screen.getByText(t('review.dirty.title'))).toBeVisible();
@@ -133,6 +135,28 @@ test('renders the evidence summary badges from the snapshot', async () => {
   expect(screen.getByText('QA: Failed')).toBeVisible();
   expect(screen.getByText('Blockers 1')).toBeVisible();
   expect(screen.getByText(t('review.evidence.title'), { selector: 'summary' })).toBeVisible();
+});
+
+test('clears submitted question answers and confirms the count', async () => {
+  const user = userEvent.setup();
+  mocks.getReviewState.mockResolvedValue(state);
+  mocks.getOpenQuestions.mockResolvedValue({
+    questions: ['Should the CLI be the only surface?'],
+  });
+  mocks.refresh.mockResolvedValue(state);
+  mocks.answerOpenQuestions.mockResolvedValue({ ok: true });
+  const router = routerFor('/projects/DEMO/review/prd');
+  render(<RouterProvider router={router} />);
+
+  const answerBox = await screen.findByRole('textbox', { name: 'Should the CLI be the only surface?' });
+  await user.type(answerBox, 'yes');
+  await user.click(screen.getByRole('button', { name: t('review.questions.apply') }));
+
+  expect(await screen.findByText('Submitted 1 answer')).toBeVisible();
+  expect(mocks.answerOpenQuestions).toHaveBeenCalledWith('DEMO', 'prd', [
+    { question: 'Should the CLI be the only surface?', answer: 'yes' },
+  ]);
+  expect(screen.getByRole('textbox', { name: 'Should the CLI be the only surface?' })).toHaveValue('');
 });
 
 test('renders the pipeline position indicator for the selected gate', async () => {

@@ -1,6 +1,6 @@
 # Web HCI Usability Fix Plan
 
-> Status: **B0/W2/A/B/C/W 已落地（PRs #365/#366/#367，2026-08-15 合入 main）；D/E/F 仍为 proposed。**
+> Status: **全部轨道已落地（PRs #365/#366/#367 与 #369，2026-08-15 合入 main）。**
 > Date: 2026-07-21（走查与计划）；2026-08-15（落地）。
 > Context: HCI 细节审查（2026-07-21 会话输出：Web 全路由 + 共享组件 + i18n + 样式）。
 > 语境：**Web 优先作为本地可工作的状态**，远程操作（Telegram）不在本轮。

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
+import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { getProjectProjections } from '../../lib/api/globalApi';
@@ -35,15 +36,16 @@ function buildItems(projections, t) {
 }
 
 export default function InboxPage() {
-  const { t } = useOutletContext();
+  const { language, t } = useOutletContext();
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState(null);
   const [partialCount, setPartialCount] = useState(0);
-  const load = () => {
+  const [updatedAt, setUpdatedAt] = useState(null);
+  const load = ({ quiet = false } = {}) => {
     const controller = new AbortController();
-    setStatus('loading');
-    getProjectProjections({ signal: controller.signal }).then((payload) => { setItems(buildItems(payload, t)); setPartialCount(payload.filter((projection) => projection.error).length); setStatus('ready'); setError(null); }).catch((caught) => { if (caught.name !== 'AbortError') { setError(caught); setStatus('error'); } });
+    if (!quiet || !items.length) setStatus('loading');
+    getProjectProjections({ signal: controller.signal }).then((payload) => { setItems(buildItems(payload, t)); setPartialCount(payload.filter((projection) => projection.error).length); setStatus('ready'); setError(null); setUpdatedAt(new Date()); }).catch((caught) => { if (caught.name !== 'AbortError') { setError(caught); setStatus('error'); } });
     return controller;
   };
   useEffect(() => {
@@ -51,9 +53,15 @@ export default function InboxPage() {
     queueMicrotask(() => { controller = load(); });
     return () => controller?.abort();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => {
+      if (!globalThis.document?.hidden) void load({ quiet: true });
+    }, 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <main id="main-content" className="product-page">
-      <header className="product-page-header"><div><h1>{t('inbox.title')}</h1><p>{t('inbox.description')}</p></div></header>
+      <header className="product-page-header"><div><h1>{t('inbox.title')}</h1><p>{t('inbox.description')}</p>{updatedAt ? <p className="product-data-age" role="status">{t('inbox.updatedAt', { time: new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(updatedAt) })}</p> : null}</div><Button variant="secondary" onClick={() => load()}>{t('product.actions.refresh')}</Button></header>
       {status === 'loading' ? <div className="product-workspace-skeleton" role="status"><span /><span /><span /></div> : null}
       {status === 'error' ? <ProductError error={error} onRetry={load} t={t} /> : null}
       {status === 'ready' && partialCount ? <section className="product-partial-state" role="status"><strong>{t('product.states.partial')}</strong><p>{t('product.states.partialProjects', { count: partialCount })}</p></section> : null}

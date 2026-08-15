@@ -50,7 +50,7 @@ function ArtifactsView({ data, projectKey, search, setSearch, t }) {
   if (!entries.length) return <p className="product-empty-copy">{t('knowledge.artifacts.empty')}</p>;
   return (
     <div className="knowledge-artifacts">
-      <aside><h2>{t('knowledge.artifacts.title')}</h2><ol>{entries.map(([key, path]) => <li key={key}><button className={key === selectedKey ? 'is-active' : ''} onClick={() => setSearch({ view: 'artifacts', artifact: key })}><strong>{key}</strong><small>{path}</small></button></li>)}</ol></aside>
+      <aside><h2>{t('knowledge.artifacts.title')}</h2><ol>{entries.map(([key, path]) => <li key={key}><button aria-pressed={key === selectedKey} className={key === selectedKey ? 'is-active' : ''} onClick={() => setSearch({ view: 'artifacts', artifact: key })}><strong>{key}</strong><small>{path}</small></button></li>)}</ol></aside>
       <article><h2>{selectedKey}</h2>{error ? <ProductError error={error} t={t} /> : <pre>{content}</pre>}</article>
     </div>
   );
@@ -63,6 +63,9 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   const [eventDetail, setEventDetail] = useState(null);
   const [crossResults, setCrossResults] = useState([]);
   const [crossBusy, setCrossBusy] = useState(false);
+  const [crossSearched, setCrossSearched] = useState(false);
+  const [eventsReady, setEventsReady] = useState(false);
+  const [draftQuery, setDraftQuery] = useState(search.get('memory_q') || '');
   const [error, setError] = useState(null);
   const selected = search.get('role') || memory?.roles?.[0]?.role || '';
   const query = search.get('memory_q') || '';
@@ -89,9 +92,16 @@ function MemoryView({ projectKey, search, setSearch, t }) {
     return () => controller.abort();
   }, [projectKey]);
   useEffect(() => {
+    const timer = globalThis.setTimeout(() => {
+      if (draftQuery.trim() !== query) updateSearch({ memory_q: draftQuery, event: '' });
+    }, 250);
+    return () => globalThis.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftQuery]);
+  useEffect(() => {
     if (!selected) return undefined;
     const controller = new AbortController();
-    knowledgeApi.getMemoryEvents(projectKey, selected, query, { signal: controller.signal }).then((payload) => setEvents(payload.events || []))
+    knowledgeApi.getMemoryEvents(projectKey, selected, query, { signal: controller.signal }).then((payload) => { setEvents(payload.events || []); setEventsReady(true); })
       .catch((caught) => { if (caught.name !== 'AbortError') setError(caught); });
     return () => controller.abort();
   }, [projectKey, query, selected]);
@@ -104,7 +114,7 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   }, [eventId, projectKey]);
   const runCrossSearch = async (event) => {
     event.preventDefault(); setCrossBusy(true); setError(null);
-    try { const payload = await knowledgeApi.getCrossProjectMemory(selected, crossQuery, scope); setCrossResults(payload.results || []); }
+    try { const payload = await knowledgeApi.getCrossProjectMemory(selected, crossQuery, scope); setCrossResults(payload.results || []); setCrossSearched(true); }
     catch (caught) { setError(caught); }
     finally { setCrossBusy(false); }
   };
@@ -113,11 +123,12 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   if (!memory?.roles?.length) return <p className="product-empty-copy">{t('knowledge.memory.empty')}</p>;
   return (
     <div className="knowledge-memory">
-      <aside><h2>{t('knowledge.memory.roles')}</h2>{memory.roles.map((role) => <button className={selected === role.role ? 'is-active' : ''} key={role.role} onClick={() => updateSearch({ role: role.role, event: '' })}><strong>{role.role}</strong><small>{t('knowledge.memory.events', { count: role.event_count })}</small></button>)}</aside>
-      <section><label><span>{t('knowledge.memory.search')}</span><input type="search" value={query} onChange={(event) => updateSearch({ memory_q: event.target.value, event: '' })} /></label>
-        <ol>{events.map((memoryEvent, index) => <li key={memoryEvent.id || index}><button className={eventId === memoryEvent.id ? 'is-active' : ''} onClick={() => updateSearch({ event: memoryEvent.id })}><strong>{memoryEvent.action || memoryEvent.horizon || selected}</strong><span>{memoryEvent.text || memoryEvent.summary}</span><code>{memoryEvent.id}</code></button></li>)}</ol>
+      <aside><h2>{t('knowledge.memory.roles')}</h2>{memory.roles.map((role) => <button aria-pressed={selected === role.role} className={selected === role.role ? 'is-active' : ''} key={role.role} onClick={() => updateSearch({ role: role.role, event: '' })}><strong>{role.role}</strong><small>{t('knowledge.memory.events', { count: role.event_count })}</small></button>)}</aside>
+      <section><label><span>{t('knowledge.memory.search')}</span><input type="search" value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} /></label>
+        {eventsReady && !events.length ? <p className="product-empty-copy">{t('knowledge.memory.emptyResults')}</p> : null}
+        <ol>{events.map((memoryEvent, index) => <li key={memoryEvent.id || index}><button aria-pressed={eventId === memoryEvent.id} className={eventId === memoryEvent.id ? 'is-active' : ''} onClick={() => updateSearch({ event: memoryEvent.id })}><strong>{memoryEvent.action || memoryEvent.horizon || selected}</strong><span>{memoryEvent.text || memoryEvent.summary}</span><code>{memoryEvent.id}</code></button></li>)}</ol>
         {eventDetail ? <aside className="knowledge-memory-inspector"><h3>{t('knowledge.memory.inspector')}</h3><pre>{JSON.stringify(eventDetail, null, 2)}</pre></aside> : null}
-        <form className="knowledge-cross-memory" onSubmit={runCrossSearch}><h2>{t('knowledge.memory.crossTitle')}</h2><p>{t('knowledge.memory.crossDescription')}</p><fieldset><legend>{t('knowledge.memory.scope')}</legend>{projects.filter((key) => key !== projectKey).map((key) => <label key={key}><input checked={scope.includes(key)} onChange={() => toggleScope(key)} type="checkbox" />{key}</label>)}</fieldset><label><span>{t('knowledge.memory.crossQuery')}</span><input required type="search" value={crossQuery} onChange={(event) => updateSearch({ cross_q: event.target.value })} /></label><button className="product-button" disabled={!selected || !crossQuery.trim() || !scope.length || crossBusy} type="submit">{crossBusy ? t('product.states.loading') : t('knowledge.memory.crossSearch')}</button>{crossResults.length ? <ol>{crossResults.map((result, index) => <li key={result.id || index}><strong>{result.project_key || result.project || '—'}</strong><p>{result.text || result.summary || result.content}</p></li>)}</ol> : null}</form>
+        <form className="knowledge-cross-memory" onSubmit={runCrossSearch}><h2>{t('knowledge.memory.crossTitle')}</h2><p>{t('knowledge.memory.crossDescription')}</p><fieldset><legend>{t('knowledge.memory.scope')}</legend>{projects.filter((key) => key !== projectKey).map((key) => <label key={key}><input checked={scope.includes(key)} onChange={() => toggleScope(key)} type="checkbox" />{key}</label>)}</fieldset><label><span>{t('knowledge.memory.crossQuery')}</span><input required type="search" value={crossQuery} onChange={(event) => updateSearch({ cross_q: event.target.value })} /></label>{crossQuery.trim() && !scope.length ? <p className="knowledge-scope-hint" id="knowledge-cross-scope-hint">{t('knowledge.memory.scopeHint')}</p> : null}<button className="product-button" aria-describedby={crossQuery.trim() && !scope.length ? 'knowledge-cross-scope-hint' : undefined} disabled={!selected || !crossQuery.trim() || !scope.length || crossBusy} type="submit">{crossBusy ? t('product.states.loading') : t('knowledge.memory.crossSearch')}</button>{crossResults.length ? <ol>{crossResults.map((result, index) => <li key={result.id || index}><strong>{result.project_key || result.project || '—'}</strong><p>{result.text || result.summary || result.content}</p></li>)}</ol> : crossSearched ? <p className="product-empty-copy">{t('knowledge.memory.crossEmpty')}</p> : null}</form>
       </section>
     </div>
   );
@@ -149,7 +160,7 @@ export default function KnowledgePage() {
   return (
     <main id="main-content" className="product-page product-knowledge-page">
       <header className="product-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('knowledge.title')}</h1><p>{t('knowledge.description')}</p></div><Link to={routes.projectHome(projectKey)}>{t('knowledge.backHome')}</Link></header>
-      <nav className="product-subnav" aria-label={t('knowledge.views.label')}>{VIEWS.map((item) => <button className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{t(`knowledge.views.${item}`)}</button>)}</nav>
+      <nav className="product-subnav" aria-label={t('knowledge.views.label')}>{VIEWS.map((item) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{t(`knowledge.views.${item}`)}</button>)}</nav>
       {view === 'overview' ? <OverviewView home={home} language={language} overview={overview} t={t} /> : null}
       {view === 'artifacts' ? <ArtifactsView data={data} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
       {view === 'memory' ? <MemoryView projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}

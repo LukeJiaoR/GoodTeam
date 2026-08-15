@@ -17,8 +17,9 @@ export default function ProjectSettingsPage() {
   const [modeOverride, setModeOverride] = useState('');
   const [busy, setBusy] = useState(false);
   const [mutationError, setMutationError] = useState(null);
+  const [saved, setSaved] = useState(false);
   const mode = modeOverride || data?.start_context?.worker_backend?.mode || 'codex';
-  const save = async () => { setBusy(true); setMutationError(null); try { await settingsApi.saveWorkerDefaults(projectKey, mode); setModeOverride(''); await refresh(); } catch (caught) { setMutationError(caught); } finally { setBusy(false); } };
+  const save = async () => { setBusy(true); setMutationError(null); setSaved(false); try { await settingsApi.saveWorkerDefaults(projectKey, mode); setModeOverride(''); setSaved(true); await refresh(); } catch (caught) { setMutationError(caught); } finally { setBusy(false); } };
   const activeSection = SECTIONS.includes(section) ? section : 'general';
   if (status === 'loading') return <main id="main-content" className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></main>;
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
@@ -28,9 +29,9 @@ export default function ProjectSettingsPage() {
   return (
     <main id="main-content" className="product-page">
       <header className="product-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('settings.project.title')}</h1><p>{t('settings.project.description')}</p></div><Link to={routes.projectHome(projectKey)}>{t('settings.project.back')}</Link></header>
-      <div className="project-settings-layout"><nav aria-label={t('settings.project.sections')}>{SECTIONS.map((item) => <Link className={activeSection === item ? 'is-active' : ''} key={item} to={routes.projectSettings(projectKey, item)}>{t(`settings.project.${item}`)}</Link>)}</nav><section>
+      <div className="project-settings-layout"><nav aria-label={t('settings.project.sections')}>{SECTIONS.map((item) => <Link aria-current={activeSection === item ? 'true' : undefined} className={activeSection === item ? 'is-active' : ''} key={item} to={routes.projectSettings(projectKey, item)}>{t(`settings.project.${item}`)}</Link>)}</nav><section>
         {activeSection === 'general' ? <><h2>{t('settings.project.general')}</h2><dl className="settings-data-list"><div><dt>{t('settings.project.key')}</dt><dd><code>{projectKey}</code></dd></div><div><dt>{t('settings.project.root')}</dt><dd><code>{data?.start_context?.project_base || ''}</code></dd></div><div><dt>{t('settings.project.config')}</dt><dd><code>{data?.start_context?.project_config || ''}</code></dd></div></dl></> : null}
-        {activeSection === 'workers' ? <><h2>{t('settings.project.workers')}</h2><label className="settings-field"><span>{t('settings.project.defaultWorker')}</span><select value={mode} onChange={(event) => setModeOverride(event.target.value)}>{(data?.start_context?.worker_backend_options || []).map((value) => <option key={value}>{value}</option>)}</select></label>{mutationError ? <ProductError error={mutationError} t={t} /> : null}<Button busy={busy} onClick={save}>{t('settings.project.save')}</Button>
+        {activeSection === 'workers' ? <><h2>{t('settings.project.workers')}</h2><label className="settings-field"><span>{t('settings.project.defaultWorker')}</span><select value={mode} onChange={(event) => setModeOverride(event.target.value)}>{(data?.start_context?.worker_backend_options || []).map((value) => <option key={value}>{value}</option>)}</select></label>{mutationError ? <ProductError error={mutationError} t={t} /> : null}{saved ? <p className="settings-saved" role="status">{t('settings.project.saved')}</p> : null}<Button busy={busy} onClick={save}>{t('settings.project.save')}</Button>
           <section className="settings-preflight-list" aria-label={t('settings.project.workers')}>
             {preflightEntries.length ? <ul>{preflightEntries.map(([backend, info]) => (
               <li className="settings-preflight-row" key={backend}>
