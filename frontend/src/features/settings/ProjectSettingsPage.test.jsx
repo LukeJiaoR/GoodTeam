@@ -60,6 +60,8 @@ test('renders worker preflight as a structured list with hints and raw JSON coll
   expect(screen.getByText('Unavailable')).toBeVisible();
   expect(screen.getByText('Set the NOOP secret before dispatch.')).toBeVisible();
   expect(screen.getByText('Raw preflight report', { selector: 'summary' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Workers and models' })).toHaveAttribute('aria-current', 'true');
+  expect(screen.getByRole('link', { name: 'General' })).not.toHaveAttribute('aria-current');
 });
 
 test('shows an empty state when no preflight data exists', async () => {

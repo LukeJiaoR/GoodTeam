@@ -137,7 +137,7 @@ function ReviewList({ projectKey, reviews, selected, t }) {
       <h2>{t('review.queue.title')}</h2>
       {reviews.length ? <ol>{reviews.map((review) => (
         <li key={review.approval}>
-          <Link className={selected === review.approval ? 'is-active' : ''} to={routes.projectReviewItem(projectKey, review.approval)}>
+          <Link aria-current={selected === review.approval ? 'true' : undefined} className={selected === review.approval ? 'is-active' : ''} to={routes.projectReviewItem(projectKey, review.approval)}>
             <span><strong>{reviewTitle(review, t)}</strong><small>{review.recovery?.available ? t('review.queue.recoveryNeeded') : (review.artifact_path ? t('review.queue.artifactReady') : t('review.queue.noArtifact'))}</small></span>
             <StatusBadge tone={reviewTone(review)}>{reviewStatus(review, t)}</StatusBadge>
           </Link>
@@ -203,7 +203,7 @@ function DecisionResult({ decisionNote, projectKey, t }) {
   );
 }
 
-function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onSave, projectKey, proposed, questions, review, setAnswers, t }) {
+function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
   const [note, setNote] = useState('');
   const evidence = asObject(review.evidence_snapshot);
   const provenance = asObject(review.reviewer_provenance);
@@ -223,7 +223,7 @@ function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onD
       {questions.length ? <details open><summary>{t('review.questions.title')}</summary><div className="review-question-list">{questions.map((question) => {
         const text = typeof question === 'string' ? question : question.question || question.text;
         return <label key={text}><span>{text}</span><textarea rows="2" value={answers[text] || ''} onChange={(event) => setAnswers((current) => ({ ...current, [text]: event.target.value }))} /></label>;
-      })}<Button busy={busy === 'answer'} disabled={!Object.values(answers).some((value) => value.trim())} onClick={() => onAnswer(Object.entries(answers).filter(([, value]) => value.trim()).map(([question, answer]) => ({ question, answer })))}>{t('review.questions.apply')}</Button></div></details> : null}
+      })}<Button busy={busy === 'answer'} disabled={!Object.values(answers).some((value) => value.trim())} onClick={() => onAnswer(Object.entries(answers).filter(([, value]) => value.trim()).map(([question, answer]) => ({ question, answer })))}>{t('review.questions.apply')}</Button>{submittedCount ? <p className="review-questions-submitted" role="status">{t('review.questions.submitted', { count: submittedCount, plural: submittedCount === 1 ? '' : 's' })}</p> : null}</div></details> : null}
       {review.artifact_path ? <div className="review-editor-actions"><Button variant="secondary" busy={busy === 'save'} onClick={onSave}>{t('review.actions.save')}</Button><Button variant="secondary" busy={busy === 'refine'} onClick={onRefine}>{t('review.actions.refine')}</Button></div> : <p className="product-boundary-note">{t('review.artifact.notGenerated')}</p>}
       {proposed ? <section className="review-proposal"><h3>{t('review.refinement.title')}</h3><pre>{proposed.content}</pre><div className="review-editor-actions"><Button busy={busy === 'accept'} onClick={onAccept}>{t('review.refinement.accept')}</Button><Button variant="secondary" busy={busy === 'discard'} onClick={onDiscard}>{t('review.refinement.discard')}</Button></div></section> : null}
       {error ? <ProductError error={error} t={t} /> : null}
@@ -277,6 +277,7 @@ export default function ReviewPage() {
   const [proposed, setProposed] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [decisionNote, setDecisionNote] = useState(null);
+  const [submittedCount, setSubmittedCount] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const dirty = content !== baseline
@@ -303,6 +304,12 @@ export default function ReviewPage() {
     const timer = globalThis.setTimeout(() => setDecisionNote(null), 6000);
     return () => globalThis.clearTimeout(timer);
   }, [decisionNote]);
+
+  useEffect(() => {
+    if (!submittedCount) return undefined;
+    const timer = globalThis.setTimeout(() => setSubmittedCount(0), 4000);
+    return () => globalThis.clearTimeout(timer);
+  }, [submittedCount]);
 
   useEffect(() => {
     if (!reviewId && selected?.approval) navigate(routes.projectReviewItem(projectKey, selected.approval), { replace: true });
@@ -353,6 +360,11 @@ export default function ReviewPage() {
   };
   const answer = async (answers) => {
     const result = await mutate('answer', () => reviewApi.answerOpenQuestions(projectKey, selected.artifact, answers));
+    if (result) {
+      const submitted = new Set(answers.map((entry) => entry.question));
+      setAnswers((current) => Object.fromEntries(Object.entries(current).filter(([question]) => !submitted.has(question))));
+      setSubmittedCount(answers.length);
+    }
     await loadProposal(result);
   };
   const accept = async () => {
@@ -394,7 +406,7 @@ export default function ReviewPage() {
             onRecover={(note) => mutate('recover', () => reviewApi.recoverTakeoverBrief(projectKey, note))}
           /> : <>
             <ArtifactPanel key={selected.approval} review={selected} value={content} onChange={setContent} t={t} />
-            <Inspector answers={answers} busy={busy} decisionNote={decisionNote} error={mutationError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} t={t}
+            <Inspector answers={answers} busy={busy} decisionNote={decisionNote} error={mutationError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} submittedCount={submittedCount} t={t}
               projectKey={projectKey}
               onSave={save}
               onRefine={refine}

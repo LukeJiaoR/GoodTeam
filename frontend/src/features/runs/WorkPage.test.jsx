@@ -1,11 +1,14 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
 import { translate } from '../../i18n';
 import WorkPage from './WorkPage';
 
 const mocks = vi.hoisted(() => ({
+  dispatchTrack: vi.fn(),
   getDevLoop: vi.fn(),
+  getMessages: vi.fn(),
   getProjectRuns: vi.fn(),
   startSmoke: vi.fn(),
   useProjectState: vi.fn(),
@@ -13,7 +16,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./useProjectState', () => ({ default: mocks.useProjectState }));
 vi.mock('./runApi', () => ({
-  runApi: { getDevLoop: mocks.getDevLoop, getProjectRuns: mocks.getProjectRuns, startSmoke: mocks.startSmoke },
+  runApi: {
+    dispatchTrack: mocks.dispatchTrack,
+    getDevLoop: mocks.getDevLoop,
+    getMessages: mocks.getMessages,
+    getProjectRuns: mocks.getProjectRuns,
+    startSmoke: mocks.startSmoke,
+  },
 }));
 
 function TranslationOutlet() {
@@ -163,6 +172,73 @@ test('delivery view renders structured lists with raw payload collapsed', async 
   expect(screen.getByText('backend')).toBeVisible();
   expect(screen.getByText('prd', { selector: 'strong' })).toBeVisible();
   expect(screen.getAllByText('Raw payload', { selector: 'summary' }).length).toBeGreaterThanOrEqual(3);
+});
+
+test('subnav exposes the active view to assistive technology and dispatch confirms', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: { run_id: 'run-active' },
+      agile_board: { counts: {} },
+      start_context: { project_name: 'Demo project' },
+      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
+      workflow_steps: [],
+    },
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
+  });
+  mocks.dispatchTrack.mockResolvedValue({ ok: true });
+
+  renderWorkPage();
+
+  const current = await screen.findByRole('button', { name: 'Current work' });
+  expect(current).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: 'Plan' })).toHaveAttribute('aria-pressed', 'false');
+
+  await userEvent.click(screen.getByRole('button', { name: 'Execution' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Dispatch track' }));
+  await userEvent.type(screen.getByLabelText('Track name'), 'audit scan');
+  await userEvent.type(screen.getByLabelText('Task and acceptance boundary'), 'scan the repo read-only');
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm dispatch' }));
+  expect(await screen.findByText('Dispatched audit scan · implementation')).toBeVisible();
+  expect(mocks.dispatchTrack).toHaveBeenCalledWith({
+    name: 'audit scan', role: 'implementation', adapter: 'codex', task: 'scan the repo read-only', project_key: 'DEMO',
+  });
+});
+
+test('messages view renders recorded messages', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: { run_id: 'run-active' },
+      agile_board: { counts: {} },
+      start_context: { project_name: 'Demo project' },
+      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
+      workflow_steps: [],
+    },
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
+  });
+  mocks.getMessages.mockResolvedValue({ messages: [{ id: 'm1', role: 'architect', content: 'RFC drafted' }] });
+
+  render(
+    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active?view=messages']}>
+      <Routes>
+        <Route element={<TranslationOutlet />}>
+          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByText('RFC drafted')).toBeVisible();
+  expect(mocks.getMessages).toHaveBeenCalledWith('DEMO', 'run-active', '', expect.anything());
 });
 
 test('routes a legacy takeover revision to the brief recovery screen', async () => {

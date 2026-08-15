@@ -109,7 +109,7 @@ function StageRail({ steps, t }) {
   );
 }
 
-function CurrentView({ data, onRetry, onTerminate, projectKey, retrying, runTitle, t, terminating }) {
+function CurrentView({ data, language, onRetry, onTerminate, projectKey, retrying, runTitle, t, terminating }) {
   const current = data.workflow_steps?.find((step) => ['active', 'blocked'].includes(step.status))
     || data.workflow_steps?.find((step) => step.status !== 'complete');
   const actionableReview = data.approval_reviews?.find((review) => review.is_actionable);
@@ -147,7 +147,7 @@ function CurrentView({ data, onRetry, onTerminate, projectKey, retrying, runTitl
       <section className="work-actions-panel">
         <h2>{t('work.actions.title')}</h2>
         <p>{t('work.actions.description')}</p>
-        {data.action_items?.length ? <ol>{data.action_items.slice(0, 12).map((action, index) => <li key={action.id || `${action.action}-${action.timestamp}-${index}`}><div><strong>{action.title || action.action}</strong><small>{action.node_transition || action.after_node || ''}</small></div><time dateTime={action.timestamp}>{action.timestamp || '—'}</time></li>)}</ol> : <p className="product-empty-copy">{t('work.actions.empty')}</p>}
+        {data.action_items?.length ? <ol>{data.action_items.slice(0, 12).map((action, index) => { const parsed = Date.parse(action.timestamp); const label = Number.isFinite(parsed) ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(parsed)) : (action.timestamp || '—'); return <li key={action.id || `${action.action}-${action.timestamp}-${index}`}><div><strong>{action.title || action.action}</strong><small>{action.node_transition || action.after_node || ''}</small></div><time dateTime={action.timestamp}>{label}</time></li>; })}</ol> : <p className="product-empty-copy">{t('work.actions.empty')}</p>}
       </section>
     </div>
   );
@@ -196,24 +196,35 @@ function PlanView({ board, t }) {
   );
 }
 
-function ExecutionView({ jobs, onDispatch, t }) {
+function ExecutionView({ defaultAdapter = 'codex', jobs, onDispatch, t }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [values, setValues] = useState({ name: '', role: 'implementation', adapter: 'codex', task: '' });
+  const [dispatched, setDispatched] = useState(null);
+  const [values, setValues] = useState({ name: '', role: 'implementation', adapter: defaultAdapter, task: '' });
   const submit = async (event) => {
     event.preventDefault();
     setBusy(true); setError(null);
-    try { await onDispatch(values); setOpen(false); setValues({ ...values, name: '', task: '' }); }
+    try {
+      const result = await onDispatch(values);
+      if (!result) return;
+      setOpen(false); setDispatched({ name: values.name, role: values.role }); setValues({ ...values, name: '', task: '' });
+    }
     catch (caught) { setError(caught); }
     finally { setBusy(false); }
   };
+  useEffect(() => {
+    if (!dispatched) return undefined;
+    const timer = globalThis.setTimeout(() => setDispatched(null), 3000);
+    return () => globalThis.clearTimeout(timer);
+  }, [dispatched]);
   return (
     <div className="work-section-stack">
       <header className="work-section-header">
         <div><h2>{t('work.execution.title')}</h2><p>{t('work.execution.description')}</p></div>
         <Button onClick={() => setOpen((value) => !value)}>{t('work.execution.dispatch')}</Button>
       </header>
+      {dispatched ? <p className="work-dispatch-result" role="status">{t('work.execution.dispatched', { name: dispatched.name, role: dispatched.role })}</p> : null}
       {open ? (
         <form className="product-inline-form" onSubmit={submit}>
           {['name', 'role', 'adapter', 'task'].map((field) => (
@@ -244,10 +255,14 @@ function MessagesView({ data, projectKey, t }) {
   useEffect(() => {
     if (!runId) { queueMicrotask(() => { setMessages([]); setStatus('ready'); }); return undefined; }
     const controller = new AbortController();
-    runApi.getMessages(projectKey, runId, '', { signal: controller.signal })
+    const load = () => runApi.getMessages(projectKey, runId, '', { signal: controller.signal })
       .then((payload) => { setMessages(payload.messages || []); setStatus('ready'); })
       .catch((error) => { if (error.name !== 'AbortError') setStatus('error'); });
-    return () => controller.abort();
+    void load();
+    const timer = globalThis.setInterval(() => {
+      if (!globalThis.document?.hidden) void load();
+    }, 5_000);
+    return () => { controller.abort(); globalThis.clearInterval(timer); };
   }, [projectKey, runId]);
   if (status === 'loading') return <WorkSkeleton t={t} />;
   if (!messages.length) return <p className="product-empty-copy">{t('work.messages.empty')}</p>;
@@ -341,7 +356,7 @@ function DeliveryView({ data, projectKey, t }) {
 
 export default function WorkPage() {
   const { projectKey = '', runId = '' } = useParams();
-  const { t } = useOutletContext();
+  const { language, t } = useOutletContext();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
   const view = VIEWS.includes(search.get('view')) ? search.get('view') : 'current';
@@ -405,7 +420,7 @@ export default function WorkPage() {
     idea: goal,
     project_key: projectKey,
     model_profile: data?.start_context?.model_profile || 'balanced',
-    delivery_mode: data?.start_context?.delivery_mode || 'feature_increment',
+    delivery_mode: data?.start_context?.delivery_mode || 'init_project',
     source_type: 'existing_project',
     project_config: data?.start_context?.project_config || '',
     dry_run: false,
@@ -423,7 +438,7 @@ export default function WorkPage() {
           {data?.active_run ? <><StatusBadge tone="active">{t('work.active')}</StatusBadge><strong className="work-run-title">{currentRunTitle}</strong></> : <StatusBadge>{t('work.noRun')}</StatusBadge>}
           {runHistory.length ? (
             <label className="work-run-selector"><span className="sr-only">{t('work.history.selector')}</span>
-              <select value={runId || currentRunId} onChange={(event) => navigate(routes.projectRun(projectKey, event.target.value))}>
+              <select value={runId || currentRunId} onChange={(event) => { const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
                 {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
               </select>
             </label>
@@ -437,12 +452,12 @@ export default function WorkPage() {
         <>
           <WorkflowPipeline projectKey={projectKey} steps={data.workflow_steps || []} t={t} />
           <nav className="product-subnav" aria-label={t('work.views.label')}>
-            {tabs.map(({ item, label }) => <button className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
+            {tabs.map(({ item, label }) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
           </nav>
           {mutationError ? <ProductError error={mutationError} t={t} /> : null}
-          {view === 'current' ? <CurrentView data={data} projectKey={projectKey} retrying={busy === 'retry'} runTitle={currentRunTitle} terminating={busy === 'terminate'} onRetry={() => mutate('retry', () => runApi.retryRun(projectKey))} onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey))} t={t} /> : null}
+          {view === 'current' ? <CurrentView data={data} language={language} projectKey={projectKey} retrying={busy === 'retry'} runTitle={currentRunTitle} terminating={busy === 'terminate'} onRetry={() => mutate('retry', () => runApi.retryRun(projectKey))} onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey))} t={t} /> : null}
           {view === 'plan' ? <PlanView board={data.agile_board} t={t} /> : null}
-          {view === 'execution' ? <ExecutionView jobs={data.worker_jobs || []} onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))} t={t} /> : null}
+          {view === 'execution' ? <ExecutionView defaultAdapter={data?.start_context?.worker_backend?.mode || 'codex'} jobs={data.worker_jobs || []} onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))} t={t} /> : null}
           {view === 'messages' ? <MessagesView data={data} projectKey={projectKey} t={t} /> : null}
           {view === 'delivery' ? <DeliveryView data={data} projectKey={projectKey} t={t} /> : null}
         </>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
+import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import { getProjectProjections } from '../../lib/api/globalApi';
 import { routes } from '../../lib/routing/routes';
@@ -28,15 +29,29 @@ export default function ActivityPage() {
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState(null);
   const [partialCount, setPartialCount] = useState(0);
-  useEffect(() => {
+  const [updatedAt, setUpdatedAt] = useState(null);
+  const load = ({ quiet = false } = {}) => {
     const controller = new AbortController();
+    if (!quiet || !events.length) setStatus('loading');
     getProjectProjections({ signal: controller.signal }).then((payload) => {
       setEvents(payload.flatMap(({ item, state }) => (state?.action_items || []).map((event, index) => ({ ...event, project_key: item.project.project_key, _id: event.id || `${item.project.project_key}-${index}` }))).sort((a, b) => eventTime(b).localeCompare(eventTime(a))));
       setPartialCount(payload.filter((projection) => projection.error).length);
       setStatus('ready');
+      setUpdatedAt(new Date());
     }).catch((caught) => { if (caught.name !== 'AbortError') { setError(caught); setStatus('error'); } });
-    return () => controller.abort();
-  }, []);
+    return controller;
+  };
+  useEffect(() => {
+    let controller = null;
+    queueMicrotask(() => { controller = load(); });
+    return () => controller?.abort();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => {
+      if (!globalThis.document?.hidden) void load({ quiet: true });
+    }, 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const project = search.get('project') || '';
   const type = search.get('type') || '';
   const run = search.get('run') || '';
@@ -59,7 +74,7 @@ export default function ActivityPage() {
   const categories = EVENT_CATEGORIES.filter((category) => events.some((event) => eventCategory(event) === category));
   return (
     <main id="main-content" className="product-page">
-      <header className="product-page-header"><div><h1>{t('activity.title')}</h1><p>{t('activity.description')}</p></div></header>
+      <header className="product-page-header"><div><h1>{t('activity.title')}</h1><p>{t('activity.description')}</p>{updatedAt ? <p className="product-data-age" role="status">{t('activity.updatedAt', { time: new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(updatedAt) })}</p> : null}</div><Button variant="secondary" onClick={() => load()}>{t('product.actions.refresh')}</Button></header>
       <form className="activity-filters"><label><span>{t('activity.filters.project')}</span><select value={project} onChange={(event) => update('project', event.target.value)}><option value="">{t('activity.filters.all')}</option>{projects.map((value) => <option key={value}>{value}</option>)}</select></label><label><span>{t('activity.filters.type')}</span><select value={type} onChange={(event) => update('type', event.target.value)}><option value="">{t('activity.filters.all')}</option>{categories.map((value) => <option key={value} value={value}>{t(`activity.categories.${value}`)}</option>)}</select></label><label><span>{t('activity.filters.run')}</span><input value={run} onChange={(event) => update('run', event.target.value)} /></label><label><span>{t('activity.filters.after')}</span><input type="date" value={after} onChange={(event) => update('after', event.target.value)} /></label><label><span>{t('activity.filters.before')}</span><input type="date" value={before} onChange={(event) => update('before', event.target.value)} /></label></form>
       {status === 'loading' ? <div className="product-workspace-skeleton" role="status"><span /><span /><span /></div> : null}
       {status === 'error' ? <ProductError error={error} t={t} /> : null}
