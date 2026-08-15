@@ -1,5 +1,21 @@
 # Current Progress
 
+- Footprint 2026-08-15 (b) — Web HCI D/E/F 轨道落地（PR #369，前端）。**D** aria 激活态：
+  Work/Knowledge subnav `aria-pressed`、Review 队列 `aria-current`、Settings 分区导航
+  `aria-current`、Knowledge 工件/记忆列表 `aria-pressed`。**E** 信息新鲜度：Messages 视图
+  5s 轮询（标签页隐藏时暂停）；Inbox/Activity 增加"最后更新于"时间戳 + 刷新按钮 + 30s
+  静默轮询（失败保留旧数据不弹错）。**F** 细节清理：memory 搜索 250ms 防抖 + 事件/跨项目
+  空态文案；跨项目搜索 scope 未选时提示（`aria-describedby` 关联）；三处静默成功修复——
+  ProjectSettings 保存后 `role="status"` 已保存提示（再编辑重置）、WorkPage 派发成功提示
+  （**顺带修掉一个真实 bug：dispatch 失败时 ExecutionView 把 null 当成功显示"已派发"**，
+  现在失败显示错误横幅；默认 adapter 跟随项目 `worker_backend.mode`）、SettingsPage Saved
+  再编辑重置；run 选择器切换保留 view 参数；action items 时间 `Intl.DateTimeFormat`
+  本地化；StartRunPanel `delivery_mode` fallback 对齐 `init_project`；开放问题提交后清空
+  已提交项 + "已提交 N 条"反馈。验证：前端 151 tests（新增 4 个契约测试）、lint/build
+  干净；活体冒烟（隔离 workspace + fake worker）：subnav aria、review aria-current、
+  inbox/activity 时间戳+刷新、派发反馈（成功提示与失败横幅两条路径均验证）。冒烟中发现的
+  dispatch-track 500（fake adapter、合法 slug）为后端独立问题，未在本 PR 处理，记录待查。
+
 - Footprint 2026-08-15 — Web HCI 审查 + 走查 + 三 PR 落地（#365/#366/#367）。Playwright
   活体走查（隔离 workspace + fake worker）抓到 7 个发现：**W1**（P0，后端）
   canonical_root 解析不一致——macOS `/tmp`→`/private/tmp` 符号链接下，readiness 顶层存
