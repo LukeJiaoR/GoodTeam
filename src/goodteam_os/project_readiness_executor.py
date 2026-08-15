@@ -33,6 +33,26 @@ from goodteam_os.state import normalize_project_key
 from goodteam_os.workers import worker_backend_local_preflight
 
 
+def canonical_root(root: object) -> str:
+    """Resolve a project root to the canonical form used by readiness records.
+
+    macOS ``/tmp`` is a symlink to ``/private/tmp``. Readiness initialization
+    stores ``canonical_root`` as the resolved path, while callers may pass the
+    raw path (e.g. a ``repos.root`` from a project config). The executor used to
+    write execution and artifact records with the raw caller path, so binding
+    comparisons between the two forms failed for symlinked roots
+    (``readiness_artifact_mismatch`` on input submission and the
+    ``start_workflow`` capability gated off even after readiness completed).
+
+    Only ancestor components are resolved: the final component is preserved so
+    the executor's O_NOFOLLOW root guard still rejects a root that is itself a
+    symlink (anti-replacement invariant). Every readiness writer, entry point,
+    and comparator must use this same canonical form.
+    """
+    value = Path(root).expanduser()
+    return str(value.parent.resolve() / value.name)
+
+
 STEP_DEFAULTS: dict[str, dict[str, object]] = {
     "project_record": {"unlocks": ["inspect_project_facts"]},
     "safe_preflight": {"unlocks": ["run_readiness_steps"]},
@@ -288,7 +308,7 @@ class ProjectReadinessExecutor:
         background: bool = True,
     ) -> dict[str, object]:
         key = normalize_project_key(project_key)
-        root = Path(root).expanduser()
+        root = Path(canonical_root(root))
         submitted = dict(inputs or {})
         created = False
         should_run = False
@@ -336,7 +356,7 @@ class ProjectReadinessExecutor:
                 "id": execution_id,
                 "status": "running",
                 "project_key": key,
-                "canonical_root": str(root),
+                "canonical_root": canonical_root(root),
                 "attempt": attempt,
                 "started_at": timestamp,
                 "completed_at": None,
@@ -407,7 +427,7 @@ class ProjectReadinessExecutor:
         recover: bool = True,
     ) -> dict[str, object]:
         key = normalize_project_key(project_key)
-        root = Path(root).expanduser()
+        root = Path(canonical_root(root))
         readiness = read_bound_project_readiness(self.workspace, key, root)
         readiness = upgrade_readiness(readiness, root)
         if not recover:
@@ -439,7 +459,7 @@ class ProjectReadinessExecutor:
         background: bool = True,
     ) -> dict[str, object]:
         key = normalize_project_key(project_key)
-        root = Path(root).expanduser()
+        root = Path(canonical_root(root))
         spawn_preflight = False
         execution_id = ""
         attempt = 0
@@ -597,7 +617,7 @@ class ProjectReadinessExecutor:
         background: bool = True,
     ) -> dict[str, object]:
         key = normalize_project_key(project_key)
-        root = Path(root).expanduser()
+        root = Path(canonical_root(root))
         readiness = self.status(key, root)
         execution = readiness.get("execution")
         if not isinstance(execution, dict) or execution.get("status") != "failed":
@@ -681,7 +701,7 @@ class ProjectReadinessExecutor:
 
     def cancel(self, project_key: str, root: Path) -> dict[str, object]:
         key = normalize_project_key(project_key)
-        root = Path(root).expanduser()
+        root = Path(canonical_root(root))
 
         def transform(current: dict[str, object]) -> dict[str, object]:
             state = upgrade_readiness(current, root)
@@ -715,6 +735,7 @@ class ProjectReadinessExecutor:
         root: Path,
         artifact_ref: str,
     ) -> dict[str, object]:
+        root = Path(canonical_root(root))
         readiness = self.status(project_key, root)
         artifact = dict(readiness.get("artifacts", {}) or {}).get(artifact_ref)
         if not isinstance(artifact, dict):
@@ -734,7 +755,7 @@ class ProjectReadinessExecutor:
         )
         if (
             artifact.get("project_key") != normalize_project_key(project_key)
-            or artifact.get("canonical_root") != str(Path(root).expanduser())
+            or artifact.get("canonical_root") != canonical_root(root)
             or not isinstance(owning_step, dict)
             or artifact.get("step_id") != owning_step.get("id")
             or artifact.get("execution_id") != owning_step.get("execution_id")
@@ -1089,7 +1110,7 @@ class ProjectReadinessExecutor:
         artifacts[artifact_ref] = {
             "id": artifact_ref,
             "project_key": key,
-            "canonical_root": str(root),
+            "canonical_root": canonical_root(root),
             "execution_id": execution_id,
             "attempt": attempt,
             "step_id": step_id,
