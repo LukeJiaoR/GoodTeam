@@ -5,12 +5,16 @@ import { translate } from '../../i18n';
 import WorkPage from './WorkPage';
 
 const mocks = vi.hoisted(() => ({
+  getDevLoop: vi.fn(),
   getProjectRuns: vi.fn(),
+  startSmoke: vi.fn(),
   useProjectState: vi.fn(),
 }));
 
 vi.mock('./useProjectState', () => ({ default: mocks.useProjectState }));
-vi.mock('./runApi', () => ({ runApi: { getProjectRuns: mocks.getProjectRuns } }));
+vi.mock('./runApi', () => ({
+  runApi: { getDevLoop: mocks.getDevLoop, getProjectRuns: mocks.getProjectRuns, startSmoke: mocks.startSmoke },
+}));
 
 function TranslationOutlet() {
   return <Outlet context={{ t: (key, params) => translate('en', key, params) }} />;
@@ -89,6 +93,76 @@ test('makes an actionable takeover review the primary next step', async () => {
     .toHaveAttribute('href', '/projects/DEMO/review/takeover');
   expect(screen.getByText('Stop or abandon this run')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Terminate this run' })).not.toBeVisible();
+});
+
+test('renders the workflow pipeline above the views with gate links', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: { run_id: 'run-active' },
+      agile_board: { counts: {} },
+      start_context: { project_name: 'Demo project' },
+      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
+      workflow_steps: [
+        { key: 'prd', number: '1', title: 'Product / Requirement', status: 'review-needed', approval: 'prd', status_label: 'Needs review' },
+        { key: 'rfc', number: '2', title: 'Architecture', status: 'not-started', approval: 'rfc', status_label: 'Not started' },
+      ],
+    },
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
+  });
+
+  renderWorkPage();
+
+  expect(await screen.findByRole('navigation', { name: 'Workflow pipeline' })).toBeVisible();
+  expect(screen.getByRole('link', { name: /Review PRD/ }))
+    .toHaveAttribute('href', '/projects/DEMO/review/prd');
+});
+
+test('delivery view renders structured lists with raw payload collapsed', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: { run_id: 'run-active' },
+      agile_board: { counts: {} },
+      start_context: { project_name: 'Demo project' },
+      resources: [{ key: 'prd', path: '/runs/x/prd.md' }],
+      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
+      workflow_steps: [],
+    },
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
+  });
+  mocks.getDevLoop.mockResolvedValue({
+    pull_requests: [{ number: 7, title: 'feat: walkthrough', branch: 'feat/x', state: 'open', html_url: 'https://example.com/pr/7' }],
+    ci: [{ name: 'backend', status: 'completed', conclusion: 'success', html_url: 'https://example.com/ci/1' }],
+    evidence: [],
+  });
+
+  render(
+    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active?view=delivery']}>
+      <Routes>
+        <Route element={<TranslationOutlet />}>
+          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByText('feat: walkthrough')).toBeVisible();
+  expect(screen.getByText('feat/x', { selector: 'code' })).toBeVisible();
+  const openLinks = screen.getAllByRole('link', { name: 'Open PR' });
+  expect(openLinks.some((link) => link.getAttribute('href') === 'https://example.com/pr/7')).toBe(true);
+  expect(openLinks.some((link) => link.getAttribute('href') === 'https://example.com/ci/1')).toBe(true);
+  expect(screen.getByText('backend')).toBeVisible();
+  expect(screen.getByText('prd', { selector: 'strong' })).toBeVisible();
+  expect(screen.getAllByText('Raw payload', { selector: 'summary' }).length).toBeGreaterThanOrEqual(3);
 });
 
 test('routes a legacy takeover revision to the brief recovery screen', async () => {
