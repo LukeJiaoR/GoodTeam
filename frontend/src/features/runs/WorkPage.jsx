@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
+import WorkflowPipeline from '../../components/WorkflowPipeline';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -255,6 +256,22 @@ function MessagesView({ data, projectKey, t }) {
   ))}</ol>;
 }
 
+function asEntries(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') return Object.entries(value).map(([key, entry]) => ({ key, ...(typeof entry === 'object' && entry ? entry : { value: entry }) }));
+  return [];
+}
+
+function DeliverySection({ children, raw, title, t }) {
+  return (
+    <section>
+      <h3>{title}</h3>
+      {children}
+      <details><summary>{t('work.delivery.raw')}</summary><pre>{raw}</pre></details>
+    </section>
+  );
+}
+
 function DeliveryView({ data, projectKey, t }) {
   const [details, setDetails] = useState(null);
   const [error, setError] = useState(null);
@@ -271,16 +288,52 @@ function DeliveryView({ data, projectKey, t }) {
     catch (caught) { setError(caught); }
     finally { setSmokeBusy(false); }
   };
+  const pullRequests = asEntries(details?.pull_requests || details?.prs || []);
+  const checks = asEntries(details?.ci || details?.checks || []);
+  const evidence = asEntries(data?.resources || details?.evidence || []);
+  const smokeRuns = asEntries(data?.smoke_run_items || []);
   return (
     <div className="work-section-stack">
       <header className="work-section-header"><div><h2>{t('work.delivery.title')}</h2><p>{t('work.delivery.description')}</p></div>
         <Button busy={smokeBusy} onClick={smoke}>{t('work.delivery.smoke')}</Button></header>
       {error ? <ProductError error={error} t={t} /> : null}
       <div className="work-delivery-grid">
-        <section><h3>{t('work.delivery.pullRequests')}</h3><pre>{JSON.stringify(details?.pull_requests || details?.prs || [], null, 2)}</pre></section>
-        <section><h3>{t('work.delivery.ci')}</h3><pre>{JSON.stringify(details?.ci || details?.checks || [], null, 2)}</pre></section>
-        <section><h3>{t('work.delivery.evidence')}</h3><pre>{JSON.stringify(data?.resources || details?.evidence || [], null, 2)}</pre></section>
-        <section><h3>{t('work.delivery.smokeRuns')}</h3><pre>{JSON.stringify(data?.smoke_run_items || [], null, 2)}</pre></section>
+        <DeliverySection title={t('work.delivery.pullRequests')} raw={JSON.stringify(pullRequests, null, 2)} t={t}>
+          {pullRequests.length ? <ul className="work-delivery-list">{pullRequests.map((pr, index) => (
+            <li key={pr.number || pr.id || pr.title || index}>
+              <strong>{pr.title || `#${pr.number || index}`}</strong>
+              {pr.branch ? <code>{pr.branch}</code> : null}
+              <StatusBadge tone={tone(pr.state)}>{pr.state || t('work.delivery.state')}</StatusBadge>
+              {pr.html_url ? <a href={pr.html_url} target="_blank" rel="noreferrer">{t('work.delivery.open')}</a> : null}
+            </li>
+          ))}</ul> : <p className="product-empty-copy">{t('work.delivery.empty')}</p>}
+        </DeliverySection>
+        <DeliverySection title={t('work.delivery.ci')} raw={JSON.stringify(checks, null, 2)} t={t}>
+          {checks.length ? <ul className="work-delivery-list">{checks.map((check, index) => (
+            <li key={check.name || check.id || index}>
+              <strong>{check.name || check.title || check.check_name || `#${index}`}</strong>
+              <StatusBadge tone={tone(check.status || check.conclusion)}>{check.status || check.conclusion || t('work.delivery.state')}</StatusBadge>
+              {check.html_url || check.details_url ? <a href={check.html_url || check.details_url} target="_blank" rel="noreferrer">{t('work.delivery.open')}</a> : null}
+            </li>
+          ))}</ul> : <p className="product-empty-copy">{t('work.delivery.empty')}</p>}
+        </DeliverySection>
+        <DeliverySection title={t('work.delivery.evidence')} raw={JSON.stringify(evidence, null, 2)} t={t}>
+          {evidence.length ? <ul className="work-delivery-list">{evidence.map((item, index) => (
+            <li key={item.key || item.id || item.path || index}>
+              <strong>{item.key || item.name || item.id || `#${index}`}</strong>
+              {item.path || item.value ? <code>{item.path || item.value}</code> : null}
+            </li>
+          ))}</ul> : <p className="product-empty-copy">{t('work.delivery.empty')}</p>}
+        </DeliverySection>
+        <DeliverySection title={t('work.delivery.smokeRuns')} raw={JSON.stringify(smokeRuns, null, 2)} t={t}>
+          {smokeRuns.length ? <ul className="work-delivery-list">{smokeRuns.map((run, index) => (
+            <li key={run.id || run.run_id || index}>
+              <strong>{run.suite || run.name || t('work.delivery.smokeRuns')}</strong>
+              <StatusBadge tone={tone(run.status)}>{run.status || t('work.delivery.state')}</StatusBadge>
+              {run.report_path ? <code>{run.report_path}</code> : null}
+            </li>
+          ))}</ul> : <p className="product-empty-copy">{t('work.delivery.empty')}</p>}
+        </DeliverySection>
       </div>
     </div>
   );
@@ -382,6 +435,7 @@ export default function WorkPage() {
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
       {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : !data?.active_run ? <StartRunPanel busy={busy === 'start'} data={data} error={mutationError} onStart={start} t={t} /> : (
         <>
+          <WorkflowPipeline projectKey={projectKey} steps={data.workflow_steps || []} t={t} />
           <nav className="product-subnav" aria-label={t('work.views.label')}>
             {tabs.map(({ item, label }) => <button className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
           </nav>
