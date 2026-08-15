@@ -143,12 +143,14 @@ test('needs-input command confirmation posts only the backend step values contra
   const api = apiFor(needsInput, { submitReadinessInput: vi.fn().mockResolvedValue(needsInput) });
 
   render(<ProjectHomePage api={api} language="en" projectKey="DEMO" />);
-  await user.click(await screen.findByRole('checkbox', { name: 'npm test' }));
+  // Standard commands are pre-selected; submitting without further clicks
+  // still posts only the backend step values contract.
+  await screen.findByRole('checkbox', { name: 'npm test' });
   await user.click(screen.getByRole('button', { name: 'Confirm and continue' }));
 
   expect(api.submitReadinessInput).toHaveBeenCalledWith('DEMO', {
     step_id: 'command_verification',
-    values: { confirmed_command_ids: ['test'] },
+    values: { confirmed_command_ids: ['test', 'lint'] },
   });
 });
 
@@ -177,7 +179,9 @@ test('duplicate discovered commands render once and confirm every source ID toge
   render(<ProjectHomePage api={api} language="en" projectKey="DEMO" />);
 
   expect(await screen.findAllByRole('checkbox')).toHaveLength(2);
-  await user.click(screen.getByRole('checkbox', { name: /npm run test/ }));
+  // Both groups are pre-selected; deselecting the lint group keeps the
+  // test group's duplicate source IDs confirmed together.
+  await user.click(screen.getByRole('checkbox', { name: /npm run lint/ }));
   await user.click(screen.getByRole('button', { name: 'Confirm and continue' }));
 
   expect(api.submitReadinessInput).toHaveBeenCalledWith('DEMO', {
@@ -238,6 +242,13 @@ test('command confirmation prevents an empty submission and works from the keybo
   render(<ProjectHomePage api={api} language="en" projectKey="DEMO" />);
   const checkbox = await screen.findByRole('checkbox', { name: 'npm test' });
   const submit = screen.getByRole('button', { name: 'Confirm and continue' });
+  // Standard commands are pre-selected even when the backend sends no
+  // recommended flags, so the panel opens actionable.
+  expect(checkbox).toBeChecked();
+  expect(submit).toBeEnabled();
+
+  // Deselecting everything still guards an empty submission.
+  await user.click(checkbox);
   expect(submit).toBeDisabled();
   expect(screen.getByText('Select at least one discovered command to continue.')).toBeVisible();
 
@@ -252,6 +263,37 @@ test('command confirmation prevents an empty submission and works from the keybo
     step_id: 'command_verification',
     values: { confirmed_command_ids: ['test'] },
   });
+});
+
+test('command confirmation pre-selects standard commands without backend flags', async () => {
+  const needsInput = homeWith({
+    execution: { id: 'exec-preselect', status: 'needs_input', current_step_id: 'command_verification' },
+    lifecycle: 'attention_required',
+    nextAction: { id: 'command_verification', status: 'needs_input' },
+    steps: [{
+      id: 'command_verification',
+      status: 'needs_input',
+      required: true,
+      input_requirements: {
+        kind: 'command_confirmation',
+        commands: [
+          { id: 'build', kind: 'build', command: 'npm run build', source: 'package.json' },
+          { id: 'test', kind: 'test', command: 'npm run test', source: 'package.json' },
+          { id: 'dev', kind: 'run', command: 'npm run dev', source: 'package.json' },
+        ],
+      },
+    }],
+  });
+
+  render(<ProjectHomePage api={apiFor(needsInput)} language="en" projectKey="DEMO" />);
+
+  const build = await screen.findByRole('checkbox', { name: /npm run build/ });
+  const test = screen.getByRole('checkbox', { name: /npm run test/ });
+  expect(build).toBeChecked();
+  expect(test).toBeChecked();
+  // Non-standard commands stay unselected behind advanced disclosure.
+  expect(screen.getByRole('checkbox', { name: /npm run dev/ })).not.toBeVisible();
+  expect(screen.getByRole('button', { name: 'Confirm and continue' })).toBeEnabled();
 });
 
 test('failed step exposes stable details and retries that exact step', async () => {
