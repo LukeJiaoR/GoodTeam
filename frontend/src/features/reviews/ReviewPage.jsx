@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import { Link, useBlocker, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -97,6 +97,40 @@ function recommendationReason(reason, t) {
   return reason?.text || reason;
 }
 
+function evidenceStatusLabel(value, t) {
+  if (value === 'passed') return t('review.evidence.status.passed');
+  if (value === 'failed') return t('review.evidence.status.failed');
+  return t('review.evidence.status.unknown');
+}
+
+function evidenceTone(value) {
+  if (value === 'passed') return 'success';
+  if (value === 'failed') return 'danger';
+  return 'pending';
+}
+
+const DECISION_NODE_KEYS = {
+  prd: 'review.decision.node.prd',
+  rfc: 'review.decision.node.rfc',
+  security: 'review.decision.node.security',
+  staging: 'review.decision.node.staging',
+  release: 'review.decision.node.release',
+  planner: 'review.decision.node.planner',
+  implementation: 'review.decision.node.implementation',
+  qa: 'review.decision.node.qa',
+  rfc_review_gate: 'review.decision.node.rfc_review_gate',
+  security_review_gate: 'review.decision.node.security_review_gate',
+  staging_review_gate: 'review.decision.node.staging_review_gate',
+  release_review_gate: 'review.decision.node.release_review_gate',
+};
+
+function decisionNodeLabel(node, t) {
+  const key = DECISION_NODE_KEYS[node];
+  if (!key) return '';
+  const translated = t(key);
+  return translated === key ? '' : translated;
+}
+
 function ReviewList({ projectKey, reviews, selected, t }) {
   return (
     <aside className="review-queue" aria-label={t('review.queue.label')}>
@@ -140,9 +174,37 @@ function ArtifactPanel({ onChange, review, t, value }) {
   );
 }
 
-function Inspector({ busy, error, onAccept, onAnswer, onDecision, onDiscard, onRefine, onSave, proposed, questions, review, t }) {
+function EvidenceSummary({ evidence, t }) {
+  const hasEvidence = Object.keys(evidence).some((key) => ['ci_status', 'smoke_status', 'qa_status'].includes(key));
+  if (!hasEvidence) return null;
+  const blockerCount = Number(evidence.blocker_count) || 0;
+  return (
+    <section className="review-evidence-summary" aria-label={t('review.evidence.summary')}>
+      <h2>{t('review.evidence.summary')}</h2>
+      <div className="review-evidence-badges">
+        <StatusBadge tone={evidenceTone(evidence.ci_status)}>{t('review.evidence.ci')}: {evidenceStatusLabel(evidence.ci_status, t)}</StatusBadge>
+        <StatusBadge tone={evidenceTone(evidence.smoke_status)}>{t('review.evidence.smoke')}: {evidenceStatusLabel(evidence.smoke_status, t)}</StatusBadge>
+        <StatusBadge tone={evidenceTone(evidence.qa_status)}>{t('review.evidence.qa')}: {evidenceStatusLabel(evidence.qa_status, t)}</StatusBadge>
+        <StatusBadge tone={blockerCount > 0 ? 'danger' : 'neutral'}>{t('review.evidence.blockers', { count: blockerCount })}</StatusBadge>
+      </div>
+    </section>
+  );
+}
+
+function DecisionResult({ decisionNote, projectKey, t }) {
+  if (!decisionNote) return null;
+  const decision = decisionNote.decision || 'approved';
+  return (
+    <div className="review-decision-result" role="status">
+      <strong>{t(`review.decision.result.${decision}`, { gate: String(decisionNote.gate || '').toUpperCase() })}</strong>
+      {decisionNote.nextLabel ? <span>{t('review.decision.next', { node: decisionNote.nextLabel })}</span> : null}
+      <Link to={routes.projectWork(projectKey)}>{t('review.decision.viewNext')}</Link>
+    </div>
+  );
+}
+
+function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onSave, projectKey, proposed, questions, review, setAnswers, t }) {
   const [note, setNote] = useState('');
-  const [answers, setAnswers] = useState({});
   const evidence = asObject(review.evidence_snapshot);
   const provenance = asObject(review.reviewer_provenance);
   const recommendation = asObject(review.recommendation);
@@ -153,6 +215,7 @@ function Inspector({ busy, error, onAccept, onAnswer, onDecision, onDiscard, onR
         <p className="review-verdict">{recommendation.verdict ? recommendationVerdict(recommendation.verdict, t) : t('review.recommendation.none')}</p>
         {recommendation.reasons?.map?.((reason, index) => <p key={index}>{recommendationReason(reason, t)}</p>)}
       </section>
+      <EvidenceSummary evidence={evidence} t={t} />
       <details><summary>{t('review.evidence.title')}</summary><pre>{JSON.stringify(evidence, null, 2)}</pre></details>
       <details><summary>{t('review.provenance.title')}</summary><pre>{JSON.stringify(provenance, null, 2)}</pre></details>
       <details><summary>{t('review.dissent.title')}</summary>{dissent.length ? dissent.map((reason, index) => <p key={index}>{reason.text || reason}</p>) : <p>{t('review.dissent.none')}</p>}{review.multi_reviewer_projection ? <pre>{JSON.stringify(review.multi_reviewer_projection, null, 2)}</pre> : null}</details>
@@ -164,6 +227,7 @@ function Inspector({ busy, error, onAccept, onAnswer, onDecision, onDiscard, onR
       {review.artifact_path ? <div className="review-editor-actions"><Button variant="secondary" busy={busy === 'save'} onClick={onSave}>{t('review.actions.save')}</Button><Button variant="secondary" busy={busy === 'refine'} onClick={onRefine}>{t('review.actions.refine')}</Button></div> : <p className="product-boundary-note">{t('review.artifact.notGenerated')}</p>}
       {proposed ? <section className="review-proposal"><h3>{t('review.refinement.title')}</h3><pre>{proposed.content}</pre><div className="review-editor-actions"><Button busy={busy === 'accept'} onClick={onAccept}>{t('review.refinement.accept')}</Button><Button variant="secondary" busy={busy === 'discard'} onClick={onDiscard}>{t('review.refinement.discard')}</Button></div></section> : null}
       {error ? <ProductError error={error} t={t} /> : null}
+      <DecisionResult decisionNote={decisionNote} projectKey={projectKey} t={t} />
       {review.is_actionable ? (
         <form className="review-decision-panel" onSubmit={(event) => event.preventDefault()}>
           <label><span>{t('review.decision.rationale')}</span><textarea rows="3" value={note} onChange={(event) => setNote(event.target.value)} /></label>
@@ -173,7 +237,23 @@ function Inspector({ busy, error, onAccept, onAnswer, onDecision, onDiscard, onR
           <p>{t('review.decision.authority')}</p>
         </form>
       ) : <p className="product-boundary-note">{t('review.decision.notActionable')}</p>}
+      {decisionNote ? <button type="button" className="review-decision-dismiss" onClick={onDismissDecision}>{t('review.decision.dismiss')}</button> : null}
     </aside>
+  );
+}
+
+function DirtyDialog({ onLeave, onStay, t }) {
+  return (
+    <div className="product-dialog-backdrop">
+      <div className="product-dialog" role="dialog" aria-modal="true" aria-labelledby="review-dirty-title">
+        <h2 id="review-dirty-title">{t('review.dirty.title')}</h2>
+        <p>{t('review.dirty.description')}</p>
+        <div className="product-dialog-actions">
+          <Button variant="secondary" onClick={onStay}>{t('review.dirty.stay')}</Button>
+          <Button variant="danger" onClick={onLeave}>{t('review.dirty.leave')}</Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -190,23 +270,55 @@ export default function ReviewPage() {
     || reviews.find((item) => item.is_actionable)
     || reviews[0];
   const [content, setContent] = useState('');
+  const [baseline, setBaseline] = useState('');
+  const [answers, setAnswers] = useState({});
   const [busy, setBusy] = useState('');
   const [mutationError, setMutationError] = useState(null);
   const [proposed, setProposed] = useState(null);
   const [questions, setQuestions] = useState([]);
+  const [decisionNote, setDecisionNote] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const dirty = content !== baseline
+    || Object.values(answers).some((value) => String(value || '').trim())
+    || Boolean(proposed);
+  const blocker = useBlocker(dirty);
+
+  useEffect(() => {
+    if (blocker.state === 'blocked') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- documented react-router useBlocker pattern: the dialog opens only when navigation is blocked.
+      setConfirmOpen(true);
+    }
+  }, [blocker.state]);
+
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const handler = (event) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
+
+  useEffect(() => {
+    if (!decisionNote) return undefined;
+    const timer = globalThis.setTimeout(() => setDecisionNote(null), 6000);
+    return () => globalThis.clearTimeout(timer);
+  }, [decisionNote]);
 
   useEffect(() => {
     if (!reviewId && selected?.approval) navigate(routes.projectReviewItem(projectKey, selected.approval), { replace: true });
   }, [navigate, projectKey, reviewId, selected?.approval]);
 
   useEffect(() => {
-    if (!selected) { queueMicrotask(() => setContent('')); return undefined; }
-    if (selected.recovery?.available) { queueMicrotask(() => setContent('')); return undefined; }
-    if (typeof selected.content === 'string') { queueMicrotask(() => setContent(selected.content)); return undefined; }
+    if (!selected) { queueMicrotask(() => { setContent(''); setBaseline(''); }); return undefined; }
+    if (selected.recovery?.available) { queueMicrotask(() => { setContent(''); setBaseline(''); }); return undefined; }
+    if (typeof selected.content === 'string') {
+      queueMicrotask(() => { setContent(selected.content); setBaseline(selected.content); });
+      return undefined;
+    }
     if (!selected.artifact) return undefined;
     const controller = new AbortController();
     reviewApi.getArtifact(projectKey, selected.artifact, { signal: controller.signal })
-      .then((payload) => setContent(payload.content || ''))
+      .then((payload) => { setContent(payload.content || ''); setBaseline(payload.content || ''); })
       .catch((caught) => { if (caught.name !== 'AbortError') setMutationError(caught); });
     return () => controller.abort();
   }, [projectKey, selected]);
@@ -245,18 +357,36 @@ export default function ReviewPage() {
   };
   const accept = async () => {
     const result = await mutate('accept', () => reviewApi.acceptRefinement(projectKey, selected.artifact));
-    if (result) { setContent(proposed.content); setProposed(null); }
+    if (result) { setContent(proposed.content); setBaseline(proposed.content); setProposed(null); }
   };
   const discard = async () => {
     const result = await mutate('discard', () => reviewApi.discardRefinement(projectKey, selected.artifact));
     if (result) setProposed(null);
   };
+  const save = async () => {
+    const result = await mutate('save', () => reviewApi.saveArtifact(projectKey, selected.artifact, content));
+    if (result) setBaseline(content);
+  };
+  const decide = async (decision, note) => {
+    const result = await mutate(decision, () => reviewApi.decideReview(projectKey, selected.approval, decision, note));
+    if (!result) return;
+    const payload = await refresh();
+    const actionItems = payload?.action_items || [];
+    const latest = actionItems[actionItems.length - 1];
+    setDecisionNote({
+      decision,
+      gate: selected.approval,
+      nextLabel: decisionNodeLabel(latest?.after_node || latest?.node_transition || '', t),
+    });
+  };
 
   if (status === 'loading') return <main id="main-content" className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></main>;
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
+  const steps = data?.workflow_steps || [];
+  const stepIndex = steps.findIndex((step) => step.approval === selected?.approval);
   return (
     <main id="main-content" className="product-page product-review-page">
-      <header className="product-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('review.title')}</h1><p>{t('review.description')}</p></div><Link to={routes.projectWork(projectKey)}>{t('review.backWork')}</Link></header>
+      <header className="product-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('review.title')}</h1><p>{t('review.description')}</p>{stepIndex >= 0 ? <p className="review-pipeline-position">{t('work.pipeline.stepOf', { number: stepIndex + 1, total: steps.length })}</p> : null}</div><Link to={routes.projectWork(projectKey)}>{t('review.backWork')}</Link></header>
       {!selected ? <p className="product-empty-copy">{t('review.empty')}</p> : (
         <div className="review-workspace">
           <ReviewList projectKey={projectKey} reviews={reviews} selected={selected.approval} t={t} />
@@ -264,17 +394,20 @@ export default function ReviewPage() {
             onRecover={(note) => mutate('recover', () => reviewApi.recoverTakeoverBrief(projectKey, note))}
           /> : <>
             <ArtifactPanel key={selected.approval} review={selected} value={content} onChange={setContent} t={t} />
-            <Inspector busy={busy} error={mutationError} proposed={proposed} questions={questions} review={selected} t={t}
-              onSave={() => mutate('save', () => reviewApi.saveArtifact(projectKey, selected.artifact, content))}
+            <Inspector answers={answers} busy={busy} decisionNote={decisionNote} error={mutationError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} t={t}
+              projectKey={projectKey}
+              onSave={save}
               onRefine={refine}
               onAnswer={answer}
               onAccept={accept}
               onDiscard={discard}
-              onDecision={(decision, note) => mutate(decision, () => reviewApi.decideReview(projectKey, selected.approval, decision, note))}
+              onDismissDecision={() => setDecisionNote(null)}
+              onDecision={decide}
             />
           </>}
         </div>
       )}
+      {confirmOpen ? <DirtyDialog t={t} onLeave={() => { blocker.proceed(); setConfirmOpen(false); }} onStay={() => { blocker.reset(); setConfirmOpen(false); }} /> : null}
     </main>
   );
 }
