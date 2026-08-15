@@ -1,5 +1,38 @@
 # Current Progress
 
+- Footprint 2026-08-15 — Web HCI 审查 + 走查 + 三 PR 落地（#365/#366/#367）。Playwright
+  活体走查（隔离 workspace + fake worker）抓到 7 个发现：**W1**（P0，后端）
+  canonical_root 解析不一致——macOS `/tmp`→`/private/tmp` 符号链接下，readiness 顶层存
+  resolve 后路径，executor 的 execution/artifact 记录存原始路径，绑定比较在两个规范形间
+  横跳 → 命令确认提交 409 `readiness_artifact_mismatch`、就绪 complete 后
+  `start_workflow` 能力门禁仍 False、Home 每次加载拉取工件 409 出错误横幅；Linux CI
+  的 `/tmp` 非符号链接所以全量测试照过。**W2**（前端）命令确认面板标准命令不预选
+  （后端只发 `requires_confirmation`，前端预选只看 `recommended/confirmed`）→ 提交按钮
+  禁用。**W3** 决策后无成功反馈；**W4** Home 状态自相矛盾（已完成 + 错误横幅共存）；
+  **W5** Home/Work 两处"启动工作流"语义混淆；**W6** Inbox 对未来 gate 出"缺少证据"噪音
+  且同一 PRD 出现矛盾条目；**W7** StageRail 存在但后端 `action_label` 引导字段未渲染。
+  修复：#365 后端 canonical_root 统一——新增 `canonical_root()`（只 resolve 祖先组件，
+  保留 O_NOFOLLOW 对根组件符号链接的防替换守卫），executor 六个公共入口
+  （start/status/submit_input/retry/cancel/artifact）+ 两处写入 + 一处比较统一走它；
+  新增符号链接父路径端到端回归测试，原有符号链接安全测试保持通过。#366 前端
+  `ReadinessInputPanel` 预选条件扩展为"推荐标记 或 `isStandardCommand`"，空提交守卫
+  不变，3 个旧契约测试按新行为更新 + 新增预选专项测试。#367 四条前端轨道：**A** 评审
+  工作台脏状态保护（`useBlocker` + 自定义 dialog——设计稿 §12 禁浏览器 alert +
+  `beforeunload`，保存/接受修订清除 dirty）；**B** 决策成功反馈（内联 `role="status"`
+  结果条 + 可映射的"下一步"标签 + Work 链接，不可映射时退化为仅确认）；**C** 结构化
+  呈现（Delivery PR/CI/证据/冒烟列表 + 徽章 + 链接、Review 证据摘要徽章与 Telegram 卡
+  同源、Settings worker preflight 就绪/不可用列表 + hint，原始 JSON 全部折叠进
+  `<details>`）；**W** 工作流管线可视化（新 `WorkflowPipeline` 组件：六状态语义、审查
+  门直链 Review、完成阶段链 Knowledge 工件、Takeover 前置段虚线分隔；Work 页常驻 +
+  Review"第 N/M 步"指示；Home 紧凑变体因 home payload 无 workflow_steps 推迟）。
+  验证：前端 147 tests（新增 14 个契约测试）、lint/build 干净；后端结构性前端契约
+  5 passed；活体冒烟零 console 错误。全量后端 1891 passed / 7 failed（test_workers PTY
+  ×5 + test_supervisor_runtime ×2，在干净 origin/main 基线原样复现，属环境抖动）。
+  CI 备注：后端任务在 GitHub runner 上 22s 导入期崩溃（环境问题，纯前端 PR 不可能
+  引起），按 founder 指示合并并如实记录。文档：`docs/plans/web-hci-usability-fixes.md`
+  （走查证据 + 轨道规格，D/E/F 仍 proposed）、`docs/plans/workflow-pipeline-design.md`
+  已入库。
+
 - Footprint 2026-07-04 - D3/G3 readiness review kickoff. Started the gated
   D3 real-parallel and G3 LLM-triage tracks as evidence work, not execution
   enablement. Added CP20 to `docs/plans/d3-server-land-g3-checkpoints.md`;
