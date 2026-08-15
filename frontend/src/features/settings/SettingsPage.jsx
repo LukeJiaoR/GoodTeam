@@ -3,12 +3,14 @@ import { useOutletContext } from 'react-router-dom';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { useToast } from '../../components/ui/ToastProvider';
 import { useAppearancePreferences } from '../../hooks/useAppearancePreferences';
 import { settingsApi } from './settingsApi';
 
 export default function SettingsPage() {
   const { t } = useOutletContext();
   const appearance = useAppearancePreferences();
+  const toast = useToast();
   const [health, setHealth] = useState(null);
   const [agents, setAgents] = useState([]);
   const [workspaceSettings, setWorkspaceSettings] = useState(null);
@@ -26,7 +28,13 @@ export default function SettingsPage() {
   }, []);
   const saveDefaults = async (event) => {
     event.preventDefault(); setSaving(true); setSaved(false); setMutationError(null);
-    try { const settings = await settingsApi.saveWorkspaceSettings(defaults); setWorkspaceSettings(settings); setDefaults(settings.defaults); setSaved(true); }
+    try {
+      const settings = await settingsApi.saveWorkspaceSettings(defaults);
+      setWorkspaceSettings(settings);
+      setDefaults(settings.defaults);
+      setSaved(true);
+      toast.success(t('toast.settingsSaved'));
+    }
     catch (caught) { setMutationError(caught); }
     finally { setSaving(false); }
   };

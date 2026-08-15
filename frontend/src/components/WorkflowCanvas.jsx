@@ -168,6 +168,12 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
     }
   };
 
+  const doneCount = steps.filter((s) => s.status === 'done').length;
+  const activeCount = steps.filter((s) => s.status === 'active').length;
+  const reviewCount = steps.filter((s) => s.status === 'review-needed').length;
+  const blockedCount = steps.filter((s) => s.status === 'blocked').length;
+  const progressPercent = Math.round((doneCount / (steps.length || 1)) * 100);
+
   return (
     <div
       className="workflow-canvas"
@@ -190,6 +196,28 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
         fitView
       >
         <Background gap={28} />
+        <Panel position="top-left" className="workflow-canvas-stats">
+          <div className="workflow-canvas-progress">
+            <span className="workflow-canvas-progress__label">
+              {t('work.canvas.progress', { done: doneCount, total: steps.length, percent: progressPercent })}
+            </span>
+            <div
+              className="workflow-canvas-progress__track"
+              role="progressbar"
+              aria-valuenow={progressPercent}
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <div className="workflow-canvas-progress__bar" style={{ width: `${progressPercent}%` }} />
+            </div>
+          </div>
+          <div className="workflow-canvas-stats__badges">
+            {doneCount > 0 ? <span className="workflow-canvas-badge workflow-canvas-badge--done">✓ {doneCount}</span> : null}
+            {activeCount > 0 ? <span className="workflow-canvas-badge workflow-canvas-badge--active">● {activeCount}</span> : null}
+            {reviewCount > 0 ? <span className="workflow-canvas-badge workflow-canvas-badge--review">▶ {reviewCount}</span> : null}
+            {blockedCount > 0 ? <span className="workflow-canvas-badge workflow-canvas-badge--blocked">⛔ {blockedCount}</span> : null}
+          </div>
+        </Panel>
         <Panel position="top-right" className="workflow-canvas-controls">
           <Button variant="secondary" onClick={() => void zoomIn()} aria-label={t('work.canvas.zoomIn')}>+</Button>
           <Button variant="secondary" onClick={() => void zoomOut()} aria-label={t('work.canvas.zoomOut')}>−</Button>
