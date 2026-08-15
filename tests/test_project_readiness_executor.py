@@ -135,6 +135,73 @@ def test_existing_confirmations_and_worker_preflight_make_project_ready(
     assert command_input["source_artifact_refs"]
 
 
+def test_symlinked_project_root_keeps_consistent_canonical_root(tmp_path: Path) -> None:
+    """Symlinked roots must not break artifact binding or the start_workflow gate.
+
+    Regression for macOS /tmp -> /private/tmp: readiness stores the resolved
+    canonical root, but the executor used to write execution/artifact records
+    with the raw caller path, so binding comparisons failed
+    (readiness_artifact_mismatch on input submission and start_workflow gated
+    off even after readiness completed).
+    """
+    workspace = tmp_path / "workspace"
+    # The root itself must stay a real directory (the executor rejects symlink
+    # roots via O_NOFOLLOW), but a symlinked parent reproduces the macOS
+    # /tmp -> /private/tmp shape where resolve() differs from the raw path.
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    link_parent = tmp_path / "link-parent"
+    link_parent.symlink_to(real_parent, target_is_directory=True)
+    root = link_parent / "repo"
+    root.mkdir()
+    (root / "package.json").write_text(
+        json.dumps({"scripts": {"test": "pytest"}}),
+        encoding="utf-8",
+    )
+    assert str(root) != str(root.resolve())
+
+    key = import_project(workspace, str(root))["project"]["project_key"]
+    executor = _executor(workspace)
+    scanned = executor.start(key, root, background=False)
+    command_ids = [
+        item["id"]
+        for item in next(
+            step for step in scanned["steps"] if step["id"] == "command_verification"
+        )["input_requirements"]["commands"]
+    ]
+
+    constraints = executor.submit_input(
+        key,
+        root,
+        "command_verification",
+        {"confirmed_command_ids": command_ids},
+        background=False,
+    )
+    assert constraints["execution"]["current_step_id"] == "constraints_confirmation"
+    complete = executor.submit_input(
+        key,
+        root,
+        "constraints_confirmation",
+        {"confirmed": True},
+        background=False,
+    )
+
+    assert complete["execution"]["status"] == "complete"
+    assert complete["lifecycle"] == "ready"
+    assert build_capabilities(complete)["start_workflow"] is True
+    expected = str(root.resolve())
+    assert complete["canonical_root"] == expected
+    assert complete["execution"]["canonical_root"] == expected
+    repository = next(
+        step for step in complete["steps"] if step["id"] == "repository_understanding"
+    )
+    for ref in repository["artifact_refs"]:
+        artifact = complete["artifacts"][ref]
+        assert artifact["canonical_root"] == expected
+        bound = executor.artifact(key, root, ref)
+        assert bound["canonical_root"] == expected
+
+
 def test_new_project_inputs_are_persisted_without_writing_target(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     root = tmp_path / "empty"
