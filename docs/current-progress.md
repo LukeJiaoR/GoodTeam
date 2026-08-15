@@ -1,5 +1,20 @@
 # Current Progress
 
+- Footprint 2026-08-15 (c) — 工作流画布 P1+P2 落地（PR #370，前端）。按用户方向
+  （"工作流用无限画布展示，不完全平铺，节点可点击展开细节"）+ 设计文档
+  `docs/plans/workflow-canvas-design.md`：Work 页管线升级为 **React Flow 视图画布**
+  （@xyflow/react 12.11.3），三级语义缩放（L0 总览 <0.8x / L1 阶段 <1.25x / L2 细节），
+  平移/滚轮缩放/适应视图，键盘（方向键移动焦点/Enter 展开/Esc 关闭/+/- 缩放/F 适应），
+  节点点击展开浮层细节卡（复用 Review 数据：推荐、证据徽章、批准/修改/拒绝动作直达、
+  "打开完整评审"链接——批准路径 ≤2 次交互）。抽取共享组件 `DecisionActions` +
+  `EvidenceSummary`（ReviewPage 行为不变）。`prefers-reduced-motion` 回退到管线条
+  （v1 组件保留，契约测试全绿）。验证：前端 158 tests（新增 WorkflowCanvas 契约测试
+  7 项：节点构建/层级阈值/回退/状态节点/视图缩放/细节卡批准/键盘），lint/build 干净；
+  活体冒烟（隔离 workspace + fake worker）：14 节点渲染、缩放"总览→细节"、细节卡批准
+  生效且节点转 done、reduced-motion 回退管线条，零 console 错误。P3（并行泳道/跨项目
+  画布）与设计文档 §10 的三个管理小项（Home 项目总览、Settings 剩余 JSON、项目列表
+  搜索）留待后续。
+
 - Footprint 2026-08-15 (b) — Web HCI D/E/F 轨道落地（PR #369，前端）。**D** aria 激活态：
   Work/Knowledge subnav `aria-pressed`、Review 队列 `aria-current`、Settings 分区导航
   `aria-current`、Knowledge 工件/记忆列表 `aria-pressed`。**E** 信息新鲜度：Messages 视图
