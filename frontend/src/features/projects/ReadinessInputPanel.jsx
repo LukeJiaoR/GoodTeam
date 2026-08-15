@@ -91,7 +91,9 @@ export default function ReadinessInputPanel({ busy = false, inputRequest, langua
   );
   const [selected, setSelected] = useState(() => new Set(
     displayItems.flatMap((item, index) => (
-      itemIsRecommended(item) ? itemIdentities(item, index) : []
+      (itemIsRecommended(item) || (commandRequest && isStandardCommand(item)))
+        ? itemIdentities(item, index)
+        : []
     )),
   ));
   const [note, setNote] = useState('');
