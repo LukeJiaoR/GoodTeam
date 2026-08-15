@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useBlocker, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import Button from '../../components/ui/Button';
+import DecisionActions from '../../components/DecisionActions';
+import EvidenceSummary from '../../components/EvidenceSummary';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { routes } from '../../lib/routing/routes';
@@ -97,18 +99,6 @@ function recommendationReason(reason, t) {
   return reason?.text || reason;
 }
 
-function evidenceStatusLabel(value, t) {
-  if (value === 'passed') return t('review.evidence.status.passed');
-  if (value === 'failed') return t('review.evidence.status.failed');
-  return t('review.evidence.status.unknown');
-}
-
-function evidenceTone(value) {
-  if (value === 'passed') return 'success';
-  if (value === 'failed') return 'danger';
-  return 'pending';
-}
-
 const DECISION_NODE_KEYS = {
   prd: 'review.decision.node.prd',
   rfc: 'review.decision.node.rfc',
@@ -174,23 +164,6 @@ function ArtifactPanel({ onChange, review, t, value }) {
   );
 }
 
-function EvidenceSummary({ evidence, t }) {
-  const hasEvidence = Object.keys(evidence).some((key) => ['ci_status', 'smoke_status', 'qa_status'].includes(key));
-  if (!hasEvidence) return null;
-  const blockerCount = Number(evidence.blocker_count) || 0;
-  return (
-    <section className="review-evidence-summary" aria-label={t('review.evidence.summary')}>
-      <h2>{t('review.evidence.summary')}</h2>
-      <div className="review-evidence-badges">
-        <StatusBadge tone={evidenceTone(evidence.ci_status)}>{t('review.evidence.ci')}: {evidenceStatusLabel(evidence.ci_status, t)}</StatusBadge>
-        <StatusBadge tone={evidenceTone(evidence.smoke_status)}>{t('review.evidence.smoke')}: {evidenceStatusLabel(evidence.smoke_status, t)}</StatusBadge>
-        <StatusBadge tone={evidenceTone(evidence.qa_status)}>{t('review.evidence.qa')}: {evidenceStatusLabel(evidence.qa_status, t)}</StatusBadge>
-        <StatusBadge tone={blockerCount > 0 ? 'danger' : 'neutral'}>{t('review.evidence.blockers', { count: blockerCount })}</StatusBadge>
-      </div>
-    </section>
-  );
-}
-
 function DecisionResult({ decisionNote, projectKey, t }) {
   if (!decisionNote) return null;
   const decision = decisionNote.decision || 'approved';
@@ -204,7 +177,6 @@ function DecisionResult({ decisionNote, projectKey, t }) {
 }
 
 function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
-  const [note, setNote] = useState('');
   const evidence = asObject(review.evidence_snapshot);
   const provenance = asObject(review.reviewer_provenance);
   const recommendation = asObject(review.recommendation);
@@ -229,13 +201,7 @@ function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onD
       {error ? <ProductError error={error} t={t} /> : null}
       <DecisionResult decisionNote={decisionNote} projectKey={projectKey} t={t} />
       {review.is_actionable ? (
-        <form className="review-decision-panel" onSubmit={(event) => event.preventDefault()}>
-          <label><span>{t('review.decision.rationale')}</span><textarea rows="3" value={note} onChange={(event) => setNote(event.target.value)} /></label>
-          <Button busy={busy === 'approved'} onClick={() => onDecision('approved', note)}>{t('review.decision.approve')}</Button>
-          <Button variant="secondary" busy={busy === 'changes_requested'} disabled={!note.trim()} onClick={() => onDecision('changes_requested', note)}>{t('review.decision.changes')}</Button>
-          <Button variant="danger" busy={busy === 'rejected'} disabled={!note.trim()} onClick={() => onDecision('rejected', note)}>{t('review.decision.reject')}</Button>
-          <p>{t('review.decision.authority')}</p>
-        </form>
+        <DecisionActions busy={busy} onDecision={onDecision} t={t} />
       ) : <p className="product-boundary-note">{t('review.decision.notActionable')}</p>}
       {decisionNote ? <button type="button" className="review-decision-dismiss" onClick={onDismissDecision}>{t('review.decision.dismiss')}</button> : null}
     </aside>

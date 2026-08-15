@@ -1,0 +1,233 @@
+/* eslint-disable react-refresh/only-export-components -- canvas helpers are exported for contract tests. */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Background,
+  Panel,
+  ReactFlow,
+  ReactFlowProvider,
+  useNodesState,
+  useOnViewportChange,
+  useReactFlow,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Link } from 'react-router-dom';
+import Button from './ui/Button';
+import DecisionActions from './DecisionActions';
+import EvidenceSummary from './EvidenceSummary';
+import WorkflowPipeline from './WorkflowPipeline';
+import { routes } from '../lib/routing/routes';
+import { reviewApi } from '../features/reviews/reviewApi';
+
+const STATUS_ICONS = {
+  done: '✓',
+  active: '●',
+  'review-needed': '▶',
+  blocked: '⛔',
+  ready: '▫',
+  'not-started': '○',
+};
+
+export function canvasLevel(zoom) {
+  if (zoom < 0.8) return 0;
+  if (zoom < 1.25) return 1;
+  return 2;
+}
+
+const WRAP_COLUMNS = 7;
+
+export function buildCanvasNodes(steps, level, focusedKey = '', translators = {}) {
+  const titleFor = translators.titleFor || ((step) => (step.approval === 'takeover' ? 'Takeover' : step.title));
+  const labelFor = translators.labelFor || ((step) => step.status_label || step.status);
+  return steps.map((step, index) => ({
+    id: step.key || `step-${index}`,
+    position: {
+      x: (index % WRAP_COLUMNS) * 250,
+      y: Math.floor(index / WRAP_COLUMNS) * 130,
+    },
+    data: { focused: step.key === focusedKey, level, step, label: labelFor(step), title: titleFor(step) },
+    type: 'stage',
+    draggable: false,
+    focusable: true,
+  }));
+}
+
+function StageNode({ data }) {
+  const { focused, level, step } = data;
+  const isTakeover = step.approval === 'takeover';
+  return (
+    <div
+      className={`workflow-canvas__node workflow-canvas__node--${step.status}${isTakeover ? ' workflow-canvas__node--takeover' : ''}${focused ? ' workflow-canvas__node--focused' : ''}`}
+      data-status={step.status}
+      data-level={level}
+    >
+      <span className="workflow-canvas__node-icon" aria-hidden="true">{STATUS_ICONS[step.status] || '·'}</span>
+      <span className="workflow-canvas__node-copy">
+        <strong>{data.title}</strong>
+        <small>{data.label}</small>
+        {level >= 1 && step.feedback ? <em>{step.feedback}</em> : null}
+        {level >= 2 && step.artifact_path ? <code>{step.artifact_path}</code> : null}
+      </span>
+    </div>
+  );
+}
+
+function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
+  const [level, setLevel] = useState(0);
+  const [expanded, setExpanded] = useState(null);
+  const [focusedKey, setFocusedKey] = useState('');
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState(null);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const nodeTypes = useMemo(() => ({ stage: StageNode }), []);
+
+  useEffect(() => {
+    setNodes(buildCanvasNodes(steps, level, focusedKey, {
+      titleFor: (step) => (step.approval === 'takeover' ? t('work.pipeline.takeover') : step.title),
+      labelFor: (step) => {
+        const key = `work.pipeline.status.${step.status}`;
+        const translated = t(key);
+        return translated === key ? (step.status_label || step.status) : translated;
+      },
+    }));
+  }, [focusedKey, level, setNodes, steps, t]);
+
+  useOnViewportChange({
+    onChange: ({ zoom }) => setLevel(canvasLevel(zoom)),
+  });
+
+  const handleNodeClick = useCallback((_, node) => {
+    setExpanded((current) => (current === node.id ? null : node.id));
+  }, []);
+
+  const handleKeyDown = useCallback((event) => {
+    const index = steps.findIndex((step) => (step.key || `step-${steps.indexOf(step)}`) === focusedKey);
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      const next = index < 0 ? 0 : Math.min(Math.max(index + (event.key === 'ArrowRight' ? 1 : -1), 0), steps.length - 1);
+      setFocusedKey(steps[next].key || `step-${next}`);
+    } else if (event.key === 'Enter' && focusedKey) {
+      event.preventDefault();
+      setExpanded(focusedKey);
+    } else if (event.key === 'Escape') {
+      setExpanded(null);
+    } else if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      void zoomIn();
+    } else if (event.key === '-') {
+      event.preventDefault();
+      void zoomOut();
+    } else if (event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      void fitView();
+    }
+  }, [fitView, focusedKey, steps, zoomIn, zoomOut]);
+
+  const edges = useMemo(() => steps.slice(0, -1).map((step, index) => ({
+    id: `edge-${index}`,
+    source: step.key || `step-${index}`,
+    target: steps[index + 1].key || `step-${index + 1}`,
+    type: 'smoothstep',
+  })), [steps]);
+
+  if (fallback) {
+    return (
+      <>
+        <WorkflowPipeline projectKey={projectKey} steps={steps} t={t} />
+        <p className="workflow-canvas-fallback-note">{t('work.canvas.fallbackNote')}</p>
+      </>
+    );
+  }
+  if (!steps.length) return null;
+
+  const expandedStep = expanded ? steps.find((step) => (step.key || `step-${steps.indexOf(step)}`) === expanded) : null;
+  const actionableReview = expanded && expandedStep
+    ? reviews.find((review) => review.approval === expandedStep.approval && review.is_actionable)
+    : null;
+  const evidence = expandedStep && actionableReview
+    ? (typeof actionableReview.evidence_snapshot === 'object' && actionableReview.evidence_snapshot
+      ? actionableReview.evidence_snapshot
+      : {})
+    : {};
+
+  const decide = async (decision, note) => {
+    if (!expandedStep || !actionableReview) return;
+    setBusy(decision);
+    setError(null);
+    try {
+      await reviewApi.decideReview(projectKey, actionableReview.approval, decision, note);
+      setExpanded(null);
+      onDecided?.();
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <div
+      className="workflow-canvas"
+      role="region"
+      aria-label={t('work.canvas.label')}
+      onKeyDown={handleKeyDown}
+    >
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onNodeClick={handleNodeClick}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable
+        minZoom={0.4}
+        maxZoom={2.2}
+        fitView
+      >
+        <Background gap={28} />
+        <Panel position="top-right" className="workflow-canvas-controls">
+          <Button variant="secondary" onClick={() => void zoomIn()} aria-label={t('work.canvas.zoomIn')}>+</Button>
+          <Button variant="secondary" onClick={() => void zoomOut()} aria-label={t('work.canvas.zoomOut')}>−</Button>
+          <Button variant="secondary" onClick={() => void fitView()} aria-label={t('work.canvas.fit')}>⌂</Button>
+          <span className="workflow-canvas-level" role="status">{t(`work.canvas.level${level}`)}</span>
+        </Panel>
+      </ReactFlow>
+      {expandedStep ? (
+        <div className="workflow-canvas-detail" role="dialog" aria-label={t('work.canvas.detail')}>
+          <header>
+            <p className="product-eyebrow">{t('work.canvas.detail')}</p>
+            <h3>{expandedStep.title}</h3>
+          </header>
+          <p>{expandedStep.feedback || expandedStep.summary || ''}</p>
+          {expandedStep.approval ? (
+            <Link to={routes.projectReviewItem(projectKey, expandedStep.approval)}>
+              {t('work.canvas.openReview')}
+            </Link>
+          ) : null}
+          {expandedStep.artifact_path ? (
+            <Link to={`${routes.projectKnowledge(projectKey)}?view=artifacts&artifact=${encodeURIComponent(expandedStep.artifact || '')}`}>
+              {t('work.canvas.viewArtifact')}
+            </Link>
+          ) : null}
+          {actionableReview ? (
+            <>
+              <EvidenceSummary evidence={evidence} t={t} />
+              <DecisionActions busy={busy} error={error} onDecision={decide} t={t} />
+            </>
+          ) : null}
+          <Button variant="secondary" onClick={() => setExpanded(null)}>{t('work.canvas.close')}</Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export default function WorkflowCanvas(props) {
+  if (!props.steps?.length) return null;
+  return (
+    <ReactFlowProvider>
+      <CanvasInner {...props} />
+    </ReactFlowProvider>
+  );
+}

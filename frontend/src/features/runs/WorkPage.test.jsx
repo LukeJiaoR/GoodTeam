@@ -1,5 +1,30 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+
+vi.mock('@xyflow/react', async () => {
+  const React = await import('react');
+  return {
+    ReactFlow: ({ children, nodes, onNodeClick }) => (
+      <div data-testid="reactflow">
+        {nodes.map((node) => (
+          <button type="button" key={node.id} data-node={node.id} data-status={node.data.step.status} onClick={() => onNodeClick?.(null, node)}>
+            {node.data.title}
+          </button>
+        ))}
+        {children}
+      </div>
+    ),
+    Background: () => null,
+    Panel: ({ children }) => <div data-testid="canvas-panel">{children}</div>,
+    ReactFlowProvider: ({ children }) => <div>{children}</div>,
+    useNodesState: (initial) => {
+      const state = React.useState(initial);
+      return [...state, () => {}];
+    },
+    useReactFlow: () => ({ fitView: () => {}, zoomIn: () => {}, zoomOut: () => {} }),
+    useOnViewportChange: () => {},
+  };
+});
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
 import { translate } from '../../i18n';
@@ -10,17 +35,20 @@ const mocks = vi.hoisted(() => ({
   getDevLoop: vi.fn(),
   getMessages: vi.fn(),
   getProjectRuns: vi.fn(),
+  getProjectState: vi.fn(),
   startSmoke: vi.fn(),
   useProjectState: vi.fn(),
 }));
 
 vi.mock('./useProjectState', () => ({ default: mocks.useProjectState }));
 vi.mock('./runApi', () => ({
+  getProjectState: mocks.getProjectState,
   runApi: {
     dispatchTrack: mocks.dispatchTrack,
     getDevLoop: mocks.getDevLoop,
     getMessages: mocks.getMessages,
     getProjectRuns: mocks.getProjectRuns,
+    getProjectState: mocks.getProjectState,
     startSmoke: mocks.startSmoke,
   },
 }));
@@ -104,7 +132,7 @@ test('makes an actionable takeover review the primary next step', async () => {
   expect(screen.getByRole('button', { name: 'Terminate this run' })).not.toBeVisible();
 });
 
-test('renders the workflow pipeline above the views with gate links', async () => {
+test('renders the workflow canvas above the views and opens the gate detail card', async () => {
   mocks.useProjectState.mockReturnValue({
     data: {
       active_run: { run_id: 'run-active' },
@@ -126,8 +154,10 @@ test('renders the workflow pipeline above the views with gate links', async () =
 
   renderWorkPage();
 
-  expect(await screen.findByRole('navigation', { name: 'Workflow pipeline' })).toBeVisible();
-  expect(screen.getByRole('link', { name: /Review PRD/ }))
+  expect(await screen.findByRole('region', { name: 'Workflow canvas' })).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: /Product \/ Requirement/ }));
+  expect(await screen.findByRole('dialog', { name: 'Stage details' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Open full review' }))
     .toHaveAttribute('href', '/projects/DEMO/review/prd');
 });
 
