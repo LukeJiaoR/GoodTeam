@@ -243,8 +243,8 @@ function DirtyDialog({ onLeave, onStay, t }) {
         <h2 id="review-dirty-title">{t('review.dirty.title')}</h2>
         <p>{t('review.dirty.description')}</p>
         <div className="product-dialog-actions">
-          <Button variant="secondary" onClick={onStay}>{t('review.dirty.stay')}</Button>
-          <Button variant="danger" onClick={onLeave}>{t('review.dirty.leave')}</Button>
+          <Button variant="secondary" onClick={onLeave}>{t('review.dirty.leave')}</Button>
+          <Button variant="primary" onClick={onStay}>{t('review.dirty.stay')}</Button>
         </div>
       </div>
     </div>

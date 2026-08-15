@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Background,
+  Handle,
   Panel,
+  Position,
   ReactFlow,
   ReactFlowProvider,
   useNodesState,
@@ -17,6 +19,7 @@ import EvidenceSummary from './EvidenceSummary';
 import WorkflowPipeline from './WorkflowPipeline';
 import { routes } from '../lib/routing/routes';
 import { reviewApi } from '../features/reviews/reviewApi';
+import { statusLabel, stepTitle } from '../utils/workflowHelpers';
 
 const STATUS_ICONS = {
   done: '✓',
@@ -36,8 +39,8 @@ export function canvasLevel(zoom) {
 const WRAP_COLUMNS = 7;
 
 export function buildCanvasNodes(steps, level, focusedKey = '', translators = {}) {
-  const titleFor = translators.titleFor || ((step) => (step.approval === 'takeover' ? 'Takeover' : step.title));
-  const labelFor = translators.labelFor || ((step) => step.status_label || step.status);
+  const titleFor = translators.titleFor || ((step) => (step.approval === 'takeover' ? 'Takeover' : (translators.t ? stepTitle(step, translators.t) : step.title)));
+  const labelFor = translators.labelFor || ((step) => (translators.t ? statusLabel(step, translators.t) : (step.status_label || step.status)));
   return steps.map((step, index) => ({
     id: step.key || `step-${index}`,
     position: {
@@ -60,6 +63,7 @@ function StageNode({ data }) {
       data-status={step.status}
       data-level={level}
     >
+      <Handle type="target" position={Position.Left} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} isConnectable={false} />
       <span className="workflow-canvas__node-icon" aria-hidden="true">{STATUS_ICONS[step.status] || '·'}</span>
       <span className="workflow-canvas__node-copy">
         <strong>{data.title}</strong>
@@ -67,6 +71,7 @@ function StageNode({ data }) {
         {level >= 1 && step.feedback ? <em>{step.feedback}</em> : null}
         {level >= 2 && step.artifact_path ? <code>{step.artifact_path}</code> : null}
       </span>
+      <Handle type="source" position={Position.Right} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} isConnectable={false} />
     </div>
   );
 }
@@ -83,12 +88,9 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
 
   useEffect(() => {
     setNodes(buildCanvasNodes(steps, level, focusedKey, {
-      titleFor: (step) => (step.approval === 'takeover' ? t('work.pipeline.takeover') : step.title),
-      labelFor: (step) => {
-        const key = `work.pipeline.status.${step.status}`;
-        const translated = t(key);
-        return translated === key ? (step.status_label || step.status) : translated;
-      },
+      t,
+      titleFor: (step) => stepTitle(step, t),
+      labelFor: (step) => statusLabel(step, t),
     }));
   }, [focusedKey, level, setNodes, steps, t]);
 
@@ -128,6 +130,7 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
     source: step.key || `step-${index}`,
     target: steps[index + 1].key || `step-${index + 1}`,
     type: 'smoothstep',
+    animated: step.status === 'active',
   })), [steps]);
 
   if (fallback) {
@@ -183,6 +186,7 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
         elementsSelectable
         minZoom={0.4}
         maxZoom={2.2}
+        proOptions={{ hideAttribution: true }}
         fitView
       >
         <Background gap={28} />
@@ -197,7 +201,7 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
         <div className="workflow-canvas-detail" role="dialog" aria-label={t('work.canvas.detail')}>
           <header>
             <p className="product-eyebrow">{t('work.canvas.detail')}</p>
-            <h3>{expandedStep.title}</h3>
+            <h3>{stepTitle(expandedStep, t)}</h3>
           </header>
           <p>{expandedStep.feedback || expandedStep.summary || ''}</p>
           {expandedStep.approval ? (

@@ -8,6 +8,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import TaskDetailModal, { findMatchingReview } from '../../components/TaskDetailModal';
 import { routes } from '../../lib/routing/routes';
 import { reviewApi } from '../reviews/reviewApi';
+import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 
@@ -119,7 +120,7 @@ function StageRail({ steps, t }) {
       {steps.map((step) => (
         <li key={step.key} data-status={step.status}>
           <span className="work-stage-number">{step.number}</span>
-          <div><strong>{step.title}</strong><small>{step.status_label}</small></div>
+          <div><strong>{stepTitle(step, t)}</strong><small>{statusLabel(step, t)}</small></div>
         </li>
       ))}
     </ol>
@@ -147,7 +148,7 @@ function CurrentView({ data, language, onRetry, onTerminate, projectKey, retryin
         ) : (
           <>
             <p className="product-eyebrow">{t('work.current.next')}</p>
-            <h2>{current?.title || t('work.current.complete')}</h2>
+            <h2>{stepTitle(current, t) || t('work.current.complete')}</h2>
             <p>{current?.summary || t('work.current.completeDescription')}</p>
             {current?.feedback ? <p className="work-feedback">{current.feedback}</p> : null}
             {current?.status === 'review-needed' && current?.approval && projectKey ? (
