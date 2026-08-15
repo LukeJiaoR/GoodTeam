@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
-import WorkflowPipeline from '../../components/WorkflowPipeline';
+import WorkflowCanvas from '../../components/WorkflowCanvas';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -9,6 +9,20 @@ import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 
 const VIEWS = ['current', 'plan', 'execution', 'messages', 'delivery'];
+
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(() => (
+    globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false
+  ));
+  useEffect(() => {
+    const mq = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!mq) return undefined;
+    const handler = (event) => setReduced(event.matches);
+    mq.addEventListener?.('change', handler);
+    return () => mq.removeEventListener?.('change', handler);
+  }, []);
+  return reduced;
+}
 
 function tone(status) {
   if (['complete', 'done', 'approved', 'success'].includes(status)) return 'success';
@@ -357,6 +371,7 @@ function DeliveryView({ data, projectKey, t }) {
 export default function WorkPage() {
   const { projectKey = '', runId = '' } = useParams();
   const { language, t } = useOutletContext();
+  const reducedMotion = usePrefersReducedMotion();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
   const view = VIEWS.includes(search.get('view')) ? search.get('view') : 'current';
@@ -450,7 +465,14 @@ export default function WorkPage() {
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
       {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : !data?.active_run ? <StartRunPanel busy={busy === 'start'} data={data} error={mutationError} onStart={start} t={t} /> : (
         <>
-          <WorkflowPipeline projectKey={projectKey} steps={data.workflow_steps || []} t={t} />
+          <WorkflowCanvas
+            fallback={reducedMotion}
+            onDecided={refresh}
+            projectKey={projectKey}
+            reviews={data.approval_reviews || []}
+            steps={data.workflow_steps || []}
+            t={t}
+          />
           <nav className="product-subnav" aria-label={t('work.views.label')}>
             {tabs.map(({ item, label }) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
           </nav>
