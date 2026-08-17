@@ -22,7 +22,7 @@ STAGE_TASKS = (
     },
     {
         "node": "architect",
-        "title": "Design and approve RFC",
+        "title": "Design RFC & Security Review",
         "role": "architect",
     },
     {
@@ -44,8 +44,9 @@ STAGE_TASKS = (
 
 
 class LocalTaskStore:
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path, project_key: str = ""):
         self.project_root = project_root
+        self.project_key = str(project_key or "").strip()
         self.path = project_root / ".goodteam" / "tasks" / "tasks.json"
 
     def list_tasks(self) -> list[dict[str, Any]]:
@@ -72,8 +73,14 @@ class LocalTaskStore:
         ledger = self._read()
         tasks = list(ledger.get("tasks", []))
         now = self._now()
+        prefix = str(self.project_key or ledger.get("prefix", "GT")).strip().upper()
+        next_id = int(ledger.get("next_id", 1))
+        existing_ids = {str(t.get("id", "")) for t in tasks}
+        while f"{prefix}-{next_id}" in existing_ids:
+            next_id += 1
+        task_id = f"{prefix}-{next_id}"
         task = {
-            "id": f"GT-{ledger.get('next_id', 1)}",
+            "id": task_id,
             "title": title,
             "description": description,
             "role": role,
@@ -88,13 +95,27 @@ class LocalTaskStore:
         }
         tasks.append(task)
         ledger["tasks"] = tasks
-        ledger["next_id"] = int(ledger.get("next_id", 1)) + 1
+        ledger["next_id"] = next_id + 1
         self._write(ledger)
         return task
 
     def update_task(self, task_id: str, **updates: Any) -> dict[str, Any]:
         ledger = self._read()
         tasks = list(ledger.get("tasks", []))
+        new_id = str(updates.get("id", task_id)).strip()
+        if new_id and new_id != task_id:
+            # Collision guard: do not overwrite an existing different task
+            if any(t.get("id") == new_id for t in tasks if t.get("id") != task_id):
+                updates.pop("id", None)
+                new_id = task_id
+            else:
+                # Synchronize dependencies across all tasks
+                for t in tasks:
+                    if "dependencies" in t and isinstance(t["dependencies"], list):
+                        t["dependencies"] = [
+                            new_id if dep == task_id else dep
+                            for dep in t["dependencies"]
+                        ]
         for index, task in enumerate(tasks):
             if task["id"] != task_id:
                 continue
@@ -109,12 +130,18 @@ class LocalTaskStore:
 
     def _read(self) -> dict[str, Any]:
         if not self.path.is_file():
-            return {"version": 1, "next_id": 1, "tasks": []}
-        return json.loads(self.path.read_text(encoding="utf-8"))
+            return {"tasks": [], "next_id": 1}
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {"tasks": [], "next_id": 1}
+        if not isinstance(payload, dict):
+            return {"tasks": [], "next_id": 1}
+        return payload
 
-    def _write(self, ledger: dict[str, Any]) -> None:
+    def _write(self, payload: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(ledger, indent=2), encoding="utf-8")
+        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()
@@ -124,7 +151,7 @@ def sync_stage_tasks(state: Any, store: LocalTaskStore) -> list[dict[str, Any]]:
     statuses = _stage_statuses(state)
     existing = store.list_tasks()
     tasks: list[dict[str, Any]] = []
-    for stage in STAGE_TASKS:
+    for index, stage in enumerate(STAGE_TASKS, start=1):
         node = str(stage["node"])
         external_ref = f"stage:{node}"
         task = next(
@@ -135,6 +162,8 @@ def sync_stage_tasks(state: Any, store: LocalTaskStore) -> list[dict[str, Any]]:
             ),
             None,
         )
+        prefix = str(store.project_key or "GT").strip().upper()
+        expected_id = f"{prefix}-{index}"
         if task is None:
             task = store.create_task(
                 title=str(stage["title"]),
@@ -143,7 +172,12 @@ def sync_stage_tasks(state: Any, store: LocalTaskStore) -> list[dict[str, Any]]:
                 external_refs=[external_ref],
             )
             existing.append(task)
-        updates: dict[str, Any] = {"status": statuses[node]}
+        updates: dict[str, Any] = {
+            "title": str(stage["title"]),
+            "status": statuses[node],
+        }
+        if store.project_key and not str(task.get("id", "")).startswith(f"{prefix}-"):
+            updates["id"] = expected_id
         artifact_ref = _stage_artifact_ref(state, node)
         updates["artifact_refs"] = [artifact_ref] if artifact_ref else []
         task = store.update_task(str(task["id"]), **updates)
@@ -170,12 +204,20 @@ def _stage_statuses(state: Any) -> dict[str, str]:
         return statuses
     statuses["product_requirement"] = "done"
 
-    if approvals.get("rfc") != "approved":
+    if approvals.get("rfc") != "approved" or approvals.get("security") != "approved":
         statuses["architect"] = "in_progress"
         return statuses
     statuses["architect"] = "done"
 
-    implementation_active = current_node == "implementation" or next_node in {"planner", "blocked"}
+    implementation_active = (
+        current_node in {"planner", "ui_design", "implementation", "code_review", "implementation_workers"}
+        or next_node in {"planner", "ui_design", "implementation", "code_review", "blocked"}
+        or (
+            approvals.get("staging") != "approved"
+            and current_node not in {"staging_review_gate", "release_review_gate", "complete"}
+            and next_node not in {"await_staging_approval", "release", "await_release_approval", "retro_memory"}
+        )
+    )
     if implementation_active:
         statuses["implementation"] = "in_progress"
         return statuses

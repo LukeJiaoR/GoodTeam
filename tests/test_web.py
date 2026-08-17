@@ -5323,3 +5323,67 @@ def test_context_estimate_enforces_url_size_cap(tmp_path, monkeypatch):
     assert payload["code"] == "invalid_request"
     assert payload["message"] == "URL source exceeds 1048576 byte cap: https://example.com/context.md"
     assert payload["request_id"]
+
+
+def test_discover_project_configs_discovers_registry_projects(tmp_path: Path) -> None:
+    from goodteam_os.project_registry import ProjectRegistry
+
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    ext_config = external_dir / "external-app.local.yaml"
+    ext_config.write_text("name: External App\nkey: EXTERNALAPP\n", encoding="utf-8")
+
+    registry = ProjectRegistry()
+    registry.register_project(ext_config, key="EXTERNALAPP")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    configs = discover_project_configs(workspace)
+    assert ext_config.resolve() in configs
+
+
+def test_build_project_home_loads_registered_project_with_remote_state(tmp_path: Path) -> None:
+    from dataclasses import asdict
+    from goodteam_os.project_readiness import ProjectReadinessStore
+    from goodteam_os.project_registry import ProjectRegistry
+
+    external_root = tmp_path / "my-external-repo"
+    external_root.mkdir()
+    external_config_dir = tmp_path / "configs"
+    external_config_dir.mkdir()
+    ext_config = external_config_dir / "my-app.local.yaml"
+    ext_config.write_text(
+        f"name: My App\nkey: MYAPP\nrepos:\n  app: {external_root}\n",
+        encoding="utf-8",
+    )
+
+    external_state_dir = tmp_path / "external_workspace" / "state" / "projects" / "MYAPP"
+    external_state_dir.mkdir(parents=True)
+    state = create_initial_state(
+        "run-ext-1",
+        "MYAPP",
+        "Build a cat app",
+    )
+    (external_state_dir / "current.json").write_text(
+        json.dumps(asdict(state)),
+        encoding="utf-8",
+    )
+    ProjectReadinessStore(tmp_path / "external_workspace").initialize("MYAPP", external_root)
+
+    registry = ProjectRegistry()
+    registry.register_project(
+        ext_config,
+        root=external_root,
+        key="MYAPP",
+        state_path=external_state_dir,
+    )
+
+    workspace = tmp_path / "fresh_workspace"
+    workspace.mkdir()
+
+    home = web.build_project_home(workspace, "MYAPP")
+    assert home["project"]["project_key"] == "MYAPP"
+    assert home["project"]["display_name"] == "My App"
+    assert home["facts"]["active_run"] is not None
+    assert home["facts"]["active_run"]["run_id"] == "run-ext-1"

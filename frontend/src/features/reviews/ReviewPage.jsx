@@ -3,6 +3,7 @@ import { Link, useBlocker, useNavigate, useOutletContext, useParams } from 'reac
 import Button from '../../components/ui/Button';
 import DecisionActions from '../../components/DecisionActions';
 import EvidenceSummary from '../../components/EvidenceSummary';
+import MarkdownView from '../../components/ui/MarkdownView';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { routes } from '../../lib/routing/routes';
@@ -158,8 +159,35 @@ function ArtifactPanel({ onChange, review, t, value }) {
   const baseline = typeof review.content === 'string' ? review.content : '';
   return (
     <article className="review-artifact">
-      <header><div><p className="product-eyebrow">{t('review.artifact.eyebrow')}</p><h2>{reviewTitle(review, t)}</h2></div><div className="review-view-switcher">{isBrief ? <button className={view === 'preview' ? 'is-active' : ''} onClick={() => setView('preview')}>{t('review.artifact.read')}</button> : null}<button className={view === 'edit' ? 'is-active' : ''} onClick={() => setView('edit')}>{t('review.artifact.edit')}</button><button className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}>{t('review.artifact.diff')}</button></div></header>
-      {view === 'preview' ? <BriefPreview content={value} t={t} /> : view === 'edit' ? <label className="review-editor"><span className="sr-only">{t('review.artifact.content')}</span><textarea spellCheck="false" value={value} onChange={(event) => onChange(event.target.value)} /></label> : <pre className="review-diff" aria-label={t('review.artifact.diff')}>{lineDiff(baseline, value)}</pre>}
+      <header>
+        <div>
+          <p className="product-eyebrow">{t('review.artifact.eyebrow')}</p>
+          <h2>{reviewTitle(review, t)}</h2>
+        </div>
+        <div className="review-view-switcher">
+          <button className={view === 'preview' ? 'is-active' : ''} onClick={() => setView('preview')}>{t(isBrief ? 'review.artifact.read' : 'review.artifact.preview')}</button>
+          <button className={view === 'edit' ? 'is-active' : ''} onClick={() => setView('edit')}>{t('review.artifact.edit')}</button>
+          <button className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}>{t('review.artifact.diff')}</button>
+        </div>
+      </header>
+      {view === 'preview' ? (
+        isBrief ? (
+          <BriefPreview content={value} t={t} />
+        ) : (
+          <div className="review-rendered-container" tabIndex={0}>
+            <MarkdownView content={value} />
+          </div>
+        )
+      ) : view === 'edit' ? (
+        <label className="review-editor">
+          <span className="sr-only">{t('review.artifact.content')}</span>
+          <textarea spellCheck="false" value={value} onChange={(event) => onChange(event.target.value)} />
+        </label>
+      ) : (
+        <pre className="review-diff" aria-label={t('review.artifact.diff')}>
+          {lineDiff(baseline, value)}
+        </pre>
+      )}
     </article>
   );
 }
@@ -191,13 +219,13 @@ function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onD
       <details><summary>{t('review.evidence.title')}</summary><pre>{JSON.stringify(evidence, null, 2)}</pre></details>
       <details><summary>{t('review.provenance.title')}</summary><pre>{JSON.stringify(provenance, null, 2)}</pre></details>
       <details><summary>{t('review.dissent.title')}</summary>{dissent.length ? dissent.map((reason, index) => <p key={index}>{reason.text || reason}</p>) : <p>{t('review.dissent.none')}</p>}{review.multi_reviewer_projection ? <pre>{JSON.stringify(review.multi_reviewer_projection, null, 2)}</pre> : null}</details>
-      {review.committee?.messages?.length ? <details><summary>{t('review.debate.title')}</summary><ol>{review.committee.messages.map((message) => <li key={message.id}><strong>{message.from_role}</strong><p>{message.body}</p></li>)}</ol></details> : null}
+      {review.committee?.messages?.length ? <details><summary>{t('review.debate.title')}</summary><ol>{review.committee.messages.map((message) => <li key={message.id}><strong>{message.from_role}</strong><MarkdownView content={message.body} /></li>)}</ol></details> : null}
       {questions.length ? <details open><summary>{t('review.questions.title')}</summary><div className="review-question-list">{questions.map((question) => {
         const text = typeof question === 'string' ? question : question.question || question.text;
         return <label key={text}><span>{text}</span><textarea rows="2" value={answers[text] || ''} onChange={(event) => setAnswers((current) => ({ ...current, [text]: event.target.value }))} /></label>;
       })}<Button busy={busy === 'answer'} disabled={!Object.values(answers).some((value) => value.trim())} onClick={() => onAnswer(Object.entries(answers).filter(([, value]) => value.trim()).map(([question, answer]) => ({ question, answer })))}>{t('review.questions.apply')}</Button>{submittedCount ? <p className="review-questions-submitted" role="status">{t('review.questions.submitted', { count: submittedCount, plural: submittedCount === 1 ? '' : 's' })}</p> : null}</div></details> : null}
       {review.artifact_path ? <div className="review-editor-actions"><Button variant="secondary" busy={busy === 'save'} onClick={onSave}>{t('review.actions.save')}</Button><Button variant="secondary" busy={busy === 'refine'} onClick={onRefine}>{t('review.actions.refine')}</Button></div> : <p className="product-boundary-note">{t('review.artifact.notGenerated')}</p>}
-      {proposed ? <section className="review-proposal"><h3>{t('review.refinement.title')}</h3><pre>{proposed.content}</pre><div className="review-editor-actions"><Button busy={busy === 'accept'} onClick={onAccept}>{t('review.refinement.accept')}</Button><Button variant="secondary" busy={busy === 'discard'} onClick={onDiscard}>{t('review.refinement.discard')}</Button></div></section> : null}
+      {proposed ? <section className="review-proposal"><h3>{t('review.refinement.title')}</h3><div className="review-proposal-content"><MarkdownView content={proposed.content} /></div><div className="review-editor-actions"><Button busy={busy === 'accept'} onClick={onAccept}>{t('review.refinement.accept')}</Button><Button variant="secondary" busy={busy === 'discard'} onClick={onDiscard}>{t('review.refinement.discard')}</Button></div></section> : null}
       {error ? <ProductError error={error} t={t} /> : null}
       <DecisionResult decisionNote={decisionNote} projectKey={projectKey} t={t} />
       {review.is_actionable ? (
@@ -364,7 +392,15 @@ export default function ReviewPage() {
   const stepIndex = steps.findIndex((step) => step.approval === selected?.approval);
   return (
     <main id="main-content" className="product-page product-review-page">
-      <header className="product-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('review.title')}</h1><p>{t('review.description')}</p>{stepIndex >= 0 ? <p className="review-pipeline-position">{t('work.pipeline.stepOf', { number: stepIndex + 1, total: steps.length })}</p> : null}</div><Link to={routes.projectWork(projectKey)}>{t('review.backWork')}</Link></header>
+      <header className="product-page-header">
+        <div>
+          <p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p>
+          <h1>{t('review.title')}</h1>
+          <p>{t('review.description')}</p>
+          {stepIndex >= 0 ? <p className="review-pipeline-position">{t('work.pipeline.stepOf', { number: stepIndex + 1, total: steps.length })}</p> : null}
+        </div>
+        <Link to={`${routes.projectWork(projectKey)}?view=plan`}>{t('review.backWork')}</Link>
+      </header>
       {!selected ? <p className="product-empty-copy">{t('review.empty')}</p> : (
         <div className="review-workspace">
           <ReviewList projectKey={projectKey} reviews={reviews} selected={selected.approval} t={t} />

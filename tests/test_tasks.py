@@ -165,3 +165,32 @@ def test_sync_stage_tasks_replaces_and_clears_stage_artifact_refs(tmp_path):
     sync_stage_tasks(state, store)
 
     assert store.get_task(prd_task["id"])["artifact_refs"] == []
+
+
+def test_task_id_migration_updates_dependencies_and_prevents_collision(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    store = LocalTaskStore(project_root)
+
+    t1 = store.create_task(title="Task 1", description="", role="product_requirement")
+    t2 = store.create_task(title="Task 2", description="", role="architect", dependencies=[t1["id"]])
+
+    assert t1["id"] == "GT-1"
+    assert t2["id"] == "GT-2"
+    assert store.get_task("GT-2")["dependencies"] == ["GT-1"]
+
+    # Migrate GT-1 to DEMO-1
+    store.update_task("GT-1", id="DEMO-1")
+
+    # Dependency in GT-2 is automatically updated to DEMO-1
+    assert store.get_task("GT-2")["dependencies"] == ["DEMO-1"]
+    assert store.get_task("DEMO-1")["title"] == "Task 1"
+
+    # Collision guard: attempting to update GT-2 to already-existing DEMO-1 is rejected/ignored
+    store.update_task("GT-2", id="DEMO-1")
+    assert store.get_task("GT-2")["id"] == "GT-2"
+
+    # Creating a new task with project_key avoids collision
+    store_demo = LocalTaskStore(project_root, project_key="DEMO")
+    t3 = store_demo.create_task(title="Task 3", description="", role="implementation")
+    assert t3["id"] == "DEMO-3"

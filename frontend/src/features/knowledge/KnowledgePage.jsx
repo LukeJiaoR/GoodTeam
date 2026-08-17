@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
+import MarkdownView from '../../components/ui/MarkdownView';
 import ProductError from '../../components/ui/ProductError';
 import { routes } from '../../lib/routing/routes';
 import RepositoryOverview from '../projects/RepositoryOverview';
@@ -51,7 +52,16 @@ function ArtifactsView({ data, projectKey, search, setSearch, t }) {
   return (
     <div className="knowledge-artifacts">
       <aside><h2>{t('knowledge.artifacts.title')}</h2><ol>{entries.map(([key, path]) => <li key={key}><button aria-pressed={key === selectedKey} className={key === selectedKey ? 'is-active' : ''} onClick={() => setSearch({ view: 'artifacts', artifact: key })}><strong>{key}</strong><small>{path}</small></button></li>)}</ol></aside>
-      <article><h2>{selectedKey}</h2>{error ? <ProductError error={error} t={t} /> : <pre>{content}</pre>}</article>
+      <article>
+        <h2>{selectedKey}</h2>
+        {error ? (
+          <ProductError error={error} t={t} />
+        ) : (
+          <div className="knowledge-artifact-rendered-wrap" tabIndex={0}>
+            <MarkdownView content={content} />
+          </div>
+        )}
+      </article>
     </div>
   );
 }

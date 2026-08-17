@@ -59,6 +59,7 @@ from goodteam_os.project_import import (
     import_project,
     read_bound_project_readiness,
 )
+from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities  # noqa: F401
 from goodteam_os.project_readiness_executor import (
     ProjectReadinessExecutor,
@@ -2277,7 +2278,8 @@ def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
     ledger = _task_ledger_from_state(state)
     if ledger is None:
         return serialize_task_board(build_task_board([]))
-    return serialize_task_board(build_task_board(LocalTaskStore(ledger.parents[2]).list_tasks()))
+    project_key = str(getattr(state, "project_key", "") or "")
+    return serialize_task_board(build_task_board(LocalTaskStore(ledger.parents[2], project_key=project_key).list_tasks()))
 
 
 def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
@@ -4546,17 +4548,32 @@ def discover_project_configs(workspace: Path) -> list[Path]:
     for project_dir in _project_config_dirs(workspace):
         if project_dir.is_dir():
             paths.extend(project_dir.glob("*.local.yaml"))
+    try:
+        paths.extend(ProjectRegistry().list_registered_configs())
+    except Exception:
+        pass
     paths.extend(_project_configs_from_state_sources(workspace))
     unique = sorted({path.resolve(): path.resolve() for path in paths if path.is_file()}.values(), key=lambda item: item.name.lower())
     return unique
 
 
 def _project_config_dirs(workspace: Path) -> list[Path]:
-    candidates = [workspace / "projects", workspace.parent / "projects"]
+    candidates = [
+        workspace / "projects",
+        workspace.parent / "projects",
+    ]
+    goodteam_home = os.getenv("GOODTEAM_HOME")
+    if goodteam_home:
+        candidates.append(Path(goodteam_home).expanduser() / "projects")
+    else:
+        candidates.append(Path.home() / ".goodteam" / "projects")
     unique: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:
-        resolved = candidate.resolve()
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
         if resolved in seen:
             continue
         seen.add(resolved)
@@ -4565,21 +4582,35 @@ def _project_config_dirs(workspace: Path) -> list[Path]:
 
 
 def _project_configs_from_state_sources(workspace: Path) -> list[Path]:
-    state_projects_dir = workspace / "state" / "projects"
-    if not state_projects_dir.is_dir():
-        return []
+    state_dirs = [
+        workspace / "state" / "projects",
+        workspace.parent / "state" / "projects",
+    ]
+    goodteam_home = os.getenv("GOODTEAM_HOME")
+    if goodteam_home:
+        state_dirs.append(Path(goodteam_home).expanduser() / "state" / "projects")
+    else:
+        state_dirs.append(Path.home() / ".goodteam" / "state" / "projects")
     store = StateStore(workspace)
     paths: list[Path] = []
-    for current_path in state_projects_dir.glob("*/current.json"):
-        state = store.read_project_current(current_path.parent.name)
-        if state is None:
+    seen_keys: set[str] = set()
+    for state_projects_dir in state_dirs:
+        if not state_projects_dir.is_dir():
             continue
-        source_ref = str(state.source_ref or "").strip()
-        if not source_ref or source_ref == "manual":
-            continue
-        source_path = Path(source_ref).expanduser()
-        if source_path.is_file():
-            paths.append(source_path)
+        for current_path in state_projects_dir.glob("*/current.json"):
+            project_name = current_path.parent.name
+            if project_name in seen_keys:
+                continue
+            seen_keys.add(project_name)
+            state = store.read_project_current(project_name)
+            if state is None:
+                continue
+            source_ref = str(state.source_ref or "").strip()
+            if not source_ref or source_ref == "manual":
+                continue
+            source_path = Path(source_ref).expanduser().resolve()
+            if source_path.is_file():
+                paths.append(source_path)
     return paths
 
 

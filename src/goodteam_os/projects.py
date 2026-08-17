@@ -165,6 +165,16 @@ def init_project(
         force=force,
     )
     target = load_project_target(path)
+    try:
+        from goodteam_os.project_registry import ProjectRegistry
+
+        ProjectRegistry().register_project(
+            path,
+            root=Path(repo_path).expanduser().resolve() if repo_path else None,
+            key=key,
+        )
+    except Exception:
+        pass
     return {
         "config_path": str(path),
         "doctor": check_project_target(target),

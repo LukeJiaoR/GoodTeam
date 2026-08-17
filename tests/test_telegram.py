@@ -158,8 +158,41 @@ def test_global_test_telegram_request_fake_prevents_network(monkeypatch):
 
 
 @pytest.mark.telegram_transport_unit
+def test_telegram_request_circuit_breaker_blocks_all_methods(monkeypatch):
+    calls = []
+
+    def fail_if_called(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        raise AssertionError("network transport should not be reached when circuit breaker is active")
+
+    monkeypatch.setenv("GOODTEAM_DISABLE_TG_NETWORK", "1")
+    monkeypatch.setattr("telebot.apihelper._make_request", fail_if_called)
+
+    send_res = telegram._telegram_request("token", "sendMessage", {"chat_id": 123, "text": "hi"})
+    assert send_res == {"ok": True, "result": {"message_id": 1}}
+
+    edit_res = telegram._telegram_request("token", "editMessageText", {"message_id": 99, "text": "hi"})
+    assert edit_res == {"ok": True, "result": {"message_id": 99}}
+
+    del_res = telegram._telegram_request("token", "deleteMessage", {"chat_id": 123, "message_id": 99})
+    assert del_res == {"ok": True, "result": True}
+
+    ans_res = telegram._telegram_request("token", "answerCallbackQuery", {"callback_query_id": "cb1"})
+    assert ans_res == {"ok": True, "result": True}
+
+    upd_res = telegram._telegram_request("token", "getUpdates", {})
+    assert upd_res == {"ok": True, "result": []}
+
+    other_res = telegram._telegram_request("token", "customMethod", {})
+    assert other_res == {"ok": True, "result": {}}
+
+    assert calls == []
+
+
+@pytest.mark.telegram_transport_unit
 def test_telegram_request_uses_telebot_apihelper_and_preserves_raw_response_contract(monkeypatch):
     calls = []
+    monkeypatch.delenv(telegram.DISABLE_NETWORK_ENV, raising=False)
 
     def fake_make_request(token, method_name, method="get", params=None, files=None):
         calls.append(

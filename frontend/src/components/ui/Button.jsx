@@ -1,3 +1,5 @@
+import { Loader2 } from 'lucide-react';
+
 const VARIANTS = new Set(['primary', 'secondary', 'danger']);
 
 export default function Button({
@@ -24,6 +26,7 @@ export default function Button({
       data-busy={busy ? 'true' : undefined}
       data-variant={resolvedVariant}
     >
+      {busy ? <Loader2 className="product-button__spinner" aria-hidden="true" size={14} /> : null}
       {children}
     </button>
   );

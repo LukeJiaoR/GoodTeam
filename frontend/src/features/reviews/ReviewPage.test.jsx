@@ -1,7 +1,8 @@
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import MarkdownView from '../../components/ui/MarkdownView';
 import { translate } from '../../i18n';
 import ReviewPage from './ReviewPage';
 
@@ -91,76 +92,115 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-test('guards navigation away from unsaved review edits with a dialog', async () => {
-  const user = userEvent.setup();
-  const router = renderReview();
+describe('ReviewPage workflow and navigation', () => {
+  test('guards navigation away from unsaved review edits with a dialog', async () => {
+    const user = userEvent.setup();
+    const router = renderReview();
 
-  const editor = await screen.findByRole('textbox', { name: t('review.artifact.content') });
-  await user.type(editor, ' + extra edit');
+    const editor = await screen.findByRole('textbox', { name: t('review.artifact.content') });
+    await user.type(editor, ' + extra edit');
 
-  expect(screen.getByRole('link', { name: /PRD/ })).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('link', { name: /PRD/ })).toHaveAttribute('aria-current', 'true');
 
-  await user.click(screen.getByRole('link', { name: /RFC/ }));
-  expect(await screen.findByRole('dialog')).toBeVisible();
-  expect(screen.getByText(t('review.dirty.title'))).toBeVisible();
+    await user.click(screen.getByRole('link', { name: /RFC/ }));
+    expect(await screen.findByRole('dialog')).toBeVisible();
+    expect(screen.getByText(t('review.dirty.title'))).toBeVisible();
 
-  await user.click(screen.getByRole('button', { name: t('review.dirty.stay') }));
-  expect(router.state.location.pathname).toBe('/projects/DEMO/review/prd');
-  expect(screen.getByRole('textbox', { name: t('review.artifact.content') })).toHaveValue('# PRD\nInitial plan. + extra edit');
+    await user.click(screen.getByRole('button', { name: t('review.dirty.stay') }));
+    expect(router.state.location.pathname).toBe('/projects/DEMO/review/prd');
+    expect(screen.getByRole('textbox', { name: t('review.artifact.content') })).toHaveValue('# PRD\nInitial plan. + extra edit');
 
-  await user.click(screen.getByRole('link', { name: /RFC/ }));
-  await user.click(await screen.findByRole('button', { name: t('review.dirty.leave') }));
-  expect(router.state.location.pathname).toBe('/projects/DEMO/review/rfc');
-});
-
-test('shows an approved decision result with the next step and link to Work', async () => {
-  const user = userEvent.setup();
-  mocks.decideReview.mockResolvedValue({ ok: true });
-  renderReview();
-
-  await user.click(await screen.findByRole('button', { name: t('review.decision.approve') }));
-
-  expect(await screen.findByText('Approved PRD')).toBeVisible();
-  expect(screen.getByText(`Next: ${t('review.decision.node.rfc')}`)).toBeVisible();
-  expect(screen.getByRole('link', { name: t('review.decision.viewNext') }))
-    .toHaveAttribute('href', '/projects/DEMO/work');
-  expect(mocks.decideReview).toHaveBeenCalledWith('DEMO', 'prd', 'approved', '');
-});
-
-test('renders the evidence summary badges from the snapshot', async () => {
-  renderReview();
-
-  expect(await screen.findByText('CI: Passed')).toBeVisible();
-  expect(screen.getByText('Smoke: Unknown')).toBeVisible();
-  expect(screen.getByText('QA: Failed')).toBeVisible();
-  expect(screen.getByText('Blockers 1')).toBeVisible();
-  expect(screen.getByText(t('review.evidence.title'), { selector: 'summary' })).toBeVisible();
-});
-
-test('clears submitted question answers and confirms the count', async () => {
-  const user = userEvent.setup();
-  mocks.getReviewState.mockResolvedValue(state);
-  mocks.getOpenQuestions.mockResolvedValue({
-    questions: ['Should the CLI be the only surface?'],
+    await user.click(screen.getByRole('link', { name: /RFC/ }));
+    await user.click(await screen.findByRole('button', { name: t('review.dirty.leave') }));
+    expect(router.state.location.pathname).toBe('/projects/DEMO/review/rfc');
   });
-  mocks.refresh.mockResolvedValue(state);
-  mocks.answerOpenQuestions.mockResolvedValue({ ok: true });
-  const router = routerFor('/projects/DEMO/review/prd');
-  render(<RouterProvider router={router} />);
 
-  const answerBox = await screen.findByRole('textbox', { name: 'Should the CLI be the only surface?' });
-  await user.type(answerBox, 'yes');
-  await user.click(screen.getByRole('button', { name: t('review.questions.apply') }));
+  test('shows an approved decision result with the next step and link to Work', async () => {
+    const user = userEvent.setup();
+    mocks.decideReview.mockResolvedValue({ ok: true });
+    renderReview();
 
-  expect(await screen.findByText('Submitted 1 answer')).toBeVisible();
-  expect(mocks.answerOpenQuestions).toHaveBeenCalledWith('DEMO', 'prd', [
-    { question: 'Should the CLI be the only surface?', answer: 'yes' },
-  ]);
-  expect(screen.getByRole('textbox', { name: 'Should the CLI be the only surface?' })).toHaveValue('');
+    await user.click(await screen.findByRole('button', { name: t('review.decision.approve') }));
+
+    expect(await screen.findByText('Approved PRD')).toBeVisible();
+    expect(screen.getByText(`Next: ${t('review.decision.node.rfc')}`)).toBeVisible();
+    expect(screen.getByRole('link', { name: t('review.decision.viewNext') }))
+      .toHaveAttribute('href', '/projects/DEMO/work');
+    expect(mocks.decideReview).toHaveBeenCalledWith('DEMO', 'prd', 'approved', '');
+  });
+
+  test('renders the evidence summary badges from the snapshot', async () => {
+    renderReview();
+
+    expect(await screen.findByText('CI: Passed')).toBeVisible();
+    expect(screen.getByText('Smoke: Unknown')).toBeVisible();
+    expect(screen.getByText('QA: Failed')).toBeVisible();
+    expect(screen.getByText('Blockers 1')).toBeVisible();
+    expect(screen.getByText(t('review.evidence.title'), { selector: 'summary' })).toBeVisible();
+  });
+
+  test('clears submitted question answers and confirms the count', async () => {
+    const user = userEvent.setup();
+    mocks.getReviewState.mockResolvedValue(state);
+    mocks.getOpenQuestions.mockResolvedValue({
+      questions: ['Should the CLI be the only surface?'],
+    });
+    mocks.refresh.mockResolvedValue(state);
+    mocks.answerOpenQuestions.mockResolvedValue({ ok: true });
+    const router = routerFor('/projects/DEMO/review/prd');
+    render(<RouterProvider router={router} />);
+
+    const answerBox = await screen.findByRole('textbox', { name: 'Should the CLI be the only surface?' });
+    await user.type(answerBox, 'yes');
+    await user.click(screen.getByRole('button', { name: t('review.questions.apply') }));
+
+    expect(await screen.findByText('Submitted 1 answer')).toBeVisible();
+    expect(mocks.answerOpenQuestions).toHaveBeenCalledWith('DEMO', 'prd', [
+      { question: 'Should the CLI be the only surface?', answer: 'yes' },
+    ]);
+    expect(screen.getByRole('textbox', { name: 'Should the CLI be the only surface?' })).toHaveValue('');
+  });
+
+  test('renders the pipeline position indicator for the selected gate', async () => {
+    renderReview('/projects/DEMO/review/prd');
+
+    expect(await screen.findByText(`Step 2 of 3`)).toBeVisible();
+  });
 });
 
-test('renders the pipeline position indicator for the selected gate', async () => {
-  renderReview('/projects/DEMO/review/prd');
+describe('Markdown rendering in Review and Knowledge workflows', () => {
+  test('MarkdownView renders PRD, RFC, and QA report elements accurately', () => {
+    const prdSample = `
+# GitHub Actions CI/CD Deployment PRD
 
-  expect(await screen.findByText(`Step 2 of 3`)).toBeVisible();
+## 1. Document Overview
+This document specifies the deployment pipeline.
+
+### Target Objectives
+- Zero secret hardcoding
+- Automated readyz health check
+
+\`\`\`yaml
+name: Deploy
+on:
+  push:
+    branches: [main]
+\`\`\`
+
+| Stage | Responsibility |
+|---|---|
+| Build | Compile and test |
+| Deploy | Push to target |
+`;
+
+    render(<MarkdownView content={prdSample} />);
+
+    expect(screen.getByRole('heading', { level: 1, name: 'GitHub Actions CI/CD Deployment PRD' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 2, name: '1. Document Overview' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 3, name: 'Target Objectives' })).toBeVisible();
+    expect(screen.getByText('Zero secret hardcoding')).toBeVisible();
+    expect(screen.getByText('Automated readyz health check')).toBeVisible();
+    expect(screen.getByText('Build')).toBeVisible();
+    expect(screen.getByText('Compile and test')).toBeVisible();
+  });
 });

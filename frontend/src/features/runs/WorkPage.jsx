@@ -1,10 +1,13 @@
+/* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
+import TaskDetailModal, { findMatchingReview } from '../../components/TaskDetailModal';
 import { routes } from '../../lib/routing/routes';
+import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 
@@ -124,8 +127,9 @@ function StageRail({ steps, t }) {
 }
 
 function CurrentView({ data, language, onRetry, onTerminate, projectKey, retrying, runTitle, t, terminating }) {
-  const current = data.workflow_steps?.find((step) => ['active', 'blocked'].includes(step.status))
-    || data.workflow_steps?.find((step) => step.status !== 'complete');
+  const current = data.workflow_steps?.find((step) => ['active', 'review-needed', 'blocked', 'ready'].includes(step.status))
+    || data.workflow_steps?.find((step) => !['done', 'complete', 'approved'].includes(step.status))
+    || data.workflow_steps?.[data.workflow_steps.length - 1];
   const actionableReview = data.approval_reviews?.find((review) => review.is_actionable);
   const recoverableReview = data.approval_reviews?.find((review) => review.recovery?.available);
   const priorityReview = actionableReview || recoverableReview;
@@ -146,6 +150,16 @@ function CurrentView({ data, language, onRetry, onTerminate, projectKey, retryin
             <h2>{current?.title || t('work.current.complete')}</h2>
             <p>{current?.summary || t('work.current.completeDescription')}</p>
             {current?.feedback ? <p className="work-feedback">{current.feedback}</p> : null}
+            {current?.status === 'review-needed' && current?.approval && projectKey ? (
+              <div className="work-current-action-row" style={{ margin: '1rem 0' }}>
+                <Link
+                  to={`${routes.projectWork(projectKey)}?view=plan&approval=${current.approval}`}
+                  className="product-button product-button--primary"
+                >
+                  {t('work.plan.approval.goToApproval')} ({current.title}) →
+                </Link>
+              </div>
+            ) : null}
           </>
         )}
         {!priorityReview && data.agile_board?.counts?.blocked > 0 ? (
@@ -189,23 +203,134 @@ function HistoricalRunView({ detail, projectKey, summary, t }) {
   );
 }
 
-function PlanView({ board, t }) {
+export function findTaskForApprovalOrId(board, { approval, task: taskId, reviews }) {
+  if (!board?.columns) return null;
+  const allTasks = Object.values(board.columns).flat();
+  if (taskId) {
+    const byId = allTasks.find((item) => String(item?.id || '').toLowerCase() === String(taskId).toLowerCase());
+    if (byId) return byId;
+  }
+  if (approval) {
+    const targetApproval = String(approval).toLowerCase();
+    if (Array.isArray(reviews) && reviews.length) {
+      const match = allTasks.find((task) => {
+        const rev = findMatchingReview(task, reviews);
+        return rev && String(rev.approval || '').toLowerCase() === targetApproval;
+      });
+      if (match) return match;
+    }
+    const stageMap = {
+      takeover: 'stage:takeover',
+      prd: 'stage:product_requirement',
+      rfc: 'stage:architect',
+      security: 'stage:architect',
+      staging: 'stage:qa',
+      release: 'stage:release',
+    };
+    const targetStage = stageMap[targetApproval];
+    if (targetStage) {
+      const byStage = allTasks.find((task) =>
+        (task?.external_refs || []).some((ref) => String(ref).toLowerCase() === targetStage)
+      );
+      if (byStage) return byStage;
+    }
+    const roleMap = {
+      takeover: 'takeover',
+      prd: 'product_requirement',
+      rfc: 'architect',
+      security: 'architect',
+      staging: 'qa',
+      release: 'release',
+    };
+    const targetRole = roleMap[targetApproval];
+    if (targetRole) {
+      const byRole = allTasks.find((task) => task?.role === targetRole);
+      if (byRole) return byRole;
+    }
+  }
+  return null;
+}
+
+export function PlanView({ board, projectKey, reviews, onDecide, t }) {
+  const [search, setSearch] = useSearchParams();
+  const [manuallySelectedTask, setManuallySelectedTask] = useState(null);
+  const approvalParam = search.get('approval');
+  const taskParam = search.get('task');
+
+  const deepLinkedTask = useMemo(() => {
+    if (approvalParam || taskParam) {
+      return findTaskForApprovalOrId(board, { approval: approvalParam, task: taskParam, reviews });
+    }
+    return null;
+  }, [approvalParam, taskParam, board, reviews]);
+
+  const selectedTask = manuallySelectedTask || deepLinkedTask;
+
+  const handleClose = () => {
+    setManuallySelectedTask(null);
+    if (search.get('approval') || search.get('task')) {
+      const next = new URLSearchParams(search);
+      next.delete('approval');
+      next.delete('task');
+      setSearch(next, { replace: true });
+    }
+  };
+
   const columns = ['backlog', 'doing', 'blocked', 'done'];
   return (
     <div className="work-board">
       {columns.map((column) => (
         <section key={column}>
           <h2>{t(`work.plan.${column}`)} <span>{board?.counts?.[column] || 0}</span></h2>
-          <ul>
+          <ul className="work-board-column-list">
             {(board?.columns?.[column] || []).map((task, index) => (
-              <li key={task.id || `${column}-${index}`}>
-                <strong>{task.title || task.name || task.id}</strong>
-                {task.description ? <p>{task.description}</p> : null}
+              <li
+                key={task.id || `${column}-${index}`}
+                className="work-board-card"
+                role="button"
+                tabIndex={0}
+                aria-haspopup="dialog"
+                onClick={() => setManuallySelectedTask(task)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setManuallySelectedTask(task);
+                  }
+                }}
+              >
+                <div className="work-board-card-header">
+                  {task.id ? <span className="work-board-card-id">{task.id}</span> : null}
+                  {task.role ? (
+                    <span className="work-board-card-role">
+                      {t(`work.plan.role.${task.role}`, {}, task.role)}
+                    </span>
+                  ) : null}
+                  {task.priority ? (
+                    <span className={`work-board-card-priority priority-${task.priority}`}>
+                      {t(`work.plan.priority.${task.priority}`, {}, task.priority)}
+                    </span>
+                  ) : null}
+                </div>
+                <strong className="work-board-card-title">{task.title || task.name || task.id}</strong>
+                {task.description ? <p className="work-board-card-desc">{task.description}</p> : null}
+                <div className="work-board-card-footer">
+                  <span className="work-board-card-hint">{t('work.plan.clickToView')}</span>
+                </div>
               </li>
             ))}
           </ul>
         </section>
       ))}
+      {selectedTask ? (
+        <TaskDetailModal
+          task={selectedTask}
+          reviews={reviews}
+          projectKey={projectKey}
+          onDecide={onDecide}
+          onClose={handleClose}
+          t={t}
+        />
+      ) : null}
     </div>
   );
 }
@@ -220,12 +345,17 @@ function ExecutionView({ defaultAdapter = 'codex', jobs, onDispatch, t }) {
     event.preventDefault();
     setBusy(true); setError(null);
     try {
-      const result = await onDispatch(values);
-      if (!result) return;
-      setOpen(false); setDispatched({ name: values.name, role: values.role }); setValues({ ...values, name: '', task: '' });
+      const payload = await onDispatch(values);
+      setDispatched({ name: values.name, role: values.role });
+      setOpen(false);
+      setValues({ name: '', role: 'implementation', adapter: defaultAdapter, task: '' });
+      return payload;
+    } catch (caught) {
+      setError(caught);
+      return null;
+    } finally {
+      setBusy(false);
     }
-    catch (caught) { setError(caught); }
-    finally { setBusy(false); }
   };
   useEffect(() => {
     if (!dispatched) return undefined;
@@ -427,9 +557,17 @@ export default function WorkPage() {
   const tabs = useMemo(() => VIEWS.map((item) => ({ item, label: t(`work.views.${item}`) })), [t]);
   const mutate = async (name, operation) => {
     setBusy(name); setMutationError(null);
-    try { const result = await operation(); await refresh(); await loadRuns(); return result; }
-    catch (caught) { setMutationError(caught); return null; }
-    finally { setBusy(''); }
+    try {
+      const result = await operation();
+      await refresh();
+      await loadRuns();
+      return result;
+    } catch (caught) {
+      setMutationError(caught);
+      throw caught;
+    } finally {
+      setBusy('');
+    }
   };
   const start = (goal) => mutate('start', () => runApi.startRun({
     idea: goal,
@@ -439,7 +577,7 @@ export default function WorkPage() {
     source_type: 'existing_project',
     project_config: data?.start_context?.project_config || '',
     dry_run: false,
-  }));
+  })).catch(() => {});
 
   if (status === 'loading') return <main id="main-content" className="product-page"><WorkSkeleton t={t} /></main>;
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
@@ -477,8 +615,16 @@ export default function WorkPage() {
             {tabs.map(({ item, label }) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
           </nav>
           {mutationError ? <ProductError error={mutationError} t={t} /> : null}
-          {view === 'current' ? <CurrentView data={data} language={language} projectKey={projectKey} retrying={busy === 'retry'} runTitle={currentRunTitle} terminating={busy === 'terminate'} onRetry={() => mutate('retry', () => runApi.retryRun(projectKey))} onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey))} t={t} /> : null}
-          {view === 'plan' ? <PlanView board={data.agile_board} t={t} /> : null}
+          {view === 'current' ? <CurrentView data={data} language={language} projectKey={projectKey} retrying={busy === 'retry'} runTitle={currentRunTitle} terminating={busy === 'terminate'} onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})} onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})} t={t} /> : null}
+          {view === 'plan' ? (
+            <PlanView
+              board={data.agile_board}
+              projectKey={projectKey}
+              reviews={data?.approval_reviews || []}
+              onDecide={(approval, decision, note) => mutate('decision', () => reviewApi.decideReview(projectKey, approval, decision, note))}
+              t={t}
+            />
+          ) : null}
           {view === 'execution' ? <ExecutionView defaultAdapter={data?.start_context?.worker_backend?.mode || 'codex'} jobs={data.worker_jobs || []} onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))} t={t} /> : null}
           {view === 'messages' ? <MessagesView data={data} projectKey={projectKey} t={t} /> : null}
           {view === 'delivery' ? <DeliveryView data={data} projectKey={projectKey} t={t} /> : null}

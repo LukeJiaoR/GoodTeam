@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -62,7 +63,52 @@ class StateStore:
 
     def project_state_dir(self, project_key: str) -> Path:
         key = normalize_project_key(project_key)
-        return self.root / "state" / "projects" / key
+        primary = self.root / "state" / "projects" / key
+        if (primary / "current.json").is_file() or (primary / "readiness.json").is_file():
+            return primary
+        for candidate in self._candidate_project_state_dirs(key):
+            if (candidate / "current.json").is_file() or (candidate / "readiness.json").is_file():
+                return candidate
+        return primary
+
+    def _candidate_project_state_dirs(self, key: str) -> list[Path]:
+        candidates: list[Path] = []
+        try:
+            candidates.append(self.root.parent / "state" / "projects" / key)
+        except Exception:
+            pass
+        goodteam_home = os.getenv("GOODTEAM_HOME")
+        if goodteam_home:
+            candidates.append(Path(goodteam_home).expanduser() / "state" / "projects" / key)
+        else:
+            candidates.append(Path.home() / ".goodteam" / "state" / "projects" / key)
+            candidates.append(Path.home() / "state" / "projects" / key)
+        try:
+            from goodteam_os.project_registry import ProjectRegistry
+
+            entry = ProjectRegistry().find_project(key)
+            if entry:
+                sp = entry.get("state_path")
+                if sp:
+                    candidates.append(Path(sp).expanduser().resolve())
+                cp = entry.get("config_path")
+                if cp:
+                    config_parent = Path(cp).expanduser().resolve().parent
+                    candidates.append(config_parent.parent / "state" / "projects" / key)
+        except Exception:
+            pass
+        unique: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            unique.append(candidate)
+        return unique
 
     def write_current(self, state: AgileDevState) -> Path:
         path = self.root / "state" / "current.json"

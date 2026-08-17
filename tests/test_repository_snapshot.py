@@ -46,6 +46,8 @@ def git(root: Path, *args: str) -> str:
 def init_git_repo(root: Path) -> Path:
     root.mkdir()
     git(root, "init", "-q")
+    git(root, "config", "user.name", "GoodTeam Tests")
+    git(root, "config", "user.email", "tests@goodteam.invalid")
     (root / "README.md").write_text("initial\n", encoding="utf-8")
     git(root, "add", "README.md")
     git(root, "commit", "-qm", "initial")

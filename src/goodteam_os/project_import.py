@@ -510,6 +510,17 @@ def _import_project_locked(
                     readiness=readiness,
                 )
                 readiness_store._commit_anchored_write(key)
+                try:
+                    from goodteam_os.project_registry import ProjectRegistry
+
+                    ProjectRegistry().register_project(
+                        config_path,
+                        root=root,
+                        key=key,
+                        state_path=workspace / "state" / "projects" / key,
+                    )
+                except Exception:
+                    pass
                 return result
             except BaseException:
                 try:
@@ -860,8 +871,12 @@ def _load_registered_projects(
     for config_path in config_paths:
         if config_path.absolute() in workspace_paths:
             continue
-        target = load_project_target(config_path)
-        registered.append(_registered_project(config_path, target))
+        try:
+            target = load_project_target(config_path)
+            registered.append(_registered_project(config_path, target))
+            workspace_paths.add(config_path.absolute())
+        except Exception:
+            continue
     return registered
 
 
