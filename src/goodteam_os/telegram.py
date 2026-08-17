@@ -2568,7 +2568,23 @@ def decide_approval(**kwargs) -> dict[str, object]:
     return web_decide_approval(**kwargs)
 
 
+DISABLE_NETWORK_ENV = "GOODTEAM_DISABLE_TG_NETWORK"
+
+
 def _telegram_request(token: str, method: str, params: dict[str, object]) -> dict[str, object]:
+    if os.getenv(DISABLE_NETWORK_ENV) == "1":
+        if method == "sendMessage":
+            return {"ok": True, "result": {"message_id": 1}}
+        if method == "editMessageText":
+            return {"ok": True, "result": {"message_id": int(params.get("message_id", 1) or 1)}}
+        if method == "deleteMessage":
+            return {"ok": True, "result": True}
+        if method == "answerCallbackQuery":
+            return {"ok": True, "result": True}
+        if method == "getUpdates":
+            return {"ok": True, "result": []}
+        return {"ok": True, "result": {}}
+
     try:
         if method == "sendMessage":
             result = apihelper.send_message(
