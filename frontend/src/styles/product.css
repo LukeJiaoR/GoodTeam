@@ -1242,6 +1242,13 @@
   padding: 0.9rem;
 }
 
+.product-shell .project-capabilities {
+  padding: clamp(1rem, 3vw, 1.45rem);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+}
+
 .product-shell .project-capabilities ul {
   display: grid;
   gap: 0.55rem;
@@ -1265,13 +1272,31 @@
 .product-shell .project-home-shortcuts {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1rem;
+  gap: 0.5rem 0.65rem;
   margin-top: 1.25rem;
   padding-top: 1rem;
   border-top: 1px solid var(--product-border);
 }
 
-.product-shell .project-home-shortcuts a { color: var(--product-accent-strong); font-weight: 620; }
+.product-shell .project-home-shortcuts a {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.65rem;
+  color: var(--product-text);
+  background: var(--product-surface-muted);
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 580;
+  text-decoration: none;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+.product-shell .project-home-shortcuts a:hover {
+  background: var(--product-surface);
+  color: var(--product-accent-strong);
+  border-color: var(--product-accent);
+}
 
 .dark .product-shell {
   --product-bg: #191816;
@@ -2790,7 +2815,7 @@
   gap: 0.35rem;
   min-width: max-content;
   margin: 0;
-  padding: 0;
+  padding: 0 1.25rem 0.35rem 0;
   list-style: none;
 }
 .product-shell .workflow-pipeline__stage {
@@ -2982,3 +3007,263 @@
 .product-shell .workflow-canvas-detail h3 { margin: 0.2rem 0 0.5rem; }
 .product-shell .workflow-canvas-detail .workflow-canvas-error { color: var(--product-danger); font-size: 0.8rem; }
 .product-shell .workflow-canvas-fallback-note { margin: -0.75rem 0 1.25rem; color: var(--product-text-muted); font-size: 0.75rem; }
+.product-shell .react-flow__edge-path {
+  stroke: var(--product-border-strong, #a89f91);
+  stroke-width: 2px;
+}
+.product-shell .react-flow__attribution {
+  display: none !important;
+}
+
+/* ---- Toast Notifications ---- */
+.product-toast-container {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 24rem;
+  pointer-events: none;
+}
+
+.product-toast {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  background: var(--product-surface);
+  color: var(--product-text);
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.15);
+  font-size: 0.88rem;
+  font-weight: 540;
+  pointer-events: auto;
+  animation: toast-slide-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.product-toast--success { border-left: 4px solid var(--product-success); }
+.product-toast--error { border-left: 4px solid var(--product-danger); }
+.product-toast--warning { border-left: 4px solid var(--product-warning); }
+.product-toast--info { border-left: 4px solid var(--product-accent); }
+
+.product-toast-icon {
+  display: inline-flex;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.product-toast--success .product-toast-icon { color: var(--product-success); }
+.product-toast--error .product-toast-icon { color: var(--product-danger); }
+.product-toast--warning .product-toast-icon { color: var(--product-warning); }
+.product-toast--info .product-toast-icon { color: var(--product-accent); }
+
+.product-toast-message { flex: 1; min-width: 0; }
+
+.product-toast-close {
+  padding: 0.1rem 0.35rem;
+  background: transparent;
+  border: none;
+  color: var(--product-text-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.product-toast-close:hover { color: var(--product-text); background: var(--product-surface-muted); }
+
+/* ---- Breadcrumb Navigation ---- */
+.product-breadcrumb {
+  width: min(100% - 2rem, 1180px);
+  margin-inline: auto;
+  padding: 0.65rem 0 0;
+}
+
+.product-breadcrumb__list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--product-text-muted);
+}
+
+.product-breadcrumb__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.product-breadcrumb__link {
+  color: var(--product-text-muted);
+  text-decoration: none;
+  transition: color 160ms ease;
+}
+
+.product-breadcrumb__link:hover {
+  color: var(--product-accent-strong);
+}
+
+.product-breadcrumb__current {
+  color: var(--product-text);
+  font-weight: 600;
+}
+
+.product-breadcrumb__separator {
+  color: var(--product-border-strong, #8a8277);
+  user-select: none;
+}
+
+/* ---- Workflow Canvas Stats & Progress ---- */
+.product-shell .workflow-canvas-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+}
+
+.product-shell .workflow-canvas-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.product-shell .workflow-canvas-progress__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--product-text);
+}
+
+.product-shell .workflow-canvas-progress__track {
+  width: 140px;
+  height: 5px;
+  background: var(--product-surface-muted);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.product-shell .workflow-canvas-progress__bar {
+  height: 100%;
+  background: var(--product-accent);
+  border-radius: 999px;
+  transition: width 300ms ease;
+}
+
+.product-shell .workflow-canvas-stats__badges {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.product-shell .workflow-canvas-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--product-surface-muted);
+}
+.product-shell .workflow-canvas-badge--done { color: var(--product-success); }
+.product-shell .workflow-canvas-badge--active { color: var(--product-accent); }
+.product-shell .workflow-canvas-badge--review { color: var(--product-warning); }
+.product-shell .workflow-canvas-badge--blocked { color: var(--product-danger); }
+
+/* ---- Decision Snippets & Keyboard Hints ---- */
+.product-shell .review-decision-snippets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+}
+
+.product-shell .review-snippet-pill {
+  padding: 0.25rem 0.55rem;
+  background: var(--product-surface-muted);
+  color: var(--product-text-muted);
+  border: 1px dashed var(--product-border);
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 520;
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+
+.product-shell .review-snippet-pill:hover {
+  background: var(--product-surface);
+  color: var(--product-accent-strong);
+  border-color: var(--product-accent);
+}
+
+.product-shell .product-kbd-hint {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.72rem;
+  font-family: inherit;
+  opacity: 0.75;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
+
+/* ---- Markdown TOC ---- */
+.product-shell .markdown-toc {
+  margin: 0 0 0.85rem;
+  background: var(--product-surface-muted);
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.product-shell .markdown-toc__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.75rem;
+  background: transparent;
+  border: none;
+  color: var(--product-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.product-shell .markdown-toc__toggle:hover {
+  color: var(--product-text);
+  background: var(--product-surface);
+}
+
+.product-shell .markdown-toc__list {
+  margin: 0;
+  padding: 0.4rem 0.75rem 0.6rem 1.75rem;
+  list-style: disc;
+  display: grid;
+  gap: 0.25rem;
+  border-top: 1px solid var(--product-border);
+}
+
+.product-shell .markdown-toc__item {
+  font-size: 0.76rem;
+  color: var(--product-text-muted);
+}
+.product-shell .markdown-toc__item--level-1 { font-weight: 600; color: var(--product-text); }
+.product-shell .markdown-toc__item--level-2 { margin-left: 0.5rem; }
+.product-shell .markdown-toc__item--level-3 { margin-left: 1rem; opacity: 0.85; }

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useBlocker, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import MarkdownToc from '../../components/MarkdownToc';
 import Button from '../../components/ui/Button';
 import DecisionActions from '../../components/DecisionActions';
 import EvidenceSummary from '../../components/EvidenceSummary';
 import MarkdownView from '../../components/ui/MarkdownView';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { useToast } from '../../components/ui/ToastProvider';
 import { routes } from '../../lib/routing/routes';
 import useProjectState from '../runs/useProjectState';
 import { reviewApi } from './reviewApi';
@@ -170,6 +172,7 @@ function ArtifactPanel({ onChange, review, t, value }) {
           <button className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}>{t('review.artifact.diff')}</button>
         </div>
       </header>
+      <MarkdownToc content={value} t={t} />
       {view === 'preview' ? (
         isBrief ? (
           <BriefPreview content={value} t={t} />
@@ -243,8 +246,8 @@ function DirtyDialog({ onLeave, onStay, t }) {
         <h2 id="review-dirty-title">{t('review.dirty.title')}</h2>
         <p>{t('review.dirty.description')}</p>
         <div className="product-dialog-actions">
-          <Button variant="secondary" onClick={onStay}>{t('review.dirty.stay')}</Button>
-          <Button variant="danger" onClick={onLeave}>{t('review.dirty.leave')}</Button>
+          <Button variant="secondary" onClick={onLeave}>{t('review.dirty.leave')}</Button>
+          <Button variant="primary" onClick={onStay}>{t('review.dirty.stay')}</Button>
         </div>
       </div>
     </div>
@@ -254,6 +257,7 @@ function DirtyDialog({ onLeave, onStay, t }) {
 export default function ReviewPage() {
   const { projectKey = '', reviewId = '' } = useParams();
   const { t } = useOutletContext();
+  const toast = useToast();
   const navigate = useNavigate();
   const api = useMemo(() => ({ getProjectState: reviewApi.getReviewState }), []);
   const { data, error, refresh, status } = useProjectState(projectKey, { api });
@@ -376,6 +380,7 @@ export default function ReviewPage() {
   const decide = async (decision, note) => {
     const result = await mutate(decision, () => reviewApi.decideReview(projectKey, selected.approval, decision, note));
     if (!result) return;
+    toast.success(t('toast.decisionSubmitted'));
     const payload = await refresh();
     const actionItems = payload?.action_items || [];
     const latest = actionItems[actionItems.length - 1];

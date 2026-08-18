@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { routes } from '../lib/routing/routes';
+import { statusLabel, stepTitle } from '../utils/workflowHelpers';
 
 const STATUS_ICONS = {
   done: '✓',
@@ -9,12 +10,6 @@ const STATUS_ICONS = {
   ready: '▫',
   'not-started': '○',
 };
-
-function statusLabel(step, t) {
-  const key = `work.pipeline.status.${step.status}`;
-  const translated = t(key);
-  return translated === key ? (step.status_label || step.status) : translated;
-}
 
 function stepHref(step, projectKey) {
   if (step.status === 'review-needed' && step.approval) {
@@ -40,7 +35,7 @@ export default function WorkflowPipeline({ projectKey, steps, t }) {
             <>
               <span className="workflow-pipeline__icon" aria-hidden="true">{STATUS_ICONS[step.status] || '·'}</span>
               <span className="workflow-pipeline__copy">
-                <strong>{isTakeover ? t('work.pipeline.takeover') : step.title}</strong>
+                <strong>{stepTitle(step, t)}</strong>
                 <small>{statusLabel(step, t)}</small>
                 {step.status === 'review-needed' && step.approval
                   ? <em>{t('work.pipeline.review', { gate: step.approval.toUpperCase() })}</em>

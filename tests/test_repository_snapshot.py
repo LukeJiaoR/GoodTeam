@@ -380,6 +380,13 @@ def test_unmerged_git_snapshot_parses_status_and_binds_all_index_stages(
         check=False,
         capture_output=True,
         text=True,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "GoodTeam Tests",
+            "GIT_AUTHOR_EMAIL": "tests@goodteam.invalid",
+            "GIT_COMMITTER_NAME": "GoodTeam Tests",
+            "GIT_COMMITTER_EMAIL": "tests@goodteam.invalid",
+        },
     )
     assert merge.returncode != 0
     raw_index = subprocess.run(
