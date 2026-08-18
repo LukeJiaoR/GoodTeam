@@ -198,15 +198,17 @@ def upgrade_readiness(
                 "The imported project root identity is missing.",
                 recovery=["reload_project", "choose_another_directory"],
             )
-        if (
-            stored_identity.get("device") != current_identity["device"]
-            or stored_identity.get("inode") != current_identity["inode"]
-        ):
+        same_inode = stored_identity.get("inode") == current_identity["inode"]
+        same_device = stored_identity.get("device") == current_identity["device"]
+        same_canonical_root = str(upgraded.get("canonical_root", "") or "") == str(root.resolve())
+        if not (same_inode and (same_device or same_canonical_root)):
             raise ReadinessExecutionError(
                 "project_root_changed",
                 "The project root no longer matches the directory that was imported.",
                 recovery=["reload_project", "choose_another_directory"],
             )
+        if same_inode and same_canonical_root and not same_device:
+            upgraded["root_identity"] = dict(current_identity)
     raw_steps = [value for value in upgraded.get("steps", []) if isinstance(value, dict)]
     if source_schema_version >= 2 and any(
         step.get("project_key") != upgraded.get("project_key")

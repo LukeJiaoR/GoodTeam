@@ -60,6 +60,11 @@ ROOT_INSTRUCTION_FILES = (
     "GOODTEAM.md",
 )
 
+GENERATED_TAKEOVER_DOC_NAMES = {
+    "takeover.md",
+    "takeover-context.md",
+}
+
 
 DELIVERY_MODE_STANDARDS = {
     "mvp": [
@@ -253,7 +258,7 @@ def discover_single_root_context(root: Path) -> list[dict[str, str]]:
                 "repo": "root",
                 "path": str(resolved),
                 "purpose": purpose,
-                "summary": summarize_context_file(content),
+                "summary": summarize_context_path(resolved, content),
             }
         )
     tree_summary = render_shallow_directory_tree(root)
@@ -299,12 +304,32 @@ def single_root_context_files(root: Path) -> list[tuple[Path, str]]:
     for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
         if path.is_file() and (path.name in manifest_names or re.fullmatch(r"requirements[-\w]*\.txt", path.name)):
             files.append((path, "Project manifest or dependency file"))
+    workflows_root = root / ".github" / "workflows"
+    if workflows_root.is_dir():
+        for path in sorted(workflows_root.iterdir(), key=lambda item: item.name.lower()):
+            if path.is_file() and path.suffix.lower() in {".yml", ".yaml"}:
+                files.append((path, "CI workflow"))
+    for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+        lowered = path.name.lower()
+        if path.is_file() and (
+            lowered.startswith("docker-compose")
+            and path.suffix.lower() in {".yml", ".yaml"}
+        ):
+            files.append((path, "Deployment manifest"))
+        if path.is_file() and lowered.startswith("dockerfile"):
+            files.append((path, "Container build definition"))
+    for pattern in ("*/Dockerfile*", "*/*/Dockerfile*"):
+        for path in sorted(root.glob(pattern), key=lambda item: str(item).lower()):
+            if path.is_file():
+                files.append((path, "Container build definition"))
     docs_root = root / "docs"
     if docs_root.is_dir():
         docs = [
             path
             for path in docs_root.rglob("*")
-            if path.is_file() and len(path.relative_to(docs_root).parts) <= 2
+            if path.is_file()
+            and len(path.relative_to(docs_root).parts) <= 2
+            and path.name.lower() not in GENERATED_TAKEOVER_DOC_NAMES
         ]
         doc_bytes = 0
         for path in sorted(docs, key=lambda item: str(item.relative_to(docs_root)).lower())[:MAX_CONTEXT_DOC_FILES]:
@@ -345,6 +370,8 @@ def render_shallow_directory_tree(root: Path, *, max_entries: int = 80) -> str:
             if count >= max_entries:
                 break
             if child.name in ignored or child.name.startswith("."):
+                continue
+            if child.name.lower() in GENERATED_TAKEOVER_DOC_NAMES:
                 continue
             child_suffix = "/" if child.is_dir() else ""
             lines.append(f"  - {child.name}{child_suffix}")
@@ -397,7 +424,8 @@ def ensure_project_task_ledger(project_config: Path) -> Path | None:
     runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if runtime_root is None:
         return None
-    store = LocalTaskStore(runtime_root)
+    project_key = str(target.get("key", "") or "")
+    store = LocalTaskStore(runtime_root, project_key=project_key)
     store.path.parent.mkdir(parents=True, exist_ok=True)
     if not store.path.is_file():
         store.path.write_text('{\n  "version": 1,\n  "next_id": 1,\n  "tasks": []\n}', encoding="utf-8")
@@ -416,7 +444,7 @@ def sync_project_stage_tasks(state: AgileDevState, project_config: Path | None) 
             runtime_root = ledger.parents[2]
     if runtime_root is None:
         return
-    sync_stage_tasks(state, LocalTaskStore(runtime_root))
+    sync_stage_tasks(state, LocalTaskStore(runtime_root, project_key=str(state.project_key or "")))
 
 
 def ensure_project_role_memories(project_config: Path) -> dict[str, dict[str, Path]]:
@@ -441,6 +469,131 @@ def artifact_mirror_root(project_config: Path | None) -> Path | None:
 
 def summarize_context_file(content: str) -> str:
     return summarize_markdown(content)
+
+
+def summarize_context_path(path: Path, content: str) -> str:
+    if path.parent.name == "workflows" and path.parent.parent.name == ".github":
+        workflow_name = next(
+            (
+                match.group(1).strip()
+                for line in content.splitlines()
+                if (match := re.match(r"^name:\s*(.+?)\s*$", line))
+            ),
+            path.stem,
+        )
+        triggers = sorted(
+            {
+                match.group(1)
+                for line in content.splitlines()
+                if (match := re.match(r"^\s{2}(workflow_dispatch|push|pull_request|schedule):", line))
+            }
+        )
+        steps = [
+            match.group(1).strip()
+            for line in content.splitlines()
+            if (match := re.match(r"^\s*-\s+name:\s*(.+?)\s*$", line))
+        ]
+        secret_names = sorted(set(re.findall(r"secrets\.([A-Z][A-Z0-9_]*)", content)))
+        variable_names = sorted(set(re.findall(r"vars\.([A-Z][A-Z0-9_]*)", content)))
+        details = [f"Workflow: {workflow_name}"]
+        if triggers:
+            trigger_text = ", ".join(triggers)
+            if triggers == ["workflow_dispatch"]:
+                trigger_text += " (manual only)"
+            details.append(f"Triggers: {trigger_text}")
+        if steps:
+            details.append("Steps: " + ", ".join(steps))
+        if secret_names:
+            details.append("Secret names: " + ", ".join(secret_names))
+        if variable_names:
+            details.append("Variable names: " + ", ".join(variable_names))
+        return " | ".join(details)
+
+    lowered_name = path.name.lower()
+    if lowered_name.startswith("docker-compose") and path.suffix.lower() in {".yml", ".yaml"}:
+        summary = summarize_context_file(content)
+        sensitive_keys = sorted(
+            {
+                match.group(1)
+                for line in content.splitlines()
+                if (
+                    match := re.match(
+                        r"^\s*(MYSQL_ROOT_PASSWORD|MYSQL_PASSWORD|DATABASE_PASSWORD|PASSWORD|SECRET|TOKEN):\s*(.+?)\s*$",
+                        line,
+                    )
+                )
+                and match.group(2)
+                and not match.group(2).lstrip().startswith(("${", "$"))
+            }
+        )
+        if sensitive_keys:
+            warning = "Warning: static sensitive-looking values detected for " + ", ".join(sensitive_keys)
+            return f"{summary} | {warning}" if summary else warning
+        return summary
+
+    if path.name == "package.json":
+        try:
+            manifest = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            return summarize_context_file(content)
+        details = []
+        package_name = str(manifest.get("name", "")).strip()
+        if package_name:
+            details.append(f"Package: {package_name}")
+        package_manager = str(manifest.get("packageManager", "")).strip()
+        if package_manager:
+            details.append(f"Package manager: {package_manager}")
+        scripts = manifest.get("scripts", {})
+        if isinstance(scripts, dict) and scripts:
+            details.append("Scripts: " + ", ".join(sorted(str(key) for key in scripts)))
+        engines = manifest.get("engines", {})
+        if isinstance(engines, dict) and engines:
+            details.append(
+                "Engines: "
+                + ", ".join(f"{key} {value}" for key, value in sorted(engines.items()))
+            )
+        if details:
+            return " | ".join(details)
+    return summarize_context_file(content)
+
+
+def select_takeover_context(
+    context: list[dict[str, str]],
+    *,
+    limit: int = 10,
+) -> list[dict[str, str]]:
+    purpose_priority = {
+        "CI workflow": 120,
+        "Deployment manifest": 120,
+        "Container build definition": 120,
+        "Project-local GoodTeam memory": 100,
+        "GoodTeam project understanding": 95,
+        "Top-level project README": 90,
+        "Project instructions / agent guidance": 85,
+        "Project manifest or dependency file": 85,
+        "Shallow project directory overview": 5,
+    }
+    delivery_terms = (
+        "deploy",
+        "release",
+        "launch",
+        "production",
+        "architecture",
+        "progress",
+        "上线",
+        "部署",
+        "发布",
+        "架构",
+        "进度",
+    )
+    ranked = []
+    for index, item in enumerate(context):
+        path_text = item["path"].lower()
+        relevance = sum(8 for term in delivery_terms if term in path_text)
+        score = purpose_priority.get(item["purpose"], 20) + relevance
+        ranked.append((score, index, item))
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+    return [item for _, _, item in ranked[:limit]]
 
 
 def render_prd_markdown(
@@ -737,6 +890,12 @@ def render_rfc_markdown(
         "Reuse existing components, routing, state management, and test utilities before adding dependencies.",
         "Cover loading, empty, error, and success states that map to acceptance criteria.",
     ]
+    security_assessment = [
+        "Authentication and authorization boundaries: verify sensitive endpoints require explicit role checks and session validation.",
+        "Data validation and injection defense: enforce parameterized SQL queries, payload schema validation, and input sanitization.",
+        "Secrets and credential posture: ensure no tokens, API keys, or private configs are exposed to client bundles or git logs.",
+        "Attack surface and third-party dependencies: audit external packages, enforce sandbox limits, and pin trusted versions.",
+    ]
     verification = [
         "Add deterministic tests for each state-changing path and primary UI flow.",
         "Run the configured project test/build commands.",
@@ -786,6 +945,10 @@ def render_rfc_markdown(
         "",
         *[f"- {item}" for item in frontend],
         "",
+        "## Security Assessment & Risk Posture",
+        "",
+        *[f"- {item}" for item in security_assessment],
+        "",
         "## Verification Plan",
         "",
         *[f"- {item}" for item in verification],
@@ -809,9 +972,19 @@ def render_rfc_markdown(
     return "\n".join(lines)
 
 
-def format_context_sources(context: list[dict[str, str]]) -> str:
+def format_context_sources(
+    context: list[dict[str, str]],
+    *,
+    summary_limit: int | None = None,
+) -> str:
+    def displayed_summary(item: dict[str, str]) -> str:
+        summary = item["summary"]
+        if summary_limit is None or len(summary) <= summary_limit:
+            return summary
+        return summary[:summary_limit].rstrip() + "…"
+
     context_sources = "\n".join(
-        f"- `{item['path']}` ({item['purpose']}): {item['summary']}"
+        f"- `{item['path']}` ({item['purpose']}): {displayed_summary(item)}"
         for item in context
     )
     if not context_sources:
@@ -2587,7 +2760,8 @@ def rfc_worker_task(state: AgileDevState) -> str:
     task = (
         "Write a complete RFC / technical design for: "
         f"{state.idea}, grounded in the approved PRD and project context (see artifacts). "
-        "Cover architecture, data model, API contract, migration/rollback, testing strategy, risks. "
+        "You MUST cover architecture, data model, API contract, security assessment & risk posture (auth boundaries, data validation/sanitization, secrets handling, dependency safety), migration/rollback, testing strategy, risks and open questions. "
+        "Ensure the generated document includes a dedicated '## Security Assessment & Risk Posture' section. "
         "Output markdown only."
     )
     note = state.change_requests.get("rfc", "").strip()
@@ -2597,6 +2771,37 @@ def rfc_worker_task(state: AgileDevState) -> str:
             f"preserving what is fine: {note}"
         )
     return task
+
+
+def _is_worker_meta_summary(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if not lines:
+        return True
+    first = lines[0].lower()
+    if first.startswith("**changed files**") or first.startswith("changed files:") or first.startswith("## changed files"):
+        return True
+    if first.startswith("**verification**") or first.startswith("verification:"):
+        return True
+    return False
+
+
+def _extract_referenced_artifact_file(text: str, runtime_root: Path) -> Path | None:
+    patterns = [
+        re.compile(r"`([^`]+\.md)`"),
+        re.compile(r"(?:^|\s)([\w\-./]+\.md)(?:\s|$)", re.MULTILINE),
+    ]
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            rel = match.group(1).strip().strip("`")
+            candidate = runtime_root / rel
+            if candidate.is_file():
+                return candidate
+            if (runtime_root / "docs" / rel).is_file():
+                return runtime_root / "docs" / rel
+    return None
 
 
 def generate_artifact_via_worker(
@@ -2638,12 +2843,47 @@ def generate_artifact_via_worker(
                 failure_status.update(status)
             return None
 
+        # 1. Look for artifact created directly by worker in runtime_root or docs/
+        candidate_names = [
+            _artifact_filename(artifact_key),
+            f"{artifact_key}.md",
+            artifact_key,
+        ]
+        candidate_dirs = [
+            runtime_root,
+            runtime_root / "docs",
+            runtime_root / ".goodteam",
+        ]
+        for cdir in candidate_dirs:
+            if not cdir.is_dir():
+                continue
+            for cname in candidate_names:
+                cpath = cdir / cname
+                if cpath.is_file():
+                    text = cpath.read_text(encoding="utf-8")
+                    if text.strip() and not _is_worker_meta_summary(text):
+                        return text
+
+        # 2. Check result_path
         result_path = Path(str(status.get("result_path", ""))).expanduser()
         if not result_path.is_file():
             result_path = store.root / str(job["id"]) / "result.md"
-        if not result_path.is_file():
-            return None
-        return result_path.read_text(encoding="utf-8")
+        if result_path.is_file():
+            result_text = result_path.read_text(encoding="utf-8")
+            if result_text.strip():
+                if not _is_worker_meta_summary(result_text):
+                    return result_text
+                # If result_text is a meta summary referencing a file (e.g. prd.md), read that file
+                ref_file = _extract_referenced_artifact_file(result_text, runtime_root)
+                if ref_file and ref_file.is_file():
+                    ref_text = ref_file.read_text(encoding="utf-8")
+                    if ref_text.strip() and not _is_worker_meta_summary(ref_text):
+                        return ref_text
+
+        # 3. Fallback: if no substantive content was found, fall back to template renderer
+        if artifact_key == "prd":
+            return render_prd_markdown(state, project_config)
+        return render_downstream_artifact_markdown(artifact_key, state, project_config)
     except Exception as exc:
         if failure_status is not None:
             failure_status.update({"status": "failed", "summary": str(exc)})

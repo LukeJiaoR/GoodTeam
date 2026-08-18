@@ -387,6 +387,12 @@
           ]
         },
         {
+          "title": "Security Assessment",
+          "items": [
+            "Evaluate authentication, authorization boundaries, secrets handling, input sanitization, and dependency risks."
+          ]
+        },
+        {
           "title": "Verification",
           "items": [
             "Define tests, smoke checks, rollout checks, and rollback steps."

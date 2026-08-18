@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Button from '../../components/ui/Button';
 import InlineNotice from '../../components/ui/InlineNotice';
+import MarkdownView from '../../components/ui/MarkdownView';
 import PageState from '../../components/ui/PageState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { translate } from '../../i18n';
@@ -484,9 +485,13 @@ export default function ProjectHomePage({
               <h2 id="readiness-artifact-preview-title">{t('readiness.artifact.title')}</h2>
               <p><code>{selectedArtifact.ref}</code></p>
             </div>
-            <pre>{typeof selectedArtifact.payload === 'string'
-              ? selectedArtifact.payload
-              : JSON.stringify(selectedArtifact.payload?.data || selectedArtifact.payload, null, 2)}</pre>
+            {typeof selectedArtifact.payload === 'string' ? (
+              <div className="readiness-artifact-rendered-wrap" tabIndex={0}>
+                <MarkdownView content={selectedArtifact.payload} />
+              </div>
+            ) : (
+              <pre>{JSON.stringify(selectedArtifact.payload?.data || selectedArtifact.payload, null, 2)}</pre>
+            )}
           </section>
         ) : null}
       </section>

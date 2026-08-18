@@ -1,3 +1,4 @@
+import MarkdownView from '../../components/ui/MarkdownView';
 import { translate } from '../../i18n';
 
 const OVERVIEW_FIELDS = [
@@ -122,7 +123,11 @@ export default function RepositoryOverview({ artifact, language = 'en' }) {
         <p>{t('readiness.overview.description')}</p>
       </div>
 
-      {overview.raw_summary ? <pre className="repository-overview-raw">{overview.raw_summary}</pre> : null}
+      {overview.raw_summary ? (
+        <div className="repository-overview-raw-wrap">
+          <MarkdownView content={overview.raw_summary} />
+        </div>
+      ) : null}
 
       <div className="repository-overview-grid">
         {fields.map(({ field, label, items }) => (

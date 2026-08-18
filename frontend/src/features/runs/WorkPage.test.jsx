@@ -296,3 +296,34 @@ test('routes a legacy takeover revision to the brief recovery screen', async () 
     .toHaveAttribute('href', '/projects/DEMO/review/takeover');
   expect(screen.queryByRole('button', { name: 'Retry blocked work' })).not.toBeInTheDocument();
 });
+
+test('handles dispatch failure by displaying error without confirming dispatch', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: { run_id: 'run-active' },
+      agile_board: { counts: {} },
+      start_context: { project_name: 'Demo project' },
+      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
+      workflow_steps: [],
+    },
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
+  });
+  mocks.dispatchTrack.mockRejectedValue(new Error('Dispatch failed: worker capacity exceeded'));
+
+  renderWorkPage();
+
+  await userEvent.click(await screen.findByRole('button', { name: 'Execution' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Dispatch track' }));
+  await userEvent.type(screen.getByLabelText('Track name'), 'audit scan');
+  await userEvent.type(screen.getByLabelText('Task and acceptance boundary'), 'scan the repo read-only');
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm dispatch' }));
+
+  expect((await screen.findAllByText('Dispatch failed: worker capacity exceeded')).length).toBeGreaterThanOrEqual(1);
+  expect(screen.queryByText(/Dispatched audit scan/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Confirm dispatch' })).toBeVisible();
+});

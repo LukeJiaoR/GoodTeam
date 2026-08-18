@@ -48,6 +48,10 @@ jobs:
     needs: classify
     if: needs.classify.outputs.backend != 'none'
     runs-on: ubuntu-latest
+    env:
+      GOODTEAM_DISABLE_TG_NETWORK: "1"
+      GOODTEAM_TG_BOT_TOKEN: ""
+      GOODTEAM_TG_CHAT_ID: ""
 
     steps:
       - uses: actions/checkout@v6

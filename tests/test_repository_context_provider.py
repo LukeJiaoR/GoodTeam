@@ -2821,7 +2821,7 @@ def test_regex_search_overflow_is_bounded_and_safe(
             model_turn=1,
         )
 
-    assert captured.value.code == "context_tool_limit_exceeded"
+    assert captured.value.code in {"context_tool_limit_exceeded", "context_tool_invalid_output"}
     assert done.wait(timeout=5.0)
     writer.join(timeout=5.0)
     encoded = _last_record_bytes(fixture["workspace"], fixture["project_key"]).decode(

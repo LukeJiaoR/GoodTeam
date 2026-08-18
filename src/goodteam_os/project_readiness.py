@@ -107,11 +107,10 @@ class ProjectReadinessStore:
     def read(self, project_key: str) -> dict[str, object] | None:
         if self.workspace_fd is not None:
             data = self._read_anchored(project_key)
-            if data is None:
-                return None
-            if not isinstance(data, dict):
-                raise ValueError(f"readiness for {project_key!r} must be a JSON object")
-            return data
+            if data is not None:
+                if not isinstance(data, dict):
+                    raise ValueError(f"readiness for {project_key!r} must be a JSON object")
+                return data
         path = self._path(project_key)
         if not path.is_file():
             return None
@@ -299,7 +298,53 @@ class ProjectReadinessStore:
 
     def _path(self, project_key: str) -> Path:
         key = normalize_project_key(project_key)
-        return self.workspace / "state" / "projects" / key / "readiness.json"
+        primary = self.workspace / "state" / "projects" / key / "readiness.json"
+        if primary.is_file():
+            return primary
+        for candidate_dir in self._candidate_state_dirs(key):
+            candidate_path = candidate_dir / "readiness.json"
+            if candidate_path.is_file():
+                return candidate_path
+        return primary
+
+    def _candidate_state_dirs(self, key: str) -> list[Path]:
+        candidates: list[Path] = []
+        try:
+            candidates.append(self.workspace.parent / "state" / "projects" / key)
+        except Exception:
+            pass
+        goodteam_home = os.getenv("GOODTEAM_HOME")
+        if goodteam_home:
+            candidates.append(Path(goodteam_home).expanduser() / "state" / "projects" / key)
+        else:
+            candidates.append(Path.home() / ".goodteam" / "state" / "projects" / key)
+            candidates.append(Path.home() / "state" / "projects" / key)
+        try:
+            from goodteam_os.project_registry import ProjectRegistry
+
+            entry = ProjectRegistry().find_project(key)
+            if entry:
+                sp = entry.get("state_path")
+                if sp:
+                    candidates.append(Path(sp).expanduser().resolve())
+                cp = entry.get("config_path")
+                if cp:
+                    config_parent = Path(cp).expanduser().resolve().parent
+                    candidates.append(config_parent.parent / "state" / "projects" / key)
+        except Exception:
+            pass
+        unique: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            unique.append(candidate)
+        return unique
 
     def _write(self, project_key: str, readiness: dict[str, object]) -> None:
         if self.workspace_fd is not None:
