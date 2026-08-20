@@ -224,9 +224,9 @@ test('subnav exposes the active view to assistive technology and dispatch confir
 
   renderWorkPage();
 
-  const current = await screen.findByRole('button', { name: 'Current work' });
-  expect(current).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.getByRole('button', { name: 'Plan' })).toHaveAttribute('aria-pressed', 'false');
+  const plan = await screen.findByRole('button', { name: 'Board' });
+  expect(plan).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: 'Activity' })).toHaveAttribute('aria-pressed', 'false');
 
   await userEvent.click(screen.getByRole('button', { name: 'Execution' }));
   await userEvent.click(screen.getByRole('button', { name: 'Dispatch track' }));
@@ -237,6 +237,44 @@ test('subnav exposes the active view to assistive technology and dispatch confir
   expect(mocks.dispatchTrack).toHaveBeenCalledWith({
     name: 'audit scan', role: 'implementation', adapter: 'codex', task: 'scan the repo read-only', project_key: 'DEMO',
   });
+});
+
+test('activity view renders action history timeline and transitions', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: { run_id: 'run-active' },
+      agile_board: { counts: {} },
+      action_items: [
+        { id: 'act-1', title: 'Start Workflow', action: 'start_run', node_transition: 'takeover -> product_requirement', timestamp: '2026-08-18T10:00:00Z', note: 'Run initialized by user' },
+        { id: 'act-2', title: 'PRD Approved', action: 'approve', approval: 'prd', node_transition: 'product_requirement -> architect', timestamp: '2026-08-18T11:00:00Z' },
+      ],
+      start_context: { project_name: 'Demo project' },
+      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
+      workflow_steps: [],
+    },
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
+  });
+
+  render(
+    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active?view=activity']}>
+      <Routes>
+        <Route element={<TranslationOutlet />}>
+          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByText('Start Workflow')).toBeVisible();
+  expect(screen.getByText('takeover -> product_requirement')).toBeVisible();
+  expect(screen.getByText('Run initialized by user')).toBeVisible();
+  expect(screen.getByText('PRD Approved')).toBeVisible();
+  expect(screen.getByRole('link', { name: /View review \(prd\)/ })).toHaveAttribute('href', '/projects/DEMO/review/prd');
 });
 
 test('messages view renders recorded messages', async () => {

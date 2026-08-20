@@ -12,7 +12,7 @@ import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 
-const VIEWS = ['current', 'plan', 'execution', 'messages', 'delivery'];
+const VIEWS = ['plan', 'activity', 'execution', 'messages', 'delivery'];
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(() => (
@@ -55,28 +55,112 @@ function runOptionLabel(run, t) {
   return t(statusKey, { title: runTitle(run, t) });
 }
 
+function cleanMarkdownText(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[*_~]+/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^[#\s*\->`]+/gm, '')
+    .trim();
+}
+
+function extractContentDigest(content) {
+  if (!content || typeof content !== 'string') return '';
+  const lines = content.split('\n')
+    .map((l) => cleanMarkdownText(l))
+    .filter(Boolean);
+  const firstMeaningful = lines.find((l) => l.length > 5 && !l.startsWith('===') && !l.startsWith('---'));
+  if (!firstMeaningful) return '';
+  return firstMeaningful.length > 160 ? `${firstMeaningful.slice(0, 157)}...` : firstMeaningful;
+}
+
+function formatArtifactFileName(path) {
+  if (!path || typeof path !== 'string') return '';
+  const parts = path.split('/').filter(Boolean);
+  return parts.slice(-2).join('/') || path;
+}
+
+function reviewGateTitle(approval, t) {
+  const gateMap = {
+    takeover: 'work.review.titles.takeover',
+    prd: 'work.review.titles.prd',
+    rfc: 'work.review.titles.rfc',
+    security: 'work.review.titles.security',
+    staging: 'work.review.titles.staging',
+    release: 'work.review.titles.release',
+  };
+  const key = gateMap[approval];
+  if (key) {
+    const label = t(key);
+    if (label !== key) return label;
+  }
+  const stageKey = `work.stage.${approval}`;
+  const stageName = t(stageKey);
+  return stageName !== stageKey ? t('work.review.gateTitle', { gate: stageName }) : t('work.review.generic.title');
+}
+
+function reviewGateName(gate, t) {
+  if (!gate) return '';
+  const key = `work.stage.${gate}`;
+  const translated = t(key);
+  return translated !== key ? translated : String(gate).toUpperCase();
+}
+
+function recommendationReasonText(reason, t) {
+  if (!reason) return '';
+  if (typeof reason === 'string') return reason;
+  if (reason.kind === 'clean') return t('review.recommendation.reason.clean');
+  return reason.text || reason.kind || '';
+}
+
 function reviewPrompt(review, t) {
   if (review?.recovery?.available) {
     return {
       action: t('work.review.recovery.action'),
-      description: t('work.review.recovery.description'),
+      artifactFile: formatArtifactFileName(review.artifact_path),
+      description: review.recovery.note || t('work.review.recovery.description'),
       eyebrow: t('work.review.eyebrow'),
+      gate: 'takeover',
+      recommendation: review.recommendation,
       title: t('work.review.recovery.title'),
     };
   }
+
+  const gateName = reviewGateName(review?.approval, t);
+  const digest = extractContentDigest(review?.content);
+  const topReason = recommendationReasonText(review?.recommendation?.reasons?.[0], t);
+
   if (review?.approval === 'takeover') {
     return {
       action: t('work.review.takeover.action'),
-      description: t('work.review.takeover.description'),
+      artifactFile: formatArtifactFileName(review.artifact_path),
+      description: digest || t('work.review.takeover.description'),
+      digest,
       eyebrow: t('work.review.eyebrow'),
+      gate: 'takeover',
+      recommendation: review.recommendation,
       title: t('work.review.takeover.title'),
     };
   }
+
+  const title = reviewGateTitle(review?.approval, t);
+
+  const description = digest
+    || (topReason ? `${topReason}` : t('work.review.gateDescription', { gate: gateName }));
+
+  const action = t('work.review.gateAction', { gate: gateName });
+
   return {
-    action: t('work.review.generic.action'),
-    description: t('work.review.generic.description'),
-    eyebrow: t('work.review.eyebrow'),
-    title: t('work.review.generic.title'),
+    action,
+    artifactFile: formatArtifactFileName(review?.artifact_path),
+    description,
+    digest,
+    eyebrow: t('work.review.gateEyebrow', { gate: gateName }),
+    gate: review?.approval,
+    recommendation: review?.recommendation,
+    title,
   };
 }
 
@@ -114,70 +198,159 @@ function StartRunPanel({ busy, data, error, onStart, t }) {
   );
 }
 
-function StageRail({ steps, t }) {
+export function WorkFocusBanner({
+  approvalReviews = [],
+  blockedCount = 0,
+  onRetry,
+  onTerminate,
+  projectKey,
+  retrying = false,
+  runTitle = '',
+  t,
+  terminating = false,
+}) {
+  const actionableReview = approvalReviews?.find((review) => review.is_actionable);
+  const recoverableReview = approvalReviews?.find((review) => review.recovery?.available);
+  const priorityReview = actionableReview || recoverableReview;
+  const prompt = priorityReview ? reviewPrompt(priorityReview, t) : null;
+
+  if (!prompt && blockedCount <= 0) {
+    return null;
+  }
+
+  const rec = prompt?.recommendation;
+  const verdictKey = rec?.verdict === 'approve'
+    ? 'work.review.recommendationApprove'
+    : rec?.verdict === 'changes_requested'
+      ? 'work.review.recommendationChanges'
+      : rec?.verdict === 'caution'
+        ? 'work.review.recommendationCaution'
+        : rec?.verdict === 'reject'
+          ? 'work.review.recommendationReject'
+          : '';
+
+  const recReason = recommendationReasonText(rec?.reasons?.[0], t);
+
   return (
-    <ol className="work-stage-rail" aria-label={t('work.stages.label')}>
-      {steps.map((step) => (
-        <li key={step.key} data-status={step.status}>
-          <span className="work-stage-number">{step.number}</span>
-          <div><strong>{stepTitle(step, t)}</strong><small>{statusLabel(step, t)}</small></div>
-        </li>
-      ))}
-    </ol>
+    <section className="work-focus-banner" data-tone={prompt ? 'warning' : 'danger'}>
+      {prompt ? (
+        <div className="work-focus-banner__content">
+          <p className="product-eyebrow">{prompt.eyebrow}</p>
+          <h2>{prompt.title}</h2>
+          {prompt.digest ? (
+            <div className="work-focus-banner__digest">{prompt.digest}</div>
+          ) : (
+            <p>{prompt.description}</p>
+          )}
+          <div className="work-focus-banner__meta">
+            {rec?.verdict ? (
+              <span className="work-focus-banner__recommendation" data-verdict={rec.verdict}>
+                {verdictKey ? t(verdictKey) : rec.verdict}
+                {recReason ? ` · ${recReason}` : ''}
+              </span>
+            ) : null}
+            {prompt.artifactFile ? (
+              <code className="work-focus-banner__path">{t('work.review.artifactFile', { file: prompt.artifactFile })}</code>
+            ) : null}
+          </div>
+          <div className="work-focus-banner__actions">
+            <Link className="product-button product-button--primary" to={routes.projectReviewItem(projectKey, priorityReview.approval)}>
+              {prompt.action}
+            </Link>
+            {onTerminate ? (
+              <details className="work-run-controls">
+                <summary>{t(prompt ? 'work.actions.abandonRun' : 'work.actions.runControls')}</summary>
+                <div className="work-run-controls__body">
+                  <p>{t('work.actions.terminateScope', { runTitle })}</p>
+                  <Button busy={terminating} variant="danger" onClick={onTerminate}>{t('work.actions.terminate')}</Button>
+                </div>
+              </details>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <div className="work-focus-banner__content">
+          <p className="product-eyebrow">{t('work.plan.blocked')}</p>
+          <h2>{t('work.actions.retryBlocked')}</h2>
+          <p>{t('work.actions.description')}</p>
+          <div className="work-focus-banner__actions">
+            {onRetry ? (
+              <Button busy={retrying} onClick={onRetry}>{t('work.actions.retryBlocked')}</Button>
+            ) : null}
+            {onTerminate ? (
+              <details className="work-run-controls">
+                <summary>{t('work.actions.runControls')}</summary>
+                <div className="work-run-controls__body">
+                  <p>{t('work.actions.terminateScope', { runTitle })}</p>
+                  <Button busy={terminating} variant="danger" onClick={onTerminate}>{t('work.actions.terminate')}</Button>
+                </div>
+              </details>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
-function CurrentView({ data, language, onRetry, onTerminate, projectKey, retrying, runTitle, t, terminating }) {
-  const current = data.workflow_steps?.find((step) => ['active', 'review-needed', 'blocked', 'ready'].includes(step.status))
-    || data.workflow_steps?.find((step) => !['done', 'complete', 'approved'].includes(step.status))
-    || data.workflow_steps?.[data.workflow_steps.length - 1];
-  const actionableReview = data.approval_reviews?.find((review) => review.is_actionable);
-  const recoverableReview = data.approval_reviews?.find((review) => review.recovery?.available);
-  const priorityReview = actionableReview || recoverableReview;
-  const prompt = priorityReview ? reviewPrompt(priorityReview, t) : null;
+export function ActivityView({ data, language, projectKey, t }) {
+  const actionItems = data?.action_items || [];
   return (
-    <div className="work-primary-view">
-      <section className="work-focus-panel">
-        {prompt ? (
-          <>
-            <p className="product-eyebrow">{prompt.eyebrow}</p>
-            <h2>{prompt.title}</h2>
-            <p>{prompt.description}</p>
-            <Link className="product-button product-button--primary" to={routes.projectReviewItem(projectKey, priorityReview.approval)}>{prompt.action}</Link>
-          </>
-        ) : (
-          <>
-            <p className="product-eyebrow">{t('work.current.next')}</p>
-            <h2>{stepTitle(current, t) || t('work.current.complete')}</h2>
-            <p>{current?.summary || t('work.current.completeDescription')}</p>
-            {current?.feedback ? <p className="work-feedback">{current.feedback}</p> : null}
-            {current?.status === 'review-needed' && current?.approval && projectKey ? (
-              <div className="work-current-action-row" style={{ margin: '1rem 0' }}>
-                <Link
-                  to={`${routes.projectWork(projectKey)}?view=plan&approval=${current.approval}`}
-                  className="product-button product-button--primary"
-                >
-                  {t('work.plan.approval.goToApproval')} ({current.title}) →
-                </Link>
-              </div>
-            ) : null}
-          </>
-        )}
-        {!priorityReview && data.agile_board?.counts?.blocked > 0 ? (
-          <Button busy={retrying} onClick={onRetry}>{t('work.actions.retryBlocked')}</Button>
+    <div className="work-activity-view">
+      <header className="work-section-header">
+        <div>
+          <h2>{t('work.actions.title')}</h2>
+          <p>{t('work.actions.description')}</p>
+        </div>
+        {actionItems.length ? (
+          <span className="work-activity-count-badge">
+            {actionItems.length} {t('work.actions.countLabel', { count: actionItems.length })}
+          </span>
         ) : null}
-        <details className="work-run-controls">
-          <summary>{t(priorityReview ? 'work.actions.abandonRun' : 'work.actions.runControls')}</summary>
-          <p>{t('work.actions.terminateScope', { runTitle })}</p>
-          <Button busy={terminating} variant="danger" onClick={onTerminate}>{t('work.actions.terminate')}</Button>
-        </details>
-      </section>
-      <StageRail steps={data.workflow_steps || []} t={t} />
-      <section className="work-actions-panel">
-        <h2>{t('work.actions.title')}</h2>
-        <p>{t('work.actions.description')}</p>
-        {data.action_items?.length ? <ol>{data.action_items.slice(0, 12).map((action, index) => { const parsed = Date.parse(action.timestamp); const label = Number.isFinite(parsed) ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(parsed)) : (action.timestamp || '—'); return <li key={action.id || `${action.action}-${action.timestamp}-${index}`}><div><strong>{action.title || action.action}</strong><small>{action.node_transition || action.after_node || ''}</small></div><time dateTime={action.timestamp}>{label}</time></li>; })}</ol> : <p className="product-empty-copy">{t('work.actions.empty')}</p>}
-      </section>
+      </header>
+
+      {actionItems.length ? (
+        <ol className="work-activity-timeline" aria-label={t('work.actions.title')}>
+          {actionItems.map((action, index) => {
+            const parsed = Date.parse(action.timestamp);
+            const formattedTime = Number.isFinite(parsed)
+              ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(parsed))
+              : (action.timestamp || '—');
+            const nodeTransition = action.node_transition || action.after_node || '';
+            const actionType = action.action || action.type || 'action';
+
+            return (
+              <li key={action.id || `${actionType}-${action.timestamp}-${index}`} className="work-activity-item">
+                <div className="work-activity-item__dot" />
+                <div className="work-activity-item__content">
+                  <div className="work-activity-item__header">
+                    <strong className="work-activity-item__title">{action.title || actionType}</strong>
+                    {nodeTransition ? (
+                      <code className="work-activity-item__transition">{nodeTransition}</code>
+                    ) : null}
+                    <time className="work-activity-item__time" dateTime={action.timestamp}>{formattedTime}</time>
+                  </div>
+                  {action.note || action.description || action.message ? (
+                    <p className="work-activity-item__note">{action.note || action.description || action.message}</p>
+                  ) : null}
+                  {action.approval ? (
+                    <div className="work-activity-item__actions">
+                      <Link
+                        className="work-activity-item__link"
+                        to={routes.projectReviewItem(projectKey, action.approval)}
+                      >
+                        {t('work.actions.viewReview', { approval: action.approval })} →
+                      </Link>
+                    </div>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      ) : (
+        <p className="product-empty-copy">{t('work.actions.empty')}</p>
+      )}
     </div>
   );
 }
@@ -198,7 +371,6 @@ function HistoricalRunView({ detail, projectKey, summary, t }) {
         <div><dt>{t('work.history.nextNode')}</dt><dd>{state.next_node || summary.next_node || '—'}</dd></div>
         <div><dt>{t('work.history.updated')}</dt><dd><time dateTime={summary.updated_at}>{summary.updated_at || '—'}</time></dd></div>
       </dl>
-      {detail?.workflow_steps?.length ? <StageRail steps={detail.workflow_steps} t={t} /> : null}
       <Link to={routes.projectWork(projectKey)}>{t('work.history.current')}</Link>
     </section>
   );
@@ -252,18 +424,33 @@ export function findTaskForApprovalOrId(board, { approval, task: taskId, reviews
   return null;
 }
 
-export function PlanView({ board, projectKey, reviews, onDecide, t }) {
+export function PlanView({
+  approvalReviews = [],
+  board,
+  onDecide,
+  onRetry,
+  onTerminate,
+  projectKey,
+  retrying = false,
+  reviews = [],
+  runTitle = '',
+  steps = [],
+  t,
+  terminating = false,
+}) {
   const [search, setSearch] = useSearchParams();
   const [manuallySelectedTask, setManuallySelectedTask] = useState(null);
   const approvalParam = search.get('approval');
   const taskParam = search.get('task');
 
+  const resolvedReviews = approvalReviews.length ? approvalReviews : reviews;
+
   const deepLinkedTask = useMemo(() => {
     if (approvalParam || taskParam) {
-      return findTaskForApprovalOrId(board, { approval: approvalParam, task: taskParam, reviews });
+      return findTaskForApprovalOrId(board, { approval: approvalParam, task: taskParam, reviews: resolvedReviews });
     }
     return null;
-  }, [approvalParam, taskParam, board, reviews]);
+  }, [approvalParam, taskParam, board, resolvedReviews]);
 
   const selectedTask = manuallySelectedTask || deepLinkedTask;
 
@@ -279,59 +466,73 @@ export function PlanView({ board, projectKey, reviews, onDecide, t }) {
 
   const columns = ['backlog', 'doing', 'blocked', 'done'];
   return (
-    <div className="work-board">
-      {columns.map((column) => (
-        <section key={column}>
-          <h2>{t(`work.plan.${column}`)} <span>{board?.counts?.[column] || 0}</span></h2>
-          <ul className="work-board-column-list">
-            {(board?.columns?.[column] || []).map((task, index) => (
-              <li
-                key={task.id || `${column}-${index}`}
-                className="work-board-card"
-                role="button"
-                tabIndex={0}
-                aria-haspopup="dialog"
-                onClick={() => setManuallySelectedTask(task)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    setManuallySelectedTask(task);
-                  }
-                }}
-              >
-                <div className="work-board-card-header">
-                  {task.id ? <span className="work-board-card-id">{task.id}</span> : null}
-                  {task.role ? (
-                    <span className="work-board-card-role">
-                      {t(`work.plan.role.${task.role}`, {}, task.role)}
-                    </span>
-                  ) : null}
-                  {task.priority ? (
-                    <span className={`work-board-card-priority priority-${task.priority}`}>
-                      {t(`work.plan.priority.${task.priority}`, {}, task.priority)}
-                    </span>
-                  ) : null}
-                </div>
-                <strong className="work-board-card-title">{task.title || task.name || task.id}</strong>
-                {task.description ? <p className="work-board-card-desc">{task.description}</p> : null}
-                <div className="work-board-card-footer">
-                  <span className="work-board-card-hint">{t('work.plan.clickToView')}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
-      {selectedTask ? (
-        <TaskDetailModal
-          task={selectedTask}
-          reviews={reviews}
-          projectKey={projectKey}
-          onDecide={onDecide}
-          onClose={handleClose}
-          t={t}
-        />
-      ) : null}
+    <div className="work-plan-container">
+      <WorkFocusBanner
+        approvalReviews={resolvedReviews}
+        blockedCount={board?.counts?.blocked || 0}
+        onRetry={onRetry}
+        onTerminate={onTerminate}
+        projectKey={projectKey}
+        retrying={retrying}
+        runTitle={runTitle}
+        steps={steps}
+        t={t}
+        terminating={terminating}
+      />
+      <div className="work-board">
+        {columns.map((column) => (
+          <section key={column}>
+            <h2>{t(`work.plan.${column}`)} <span>{board?.counts?.[column] || 0}</span></h2>
+            <ul className="work-board-column-list">
+              {(board?.columns?.[column] || []).map((task, index) => (
+                <li
+                  key={task.id || `${column}-${index}`}
+                  className="work-board-card"
+                  role="button"
+                  tabIndex={0}
+                  aria-haspopup="dialog"
+                  onClick={() => setManuallySelectedTask(task)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setManuallySelectedTask(task);
+                    }
+                  }}
+                >
+                  <div className="work-board-card-header">
+                    {task.id ? <span className="work-board-card-id">{task.id}</span> : null}
+                    {task.role ? (
+                      <span className="work-board-card-role">
+                        {t(`work.plan.role.${task.role}`, {}, task.role)}
+                      </span>
+                    ) : null}
+                    {task.priority ? (
+                      <span className={`work-board-card-priority priority-${task.priority}`}>
+                        {t(`work.plan.priority.${task.priority}`, {}, task.priority)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <strong className="work-board-card-title">{task.title || task.name || task.id}</strong>
+                  {task.description ? <p className="work-board-card-desc">{task.description}</p> : null}
+                  <div className="work-board-card-footer">
+                    <span className="work-board-card-hint">{t('work.plan.clickToView')}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+        {selectedTask ? (
+          <TaskDetailModal
+            task={selectedTask}
+            reviews={resolvedReviews}
+            projectKey={projectKey}
+            onDecide={onDecide}
+            onClose={handleClose}
+            t={t}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -505,7 +706,8 @@ export default function WorkPage() {
   const reducedMotion = usePrefersReducedMotion();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
-  const view = VIEWS.includes(search.get('view')) ? search.get('view') : 'current';
+  const viewParam = search.get('view');
+  const view = VIEWS.includes(viewParam) ? viewParam : 'plan';
   const { data, error, refresh, status } = useProjectState(projectKey);
   const [mutationError, setMutationError] = useState(null);
   const [busy, setBusy] = useState('');
@@ -616,13 +818,27 @@ export default function WorkPage() {
             {tabs.map(({ item, label }) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
           </nav>
           {mutationError ? <ProductError error={mutationError} t={t} /> : null}
-          {view === 'current' ? <CurrentView data={data} language={language} projectKey={projectKey} retrying={busy === 'retry'} runTitle={currentRunTitle} terminating={busy === 'terminate'} onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})} onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})} t={t} /> : null}
           {view === 'plan' ? (
             <PlanView
+              approvalReviews={data?.approval_reviews || []}
               board={data.agile_board}
-              projectKey={projectKey}
-              reviews={data?.approval_reviews || []}
               onDecide={(approval, decision, note) => mutate('decision', () => reviewApi.decideReview(projectKey, approval, decision, note))}
+              onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
+              onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
+              projectKey={projectKey}
+              retrying={busy === 'retry'}
+              reviews={data?.approval_reviews || []}
+              runTitle={currentRunTitle}
+              steps={data.workflow_steps || []}
+              t={t}
+              terminating={busy === 'terminate'}
+            />
+          ) : null}
+          {view === 'activity' ? (
+            <ActivityView
+              data={data}
+              language={language}
+              projectKey={projectKey}
               t={t}
             />
           ) : null}
