@@ -6,6 +6,7 @@ import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
 import TaskDetailModal, { findMatchingReview } from '../../components/TaskDetailModal';
+import { useToast } from '../../components/ui/ToastProvider';
 import { routes } from '../../lib/routing/routes';
 import { reviewApi } from '../reviews/reviewApi';
 import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
@@ -201,6 +202,8 @@ function StartRunPanel({ busy, data, error, onStart, t }) {
 export function WorkFocusBanner({
   approvalReviews = [],
   blockedCount = 0,
+  busyDecision = '',
+  onDecide,
   onRetry,
   onTerminate,
   projectKey,
@@ -254,8 +257,20 @@ export function WorkFocusBanner({
             ) : null}
           </div>
           <div className="work-focus-banner__actions">
-            <Link className="product-button product-button--primary" to={routes.projectReviewItem(projectKey, priorityReview.approval)}>
-              {prompt.action}
+            {onDecide && priorityReview?.is_actionable ? (
+              <Button
+                variant="primary"
+                busy={busyDecision === 'approved'}
+                onClick={() => onDecide(priorityReview.approval, 'approved', '')}
+              >
+                {t('work.review.quickApprove')}
+              </Button>
+            ) : null}
+            <Link
+              className={`product-button ${onDecide && priorityReview?.is_actionable ? 'product-button--secondary' : 'product-button--primary'}`}
+              to={routes.projectReviewItem(projectKey, priorityReview.approval)}
+            >
+              {onDecide && priorityReview?.is_actionable ? t('work.review.viewDetails') : prompt.action}
             </Link>
             {onTerminate ? (
               <details className="work-run-controls">
@@ -427,6 +442,7 @@ export function findTaskForApprovalOrId(board, { approval, task: taskId, reviews
 export function PlanView({
   approvalReviews = [],
   board,
+  busyDecision = '',
   onDecide,
   onRetry,
   onTerminate,
@@ -470,6 +486,8 @@ export function PlanView({
       <WorkFocusBanner
         approvalReviews={resolvedReviews}
         blockedCount={board?.counts?.blocked || 0}
+        busyDecision={busyDecision}
+        onDecide={onDecide}
         onRetry={onRetry}
         onTerminate={onTerminate}
         projectKey={projectKey}
@@ -758,6 +776,8 @@ export default function WorkPage() {
 
   const projectName = data?.start_context?.project_name || projectKey;
   const tabs = useMemo(() => VIEWS.map((item) => ({ item, label: t(`work.views.${item}`) })), [t]);
+  const toast = useToast();
+
   const mutate = async (name, operation) => {
     setBusy(name); setMutationError(null);
     try {
@@ -772,6 +792,18 @@ export default function WorkPage() {
       setBusy('');
     }
   };
+
+  const handleDecide = async (approval, decision, note = '') => {
+    try {
+      const result = await mutate('decision', () => reviewApi.decideReview(projectKey, approval, decision, note));
+      toast.success(t('toast.decisionSubmitted'));
+      return result;
+    } catch (caught) {
+      toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
+      throw caught;
+    }
+  };
+
   const start = (goal) => mutate('start', () => runApi.startRun({
     idea: goal,
     project_key: projectKey,
@@ -822,7 +854,8 @@ export default function WorkPage() {
             <PlanView
               approvalReviews={data?.approval_reviews || []}
               board={data.agile_board}
-              onDecide={(approval, decision, note) => mutate('decision', () => reviewApi.decideReview(projectKey, approval, decision, note))}
+              busyDecision={busy === 'decision' ? 'approved' : ''}
+              onDecide={handleDecide}
               onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
               onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
               projectKey={projectKey}

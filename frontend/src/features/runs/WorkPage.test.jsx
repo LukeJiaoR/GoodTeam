@@ -126,7 +126,8 @@ test('makes an actionable takeover review the primary next step', async () => {
   renderWorkPage();
 
   expect(screen.getByText('Review the takeover brief', { selector: 'h2' })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Review takeover brief' }))
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Inspect details →' }))
     .toHaveAttribute('href', '/projects/DEMO/review/takeover');
   expect(screen.getByText('Stop or abandon this run')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Terminate this run' })).not.toBeVisible();

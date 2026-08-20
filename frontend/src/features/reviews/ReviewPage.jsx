@@ -340,9 +340,17 @@ export default function ReviewPage() {
 
   const mutate = async (name, operation) => {
     setBusy(name); setMutationError(null);
-    try { const result = await operation(); await refresh(); return result; }
-    catch (caught) { setMutationError(caught); return null; }
-    finally { setBusy(''); }
+    try {
+      const result = await operation();
+      await refresh();
+      return result;
+    } catch (caught) {
+      setMutationError(caught);
+      toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
+      return null;
+    } finally {
+      setBusy('');
+    }
   };
   const refine = async () => {
     const result = await mutate('refine', () => reviewApi.refineArtifact(projectKey, selected.artifact, content));
