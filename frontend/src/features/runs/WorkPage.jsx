@@ -9,7 +9,6 @@ import TaskDetailModal, { findMatchingReview } from '../../components/TaskDetail
 import { useToast } from '../../components/ui/ToastProvider';
 import { routes } from '../../lib/routing/routes';
 import { reviewApi } from '../reviews/reviewApi';
-import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 
@@ -30,10 +29,19 @@ function usePrefersReducedMotion() {
 }
 
 function tone(status) {
-  if (['complete', 'done', 'approved', 'success'].includes(status)) return 'success';
-  if (['blocked', 'failed', 'error'].includes(status)) return 'danger';
-  if (['active', 'running', 'doing'].includes(status)) return 'active';
+  if (['complete', 'completed', 'done', 'approved', 'success'].includes(status)) return 'success';
+  if (['blocked', 'failed', 'error', 'stopped'].includes(status)) return 'danger';
+  if (['active', 'running', 'doing', 'working', 'reviewing', 'fixing'].includes(status)) return 'active';
   return 'pending';
+}
+
+function translated(t, key, fallback, params = {}) {
+  const value = t(key, params);
+  return value === key ? fallback : value;
+}
+
+function statusText(status, t) {
+  return translated(t, `work.team.status.${status}`, status || t('work.team.status.up_next'));
 }
 
 function shortRunId(runId) {
@@ -718,6 +726,386 @@ function DeliveryView({ data, projectKey, t }) {
   );
 }
 
+function timelineCopy(item, t) {
+  if (item.actor === 'user' && item.event === 'mission_requested') return item.content;
+  const details = item.details || {};
+  return translated(
+    t,
+    `work.manager.events.${item.event}`,
+    item.content || translated(t, 'work.manager.events.progress', 'The team state changed.'),
+    {
+      artifact: details.artifact || t('work.manager.deliverable'),
+      decision: details.decision ? statusText(details.decision, t) : '',
+      gate: details.gate ? reviewGateName(details.gate, t) : '',
+      taskCount: details.task_count || 0,
+    },
+  );
+}
+
+function TimelineItem({ item, language, t }) {
+  const timestamp = Date.parse(item.timestamp);
+  const formatted = Number.isFinite(timestamp)
+    ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp))
+    : '';
+  return (
+    <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind}>
+      <div className="team-manager-event__meta">
+        <strong>{item.actor === 'user' ? t('work.manager.you') : t('work.manager.name')}</strong>
+        {formatted ? <time dateTime={item.timestamp}>{formatted}</time> : null}
+      </div>
+      <p>{timelineCopy(item, t)}</p>
+      {item.content && item.event !== 'mission_requested' && timelineCopy(item, t) !== item.content ? (
+        <blockquote>{item.content}</blockquote>
+      ) : null}
+    </li>
+  );
+}
+
+function ManagerAttention({
+  attention,
+  busy,
+  onDecide,
+  onRetry,
+  projectKey,
+  t,
+}) {
+  const [requestingChanges, setRequestingChanges] = useState(false);
+  const [note, setNote] = useState('');
+  if (!attention) return null;
+  const actions = new Set(attention.actions || []);
+  const gate = attention.target_id || '';
+  const decide = (decision, decisionNote = '') => {
+    Promise.resolve()
+      .then(() => onDecide?.(gate, decision, decisionNote))
+      .catch(() => {});
+  };
+  const submitChanges = (event) => {
+    event.preventDefault();
+    if (!note.trim()) return;
+    decide('changes_requested', note.trim());
+  };
+  return (
+    <section className="team-attention" data-kind={attention.kind} aria-label={t('work.manager.attention')}>
+      <p className="team-attention__label">{t('work.manager.attention')}</p>
+      <h3 id="team-attention-title">
+        {translated(t, `work.manager.attentionKinds.${attention.kind}`, attention.reason)}
+      </h3>
+      <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason)}</p>
+      <div className="team-attention__actions">
+        {actions.has('approve') ? (
+          <Button busy={busy === 'decision'} onClick={() => decide('approved')}>
+            {t('work.review.quickApprove')}
+          </Button>
+        ) : null}
+        {actions.has('request_changes') ? (
+          <Button variant="secondary" onClick={() => setRequestingChanges((value) => !value)}>
+            {t('work.manager.requestChanges')}
+          </Button>
+        ) : null}
+        {actions.has('review') ? (
+          <Link className="product-button product-button--secondary" to={routes.projectReviewItem(projectKey, gate)}>
+            {t('work.review.viewDetails')}
+          </Link>
+        ) : null}
+        {actions.has('retry') ? (
+          <Button busy={busy === 'retry'} onClick={onRetry}>{t('work.actions.retryBlocked')}</Button>
+        ) : null}
+      </div>
+      {requestingChanges ? (
+        <form className="team-attention__form" onSubmit={submitChanges}>
+          <label>
+            <span>{t('work.manager.changeReason')}</span>
+            <textarea required rows="3" value={note} onChange={(event) => setNote(event.target.value)} />
+          </label>
+          <div>
+            <Button busy={busy === 'decision'} disabled={!note.trim()} type="submit">{t('work.manager.sendChanges')}</Button>
+            <Button variant="secondary" onClick={() => setRequestingChanges(false)}>{t('work.manager.keepWorking')}</Button>
+          </div>
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
+function ManagerMissionControls({ busy, canCancel, onTerminate, t }) {
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  if (!canCancel) return null;
+  return (
+    <div className="team-manager-controls">
+      {!confirmCancel ? (
+        <button type="button" onClick={() => setConfirmCancel(true)}>{t('work.manager.cancelMission')}</button>
+      ) : (
+        <div className="team-attention__confirm" role="group" aria-label={t('work.manager.cancelMission')}>
+          <p>{t('work.manager.cancelConfirm')}</p>
+          <div>
+            <Button busy={busy === 'terminate'} variant="danger" onClick={onTerminate}>{t('work.actions.terminate')}</Button>
+            <Button variant="secondary" onClick={() => setConfirmCancel(false)}>{t('work.manager.keepWorking')}</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ManagerPane({
+  attention,
+  busy,
+  capabilities,
+  language,
+  mission,
+  onDecide,
+  onInspect,
+  onRetry,
+  onTerminate,
+  projectKey,
+  timeline,
+  t,
+}) {
+  return (
+    <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')}>
+      <header className="team-pane__header">
+        <div>
+          <span>{t('work.team.managerLabel')}</span>
+          <h2 id="team-manager-title">{t('work.manager.name')}</h2>
+        </div>
+        <StatusBadge tone={attention?.kind === 'blocker' ? 'danger' : attention ? 'pending' : tone(mission.status)}>
+          {attention ? t('work.manager.needsYou') : statusText(mission.status, t)}
+        </StatusBadge>
+      </header>
+      <p className="team-manager-objective">{mission.objective}</p>
+      <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
+        {(timeline || []).map((item) => <TimelineItem item={item} key={item.id} language={language} t={t} />)}
+      </ol>
+      <ManagerAttention
+        attention={attention}
+        busy={busy}
+        onDecide={onDecide}
+        onRetry={onRetry}
+        projectKey={projectKey}
+        t={t}
+      />
+      <ManagerMissionControls
+        busy={busy}
+        canCancel={(capabilities || []).some((item) => item.action === 'cancel_mission')}
+        onTerminate={onTerminate}
+        t={t}
+      />
+      <div className="team-pane__inspect-actions">
+        <button type="button" onClick={() => onInspect('activity')}>{t('work.views.activity')}</button>
+        <button type="button" onClick={() => onInspect('messages')}>{t('work.views.messages')}</button>
+      </div>
+    </section>
+  );
+}
+
+function ExecutionPane({ actors, onInspect, t }) {
+  return (
+    <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')}>
+      <header className="team-pane__header">
+        <div><span>{t('work.team.liveExecution')}</span><h2 id="team-execution-title">{t('work.team.execution')}</h2></div>
+        <span className="team-pane__count">{actors.length}</span>
+      </header>
+      {actors.length ? (
+        <ol className="team-actor-list">
+          {actors.map((actor) => (
+            <li key={actor.id} data-state={actor.state}>
+              <div className="team-actor-list__topline">
+                <strong>{translated(t, `work.plan.role.${actor.role}`, actor.role)}</strong>
+                <StatusBadge tone={tone(actor.state)}>{statusText(actor.state, t)}</StatusBadge>
+              </div>
+              <p>{actor.responsibility || t('work.team.noResponsibility')}</p>
+              {actor.dependency_reason ? <small>{translated(t, `work.team.reasons.${actor.dependency_reason}`, actor.dependency_reason)}</small> : null}
+            </li>
+          ))}
+        </ol>
+      ) : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
+      <div className="team-pane__inspect-actions">
+        <button type="button" onClick={() => onInspect('execution')}>{t('work.team.inspectWorkers')}</button>
+      </div>
+    </section>
+  );
+}
+
+function OutcomesPane({ onInspect, onSelectTask, outcomes, t }) {
+  return (
+    <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')}>
+      <header className="team-pane__header">
+        <div><span>{t('work.team.convergence')}</span><h2 id="team-outcomes-title">{t('work.team.outcomes')}</h2></div>
+        <span className="team-pane__count">{outcomes.length}</span>
+      </header>
+      {outcomes.length ? (
+        <ol className="team-outcome-list">
+          {outcomes.map((task) => (
+            <li key={task.id} data-state={task.status}>
+              <button type="button" onClick={() => onSelectTask(task)}>
+                <span className="team-outcome-list__title"><strong>{task.objective}</strong><small>{task.id}</small></span>
+                <StatusBadge tone={tone(task.status)}>{statusText(task.status, t)}</StatusBadge>
+                <span className="team-outcome-list__reason">{translated(t, `work.team.reasons.${task.status_reason}`, task.status_reason)}</span>
+                {task.primary_outcome ? (
+                  <span className="team-outcome-list__deliverable">
+                    {t('work.team.primaryOutcome')}: {task.primary_outcome.label}
+                  </span>
+                ) : null}
+              </button>
+              {task.primary_outcome?.href ? (
+                <a
+                  className="team-outcome-list__link"
+                  href={task.primary_outcome.href}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {t('work.team.openOutcome', { outcome: task.primary_outcome.label })} ↗
+                </a>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : <p className="team-pane__empty">{t('work.team.outcomesEmpty')}</p>}
+      <div className="team-pane__inspect-actions">
+        <button type="button" onClick={() => onInspect('plan')}>{t('work.team.inspectWorkflow')}</button>
+        <button type="button" onClick={() => onInspect('delivery')}>{t('work.views.delivery')}</button>
+      </div>
+    </section>
+  );
+}
+
+function AdvancedInspector({
+  busy,
+  data,
+  language,
+  onClose,
+  onDecide,
+  onDispatch,
+  onRetry,
+  onTerminate,
+  projectKey,
+  reducedMotion,
+  t,
+  view,
+}) {
+  if (!view) return null;
+  return (
+    <section className="team-inspector" aria-labelledby="team-inspector-title">
+      <header>
+        <div><span>{t('work.team.inspection')}</span><h2 id="team-inspector-title">{t(`work.views.${view}`)}</h2></div>
+        <button type="button" onClick={onClose}>{t('work.team.closeInspection')}</button>
+      </header>
+      {view === 'plan' ? (
+        <>
+          <WorkflowCanvas
+            fallback={reducedMotion}
+            onDecided={undefined}
+            projectKey={projectKey}
+            reviews={data.approval_reviews || []}
+            steps={data.workflow_steps || []}
+            t={t}
+          />
+          <PlanView
+            approvalReviews={data?.approval_reviews || []}
+            board={data.agile_board}
+            busyDecision={busy === 'decision' ? 'approved' : ''}
+            onDecide={onDecide}
+            onRetry={onRetry}
+            onTerminate={onTerminate}
+            projectKey={projectKey}
+            retrying={busy === 'retry'}
+            reviews={data?.approval_reviews || []}
+            runTitle={data?.team_workspace?.mission?.title || ''}
+            steps={data.workflow_steps || []}
+            t={t}
+            terminating={busy === 'terminate'}
+          />
+        </>
+      ) : null}
+      {view === 'activity' ? <ActivityView data={data} language={language} projectKey={projectKey} t={t} /> : null}
+      {view === 'execution' ? <ExecutionView defaultAdapter={data?.start_context?.worker_backend?.mode || 'codex'} jobs={data.worker_jobs || []} onDispatch={onDispatch} t={t} /> : null}
+      {view === 'messages' ? <MessagesView data={data} projectKey={projectKey} t={t} /> : null}
+      {view === 'delivery' ? <DeliveryView data={data} projectKey={projectKey} t={t} /> : null}
+    </section>
+  );
+}
+
+function TeamWorkspace({
+  busy,
+  data,
+  language,
+  onCloseInspector,
+  onDecide,
+  onDispatch,
+  onInspect,
+  onRetry,
+  onTerminate,
+  projectKey,
+  reducedMotion,
+  t,
+  view,
+}) {
+  const [selectedTask, setSelectedTask] = useState(null);
+  const workspace = data.team_workspace;
+  const mission = workspace.mission;
+  const taskForModal = selectedTask ? {
+    ...selectedTask,
+    title: selectedTask.objective,
+    role: selectedTask.owner,
+    status: selectedTask.status,
+    artifact_refs: [
+      selectedTask.primary_outcome?.path,
+      ...(selectedTask.supporting_refs || []),
+    ].filter(Boolean),
+  } : null;
+  return (
+    <>
+      <nav className="team-mobile-nav" aria-label={t('work.team.navigation')}>
+        <a href="#team-manager-title">{t('work.team.manager')}</a>
+        <a href="#team-execution-title">{t('work.team.execution')}</a>
+        <a href="#team-outcomes-title">{t('work.team.outcomes')}</a>
+      </nav>
+      <div className="team-workspace" aria-label={t('work.team.workspace')}>
+        <ManagerPane
+          attention={workspace.attention_request}
+          busy={busy}
+          capabilities={workspace.capabilities || []}
+          language={language}
+          mission={mission}
+          onDecide={onDecide}
+          onInspect={onInspect}
+          onRetry={onRetry}
+          onTerminate={onTerminate}
+          projectKey={projectKey}
+          timeline={workspace.manager_timeline || []}
+          t={t}
+        />
+        <ExecutionPane actors={workspace.execution_actors || []} onInspect={onInspect} t={t} />
+        <OutcomesPane onInspect={onInspect} onSelectTask={setSelectedTask} outcomes={workspace.outcome_tasks || []} t={t} />
+      </div>
+      {taskForModal ? (
+        <TaskDetailModal
+          task={taskForModal}
+          reviews={data.approval_reviews || []}
+          projectKey={projectKey}
+          onDecide={onDecide}
+          onClose={() => setSelectedTask(null)}
+          t={t}
+        />
+      ) : null}
+      <AdvancedInspector
+        busy={busy}
+        data={data}
+        language={language}
+        onClose={onCloseInspector}
+        onDecide={onDecide}
+        onDispatch={onDispatch}
+        onRetry={onRetry}
+        onTerminate={onTerminate}
+        projectKey={projectKey}
+        reducedMotion={reducedMotion}
+        t={t}
+        view={view}
+      />
+    </>
+  );
+}
+
 export default function WorkPage() {
   const { projectKey = '', runId = '' } = useParams();
   const { language, t } = useOutletContext();
@@ -725,7 +1113,8 @@ export default function WorkPage() {
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
   const viewParam = search.get('view');
-  const view = VIEWS.includes(viewParam) ? viewParam : 'plan';
+  const inspectorView = VIEWS.includes(viewParam) ? viewParam : '';
+  const legacyView = VIEWS.includes(viewParam) ? viewParam : 'plan';
   const { data, error, refresh, status } = useProjectState(projectKey);
   const [mutationError, setMutationError] = useState(null);
   const [busy, setBusy] = useState('');
@@ -733,8 +1122,12 @@ export default function WorkPage() {
   const [historyStatus, setHistoryStatus] = useState('loading');
   const [historyError, setHistoryError] = useState(null);
   const [historicalDetail, setHistoricalDetail] = useState(null);
-  const currentRunId = data?.state?.run_id || '';
-  const currentRunTitle = runTitle(data?.state, t);
+  const projectedMission = data?.team_workspace?.schema_version === 'team_workspace.v1'
+    ? data.team_workspace.mission
+    : null;
+  const hasProjectedMission = Boolean(projectedMission);
+  const currentRunId = data?.state?.run_id || projectedMission?.run_id || '';
+  const currentRunTitle = projectedMission?.title || runTitle(data?.state, t);
   const selectedSummary = runHistory.find((item) => item.run_id === runId);
   const isHistorical = Boolean(runId && selectedSummary && selectedSummary.status !== 'active');
   const selectedKnown = !runId || historyStatus !== 'ready' || Boolean(selectedSummary);
@@ -777,6 +1170,17 @@ export default function WorkPage() {
   const projectName = data?.start_context?.project_name || projectKey;
   const tabs = useMemo(() => VIEWS.map((item) => ({ item, label: t(`work.views.${item}`) })), [t]);
   const toast = useToast();
+
+  const openInspector = (item) => {
+    const next = new URLSearchParams(search);
+    next.set('view', item);
+    setSearch(next);
+  };
+  const closeInspector = () => {
+    const next = new URLSearchParams(search);
+    next.delete('view');
+    setSearch(next, { replace: true });
+  };
 
   const mutate = async (name, operation) => {
     setBusy(name); setMutationError(null);
@@ -823,7 +1227,7 @@ export default function WorkPage() {
       <header className="product-page-header">
         <div><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
-          {data?.active_run ? <><StatusBadge tone="active">{t('work.active')}</StatusBadge><strong className="work-run-title">{currentRunTitle}</strong></> : <StatusBadge>{t('work.noRun')}</StatusBadge>}
+          {data?.active_run || hasProjectedMission ? <><StatusBadge tone={tone(projectedMission?.status || 'active')}>{projectedMission ? statusText(projectedMission.status, t) : t('work.active')}</StatusBadge><strong className="work-run-title">{currentRunTitle}</strong></> : <StatusBadge>{t('work.noRun')}</StatusBadge>}
           {runHistory.length ? (
             <label className="work-run-selector"><span className="sr-only">{t('work.history.selector')}</span>
               <select value={runId || currentRunId} onChange={(event) => { const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
@@ -836,7 +1240,26 @@ export default function WorkPage() {
       </header>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
-      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : !data?.active_run ? <StartRunPanel busy={busy === 'start'} data={data} error={mutationError} onStart={start} t={t} /> : (
+      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : !data?.active_run && !hasProjectedMission ? <StartRunPanel busy={busy === 'start'} data={data} error={mutationError} onStart={start} t={t} /> : hasProjectedMission ? (
+        <>
+          {mutationError ? <ProductError error={mutationError} t={t} /> : null}
+          <TeamWorkspace
+            busy={busy}
+            data={data}
+            language={language}
+            onCloseInspector={closeInspector}
+            onDecide={handleDecide}
+            onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))}
+            onInspect={openInspector}
+            onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
+            onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
+            projectKey={projectKey}
+            reducedMotion={reducedMotion}
+            t={t}
+            view={inspectorView}
+          />
+        </>
+      ) : (
         <>
           <WorkflowCanvas
             fallback={reducedMotion}
@@ -847,10 +1270,10 @@ export default function WorkPage() {
             t={t}
           />
           <nav className="product-subnav" aria-label={t('work.views.label')}>
-            {tabs.map(({ item, label }) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
+            {tabs.map(({ item, label }) => <button aria-pressed={legacyView === item} className={legacyView === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{label}</button>)}
           </nav>
           {mutationError ? <ProductError error={mutationError} t={t} /> : null}
-          {view === 'plan' ? (
+          {legacyView === 'plan' ? (
             <PlanView
               approvalReviews={data?.approval_reviews || []}
               board={data.agile_board}
@@ -867,7 +1290,7 @@ export default function WorkPage() {
               terminating={busy === 'terminate'}
             />
           ) : null}
-          {view === 'activity' ? (
+          {legacyView === 'activity' ? (
             <ActivityView
               data={data}
               language={language}
@@ -875,9 +1298,9 @@ export default function WorkPage() {
               t={t}
             />
           ) : null}
-          {view === 'execution' ? <ExecutionView defaultAdapter={data?.start_context?.worker_backend?.mode || 'codex'} jobs={data.worker_jobs || []} onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))} t={t} /> : null}
-          {view === 'messages' ? <MessagesView data={data} projectKey={projectKey} t={t} /> : null}
-          {view === 'delivery' ? <DeliveryView data={data} projectKey={projectKey} t={t} /> : null}
+          {legacyView === 'execution' ? <ExecutionView defaultAdapter={data?.start_context?.worker_backend?.mode || 'codex'} jobs={data.worker_jobs || []} onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))} t={t} /> : null}
+          {legacyView === 'messages' ? <MessagesView data={data} projectKey={projectKey} t={t} /> : null}
+          {legacyView === 'delivery' ? <DeliveryView data={data} projectKey={projectKey} t={t} /> : null}
         </>
       )}
     </main>

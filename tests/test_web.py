@@ -527,6 +527,40 @@ def test_project_run_history_and_detail_are_server_authoritative(tmp_path):
     assert missing.value.status == 404
 
 
+def test_project_state_exposes_versioned_team_workspace_projection(tmp_path: Path) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
+    state = create_initial_state("run-team", "TEAM", "Make OAuth production ready")
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = ApprovalDecision.PENDING
+    ledger = project_root / ".goodteam" / "tasks" / "tasks.json"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"tasks": [], "next_id": 1}', encoding="utf-8")
+    state.artifacts["task_ledger"] = str(ledger)
+    web.sync_project_stage_tasks(state, config)
+    StateStore(tmp_path).write_project_current(state)
+    web.append_action(
+        tmp_path,
+        run_id=state.run_id,
+        actor="human",
+        action="workflow_started",
+        project_key=state.project_key,
+        after_node=state.next_node,
+    )
+
+    payload = web.build_project_work_state(tmp_path, "TEAM")
+
+    workspace = payload["team_workspace"]
+    assert workspace["schema_version"] == "team_workspace.v1"
+    assert workspace["mission"]["objective"] == "Make OAuth production ready"
+    assert workspace["attention_request"]["kind"] == "approval"
+    assert workspace["attention_request"]["target_id"] == "takeover"
+    assert workspace["outcome_tasks"]
+    assert payload["agile_board"]["counts"]["backlog"] == 5
+
+
 def test_project_run_detail_rejects_encoded_path_segments(tmp_path):
     project_root = tmp_path / "target"
     project_root.mkdir()

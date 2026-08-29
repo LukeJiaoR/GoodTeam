@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -97,6 +97,7 @@ from goodteam_os.staging import (
 )
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
+from goodteam_os.team_workspace import build_team_workspace
 from goodteam_os.telegram import send_approval_notification
 from goodteam_os.workflow_table import (
     GATE_TRANSITIONS,
@@ -2280,6 +2281,49 @@ def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
         return serialize_task_board(build_task_board([]))
     project_key = str(getattr(state, "project_key", "") or "")
     return serialize_task_board(build_task_board(LocalTaskStore(ledger.parents[2], project_key=project_key).list_tasks()))
+
+
+def build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
+    project_config = _project_config_for_key(workspace, project_key)
+    start_context = build_start_console_context(workspace, project_config=project_config)
+    state = resolve_dashboard_state(workspace, project_key=project_key)
+    project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
+    resources = build_resource_items(state)
+    approval_reviews = build_approval_reviews(state, workspace=workspace)
+    action_items = build_action_items(workspace, project_key=project_key)
+    agile_board = build_agile_board(state)
+    worker_job_records = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
+    worker_jobs = _serialize_worker_job_items(worker_job_records)
+    task_rows = [
+        task
+        for column in dict(agile_board.get("columns", {})).values()
+        for task in (column if isinstance(column, list) else [])
+        if isinstance(task, dict)
+    ]
+    active_run = is_active_run(state)
+    return {
+        "type": "project",
+        "state": asdict(state) if state is not None else None,
+        "resources": resources,
+        "start_context": start_context,
+        "active_run": active_run,
+        "role_observations": build_role_observations(state),
+        "workflow_steps": build_workflow_steps(state),
+        "approval_reviews": approval_reviews,
+        "action_items": action_items,
+        "smoke_run_items": build_smoke_run_items(workspace),
+        "agile_board": agile_board,
+        "worker_jobs": worker_jobs,
+        "team_workspace": build_team_workspace(
+            state=state,
+            workflow_active=active_run,
+            project_root=project_root,
+            tasks=task_rows,
+            worker_jobs=worker_job_records,
+            approval_reviews=approval_reviews,
+            action_items=action_items,
+        ),
+    }
 
 
 def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
@@ -6158,8 +6202,12 @@ def render_inline_list(label: str, values: list[object], *, code: bool = False) 
 def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
     if project_root is None:
         return []
+    return _serialize_worker_job_items(WorkerJobStore(project_root).list_jobs())
+
+
+def _serialize_worker_job_items(worker_jobs: Sequence[Mapping[str, object]]) -> list[dict[str, str]]:
     items = []
-    for job in WorkerJobStore(project_root).list_jobs():
+    for job in worker_jobs:
         items.append(
             {
                 "id": str(job.get("id", "")),
@@ -6556,25 +6604,7 @@ def serve(
                             "resources": build_resource_items(legacy_state),
                         }
                     else:
-                        project_config = _project_config_for_key(workspace, project_key)
-                        start_context = build_start_console_context(workspace, project_config=project_config)
-                        state = resolve_dashboard_state(workspace, project_key=project_key)
-                        project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
-                        
-                        res_data = {
-                            "type": "project",
-                            "state": asdict(state) if state is not None else None,
-                            "resources": build_resource_items(state),
-                            "start_context": start_context,
-                            "active_run": is_active_run(state),
-                            "role_observations": build_role_observations(state),
-                            "workflow_steps": build_workflow_steps(state),
-                            "approval_reviews": build_approval_reviews(state, workspace=workspace),
-                            "action_items": build_action_items(workspace, project_key=project_key),
-                            "smoke_run_items": build_smoke_run_items(workspace),
-                            "agile_board": build_agile_board(state),
-                            "worker_jobs": build_worker_job_items(project_root),
-                        }
+                        res_data = build_project_work_state(workspace, project_key)
                     self._send_json(200, res_data)
                 except Exception as exc:
                     self._send_api_error(exc)

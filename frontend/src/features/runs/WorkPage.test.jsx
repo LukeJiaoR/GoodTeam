@@ -31,16 +31,22 @@ import { translate } from '../../i18n';
 import WorkPage from './WorkPage';
 
 const mocks = vi.hoisted(() => ({
+  decideReview: vi.fn(),
   dispatchTrack: vi.fn(),
   getDevLoop: vi.fn(),
   getMessages: vi.fn(),
   getProjectRuns: vi.fn(),
   getProjectState: vi.fn(),
   startSmoke: vi.fn(),
+  retryRun: vi.fn(),
+  terminateRun: vi.fn(),
   useProjectState: vi.fn(),
 }));
 
 vi.mock('./useProjectState', () => ({ default: mocks.useProjectState }));
+vi.mock('../reviews/reviewApi', () => ({
+  reviewApi: { decideReview: mocks.decideReview },
+}));
 vi.mock('./runApi', () => ({
   getProjectState: mocks.getProjectState,
   runApi: {
@@ -49,17 +55,19 @@ vi.mock('./runApi', () => ({
     getMessages: mocks.getMessages,
     getProjectRuns: mocks.getProjectRuns,
     getProjectState: mocks.getProjectState,
+    retryRun: mocks.retryRun,
     startSmoke: mocks.startSmoke,
+    terminateRun: mocks.terminateRun,
   },
 }));
 
 function TranslationOutlet() {
-  return <Outlet context={{ t: (key, params) => translate('en', key, params) }} />;
+  return <Outlet context={{ language: 'en', t: (key, params) => translate('en', key, params) }} />;
 }
 
-function renderWorkPage() {
+function renderWorkPage(initialEntry = '/projects/DEMO/work/runs/run-active') {
   render(
-    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route element={<TranslationOutlet />}>
           <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
@@ -71,6 +79,122 @@ function renderWorkPage() {
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+function projectedWorkData(overrides = {}) {
+  return {
+    active_run: { run_id: 'run-active' },
+    agile_board: { columns: {}, counts: {} },
+    approval_reviews: [],
+    start_context: { project_name: 'Demo project', worker_backend: { mode: 'codex' } },
+    state: { run_id: 'run-active', idea: 'Make OAuth production ready' },
+    workflow_steps: [],
+    worker_jobs: [],
+    team_workspace: {
+      schema_version: 'team_workspace.v1',
+      mission: {
+        id: 'run-active', run_id: 'run-active', source: 'workflow', title: 'Make OAuth production ready',
+        objective: 'Make OAuth production ready', status: 'working',
+      },
+      manager_timeline: [
+        { id: 'intent', actor: 'user', kind: 'intent', event: 'mission_requested', timestamp: '2026-08-30T10:00:00Z', content: 'Make OAuth production ready', details: {} },
+        { id: 'manager', actor: 'manager', kind: 'progress', event: 'mission_organized', timestamp: '2026-08-30T10:00:01Z', content: '', details: { task_count: 2 } },
+      ],
+      attention_request: null,
+      execution_actors: [
+        { id: 'job-1', role: 'implementation', state: 'working', responsibility: 'Implement OAuth', task_id: 'DEMO-1', source: 'worker_job' },
+        { id: 'role-reviewer', role: 'reviewer', state: 'waiting', responsibility: 'Review OAuth', task_id: 'DEMO-2', source: 'task_role', dependency_reason: 'waiting_for_dependencies' },
+      ],
+      outcome_tasks: [
+        { id: 'DEMO-1', objective: 'Implement OAuth', owner: 'implementation', status: 'working', status_reason: 'worker_running', dependencies: [], acceptance_criteria: ['CI passes'], attempt_count: 1, primary_outcome: { kind: 'pull_request', label: 'PR #42', href: 'https://github.com/example/demo/pull/42', path: '', status: 'ready' }, supporting_refs: [] },
+        { id: 'DEMO-2', objective: 'Review OAuth', owner: 'reviewer', status: 'waiting', status_reason: 'waiting_for_dependencies', dependencies: ['DEMO-1'], acceptance_criteria: [], attempt_count: 0, supporting_refs: [] },
+      ],
+      capabilities: [{ action: 'cancel_mission', target_id: 'run-active' }],
+    },
+    ...overrides,
+  };
+}
+
+test('renders the Manager-centered three-pane workspace from the durable projection', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: projectedWorkData(), error: null, refresh: vi.fn(), status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
+  });
+
+  renderWorkPage();
+
+  expect(screen.getByRole('region', { name: 'Manager' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Manager' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Execution' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Outcomes' })).toBeVisible();
+  expect(screen.getByText('I organized this mission into 2 outcome tasks and identified the next eligible work.')).toBeVisible();
+  expect(screen.getAllByText('Working', { selector: '.product-status-badge' }).length).toBeGreaterThanOrEqual(1);
+  expect(screen.getAllByText('Waiting for a dependency to complete.').length).toBe(2);
+  expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
+  expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole('button', { name: /Implement OAuth/ }));
+  expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
+});
+
+test('falls back to the legacy run views for an unsupported workspace contract version', () => {
+  const data = projectedWorkData();
+  data.team_workspace.schema_version = 'team_workspace.v2';
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+
+  renderWorkPage();
+
+  expect(screen.getByRole('navigation', { name: 'Run views' })).toBeVisible();
+  expect(screen.queryByRole('region', { name: 'Manager' })).not.toBeInTheDocument();
+});
+
+test('keeps approval and change-request decisions inside the Manager pane', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  const data = projectedWorkData();
+  data.approval_reviews = [{ approval: 'takeover', is_actionable: true }];
+  data.team_workspace.attention_request = {
+    id: 'approval:takeover', kind: 'approval', target_id: 'takeover', reason: 'approval_required',
+    actions: ['approve', 'request_changes', 'review'], refs: ['takeover'],
+  };
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.decideReview.mockResolvedValue({ decision: 'changes_requested' });
+
+  renderWorkPage();
+
+  expect(screen.getByText('A decision is ready')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Inspect details →' })).toHaveAttribute('href', '/projects/DEMO/review/takeover');
+  await userEvent.click(screen.getByRole('button', { name: 'Request changes' }));
+  await userEvent.type(screen.getByLabelText('What should change?'), 'Keep the provider boundary extensible.');
+  await userEvent.click(screen.getByRole('button', { name: 'Send changes' }));
+
+  expect(mocks.decideReview).toHaveBeenCalledWith(
+    'DEMO', 'takeover', 'changes_requested', 'Keep the provider boundary extensible.',
+  );
+});
+
+test('requires confirmation before the Manager cancels a mission', async () => {
+  const data = projectedWorkData();
+  data.team_workspace.attention_request = {
+    id: 'workflow-blocked', kind: 'blocker', target_id: 'run-active', reason: 'execution_blocked',
+    actions: ['retry', 'cancel_mission'], refs: [],
+  };
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.terminateRun.mockResolvedValue({ terminated: true });
+
+  renderWorkPage();
+
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel mission' }));
+  expect(screen.getByText(/Cancel the whole mission/)).toBeVisible();
+  expect(mocks.terminateRun).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Terminate this run' }));
+  expect(mocks.terminateRun).toHaveBeenCalledWith('DEMO');
 });
 
 test('labels the active run and run selector with task titles instead of raw IDs', async () => {
