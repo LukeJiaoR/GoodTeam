@@ -1726,6 +1726,53 @@
   line-height: 1.35;
 }
 
+.product-shell .team-manager-entry {
+  display: grid;
+  gap: 1.1rem;
+  padding: clamp(1.25rem, 3vw, 2rem);
+}
+
+.product-shell .team-manager-entry h3,
+.product-shell .team-manager-entry p {
+  margin: 0;
+}
+
+.product-shell .team-manager-entry h3 {
+  margin-top: 0.3rem;
+  font-size: clamp(1.35rem, 2.4vw, 1.85rem);
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.product-shell .team-manager-entry > div > p:last-child {
+  margin-top: 0.65rem;
+  color: var(--product-text-muted);
+  line-height: 1.55;
+}
+
+.product-shell .team-manager-entry label {
+  display: grid;
+  gap: 0.5rem;
+  color: var(--product-text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.product-shell .team-manager-entry textarea {
+  width: 100%;
+  min-height: 9rem;
+  resize: vertical;
+}
+
+.product-shell .team-manager-entry .product-button {
+  justify-self: start;
+}
+
+.product-shell .team-manager-entry .product-boundary-note {
+  max-width: 42rem;
+  line-height: 1.5;
+}
+
 .product-shell .team-manager-timeline,
 .product-shell .team-actor-list,
 .product-shell .team-outcome-list {
@@ -3559,7 +3606,8 @@
   .product-shell .work-board { grid-template-columns: minmax(0, 1fr); }
   .product-shell .review-editor-actions,
   .product-shell .review-decision-panel .product-button,
-  .product-shell .work-start-panel .product-button { width: 100%; }
+  .product-shell .work-start-panel .product-button,
+  .product-shell .team-manager-entry .product-button { width: 100%; }
   .product-shell .review-editor-actions { flex-direction: column; }
 }
 

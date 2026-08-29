@@ -80,6 +80,7 @@ from goodteam_os.resources import (
     register_markdown_artifact,
     resource_to_dict,
 )
+from goodteam_os.service import service_state_dir
 from goodteam_os.review_provenance import (
     build_reviewer_provenance,
     latest_reviewer_status_for_approval,
@@ -2318,6 +2319,8 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
             state=state,
             workflow_active=active_run,
             project_root=project_root,
+            project_key=project_key,
+            operator_state_dir=service_state_dir(),
             tasks=task_rows,
             worker_jobs=worker_job_records,
             approval_reviews=approval_reviews,

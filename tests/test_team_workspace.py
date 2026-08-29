@@ -1,8 +1,11 @@
 from pathlib import Path
 
+import pytest
+
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.idempotency import execution_id_from_task
 from goodteam_os.execution.models import ExecutionRun, ExecutionTask, LedgerEvent
+from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.state import create_initial_state
 from goodteam_os.team_workspace import build_team_workspace, empty_team_workspace
 
@@ -140,8 +143,51 @@ def test_approval_attention_outranks_existing_blockers() -> None:
     }
 
 
-def test_operator_execution_uses_same_projection_without_writing(tmp_path: Path) -> None:
-    ledger = ExecutionLedger(tmp_path)
+def _operator_projection_fixture(
+    tmp_path: Path,
+    phase: str,
+) -> tuple[Path, Path, dict[str, object], str]:
+    project_root = tmp_path / "project"
+    state_dir = tmp_path / "service-state"
+    queue = DurableOperatorQueue(state_dir)
+    item, _ = queue.enqueue(
+        idempotency_key="GOODTEAM:issue:375",
+        source_url="https://github.com/LukeJiaoR/GoodTeam/issues/375",
+        source_revision="revision-375",
+        project_key="GOODTEAM",
+        repository_identity="LukeJiaoR/GoodTeam",
+        metadata={
+            "issue_number": 375,
+            "issue_title": "Manager-centered team interaction",
+            "pr_number": 412 if phase not in {"executing", "pr_ready"} else 0,
+            "pr_url": (
+                "https://github.com/LukeJiaoR/GoodTeam/pull/412"
+                if phase not in {"executing", "pr_ready"}
+                else ""
+            ),
+            "head_sha": "head-412" if phase not in {"executing", "pr_ready"} else "",
+            "branch_name": "issue-375",
+            "task_contract": {
+                "summary": "Make Work feel like one AI team.",
+                "instructions": "Build the Work vertical slice.",
+                "acceptance_criteria": ["Operator remains visible after execution"],
+            },
+            "review": {"recommendation": "approve"} if phase == "waiting_telegram" else {},
+        },
+    )
+    queue.claim_next()
+    execution_id = execution_id_from_task("task-375")
+    status = "waiting" if phase == "waiting_telegram" else "active"
+    queue.transition(
+        item["id"],
+        status=status,
+        phase=phase,
+        expected_phase="hydrating",
+        updates={"execution_id": execution_id},
+        event=f"entered_{phase}",
+    )
+
+    ledger = ExecutionLedger(project_root)
     task = ExecutionTask(
         task_id="task-375",
         source_type="github_issue",
@@ -154,15 +200,14 @@ def test_operator_execution_uses_same_projection_without_writing(tmp_path: Path)
         created_at="2026-08-30T10:00:00Z",
         updated_at="2026-08-30T10:04:00Z",
     )
-    execution_id = execution_id_from_task(task.task_id)
     run = ExecutionRun(
         execution_id=execution_id,
         task_id=task.task_id,
         worker_job_id="job-375",
         adapter="codex",
-        status="running",
+        status="running" if phase == "executing" else "succeeded",
         branch_name="issue-375",
-        pr_number=None,
+        pr_number=412 if phase not in {"executing", "pr_ready"} else None,
         created_at="2026-08-30T10:01:00Z",
         updated_at="2026-08-30T10:05:00Z",
     )
@@ -179,38 +224,150 @@ def test_operator_execution_uses_same_projection_without_writing(tmp_path: Path)
             created_at="2026-08-30T10:01:00Z",
         )
     )
-    ledger.append_event(
-        LedgerEvent(
-            event_id=f"{execution_id}:0002:github:pr_opened",
-            execution_id=run.execution_id,
-            task_id=task.task_id,
-            event_type="pr_opened",
-            actor="github",
-            payload={"transition": "pr_opened", "pr_number": 412},
-            created_at="2026-08-30T10:03:00Z",
+    if phase not in {"executing", "pr_ready"}:
+        ledger.append_event(
+            LedgerEvent(
+                event_id=f"{execution_id}:0002:github:pr_opened",
+                execution_id=run.execution_id,
+                task_id=task.task_id,
+                event_type="pr_opened",
+                actor="github",
+                payload={"transition": "pr_opened", "pr_number": 412},
+                created_at="2026-08-30T10:03:00Z",
+            )
         )
-    )
-    corrupt = ledger.executions_root / "corrupt-execution"
-    corrupt.mkdir()
-    (corrupt / "task.json").write_text("{not-json", encoding="utf-8")
-    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+    return project_root, state_dir, item, execution_id
 
-    first = build_team_workspace(state=None, workflow_active=False, project_root=tmp_path)
-    second = build_team_workspace(state=None, workflow_active=False, project_root=tmp_path)
+
+@pytest.mark.parametrize(
+    ("phase", "expected_status"),
+    [
+        ("executing", "working"),
+        ("pr_ready", "working"),
+        ("observing_ci", "reviewing"),
+        ("review_ready", "reviewing"),
+        ("fixing", "fixing"),
+        ("waiting_telegram", "waiting"),
+        ("merging", "working"),
+    ],
+)
+def test_operator_queue_keeps_mission_visible_across_post_execution_lifecycle(
+    tmp_path: Path,
+    phase: str,
+    expected_status: str,
+) -> None:
+    project_root, state_dir, item, execution_id = _operator_projection_fixture(tmp_path, phase)
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    first = build_team_workspace(
+        state=None,
+        workflow_active=False,
+        project_root=project_root,
+        project_key="GOODTEAM",
+        operator_state_dir=state_dir,
+    )
+    second = build_team_workspace(
+        state=None,
+        workflow_active=False,
+        project_root=project_root,
+        project_key="GOODTEAM",
+        operator_state_dir=state_dir,
+    )
 
     assert first == second
-    assert first["mission"]["source"] == "operator_execution"
-    assert first["mission"]["id"] == execution_id
-    assert first["execution_actors"][0]["state"] == "working"
-    assert first["outcome_tasks"][0]["id"] == "task-375"
-    assert first["outcome_tasks"][0]["primary_outcome"] == {
-        "kind": "pull_request",
-        "label": "PR #412",
-        "href": "https://github.com/LukeJiaoR/GoodTeam/pull/412",
-        "path": "",
-        "status": "ready",
+    assert first["mission"] == {
+        "id": item["id"],
+        "run_id": "",
+        "execution_id": execution_id,
+        "project_key": "GOODTEAM",
+        "source": "operator_queue",
+        "title": "Manager-centered team interaction",
+        "objective": "Make Work feel like one AI team.",
+        "status": expected_status,
+        "phase": phase,
+        "started_at": first["mission"]["started_at"],
+        "updated_at": first["mission"]["updated_at"],
     }
-    assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
+    assert first["outcome_tasks"][0]["id"] == "task-375"
+    assert first["outcome_tasks"][0]["status"] == expected_status
+    assert first["outcome_tasks"][0]["status_reason"] == f"operator_{phase}"
+    assert first["outcome_tasks"][0]["acceptance_criteria"] == [
+        "Operator remains visible after execution"
+    ]
+    if phase == "executing":
+        assert first["execution_actors"][0]["state"] == "working"
+    else:
+        assert first["execution_actors"][0]["state"] == "completed"
+        assert any(actor["source"] == "operator_queue" for actor in first["execution_actors"])
+    if phase not in {"executing", "pr_ready"}:
+        assert first["outcome_tasks"][0]["primary_outcome"] == {
+            "kind": "pull_request",
+            "label": "PR #412",
+            "href": "https://github.com/LukeJiaoR/GoodTeam/pull/412",
+            "path": "",
+            "status": "ready",
+        }
+    if phase == "waiting_telegram":
+        assert first["attention_request"]["reason"] == "operator_waiting_telegram"
+    assert {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    } == before
+
+
+def test_operator_queue_remains_authoritative_when_joined_ledger_is_malformed(tmp_path: Path) -> None:
+    project_root, state_dir, item, execution_id = _operator_projection_fixture(tmp_path, "review_ready")
+    execution_root = ExecutionLedger(project_root).executions_root / execution_id
+    (execution_root / "task.json").write_text("{not-json", encoding="utf-8")
+    (execution_root / "run.json").write_text("{not-json", encoding="utf-8")
+
+    projection = build_team_workspace(
+        state=None,
+        workflow_active=False,
+        project_root=project_root,
+        project_key="GOODTEAM",
+        operator_state_dir=state_dir,
+    )
+
+    assert projection["mission"]["id"] == item["id"]
+    assert projection["mission"]["phase"] == "review_ready"
+    assert projection["mission"]["title"] == "Manager-centered team interaction"
+    assert projection["execution_actors"][-1]["source"] == "operator_queue"
+
+
+def test_running_execution_without_an_active_operator_queue_is_not_a_mission(tmp_path: Path) -> None:
+    project_root, state_dir, item, _execution_id = _operator_projection_fixture(tmp_path, "executing")
+    queue = DurableOperatorQueue(state_dir)
+    queue.transition(item["id"], status="completed", phase="completed", expected_phase="executing")
+
+    projection = build_team_workspace(
+        state=None,
+        workflow_active=False,
+        project_root=project_root,
+        project_key="GOODTEAM",
+        operator_state_dir=state_dir,
+    )
+
+    assert projection == empty_team_workspace()
+
+
+def test_active_operator_queue_is_scoped_to_the_current_project(tmp_path: Path) -> None:
+    project_root, state_dir, _item, _execution_id = _operator_projection_fixture(tmp_path, "executing")
+
+    projection = build_team_workspace(
+        state=None,
+        workflow_active=False,
+        project_root=project_root,
+        project_key="OTHER",
+        operator_state_dir=state_dir,
+    )
+
+    assert projection == empty_team_workspace()
 
 
 def test_no_active_durable_work_returns_stable_empty_contract(tmp_path: Path) -> None:

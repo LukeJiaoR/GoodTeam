@@ -181,17 +181,17 @@ function WorkSkeleton({ t }) {
   );
 }
 
-function StartRunPanel({ busy, data, error, onStart, t }) {
+function ManagerMissionEntry({ busy, data, embedded = true, error, onStart, t }) {
   const [goal, setGoal] = useState('');
   const submit = (event) => {
     event.preventDefault();
     if (goal.trim()) onStart(goal.trim());
   };
   return (
-    <form className="work-start-panel" onSubmit={submit}>
+    <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
       <div>
         <p className="product-eyebrow">{t('work.start.eyebrow')}</p>
-        <h2>{t('work.start.title')}</h2>
+        {embedded ? <h3>{t('work.start.title')}</h3> : <h2>{t('work.start.title')}</h2>}
         <p>{t('work.start.description')}</p>
       </div>
       <label>
@@ -851,11 +851,14 @@ function ManagerPane({
   attention,
   busy,
   capabilities,
+  data,
+  error,
   language,
   mission,
   onDecide,
   onInspect,
   onRetry,
+  onStart,
   onTerminate,
   projectKey,
   timeline,
@@ -868,37 +871,50 @@ function ManagerPane({
           <span>{t('work.team.managerLabel')}</span>
           <h2 id="team-manager-title">{t('work.manager.name')}</h2>
         </div>
-        <StatusBadge tone={attention?.kind === 'blocker' ? 'danger' : attention ? 'pending' : tone(mission.status)}>
-          {attention ? t('work.manager.needsYou') : statusText(mission.status, t)}
+        <StatusBadge tone={attention?.kind === 'blocker' ? 'danger' : attention ? 'pending' : mission ? tone(mission.status) : 'pending'}>
+          {attention ? t('work.manager.needsYou') : mission ? statusText(mission.status, t) : t('work.manager.ready')}
         </StatusBadge>
       </header>
-      <p className="team-manager-objective">{mission.objective}</p>
-      <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
-        {(timeline || []).map((item) => <TimelineItem item={item} key={item.id} language={language} t={t} />)}
-      </ol>
-      <ManagerAttention
-        attention={attention}
-        busy={busy}
-        onDecide={onDecide}
-        onRetry={onRetry}
-        projectKey={projectKey}
-        t={t}
-      />
-      <ManagerMissionControls
-        busy={busy}
-        canCancel={(capabilities || []).some((item) => item.action === 'cancel_mission')}
-        onTerminate={onTerminate}
-        t={t}
-      />
-      <div className="team-pane__inspect-actions">
-        <button type="button" onClick={() => onInspect('activity')}>{t('work.views.activity')}</button>
-        <button type="button" onClick={() => onInspect('messages')}>{t('work.views.messages')}</button>
-      </div>
+      {mission ? (
+        <>
+          <p className="team-manager-objective">{mission.objective}</p>
+          <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
+            {(timeline || []).map((item) => <TimelineItem item={item} key={item.id} language={language} t={t} />)}
+          </ol>
+          {error ? <ProductError error={error} t={t} /> : null}
+          <ManagerAttention
+            attention={attention}
+            busy={busy}
+            onDecide={onDecide}
+            onRetry={onRetry}
+            projectKey={projectKey}
+            t={t}
+          />
+          <ManagerMissionControls
+            busy={busy}
+            canCancel={(capabilities || []).some((item) => item.action === 'cancel_mission')}
+            onTerminate={onTerminate}
+            t={t}
+          />
+          <div className="team-pane__inspect-actions">
+            <button type="button" onClick={() => onInspect('activity')}>{t('work.views.activity')}</button>
+            <button type="button" onClick={() => onInspect('messages')}>{t('work.views.messages')}</button>
+          </div>
+        </>
+      ) : (
+        <ManagerMissionEntry
+          busy={busy === 'start'}
+          data={data}
+          error={error}
+          onStart={onStart}
+          t={t}
+        />
+      )}
     </section>
   );
 }
 
-function ExecutionPane({ actors, onInspect, t }) {
+function ExecutionPane({ actors, hasMission, onInspect, t }) {
   return (
     <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')}>
       <header className="team-pane__header">
@@ -919,14 +935,16 @@ function ExecutionPane({ actors, onInspect, t }) {
           ))}
         </ol>
       ) : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
-      <div className="team-pane__inspect-actions">
-        <button type="button" onClick={() => onInspect('execution')}>{t('work.team.inspectWorkers')}</button>
-      </div>
+      {hasMission ? (
+        <div className="team-pane__inspect-actions">
+          <button type="button" onClick={() => onInspect('execution')}>{t('work.team.inspectWorkers')}</button>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function OutcomesPane({ onInspect, onSelectTask, outcomes, t }) {
+function OutcomesPane({ hasMission, onInspect, onSelectTask, outcomes, t }) {
   return (
     <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')}>
       <header className="team-pane__header">
@@ -961,10 +979,12 @@ function OutcomesPane({ onInspect, onSelectTask, outcomes, t }) {
           ))}
         </ol>
       ) : <p className="team-pane__empty">{t('work.team.outcomesEmpty')}</p>}
-      <div className="team-pane__inspect-actions">
-        <button type="button" onClick={() => onInspect('plan')}>{t('work.team.inspectWorkflow')}</button>
-        <button type="button" onClick={() => onInspect('delivery')}>{t('work.views.delivery')}</button>
-      </div>
+      {hasMission ? (
+        <div className="team-pane__inspect-actions">
+          <button type="button" onClick={() => onInspect('plan')}>{t('work.team.inspectWorkflow')}</button>
+          <button type="button" onClick={() => onInspect('delivery')}>{t('work.views.delivery')}</button>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1028,12 +1048,14 @@ function AdvancedInspector({
 function TeamWorkspace({
   busy,
   data,
+  error,
   language,
   onCloseInspector,
   onDecide,
   onDispatch,
   onInspect,
   onRetry,
+  onStart,
   onTerminate,
   projectKey,
   reducedMotion,
@@ -1065,18 +1087,32 @@ function TeamWorkspace({
           attention={workspace.attention_request}
           busy={busy}
           capabilities={workspace.capabilities || []}
+          data={data}
+          error={error}
           language={language}
           mission={mission}
           onDecide={onDecide}
           onInspect={onInspect}
           onRetry={onRetry}
+          onStart={onStart}
           onTerminate={onTerminate}
           projectKey={projectKey}
           timeline={workspace.manager_timeline || []}
           t={t}
         />
-        <ExecutionPane actors={workspace.execution_actors || []} onInspect={onInspect} t={t} />
-        <OutcomesPane onInspect={onInspect} onSelectTask={setSelectedTask} outcomes={workspace.outcome_tasks || []} t={t} />
+        <ExecutionPane
+          actors={workspace.execution_actors || []}
+          hasMission={Boolean(mission)}
+          onInspect={onInspect}
+          t={t}
+        />
+        <OutcomesPane
+          hasMission={Boolean(mission)}
+          onInspect={onInspect}
+          onSelectTask={setSelectedTask}
+          outcomes={workspace.outcome_tasks || []}
+          t={t}
+        />
       </div>
       {taskForModal ? (
         <TaskDetailModal
@@ -1100,7 +1136,7 @@ function TeamWorkspace({
         projectKey={projectKey}
         reducedMotion={reducedMotion}
         t={t}
-        view={view}
+        view={mission ? view : ''}
       />
     </>
   );
@@ -1122,11 +1158,15 @@ export default function WorkPage() {
   const [historyStatus, setHistoryStatus] = useState('loading');
   const [historyError, setHistoryError] = useState(null);
   const [historicalDetail, setHistoricalDetail] = useState(null);
-  const projectedMission = data?.team_workspace?.schema_version === 'team_workspace.v1'
-    ? data.team_workspace.mission
+  const projectedWorkspace = data?.team_workspace?.schema_version === 'team_workspace.v1'
+    ? data.team_workspace
     : null;
+  const projectedMission = projectedWorkspace?.mission || null;
+  const hasProjectedWorkspace = Boolean(projectedWorkspace);
   const hasProjectedMission = Boolean(projectedMission);
-  const currentRunId = data?.state?.run_id || projectedMission?.run_id || '';
+  const currentRunId = data?.active_run
+    ? (projectedMission?.source === 'workflow' ? projectedMission.run_id : data?.state?.run_id) || ''
+    : '';
   const currentRunTitle = projectedMission?.title || runTitle(data?.state, t);
   const selectedSummary = runHistory.find((item) => item.run_id === runId);
   const isHistorical = Boolean(runId && selectedSummary && selectedSummary.status !== 'active');
@@ -1230,7 +1270,14 @@ export default function WorkPage() {
           {data?.active_run || hasProjectedMission ? <><StatusBadge tone={tone(projectedMission?.status || 'active')}>{projectedMission ? statusText(projectedMission.status, t) : t('work.active')}</StatusBadge><strong className="work-run-title">{currentRunTitle}</strong></> : <StatusBadge>{t('work.noRun')}</StatusBadge>}
           {runHistory.length ? (
             <label className="work-run-selector"><span className="sr-only">{t('work.history.selector')}</span>
-              <select value={runId || currentRunId} onChange={(event) => { const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
+              <select value={runId || currentRunId || ''} onChange={(event) => { if (!event.target.value) return; const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
+                {!currentRunId && !runId ? (
+                  <option disabled value="">
+                    {hasProjectedMission
+                      ? t('work.history.currentMissionOption', { title: currentRunTitle })
+                      : t('work.history.selectPrevious')}
+                  </option>
+                ) : null}
                 {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
               </select>
             </label>
@@ -1240,18 +1287,19 @@ export default function WorkPage() {
       </header>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
-      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : !data?.active_run && !hasProjectedMission ? <StartRunPanel busy={busy === 'start'} data={data} error={mutationError} onStart={start} t={t} /> : hasProjectedMission ? (
+      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
         <>
-          {mutationError ? <ProductError error={mutationError} t={t} /> : null}
           <TeamWorkspace
             busy={busy}
             data={data}
+            error={mutationError}
             language={language}
             onCloseInspector={closeInspector}
             onDecide={handleDecide}
             onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))}
             onInspect={openInspector}
             onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
+            onStart={start}
             onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
             projectKey={projectKey}
             reducedMotion={reducedMotion}
@@ -1259,6 +1307,15 @@ export default function WorkPage() {
             view={inspectorView}
           />
         </>
+      ) : !data?.active_run && !hasProjectedMission ? (
+        <ManagerMissionEntry
+          busy={busy === 'start'}
+          data={data}
+          embedded={false}
+          error={mutationError}
+          onStart={start}
+          t={t}
+        />
       ) : (
         <>
           <WorkflowCanvas

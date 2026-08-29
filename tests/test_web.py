@@ -15,6 +15,7 @@ import pytest
 from goodteam_os import project_import
 import goodteam_os.web as web
 from goodteam_os.messages import append_message
+from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.staging import delivery_contract_config
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 from goodteam_os.workers import WorkerJobStore
@@ -559,6 +560,50 @@ def test_project_state_exposes_versioned_team_workspace_projection(tmp_path: Pat
     assert workspace["attention_request"]["target_id"] == "takeover"
     assert workspace["outcome_tasks"]
     assert payload["agile_board"]["counts"]["backlog"] == 5
+
+
+def test_project_state_prefers_active_operator_queue_over_historical_workflow_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    historical = create_initial_state("run-historical", "TEAM", "Old workflow mission")
+    historical.current_node = "end"
+    historical.next_node = ""
+    StateStore(tmp_path).write_project_current(historical)
+
+    state_dir = tmp_path / "service-state"
+    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(state_dir))
+    queue = DurableOperatorQueue(state_dir)
+    item, _ = queue.enqueue(
+        idempotency_key="TEAM:issue:375",
+        source_url="https://github.com/LukeJiaoR/GoodTeam/issues/375",
+        source_revision="revision-375",
+        project_key="TEAM",
+        repository_identity="LukeJiaoR/GoodTeam",
+        metadata={
+            "issue_number": 375,
+            "issue_title": "Current Operator mission",
+            "task_contract": {"summary": "Keep Operator visible through review."},
+        },
+    )
+    queue.claim_next()
+    queue.transition(
+        item["id"],
+        phase="review_ready",
+        expected_phase="hydrating",
+        updates={"execution_id": "exec_operator375"},
+    )
+
+    payload = web.build_project_work_state(tmp_path, "TEAM")
+
+    assert payload["active_run"] is False
+    assert payload["state"]["run_id"] == "run-historical"
+    assert payload["team_workspace"]["mission"]["id"] == item["id"]
+    assert payload["team_workspace"]["mission"]["source"] == "operator_queue"
+    assert payload["team_workspace"]["mission"]["phase"] == "review_ready"
 
 
 def test_project_run_detail_rejects_encoded_path_segments(tmp_path):

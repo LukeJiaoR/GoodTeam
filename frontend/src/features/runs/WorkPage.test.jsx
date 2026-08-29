@@ -25,7 +25,7 @@ vi.mock('@xyflow/react', async () => {
     useOnViewportChange: () => {},
   };
 });
-import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
 import { translate } from '../../i18n';
 import WorkPage from './WorkPage';
@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   getProjectRuns: vi.fn(),
   getProjectState: vi.fn(),
   startSmoke: vi.fn(),
+  startRun: vi.fn(),
   retryRun: vi.fn(),
   terminateRun: vi.fn(),
   useProjectState: vi.fn(),
@@ -57,12 +58,19 @@ vi.mock('./runApi', () => ({
     getProjectState: mocks.getProjectState,
     retryRun: mocks.retryRun,
     startSmoke: mocks.startSmoke,
+    startRun: mocks.startRun,
     terminateRun: mocks.terminateRun,
   },
 }));
 
 function TranslationOutlet() {
-  return <Outlet context={{ language: 'en', t: (key, params) => translate('en', key, params) }} />;
+  const location = useLocation();
+  return (
+    <>
+      <output data-testid="location-path">{location.pathname}</output>
+      <Outlet context={{ language: 'en', t: (key, params) => translate('en', key, params) }} />
+    </>
+  );
 }
 
 function renderWorkPage(initialEntry = '/projects/DEMO/work/runs/run-active') {
@@ -70,6 +78,7 @@ function renderWorkPage(initialEntry = '/projects/DEMO/work/runs/run-active') {
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route element={<TranslationOutlet />}>
+          <Route path="/projects/:projectKey/work" element={<WorkPage />} />
           <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
         </Route>
       </Routes>
@@ -139,6 +148,111 @@ test('renders the Manager-centered three-pane workspace from the durable project
 
   await userEvent.click(screen.getByRole('button', { name: /Implement OAuth/ }));
   expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
+});
+
+test('starts empty Work from the Manager inside the three-pane workspace', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: null,
+      agile_board: { columns: {}, counts: {} },
+      approval_reviews: [],
+      start_context: {
+        delivery_mode: 'init_project',
+        model_profile: 'balanced',
+        project_config: '/workspace/projects/demo.local.yaml',
+        project_name: 'Demo project',
+      },
+      state: null,
+      team_workspace: {
+        schema_version: 'team_workspace.v1',
+        mission: null,
+        manager_timeline: [],
+        attention_request: null,
+        execution_actors: [],
+        outcome_tasks: [],
+        capabilities: [],
+      },
+      workflow_steps: [],
+      worker_jobs: [],
+    },
+    error: null,
+    refresh,
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [] });
+  mocks.startRun.mockResolvedValue({ run_id: 'run-new' });
+
+  renderWorkPage('/projects/DEMO/work');
+
+  expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Manager' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
+  expect(screen.getByText('No active workers yet.')).toBeVisible();
+  expect(screen.getByText('No tasks yet.')).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'What should the team work on?' })).toBeVisible();
+  expect(document.querySelector('.work-start-panel')).not.toBeInTheDocument();
+
+  await userEvent.type(screen.getByLabelText('Mission'), 'Ship the Manager-centered empty state.');
+  await userEvent.click(screen.getByRole('button', { name: 'Send to Manager' }));
+
+  expect(mocks.startRun).toHaveBeenCalledWith({
+    idea: 'Ship the Manager-centered empty state.',
+    project_key: 'DEMO',
+    model_profile: 'balanced',
+    delivery_mode: 'init_project',
+    source_type: 'existing_project',
+    project_config: '/workspace/projects/demo.local.yaml',
+    dry_run: false,
+  });
+});
+
+test('keeps an active Operator mission on Work when workflow history has a stale run id', async () => {
+  const data = projectedWorkData({
+    active_run: null,
+    state: { run_id: 'run-archived', idea: 'Old workflow mission' },
+    team_workspace: {
+      schema_version: 'team_workspace.v1',
+      mission: {
+        id: 'operator-task-375',
+        run_id: '',
+        execution_id: 'exec-375',
+        source: 'operator_queue',
+        title: 'Current Operator mission',
+        objective: 'Keep the current Operator mission visible through review.',
+        status: 'reviewing',
+        phase: 'review_ready',
+      },
+      manager_timeline: [],
+      attention_request: null,
+      execution_actors: [
+        { id: 'operator-review', role: 'qa', state: 'reviewing', responsibility: 'Current Operator mission' },
+      ],
+      outcome_tasks: [
+        {
+          id: 'task-375', objective: 'Current Operator mission', owner: 'implementation',
+          status: 'reviewing', status_reason: 'operator_review_ready', supporting_refs: [],
+        },
+      ],
+      capabilities: [],
+    },
+  });
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-archived', idea: 'Old workflow mission', status: 'archived' }],
+  });
+
+  renderWorkPage('/projects/DEMO/work');
+
+  expect(await screen.findByRole('region', { name: 'Manager' })).toBeVisible();
+  expect(screen.getByText('Keep the current Operator mission visible through review.')).toBeVisible();
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work');
+  const selector = await screen.findByRole('combobox', { name: 'Select run' });
+  expect(Array.from(selector.options, (option) => option.textContent)).toEqual([
+    'Current · Current Operator mission',
+    'Archived · Old workflow mission',
+  ]);
+  expect(screen.queryByRole('heading', { name: 'Run history' })).not.toBeInTheDocument();
 });
 
 test('falls back to the legacy run views for an unsupported workspace contract version', () => {
