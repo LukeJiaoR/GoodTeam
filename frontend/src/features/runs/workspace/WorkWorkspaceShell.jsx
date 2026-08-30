@@ -1,5 +1,6 @@
 import './workspace.css';
 import './workspacePresentation.css';
+import './workspaceResponsive.css';
 
 export function WorkWorkspaceShell({ children }) {
   return (
