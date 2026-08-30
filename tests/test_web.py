@@ -15,6 +15,7 @@ import pytest
 from goodteam_os import project_import
 import goodteam_os.web as web
 from goodteam_os.messages import append_message
+from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.staging import delivery_contract_config
 from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 from goodteam_os.workers import WorkerJobStore
@@ -525,6 +526,124 @@ def test_project_run_history_and_detail_are_server_authoritative(tmp_path):
         web.handle_project_api_get(tmp_path, "/api/projects/RUNS/runs/run-missing")
     assert missing.value.code == "run_not_found"
     assert missing.value.status == 404
+
+
+def test_project_state_exposes_versioned_team_workspace_projection(tmp_path: Path) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
+    state = create_initial_state("run-team", "TEAM", "Make OAuth production ready")
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = ApprovalDecision.PENDING
+    ledger = project_root / ".goodteam" / "tasks" / "tasks.json"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"tasks": [], "next_id": 1}', encoding="utf-8")
+    state.artifacts["task_ledger"] = str(ledger)
+    web.sync_project_stage_tasks(state, config)
+    StateStore(tmp_path).write_project_current(state)
+    web.append_action(
+        tmp_path,
+        run_id=state.run_id,
+        actor="human",
+        action="workflow_started",
+        project_key=state.project_key,
+        after_node=state.next_node,
+    )
+
+    payload = web.build_project_work_state(tmp_path, "TEAM")
+
+    workspace = payload["team_workspace"]
+    assert workspace["schema_version"] == "team_workspace.v1"
+    assert workspace["mission"]["objective"] == "Make OAuth production ready"
+    assert workspace["attention_request"]["kind"] == "approval"
+    assert workspace["attention_request"]["target_type"] == "review"
+    assert workspace["attention_request"]["target_id"] == "takeover"
+    assert workspace["attention_request"]["task_id"] == ""
+    assert workspace["outcome_tasks"]
+    assert payload["agile_board"]["counts"]["backlog"] == 5
+
+
+def test_project_state_attention_targets_synced_outcome_by_task_id(tmp_path: Path) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
+    state = create_initial_state("run-team-review", "TEAM", "Review the product requirements")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    ledger = project_root / ".goodteam" / "tasks" / "tasks.json"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"tasks": [], "next_id": 1}', encoding="utf-8")
+    state.artifacts["task_ledger"] = str(ledger)
+    web.sync_project_stage_tasks(state, config)
+    StateStore(tmp_path).write_project_current(state)
+
+    workspace = web.build_project_work_state(tmp_path, "TEAM")["team_workspace"]
+
+    assert workspace["attention_request"]["target_type"] == "review"
+    assert workspace["attention_request"]["target_id"] == "prd"
+    assert workspace["attention_request"]["task_id"] == "TEAM-1"
+    target = next(item for item in workspace["outcome_tasks"] if item["id"] == "TEAM-1")
+    assert target["review_target_type"] == "review"
+    assert target["review_target_id"] == "prd"
+    assert [
+        (actor["task_id"], actor["state"])
+        for actor in workspace["execution_actors"]
+    ] == [
+        ("TEAM-1", "reviewing"),
+        ("TEAM-2", "waiting"),
+        ("TEAM-3", "waiting"),
+        ("TEAM-4", "waiting"),
+        ("TEAM-5", "waiting"),
+    ]
+    architect = next(actor for actor in workspace["execution_actors"] if actor["task_id"] == "TEAM-2")
+    assert architect["dependency_task_id"] == "TEAM-1"
+    assert architect["dependency_task_title"] == "Draft and approve PRD"
+    assert workspace["execution_actors"][0]["status_reason"] == "awaiting_your_approval"
+
+
+def test_project_state_prefers_active_operator_queue_over_historical_workflow_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    historical = create_initial_state("run-historical", "TEAM", "Old workflow mission")
+    historical.current_node = "end"
+    historical.next_node = ""
+    StateStore(tmp_path).write_project_current(historical)
+
+    state_dir = tmp_path / "service-state"
+    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(state_dir))
+    queue = DurableOperatorQueue(state_dir)
+    item, _ = queue.enqueue(
+        idempotency_key="TEAM:issue:375",
+        source_url="https://github.com/LukeJiaoR/GoodTeam/issues/375",
+        source_revision="revision-375",
+        project_key="TEAM",
+        repository_identity="LukeJiaoR/GoodTeam",
+        metadata={
+            "issue_number": 375,
+            "issue_title": "Current Operator mission",
+            "task_contract": {"summary": "Keep Operator visible through review."},
+        },
+    )
+    queue.claim_next()
+    queue.transition(
+        item["id"],
+        phase="review_ready",
+        expected_phase="hydrating",
+        updates={"execution_id": "exec_operator375"},
+    )
+
+    payload = web.build_project_work_state(tmp_path, "TEAM")
+
+    assert payload["active_run"] is False
+    assert payload["state"]["run_id"] == "run-historical"
+    assert payload["team_workspace"]["mission"]["id"] == item["id"]
+    assert payload["team_workspace"]["mission"]["source"] == "operator_queue"
+    assert payload["team_workspace"]["mission"]["phase"] == "review_ready"
 
 
 def test_project_run_detail_rejects_encoded_path_segments(tmp_path):

@@ -21,3 +21,4 @@ demo-workspace/
 
 # Worker/memory runtime artifacts (never commit; live under target workspaces)
 .goodteam/
+/.project-import.lock

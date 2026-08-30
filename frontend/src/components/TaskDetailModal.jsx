@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { routes } from '../lib/routing/routes';
+import EvidenceSummary from './EvidenceSummary';
 import Button from './ui/Button';
 import MarkdownView from './ui/MarkdownView';
 import ProductError from './ui/ProductError';
@@ -36,11 +37,33 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+const TEAM_STATUS_ALIASES = {
+  canceled: 'stopped',
+  complete: 'completed',
+  doing: 'working',
+  review: 'reviewing',
+};
+
 function statusTone(status) {
-  if (['done', 'complete', 'approved'].includes(status)) return 'success';
-  if (['blocked', 'failed', 'rejected'].includes(status)) return 'danger';
-  if (['in_progress', 'doing', 'active', 'changes_requested'].includes(status)) return 'active';
+  if (['done', 'complete', 'completed', 'approved'].includes(status)) return 'success';
+  if (['blocked', 'failed', 'rejected', 'canceled', 'stopped'].includes(status)) return 'danger';
+  if ([
+    'in_progress', 'doing', 'active', 'working', 'review', 'reviewing',
+    'changes_requested', 'fixing',
+  ].includes(status)) return 'active';
+  if (['todo', 'up_next', 'pending', 'waiting'].includes(status)) return 'pending';
   return 'neutral';
+}
+
+function taskStatusLabel(status, t) {
+  const planKey = `work.plan.status.${status}`;
+  const planLabel = t(planKey);
+  if (planLabel !== planKey) return planLabel;
+
+  const teamStatus = TEAM_STATUS_ALIASES[status] || status;
+  const teamKey = `work.team.status.${teamStatus}`;
+  const teamLabel = t(teamKey);
+  return teamLabel === teamKey ? status : teamLabel;
 }
 
 function reviewTone(review) {
@@ -51,8 +74,23 @@ function reviewTone(review) {
   return 'neutral';
 }
 
+function asReviewObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return { value }; }
+}
+
 export function findMatchingReview(task, reviews) {
   if (!task || !Array.isArray(reviews) || !reviews.length) return null;
+
+  // Manager-centered Work passes the durable review identity projected for
+  // this exact outcome. An explicit blank means "this task has no review";
+  // compatibility heuristics are only for legacy tasks that lack the field.
+  if (Object.prototype.hasOwnProperty.call(task, 'review_target_id')) {
+    const reviewTargetId = String(task.review_target_id || '').trim();
+    if (!reviewTargetId) return null;
+    return reviews.find((review) => String(review.approval || '') === reviewTargetId) || null;
+  }
 
   // 1. If any review is actionable, check if it belongs to this task's scope
   const actionable = reviews.find((r) => r.is_actionable);
@@ -173,7 +211,7 @@ export default function TaskDetailModal({
     ? t(`work.plan.role.${task.role}`, {}, task.role)
     : '—';
   const statusLabel = task.status
-    ? t(`work.plan.status.${task.status}`, {}, task.status)
+    ? taskStatusLabel(task.status, t)
     : '—';
   const priorityLabel = task.priority
     ? t(`work.plan.priority.${task.priority}`, {}, task.priority)
@@ -207,6 +245,7 @@ export default function TaskDetailModal({
   const recommendation = review?.recommendation && typeof review.recommendation === 'object'
     ? review.recommendation
     : null;
+  const evidence = asReviewObject(review?.evidence_snapshot);
 
   return (
     <div
@@ -404,6 +443,26 @@ export default function TaskDetailModal({
                   </ul>
                 </section>
               ) : null}
+
+              {task.primary_outcome ? (
+                <section className="task-detail-section">
+                  <h3>{t('work.team.primaryOutcome')}</h3>
+                  {task.primary_outcome.href ? (
+                    <a
+                      className="task-detail-workbench-link"
+                      href={task.primary_outcome.href}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <ExternalLink size={13} />
+                      {task.primary_outcome.label}
+                    </a>
+                  ) : <p>{task.primary_outcome.label}</p>}
+                  {task.primary_outcome.path ? (
+                    <p className="task-detail-preview-path">{task.primary_outcome.path}</p>
+                  ) : null}
+                </section>
+              ) : null}
             </>
           )}
 
@@ -509,6 +568,8 @@ export default function TaskDetailModal({
                     ))}
                   </div>
                 ) : null}
+
+                <EvidenceSummary evidence={evidence} t={t} />
               </div>
 
               {isActionable ? (

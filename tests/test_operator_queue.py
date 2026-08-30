@@ -121,7 +121,31 @@ def test_multiple_active_records_fail_closed(tmp_path):
 
     with pytest.raises(QueueCorruptionError, match="multiple active"):
         queue.active_item()
+    with pytest.raises(QueueCorruptionError, match="multiple active"):
+        queue.active_item_snapshot()
     assert {first["id"], second["id"]}
+
+
+def test_active_item_snapshot_is_read_only_and_uses_the_validated_projection(tmp_path):
+    empty = DurableOperatorQueue(tmp_path / "empty")
+    assert empty.active_item_snapshot() is None
+    assert not empty.root.exists()
+
+    queue = DurableOperatorQueue(tmp_path / "populated")
+    item, _ = _enqueue(queue)
+    queue.claim_next()
+    before = {
+        path.relative_to(queue.root): path.read_bytes()
+        for path in queue.root.rglob("*")
+        if path.is_file()
+    }
+
+    assert queue.active_item_snapshot()["id"] == item["id"]
+    assert {
+        path.relative_to(queue.root): path.read_bytes()
+        for path in queue.root.rglob("*")
+        if path.is_file()
+    } == before
 
 
 def test_restart_reopens_same_projection_and_append_only_events(tmp_path):
@@ -133,4 +157,3 @@ def test_restart_reopens_same_projection_and_append_only_events(tmp_path):
     assert reopened.active_item()["id"] == item["id"]
     events = [json.loads(line) for line in reopened.events_path.read_text(encoding="utf-8").splitlines()]
     assert [event["event"] for event in events] == ["enqueued", "claimed"]
-

@@ -150,6 +150,21 @@ class DurableOperatorQueue:
             active = self._active_items(self._read_state_unlocked())
             return dict(active[0]) if active else None
 
+    def active_item_snapshot(self) -> dict[str, Any] | None:
+        """Read the active item without creating queue directories or lock files.
+
+        Queue snapshots are committed with an atomic replace, so readers either
+        observe the previous complete snapshot or the next complete snapshot.
+        This method is intended for read-only UI projections; state-machine
+        decisions must continue to use the locked methods above.
+        """
+
+        if not self.state_path.is_file():
+            return None
+        state = self._read_state_file()
+        active = self._active_items(state)
+        return dict(active[0]) if active else None
+
     def claim_next(self) -> dict[str, Any] | None:
         with self._locked():
             state = self._read_state_unlocked()
@@ -335,6 +350,9 @@ class DurableOperatorQueue:
                 "items": [],
                 "updated_at": self.clock(),
             }
+        return self._read_state_file()
+
+    def _read_state_file(self) -> dict[str, Any]:
         try:
             value = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -440,4 +458,3 @@ class DurableOperatorQueue:
             handle.flush()
             os.fsync(handle.fileno())
         temporary.replace(self.state_path)
-
