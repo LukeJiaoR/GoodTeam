@@ -7,6 +7,7 @@ import ProjectHomePage from '../features/projects/ProjectHomePage';
 import ProjectsPage from '../features/projects/ProjectsPage';
 import ReviewPage from '../features/reviews/ReviewPage';
 import WorkPage from '../features/runs/WorkPage';
+import WorkWorkspaceRoute from '../features/runs/workspace/WorkWorkspaceShell';
 import ProjectSettingsPage from '../features/settings/ProjectSettingsPage';
 import SettingsPage from '../features/settings/SettingsPage';
 import { legacyDestination, routes } from '../lib/routing/routes';
@@ -56,8 +57,14 @@ export function createProductRoutes({
           path: '/projects/:projectKey/home',
           element: <ProjectHomeRoute Component={ProjectHomeComponent} />,
         },
-        { path: '/projects/:projectKey/work', element: <WorkComponent /> },
-        { path: '/projects/:projectKey/work/runs/:runId', element: <WorkComponent /> },
+        {
+          path: '/projects/:projectKey/work',
+          element: <WorkWorkspaceRoute Component={WorkComponent} />,
+        },
+        {
+          path: '/projects/:projectKey/work/runs/:runId',
+          element: <WorkWorkspaceRoute Component={WorkComponent} />,
+        },
         { path: '/projects/:projectKey/review', element: <ReviewComponent /> },
         { path: '/projects/:projectKey/review/:reviewId', element: <ReviewComponent /> },
         { path: '/projects/:projectKey/knowledge', element: <KnowledgeComponent /> },
