@@ -270,8 +270,14 @@ function managerReviewData() {
 }
 
 test('renders the Manager-centered three-pane workspace from the durable projection', async () => {
+  const data = projectedWorkData();
+  data.workflow_steps = [
+    { number: '1', key: 'product_requirement', title: 'Product / Requirement', status: 'done', status_label: 'Done' },
+    { number: '2', key: 'prd_review', title: 'PRD Review', status: 'review-needed', status_label: 'Needs review' },
+    { number: '3', key: 'architecture', title: 'Architecture', status: 'not-started', status_label: 'Not started' },
+  ];
   mocks.useProjectState.mockReturnValue({
-    data: projectedWorkData(), error: null, refresh: vi.fn(), status: 'ready',
+    data, error: null, refresh: vi.fn(), status: 'ready',
   });
   mocks.getProjectRuns.mockResolvedValue({
     runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
@@ -285,6 +291,12 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Team & tasks' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Outcomes & delivery' })).toBeVisible();
+  const missionContext = document.querySelector('.work-run-context');
+  expect(within(missionContext).getByText('Current mission')).toBeVisible();
+  expect(within(missionContext).getByText('PRD Review')).toBeVisible();
+  expect(within(missionContext).getByText('Needs review')).toBeVisible();
+  expect(within(missionContext).getByText('1 / 3 stages complete')).toBeVisible();
+  expect(screen.queryByRole('combobox', { name: 'Select run' })).not.toBeInTheDocument();
   expect(screen.getByText('I organized this mission into 2 outcome tasks and identified the next eligible work.')).toBeVisible();
   const execution = screen.getByRole('region', { name: 'Execution' });
   expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();

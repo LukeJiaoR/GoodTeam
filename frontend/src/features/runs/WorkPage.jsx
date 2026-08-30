@@ -16,6 +16,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import TaskDetailModal, { findMatchingReview } from '../../components/TaskDetailModal';
 import { useToast } from '../../components/ui/ToastProvider';
 import { routes } from '../../lib/routing/routes';
+import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
@@ -176,6 +177,20 @@ function runOptionLabel(run, t) {
       ? 'work.history.completedOption'
       : 'work.history.archivedOption';
   return t(statusKey, { title: runTitle(run, t) });
+}
+
+function currentWorkflowStep(steps = []) {
+  return steps.find((step) => ['active', 'review-needed', 'blocked'].includes(step.status))
+    || steps.find((step) => !['done', 'complete', 'completed'].includes(step.status))
+    || null;
+}
+
+function formattedRunUpdate(value, language) {
+  const timestamp = Date.parse(value || '');
+  if (!Number.isFinite(timestamp)) return '';
+  return new Intl.DateTimeFormat(language, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(timestamp));
 }
 
 function cleanMarkdownText(text) {
@@ -1556,6 +1571,18 @@ export default function WorkPage() {
   const selectedSummary = runHistory.find((item) => item.run_id === runId);
   const isHistorical = Boolean(runId && selectedSummary && selectedSummary.status !== 'active');
   const selectedKnown = !runId || historyStatus !== 'ready' || Boolean(selectedSummary);
+  const workflowSteps = data?.workflow_steps || [];
+  const contextStep = currentWorkflowStep(workflowSteps);
+  const completedStepCount = workflowSteps.filter((step) => (
+    ['done', 'complete', 'completed'].includes(step.status)
+  )).length;
+  const currentRunSummary = runHistory.find((item) => item.run_id === currentRunId);
+  const contextUpdatedAt = projectedMission?.updated_at || currentRunSummary?.updated_at || '';
+  const contextUpdatedLabel = formattedRunUpdate(contextUpdatedAt, language);
+  const hasRunContext = Boolean(data?.active_run || hasProjectedMission);
+  const showRunSelector = runHistory.length > 0 && (
+    !hasRunContext || runHistory.some((item) => item.run_id !== currentRunId)
+  );
 
   const loadRuns = useCallback(async ({ signal } = {}) => {
     setHistoryStatus((current) => (runHistory.length ? current : 'loading'));
@@ -1652,22 +1679,57 @@ export default function WorkPage() {
       <header className="product-page-header">
         <div><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
-          {data?.active_run || hasProjectedMission ? <><StatusBadge tone={tone(projectedMission?.status || 'active')}>{projectedMission ? statusText(projectedMission.status, t) : t('work.active')}</StatusBadge><strong className="work-run-title">{currentRunTitle}</strong></> : <StatusBadge>{t('work.noRun')}</StatusBadge>}
-          {runHistory.length ? (
-            <label className="work-run-selector"><span className="sr-only">{t('work.history.selector')}</span>
-              <select value={runId || currentRunId || ''} onChange={(event) => { if (!event.target.value) return; const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
-                {!currentRunId && !runId ? (
-                  <option disabled value="">
-                    {hasProjectedMission
-                      ? t('work.history.currentMissionOption', { title: currentRunTitle })
-                      : t('work.history.selectPrevious')}
-                  </option>
+          {hasRunContext ? (
+            <section className="work-run-context" aria-label={t('work.manager.currentMission')}>
+              <div className="work-run-context__mission">
+                <span>{t('work.manager.currentMission')}</span>
+                <strong className="work-run-title" title={currentRunTitle}>{currentRunTitle}</strong>
+              </div>
+              <div className="work-run-context__facts">
+                <StatusBadge tone={tone(contextStep?.status || projectedMission?.status || 'active')}>
+                  {contextStep
+                    ? statusLabel(contextStep, t)
+                    : projectedMission
+                      ? statusText(projectedMission.status, t)
+                      : t('work.active')}
+                </StatusBadge>
+                {contextStep ? (
+                  <span className="work-run-context__fact">
+                    <small>{t('work.context.currentStage')}</small>
+                    <strong>{stepTitle(contextStep, t)}</strong>
+                  </span>
                 ) : null}
-                {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
-              </select>
-            </label>
-          ) : null}
-          <Link to={routes.projectHome(projectKey)}>{t('work.backHome')}</Link>
+                {workflowSteps.length ? (
+                  <span className="work-run-context__fact">
+                    <small>{t('work.context.progressLabel')}</small>
+                    <strong>{t('work.context.progress', { complete: completedStepCount, total: workflowSteps.length })}</strong>
+                  </span>
+                ) : null}
+                {contextUpdatedLabel ? (
+                  <time className="work-run-context__updated" dateTime={contextUpdatedAt}>
+                    {t('work.context.updated', { time: contextUpdatedLabel })}
+                  </time>
+                ) : null}
+              </div>
+            </section>
+          ) : <StatusBadge>{t('work.noRun')}</StatusBadge>}
+          <div className="work-run-context__actions">
+            {showRunSelector ? (
+              <label className="work-run-selector"><span>{t('work.history.selector')}</span>
+                <select value={runId || currentRunId || ''} onChange={(event) => { if (!event.target.value) return; const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
+                  {!currentRunId && !runId ? (
+                    <option disabled value="">
+                      {hasProjectedMission
+                        ? t('work.history.currentMissionOption', { title: currentRunTitle })
+                        : t('work.history.selectPrevious')}
+                    </option>
+                  ) : null}
+                  {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
+                </select>
+              </label>
+            ) : null}
+            <Link to={routes.projectHome(projectKey)}>{t('work.backHome')}</Link>
+          </div>
         </div>
       </header>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}

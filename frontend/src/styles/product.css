@@ -1689,33 +1689,110 @@
 }
 
 .product-shell .product-work-page > .product-page-header .product-page-header__meta {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(24rem, 1fr) auto;
   flex: 1 1 auto;
+  gap: 0.65rem;
+  align-items: center;
   min-width: 0;
-  justify-content: flex-end;
   padding: 0;
   background: transparent;
   border: 0;
   box-shadow: none;
 }
 
+.product-shell .product-work-page .work-run-context {
+  display: grid;
+  min-width: 0;
+  gap: 0.5rem;
+  padding: 0.58rem 0.7rem 0.62rem;
+  background: var(--product-surface-raised);
+  border: 1px solid var(--product-border);
+  border-radius: 9px;
+  box-shadow:
+    -3px -3px 8px color-mix(in srgb, var(--product-surface-raised) 88%, transparent),
+    4px 5px 12px color-mix(in srgb, var(--product-border-strong) 18%, transparent);
+}
+
+.product-shell .product-work-page .work-run-context__mission {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.product-shell .product-work-page .work-run-context__mission > span,
+.product-shell .product-work-page .work-run-context__fact small,
+.product-shell .product-work-page .work-run-selector > span {
+  color: var(--product-text-muted);
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.025em;
+}
+
 .product-shell .product-work-page .work-run-title {
   display: -webkit-box;
-  min-width: 8rem;
-  max-width: 26rem;
+  min-width: 0;
+  max-width: none;
   overflow: hidden;
   font-size: 0.88rem;
   line-height: 1.35;
+  text-overflow: clip;
+  white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
-.product-shell .product-work-page .work-run-selector {
+.product-shell .product-work-page .work-run-context__facts {
+  display: flex;
   min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.42rem 0.75rem;
+  align-items: center;
+}
+
+.product-shell .product-work-page .work-run-context__fact {
+  display: grid;
+  min-width: 0;
+  gap: 0.02rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--product-border);
+}
+
+.product-shell .product-work-page .work-run-context__fact strong {
+  font-size: 0.7rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.product-shell .product-work-page .work-run-context__updated {
+  margin-left: auto;
+  color: var(--product-text-muted);
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.product-shell .product-work-page .work-run-context__actions {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+.product-shell .product-work-page .work-run-context__actions > a {
+  min-height: 2.5rem;
+  padding: 0.68rem 0.25rem 0;
+  white-space: nowrap;
+}
+
+.product-shell .product-work-page .work-run-selector {
+  display: grid;
+  min-width: 0;
+  gap: 0.16rem;
 }
 
 .product-shell .product-work-page .work-run-selector select {
-  width: min(26rem, 35vw);
+  width: min(20rem, 26vw);
   background-color: var(--product-surface-raised);
 }
 
@@ -4230,15 +4307,12 @@
 
   .product-shell .product-work-page > .product-page-header .product-page-header__meta {
     width: 100%;
-    justify-content: flex-start;
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .product-shell .product-work-page .work-run-selector select {
-    width: min(30rem, 54vw);
-  }
-
-  .product-shell .product-work-page .work-run-title {
-    display: none;
+  .product-shell .product-work-page .work-run-context__actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .product-shell .team-workspace {
@@ -4439,16 +4513,16 @@
 
   .product-shell .product-work-page > .product-page-header .product-page-header__meta {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.55rem 0.75rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.55rem;
     padding: 0;
     background: transparent;
     border: 0;
     box-shadow: none;
   }
 
-  .product-shell .product-work-page .work-run-title {
-    display: none;
+  .product-shell .product-work-page .work-run-context {
+    padding: 0.72rem 0.78rem;
   }
 
   .product-shell .product-work-page .work-run-selector,
@@ -4457,13 +4531,11 @@
   }
 
   .product-shell .product-work-page .work-run-selector {
-    grid-column: 1 / -1;
+    flex: 1 1 auto;
   }
 
-  .product-shell .product-work-page > .product-page-header .product-page-header__meta > a {
-    grid-column: 2;
-    grid-row: 1;
-    justify-self: end;
+  .product-shell .product-work-page .work-run-context__actions {
+    align-items: flex-end;
   }
 }
 
@@ -4479,6 +4551,9 @@
     padding-bottom: 0.75rem;
   }
   .product-shell .product-work-page > .product-page-header p:not(.product-eyebrow) { display: none; }
+  .product-shell .product-work-page .work-run-context__facts { gap: 0.5rem; }
+  .product-shell .product-work-page .work-run-context__fact { width: calc(50% - 0.25rem); padding-left: 0; border-left: 0; }
+  .product-shell .product-work-page .work-run-context__updated { width: 100%; margin-left: 0; }
   .product-shell .review-editor-actions,
   .product-shell .review-decision-panel .product-button,
   .product-shell .work-start-panel .product-button,

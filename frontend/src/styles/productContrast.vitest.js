@@ -108,6 +108,8 @@ test('Work reads as one three-domain console with restrained neumorphic depth', 
   const outcomeAttention = blockFor('.product-shell .team-outcome-list li[data-attention="true"]');
   const actorCard = blockFor('.product-shell .team-actor-list li');
   const progress = blockFor('.product-shell .team-task-progress');
+  const runContext = blockFor('.product-shell .product-work-page .work-run-context');
+  const runTitle = blockFor('.product-shell .product-work-page .work-run-title');
 
   expect(studio).toMatch(/grid-template-areas:\s*"execution manager outcomes";/);
   expect(studio).toMatch(/background-color:/);
@@ -123,4 +125,7 @@ test('Work reads as one three-domain console with restrained neumorphic depth', 
   expect(actorCard).toMatch(/-4px -4px 10px/);
   expect(actorCard).toMatch(/5px 6px 14px/);
   expect(progress).toMatch(/inset 1px 1px 2px/);
+  expect(runContext).toMatch(/background:\s*var\(--product-surface-raised\);/);
+  expect(runContext).toMatch(/box-shadow:/);
+  expect(runTitle).toMatch(/white-space:\s*normal;/);
 });
