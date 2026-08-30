@@ -2159,7 +2159,6 @@
 }
 
 .product-shell .team-attention {
-  --team-attention-color: var(--product-warning);
   display: grid;
   gap: 0.65rem;
   max-width: min(82%, 30rem);
@@ -2175,18 +2174,22 @@
   scroll-margin-top: 8rem;
 }
 
-.product-shell .team-attention[data-kind="blocker"] {
-  --team-attention-color: var(--product-danger);
-}
-
 .product-shell .team-attention__label {
   display: flex;
   gap: 0.42rem;
   align-items: center;
   margin: 0;
-  color: var(--team-attention-color);
+  color: var(--product-text-muted);
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: 650;
+}
+
+.product-shell .team-attention__label svg {
+  color: var(--product-accent);
+}
+
+.product-shell .team-attention[data-kind="blocker"] .team-attention__label svg {
+  color: var(--product-danger);
 }
 
 .product-shell .team-attention h3,
