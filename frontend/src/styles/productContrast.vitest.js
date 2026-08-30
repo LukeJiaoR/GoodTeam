@@ -76,9 +76,46 @@ test('button feedback uses deliberate timing and includes a danger hover state',
   );
 });
 
+test('the neumorphic palette is scoped to Work and leaves the app shell tokens intact', () => {
+  const shell = tokensFor('.product-shell');
+  const darkShell = tokensFor('.dark .product-shell');
+  const work = tokensFor('.product-shell--work .product-work-page');
+  const darkWork = tokensFor('.dark .product-shell--work .product-work-page');
+
+  expect(shell).toMatchObject({
+    'product-bg': '#f3f0e9',
+    'product-surface': '#fffdf8',
+    'product-text': '#292723',
+    'product-accent': '#9d5d42',
+  });
+  expect(blockFor('.product-shell')).not.toContain('--product-neu-');
+  expect(darkShell).toMatchObject({
+    'product-bg': '#191816',
+    'product-surface': '#23211e',
+    'product-text': '#eee9df',
+    'product-accent': '#c07859',
+  });
+  expect(blockFor('.dark .product-shell')).not.toContain('--product-neu-');
+  expect(work).toMatchObject({
+    'product-bg': '#f4f7fc',
+    'product-text': '#102044',
+    'product-accent': '#315efb',
+    'product-neu-material': '#edf2f8',
+  });
+  expect(darkWork).toMatchObject({
+    'product-bg': '#0e1420',
+    'product-text': '#f2f6ff',
+    'product-accent': '#86a1ff',
+    'product-neu-material': '#182231',
+  });
+});
+
 test('Execution LEDs use semantic tokens and become static for reduced motion', () => {
-  const light = tokensFor('.product-shell');
-  const dark = { ...light, ...tokensFor('.dark .product-shell') };
+  const light = tokensFor('.product-shell--work .product-work-page');
+  const dark = {
+    ...light,
+    ...tokensFor('.dark .product-shell--work .product-work-page'),
+  };
   for (const state of [
     'working', 'reviewing', 'fixing', 'waiting', 'up-next', 'blocked', 'completed', 'stopped',
   ]) {
@@ -110,7 +147,6 @@ test('Work uses one material system with authentic raised and inset neumorphic d
   const outcomeAttentionLabel = blockFor('.product-shell .team-outcome-list__attention');
   const mobileAttention = blockFor('.product-shell .team-mobile-nav__attention');
   const actorCard = blockFor('.product-shell .team-actor-list li');
-  const progress = blockFor('.product-shell .team-task-progress');
   const inspectorTabs = blockFor('.product-shell .team-inspector__tabs');
   const runContext = blockFor('.product-shell .product-work-page .work-run-context');
   const runTitle = blockFor('.product-shell .product-work-page .work-run-title');
@@ -137,7 +173,7 @@ test('Work uses one material system with authentic raised and inset neumorphic d
   expect(actorCard).toMatch(/background:\s*var\(--product-neu-material\);/);
   expect(actorCard).toMatch(/border-radius:\s*17px;/);
   expect(actorCard).toMatch(/var\(--product-neu-shadow-soft\)/);
-  expect(progress).toMatch(/var\(--product-neu-shadow-inset\)/);
+  expect(css).not.toContain('.team-task-progress');
   expect(inspectorTabs).toMatch(/background:\s*var\(--product-neu-material-deep\);/);
   expect(inspectorTabs).toMatch(/var\(--product-neu-shadow-inset\)/);
   expect(runContext).toMatch(/background:\s*var\(--product-neu-material\);/);

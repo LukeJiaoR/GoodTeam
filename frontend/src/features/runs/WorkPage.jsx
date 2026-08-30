@@ -83,35 +83,11 @@ function executionStatusReason(actor, t) {
   return reason ? translated(t, `work.team.reasons.${reason}`, reason) : '';
 }
 
-function taskProgress(status) {
-  if (['complete', 'completed', 'done', 'approved', 'success'].includes(status)) return 100;
-  if (['reviewing'].includes(status)) return 78;
-  if (['fixing'].includes(status)) return 62;
-  if (['active', 'running', 'doing', 'working'].includes(status)) return 48;
-  if (['blocked', 'failed', 'error'].includes(status)) return 24;
-  if (['waiting', 'pending'].includes(status)) return 12;
-  return 4;
-}
-
-function matchingOutcome(actor, outcomes) {
-  return outcomes.find((task) => task.id === actor.task_id)
-    || outcomes.find((task) => task.owner === actor.role && !['completed', 'stopped'].includes(task.status))
-    || null;
-}
-
 function TeamAvatar({ label, manager = false }) {
   const initial = String(label || '').trim().slice(0, 1).toUpperCase() || 'G';
   return (
     <span aria-hidden="true" className={`team-avatar${manager ? ' team-avatar--manager' : ''}`}>
       {manager ? <Bot size={18} strokeWidth={1.9} /> : initial}
-    </span>
-  );
-}
-
-function TaskProgress({ status }) {
-  return (
-    <span aria-hidden="true" className="team-task-progress">
-      <span style={{ width: `${taskProgress(status)}%` }} />
     </span>
   );
 }
@@ -1082,12 +1058,12 @@ function ManagerPane({
   );
 }
 
-function ExecutionPane({ actors, outcomes, reducedMotion, sectionProps, t }) {
+function ExecutionPane({ actors, reducedMotion, sectionProps, t }) {
   return (
     <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')} {...sectionProps}>
       <header className="team-pane__header">
         <div>
-          <h2 id="team-execution-title">{t('work.team.executionBoard')}</h2>
+          <h2 id="team-execution-title">{t('work.team.execution')}</h2>
           <span className="team-pane__eyebrow">{t('work.team.liveExecution')}</span>
         </div>
         <span className="team-pane__count">{actors.length}</span>
@@ -1095,10 +1071,8 @@ function ExecutionPane({ actors, outcomes, reducedMotion, sectionProps, t }) {
       {actors.length ? (
         <ol className="team-actor-list">
           {actors.map((actor) => {
-            const task = matchingOutcome(actor, outcomes);
             const role = translated(t, `work.plan.role.${actor.role}`, actor.role);
             const reason = executionStatusReason(actor, t);
-            const progressStatus = task?.status || actor.state;
             return (
               <li key={actor.id} data-state={actor.state}>
                 <div className="team-actor-list__summary">
@@ -1114,22 +1088,7 @@ function ExecutionPane({ actors, outcomes, reducedMotion, sectionProps, t }) {
                     <p>{actor.responsibility || t('work.team.noResponsibility')}</p>
                   </div>
                 </div>
-                <div className="team-actor-card__task">
-                  <div>
-                    <span>{t('work.team.currentTask')}</span>
-                    <strong>{task?.objective || actor.responsibility || t('work.team.noResponsibility')}</strong>
-                  </div>
-                  <TaskProgress status={progressStatus} />
-                </div>
-                <div className="team-actor-card__signals">
-                  {reason ? <p>{reason}</p> : null}
-                  {task?.acceptance_criteria?.length ? (
-                    <span>{t('work.team.acceptanceCount', { count: task.acceptance_criteria.length })}</span>
-                  ) : null}
-                  {task?.primary_outcome?.label ? (
-                    <span>{t('work.team.primaryOutcome')}: {task.primary_outcome.label}</span>
-                  ) : null}
-                </div>
+                {reason ? <p className="team-actor-list__reason">{reason}</p> : null}
               </li>
             );
           })}
@@ -1185,7 +1144,6 @@ function OutcomesPane({
                     </span>
                     <StatusBadge tone={tone(task.status)}>{statusText(task.status, t)}</StatusBadge>
                   </span>
-                  <TaskProgress status={task.status} />
                   <span className="team-outcome-card__owner">
                     <TeamAvatar label={owner} />
                     <span>
@@ -1495,7 +1453,6 @@ function TeamWorkspace({
         />
         <ExecutionPane
           actors={workspace.execution_actors || []}
-          outcomes={outcomes}
           reducedMotion={reducedMotion}
           sectionProps={sectionProps('execution')}
           t={t}
@@ -1684,7 +1641,7 @@ export default function WorkPage() {
   return (
     <main id="main-content" className="product-page product-work-page">
       <header className="product-page-header">
-        <div className="product-work-page__identity"><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
+        <div><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
           {hasRunContext ? (
             <section className="work-run-context" aria-label={t('work.manager.currentMission')}>
@@ -1745,6 +1702,7 @@ export default function WorkPage() {
                 {t('work.team.runDetails')}
               </Button>
             ) : null}
+            <Link to={routes.projectHome(projectKey)}>{t('work.backHome')}</Link>
           </div>
         </div>
       </header>

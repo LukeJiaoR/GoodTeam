@@ -289,7 +289,7 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.getByRole('heading', { name: 'Manager' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Team & tasks' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Execution' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Outcomes & delivery' })).toBeVisible();
   const missionContext = document.querySelector('.work-run-context');
   expect(within(missionContext).getByText('Current mission')).toBeVisible();
@@ -305,9 +305,10 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(execution.querySelectorAll('.team-status-led')).toHaveLength(2);
   expect(within(execution).getByRole('img', { name: 'Working. A worker is executing this task now.' })).toBeVisible();
   expect(within(execution).getByRole('img', { name: 'Waiting. Waiting for “Implement OAuth” to complete.' })).toBeVisible();
-  expect(within(execution).getAllByText('Current task')).toHaveLength(2);
-  expect(within(execution).getByText('1 acceptance criteria')).toBeVisible();
-  expect(within(execution).getByText('Outcome: PR #42')).toBeVisible();
+  expect(within(execution).queryByText('Current task')).not.toBeInTheDocument();
+  expect(within(execution).queryByText('1 acceptance criteria')).not.toBeInTheDocument();
+  expect(within(execution).queryByText('Outcome: PR #42')).not.toBeInTheDocument();
+  expect(execution.querySelector('.team-task-progress')).not.toBeInTheDocument();
   expect(document.querySelector('[data-task-id="DEMO-2"] .product-status-badge'))
     .toHaveAttribute('data-tone', 'neutral');
   expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
@@ -319,10 +320,47 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Inspect workflow' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Inspect workers' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('link', { name: 'Back to Home' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Back to Home' })).toHaveAttribute('href', '/projects/DEMO/home');
 
   await userEvent.click(screen.getByRole('button', { name: /Implement OAuth/ }));
   expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
+});
+
+test('does not infer outcome data from a shared role when task identity is absent', async () => {
+  const data = projectedWorkData();
+  data.team_workspace.execution_actors = [{
+    id: 'architect-live',
+    role: 'architect',
+    state: 'working',
+    responsibility: 'Trace the current worker signal',
+    task_id: 'UNKNOWN-TASK',
+    status_reason: 'worker_running',
+  }];
+  data.team_workspace.outcome_tasks = [
+    {
+      id: 'DEMO-ARCH-A', objective: 'Architecture A', owner: 'architect', status: 'working',
+      status_reason: 'worker_running', dependencies: [], acceptance_criteria: ['Criterion A'],
+      primary_outcome: { label: 'RFC A' }, supporting_refs: [],
+    },
+    {
+      id: 'DEMO-ARCH-B', objective: 'Architecture B', owner: 'architect', status: 'waiting',
+      status_reason: 'waiting_for_dependencies', dependencies: ['DEMO-ARCH-A'],
+      acceptance_criteria: ['Criterion B'], primary_outcome: { label: 'RFC B' }, supporting_refs: [],
+    },
+  ];
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
+  });
+
+  renderWorkPage();
+
+  const execution = screen.getByRole('region', { name: 'Execution' });
+  expect(within(execution).getByText('Trace the current worker signal')).toBeVisible();
+  expect(within(execution).queryByText('Architecture A')).not.toBeInTheDocument();
+  expect(within(execution).queryByText('Architecture B')).not.toBeInTheDocument();
+  expect(within(execution).queryByText(/Criterion [AB]/)).not.toBeInTheDocument();
+  expect(within(execution).queryByText(/RFC [AB]/)).not.toBeInTheDocument();
 });
 
 test('keeps terminal Architect attempts out of Execution and in Outcomes/history', async () => {
