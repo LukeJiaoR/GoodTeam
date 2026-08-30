@@ -532,7 +532,8 @@ def test_approval_attention_outranks_existing_blockers() -> None:
         approval_reviews=[{"approval": "takeover", "is_actionable": True}],
     )
 
-    assert projection["attention_request"] == {
+    attention = projection["attention_request"]
+    assert {key: value for key, value in attention.items() if key != "approval_brief"} == {
         "id": "approval:takeover",
         "kind": "approval",
         "target_type": "review",
@@ -542,6 +543,23 @@ def test_approval_attention_outranks_existing_blockers() -> None:
         "refs": ["takeover"],
         "actions": ["approve", "request_changes", "review"],
     }
+    brief = attention["approval_brief"]
+    assert brief["schema_version"] == "manager_approval_brief.v1"
+    assert brief["approval_type"] == "research_planning"
+    assert brief["approval_target"] == {
+        "run_id": "run-2",
+        "target_type": "review",
+        "target_id": "takeover",
+        "task_id": "",
+        "artifact_key": "",
+        "artifact_version": "missing",
+    }
+    assert brief["scope"] == {"included": [], "excluded": []}
+    assert brief["evidence"] == []
+    assert brief["mission_blockers"] == ["Worker is unavailable"]
+    assert brief["risks"] == []
+    assert brief["consequence"]["next_stage"] == "product_requirement"
+    assert brief["recommendation"]["verdict"] == ""
     assert {item["action"] for item in projection["capabilities"]} >= {
         "approve",
         "request_changes",
@@ -589,7 +607,8 @@ def test_approval_attention_targets_one_outcome_by_durable_stage_identity() -> N
         approval_reviews=reviews,
     )
 
-    assert projection["attention_request"] == {
+    attention = projection["attention_request"]
+    assert {key: value for key, value in attention.items() if key != "approval_brief"} == {
         "id": "approval:security",
         "kind": "approval",
         "target_type": "review",
@@ -599,11 +618,351 @@ def test_approval_attention_targets_one_outcome_by_durable_stage_identity() -> N
         "refs": ["security", "DEMO-ARCH"],
         "actions": ["approve", "request_changes", "review"],
     }
+    brief = attention["approval_brief"]
+    assert brief["approval_type"] == "architecture"
+    assert brief["scope"]["included"] == [
+        {
+            "source": "task_contract",
+            "heading": "",
+            "items": ["Logical assignment for Design RFC & Security Review."],
+        }
+    ]
+    assert brief["consequence"] == {
+        "next_stage": "planner",
+        "task_id": "DEMO-IMPL",
+        "task_title": "Implement approved design",
+        "recovery": [],
+    }
     outcomes = {item["id"]: item for item in projection["outcome_tasks"]}
     assert outcomes["DEMO-ARCH"]["review_target_type"] == "review"
     assert outcomes["DEMO-ARCH"]["review_target_id"] == "security"
     assert outcomes["DEMO-AUDIT"]["review_target_id"] == ""
     assert outcomes["DEMO-IMPL"]["review_target_id"] == ""
+
+
+def test_architecture_approval_brief_compresses_durable_decision_facts() -> None:
+    state = create_initial_state("run-brief", "DEMO", "Ship federated login")
+    state.next_node = "await_security_approval"
+    tasks = [
+        _workflow_task(
+            "DEMO-ARCH",
+            "Design provider architecture",
+            "architect",
+            status="review",
+            external_refs=["stage:architect"],
+        ),
+        _workflow_task(
+            "DEMO-IMPL",
+            "Implement approved provider design",
+            "implementation",
+            status="todo",
+            external_refs=["stage:implementation"],
+        ),
+    ]
+    review = {
+        "approval": "security",
+        "title": "Federated login RFC",
+        "artifact": "rfc",
+        "artifact_path": "/workspace/rfc.md",
+        "artifact_version": "sha256:abc123",
+        "decision": "pending",
+        "is_actionable": True,
+        "content": """# Federated login RFC
+
+## Architecture Decision
+
+Keep one generic provider interface while shipping Google first.
+
+## Scope
+
+- Google login in this iteration.
+- Preserve the current session and user model.
+
+## Non-Goals
+
+- GitHub login is not implemented in this iteration.
+
+## Risks and trade-offs
+
+- The provider abstraction adds initial implementation complexity.
+""",
+        "review_evidence_policy": {
+            "state": "ok",
+            "severity": "ok",
+            "rationale": "Provider-backed security review completed.",
+        },
+        "multi_reviewer_projection": {
+            "aggregate_policy": {"severity": "ok", "state_counts": {"ok": 1}},
+            "reviewers": [
+                {
+                    "profile_id": "correctness-security",
+                    "profile_label": "Security review",
+                    "status": {"status": "completed", "summary": "No blocking security issues found."},
+                    "policy": {"state": "ok", "severity": "ok"},
+                }
+            ],
+        },
+        "evidence_snapshot": {
+            "ci_status": "passed",
+            "smoke_status": "unknown",
+            "qa_status": "unknown",
+            "blocker_count": 0,
+        },
+        "recommendation": {
+            "verdict": "approve",
+            "confidence": "high",
+            "blocking_count": 0,
+            "reasons": [{"kind": "clean", "text": "No blocking signals were found."}],
+        },
+    }
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        tasks=tasks,
+        approval_reviews=[review],
+    )
+
+    brief = projection["attention_request"]["approval_brief"]
+    assert brief["approval_target"] == {
+        "run_id": "run-brief",
+        "target_type": "review",
+        "target_id": "security",
+        "task_id": "DEMO-ARCH",
+        "artifact_key": "rfc",
+        "artifact_version": "sha256:abc123",
+    }
+    assert brief["mission_blockers"] == []
+    assert brief["decision"] == {
+        "subject": "Federated login RFC",
+        "summary": "Keep one generic provider interface while shipping Google first.",
+        "artifact": {"key": "rfc", "label": "rfc.md", "version": "sha256:abc123"},
+    }
+    assert brief["scope"] == {
+        "included": [
+            {
+                "source": "artifact_section",
+                "heading": "Scope",
+                "items": [
+                    "Google login in this iteration.",
+                    "Preserve the current session and user model.",
+                ],
+            }
+        ],
+        "excluded": [
+            {
+                "source": "artifact_section",
+                "heading": "Non-Goals",
+                "items": ["GitHub login is not implemented in this iteration."],
+            }
+        ],
+    }
+    assert [(item["kind"], item["status"]) for item in brief["evidence"]] == [
+        ("artifact", "versioned"),
+        ("reviewer", "ok"),
+        ("ci", "passed"),
+    ]
+    assert brief["risks"] == [
+        {
+            "kind": "artifact",
+            "heading": "Risks and trade-offs",
+            "text": "The provider abstraction adds initial implementation complexity.",
+        }
+    ]
+    assert brief["consequence"] == {
+        "next_stage": "planner",
+        "task_id": "DEMO-IMPL",
+        "task_title": "Implement approved provider design",
+        "recovery": [],
+    }
+    assert brief["recommendation"]["verdict"] == "approve"
+    assert brief["recommendation"]["reasons"] == [
+        {"kind": "clean", "text": "No blocking signals were found."}
+    ]
+
+
+def test_release_approval_brief_binds_delivery_validation_and_recovery() -> None:
+    state = create_initial_state("run-release-brief", "DEMO", "Release version 2.4")
+    state.next_node = "await_release_approval"
+    tasks = [
+        _workflow_task(
+            "DEMO-RELEASE",
+            "Release version 2.4",
+            "release",
+            status="review",
+            external_refs=["stage:release"],
+        )
+    ]
+    review = {
+        "approval": "release",
+        "title": "Release notes 2.4",
+        "artifact": "release_notes",
+        "artifact_path": "/workspace/release-notes.md",
+        "artifact_version": "sha256:release24",
+        "decision": "pending",
+        "is_actionable": True,
+        "content": """# Release notes 2.4
+
+## Release Decision
+
+Release version 2.4 to the local starter channel.
+
+## Release Contents
+
+- Manager approval briefs and their localized presentation.
+
+## Known Caveats
+
+- Older archived runs do not contain structured approval briefs.
+
+## Rollback
+
+- Restore the previous project directory and restart GoodTeam.
+""",
+        "evidence_snapshot": {
+            "ci_status": "passed",
+            "smoke_status": "passed",
+            "qa_status": "passed",
+            "blocker_count": 0,
+            "screenshot_refs": ["release-manager.png"],
+            "provenance_refs": [
+                {
+                    "pr": "383",
+                    "branch": "codex/issue-383-decision-ready-manager",
+                    "ci_status": "passed",
+                    "merge_sha": "0123456789abcdef0123456789abcdef01234567",
+                }
+            ],
+        },
+        "recommendation": {
+            "verdict": "approve",
+            "confidence": "high",
+            "blocking_count": 0,
+            "reasons": [{"kind": "clean", "text": "Release evidence is complete."}],
+        },
+    }
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        tasks=tasks,
+        approval_reviews=[review],
+    )
+
+    brief = projection["attention_request"]["approval_brief"]
+    assert brief["approval_type"] == "release"
+    assert brief["decision"]["summary"] == "Release version 2.4 to the local starter channel."
+    assert brief["scope"]["included"][0]["heading"] == "Release Contents"
+    evidence_statuses = {item["kind"]: item["status"] for item in brief["evidence"]}
+    assert evidence_statuses.items() >= {
+        "artifact": "versioned",
+        "ci": "passed",
+        "smoke": "passed",
+        "qa": "passed",
+        "screenshots": "available",
+        "delivery": "passed",
+    }.items()
+    delivery = next(item for item in brief["evidence"] if item["kind"] == "delivery")
+    assert delivery["pr"] == "383"
+    assert delivery["commit"] == "0123456789abcdef0123456789abcdef01234567"
+    assert brief["risks"][0]["text"] == "Older archived runs do not contain structured approval briefs."
+    assert brief["consequence"]["next_stage"] == "retro_memory"
+    assert brief["consequence"]["recovery"] == [
+        {
+            "source": "artifact_section",
+            "heading": "Rollback",
+            "items": ["Restore the previous project directory and restart GoodTeam."],
+        }
+    ]
+
+
+def test_approval_brief_preserves_chinese_decision_sections() -> None:
+    state = create_initial_state("run-zh-brief", "DEMO", "交付登录能力")
+    state.next_node = "await_prd_approval"
+    task = _workflow_task(
+        "DEMO-PRD",
+        "定义登录范围",
+        "product_requirement",
+        status="review",
+        external_refs=["stage:product_requirement"],
+    )
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        tasks=[task],
+        approval_reviews=[
+            {
+                "approval": "prd",
+                "title": "登录 PRD",
+                "decision": "pending",
+                "is_actionable": True,
+                "content": """# 登录 PRD
+
+## 产品决策
+
+本轮只交付 Google 登录。
+
+## 本次范围
+
+- 保留通用 Provider 接口。
+
+## 非目标
+
+- 本轮不实现 GitHub 登录。
+
+## 风险与待确认
+
+- 企业域账号尚未验证。
+""",
+            }
+        ],
+    )
+
+    brief = projection["attention_request"]["approval_brief"]
+    assert brief["decision"]["summary"] == "本轮只交付 Google 登录。"
+    assert brief["scope"]["included"][0]["items"] == ["保留通用 Provider 接口。"]
+    assert brief["scope"]["excluded"][0]["items"] == ["本轮不实现 GitHub 登录。"]
+    assert brief["risks"][0]["text"] == "企业域账号尚未验证。"
+
+
+def test_approval_brief_masks_sensitive_artifact_facts() -> None:
+    state = create_initial_state("run-redacted-brief", "DEMO", "Review the deployment plan")
+    state.next_node = "await_prd_approval"
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        approval_reviews=[
+            {
+                "approval": "prd",
+                "title": "Deployment PRD",
+                "decision": "pending",
+                "is_actionable": True,
+                "content": """# Deployment PRD
+
+## Scope
+
+- Use API_TOKEN=very-secret-value from /Users/alice/private/config.json.
+
+## Risks
+
+- Staging host deploy@10.2.3.4 is not reachable.
+""",
+            }
+        ],
+    )
+
+    brief = projection["attention_request"]["approval_brief"]
+    serialized = str(brief)
+    assert "very-secret-value" not in serialized
+    assert "/Users/alice/private" not in serialized
+    assert "10.2.3.4" not in serialized
+    assert "API_TOKEN=[REDACTED]" in serialized
+    assert "local-workspace-dir" in serialized
+    assert "staging-host" in serialized
 
 
 def test_approval_attention_refuses_ambiguous_stage_task_membership() -> None:

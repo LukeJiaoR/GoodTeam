@@ -43,7 +43,14 @@ const steps = [
   { key: 'rfc', number: '3', title: 'Architecture', status: 'not-started', approval: 'rfc', status_label: 'Not started' },
 ];
 const reviews = [
-  { approval: 'prd', title: 'PRD', is_actionable: true, evidence_snapshot: { ci_status: 'passed', smoke_status: 'unknown', qa_status: 'failed', blocker_count: 1 } },
+  {
+    approval: 'prd',
+    title: 'PRD',
+    artifact: 'prd',
+    artifact_version: 'sha256:prd-v1',
+    is_actionable: true,
+    evidence_snapshot: { ci_status: 'passed', smoke_status: 'unknown', qa_status: 'failed', blocker_count: 1 },
+  },
 ];
 
 function t(key, params) { return translate('en', key, params); }
@@ -51,7 +58,7 @@ function t(key, params) { return translate('en', key, params); }
 function renderCanvas(props = {}) {
   return render(
     <MemoryRouter>
-      <WorkflowCanvas projectKey="DEMO" steps={steps} reviews={reviews} t={t} {...props} />
+      <WorkflowCanvas projectKey="DEMO" runId="run-1" steps={steps} reviews={reviews} t={t} {...props} />
     </MemoryRouter>,
   );
 }
@@ -101,7 +108,21 @@ test('opens the gate detail card and approves from it', async () => {
   expect(screen.getByText('CI: Passed')).toBeVisible();
 
   await user.click(screen.getByRole('button', { name: 'Approve' }));
-  expect(reviewApi.decideReview).toHaveBeenCalledWith('DEMO', 'prd', 'approved', '');
+  expect(reviewApi.decideReview).toHaveBeenCalledWith(
+    'DEMO',
+    'prd',
+    'approved',
+    '',
+    {
+      expectedApproval: {
+        run_id: 'run-1',
+        target_type: 'review',
+        target_id: 'prd',
+        artifact_key: 'prd',
+        artifact_version: 'sha256:prd-v1',
+      },
+    },
+  );
 });
 
 test('keyboard arrows move focus and Escape closes the detail card', () => {

@@ -560,6 +560,17 @@ def test_project_state_exposes_versioned_team_workspace_projection(tmp_path: Pat
     assert workspace["attention_request"]["target_type"] == "review"
     assert workspace["attention_request"]["target_id"] == "takeover"
     assert workspace["attention_request"]["task_id"] == ""
+    assert workspace["attention_request"]["approval_brief"]["schema_version"] == "manager_approval_brief.v1"
+    assert workspace["attention_request"]["approval_brief"]["approval_type"] == "research_planning"
+    assert workspace["attention_request"]["approval_brief"]["approval_target"] == {
+        "run_id": "run-team",
+        "target_type": "review",
+        "target_id": "takeover",
+        "task_id": "",
+        "artifact_key": "takeover",
+        "artifact_version": "missing",
+    }
+    assert workspace["attention_request"]["approval_brief"]["consequence"]["next_stage"] == "product_requirement"
     assert workspace["outcome_tasks"]
     assert payload["agile_board"]["counts"]["backlog"] == 5
 
@@ -583,6 +594,19 @@ def test_project_state_attention_targets_synced_outcome_by_task_id(tmp_path: Pat
     assert workspace["attention_request"]["target_type"] == "review"
     assert workspace["attention_request"]["target_id"] == "prd"
     assert workspace["attention_request"]["task_id"] == "TEAM-1"
+    brief = workspace["attention_request"]["approval_brief"]
+    assert brief["approval"] == "prd"
+    assert brief["approval_type"] == "research_planning"
+    assert brief["approval_target"] == {
+        "run_id": "run-team-review",
+        "target_type": "review",
+        "target_id": "prd",
+        "task_id": "TEAM-1",
+        "artifact_key": "prd",
+        "artifact_version": "missing",
+    }
+    assert brief["consequence"]["next_stage"] == "architect"
+    assert brief["consequence"]["task_id"] == "TEAM-2"
     target = next(item for item in workspace["outcome_tasks"] if item["id"] == "TEAM-1")
     assert target["review_target_type"] == "review"
     assert target["review_target_id"] == "prd"
@@ -3802,6 +3826,89 @@ def test_decide_approval_approves_prd_and_generates_rfc(tmp_path):
     assert "rfc" in payload["artifacts"]
     assert Path(payload["artifacts"]["rfc"]).is_file()
     assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", "run-1", "rfc_review_gate").is_file()
+
+
+def test_decide_approval_rejects_stale_artifact_version_before_mutation(tmp_path):
+    artifact = tmp_path / "prd.md"
+    artifact.write_text("# PRD\n\nVersion A\n", encoding="utf-8")
+    state = create_initial_state("run-stale", "CONTENTOPS", "Approve an exact PRD")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    state.artifacts["prd"] = str(artifact)
+    StateStore(tmp_path).write_project_current(state)
+    shown_version = web.artifact_version_for_path(str(artifact))
+    artifact.write_text("# PRD\n\nVersion B\n", encoding="utf-8")
+
+    with pytest.raises(web.ProjectApiError) as raised:
+        decide_approval(
+            workspace=tmp_path,
+            project_key="CONTENTOPS",
+            approval="prd",
+            decision="approved",
+            expected_run_id="run-stale",
+            expected_target_type="review",
+            expected_target_id="prd",
+            expected_artifact_key="prd",
+            expected_artifact_version=shown_version,
+        )
+
+    assert raised.value.code == "stale_approval"
+    assert raised.value.status == 409
+    assert raised.value.details["mismatches"] == ["artifact_version"]
+
+    current_version = web.artifact_version_for_path(str(artifact))
+    with pytest.raises(web.ProjectApiError) as wrong_run:
+        decide_approval(
+            workspace=tmp_path,
+            project_key="CONTENTOPS",
+            approval="prd",
+            decision="approved",
+            expected_run_id="run-replaced",
+            expected_target_type="review",
+            expected_target_id="prd",
+            expected_artifact_key="prd",
+            expected_artifact_version=current_version,
+        )
+    assert wrong_run.value.code == "stale_approval"
+    assert wrong_run.value.details["mismatches"] == ["run_id"]
+
+    persisted = StateStore(tmp_path).read_project_current("CONTENTOPS")
+    assert persisted is not None
+    assert persisted.approvals["prd"] == ApprovalDecision.PENDING
+    assert persisted.next_node == "await_prd_approval"
+    assert build_action_items(tmp_path, project_key="CONTENTOPS") == []
+
+
+def test_decide_approval_records_exact_approved_artifact_version(tmp_path):
+    artifact = tmp_path / "prd.md"
+    artifact.write_text("# PRD\n\nExact version\n", encoding="utf-8")
+    artifact_version = web.artifact_version_for_path(str(artifact))
+    state = create_initial_state("run-bound", "CONTENTOPS", "Approve an exact PRD")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    state.artifacts["prd"] = str(artifact)
+    StateStore(tmp_path).write_project_current(state)
+
+    payload = decide_approval(
+        workspace=tmp_path,
+        project_key="CONTENTOPS",
+        approval="prd",
+        decision="approved",
+        expected_run_id="run-bound",
+        expected_target_type="review",
+        expected_target_id="prd",
+        expected_artifact_key="prd",
+        expected_artifact_version=artifact_version,
+    )
+
+    assert payload["approvals"]["prd"] == "approved"
+    approval_event = next(
+        item
+        for item in build_action_items(tmp_path, project_key="CONTENTOPS")
+        if item["action"] == "approval_decided"
+    )
+    assert approval_event["artifact"] == "prd"
+    assert approval_event["artifact_version"] == artifact_version
 
 
 def test_decide_approval_notifies_when_takeover_approval_generates_prd_gate(tmp_path, monkeypatch):

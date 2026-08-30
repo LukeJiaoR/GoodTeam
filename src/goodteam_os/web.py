@@ -218,6 +218,7 @@ def append_action(
     after_node: str = "",
     artifact: str = "",
     artifact_path: str = "",
+    artifact_version: str = "",
     debate_ref: str = "",
     note: str = "",
     decision_origin: str = "",
@@ -243,6 +244,8 @@ def append_action(
         "artifact": artifact,
         "artifact_path": artifact_path,
     }
+    if artifact_version:
+        event["artifact_version"] = artifact_version
     if debate_ref:
         event["debate_ref"] = debate_ref
     if note:
@@ -3480,6 +3483,11 @@ def decide_approval(
     review_session_id: str = "",
     client_context: dict[str, object] | None = None,
     review_items: list[dict[str, object]] | None = None,
+    expected_run_id: str = "",
+    expected_target_type: str = "",
+    expected_target_id: str = "",
+    expected_artifact_key: str = "",
+    expected_artifact_version: str = "",
 ) -> dict[str, object]:
     try:
         approval_decision = ApprovalDecision(decision)
@@ -3512,6 +3520,17 @@ def decide_approval(
     if state.next_node != f"await_{approval}_approval":
         raise ValueError(f"Approval gate is not currently actionable: {approval}")
 
+    approval_target = _validate_approval_target(
+        state=state,
+        workspace=workspace,
+        approval=approval,
+        expected_run_id=expected_run_id,
+        expected_target_type=expected_target_type,
+        expected_target_id=expected_target_id,
+        expected_artifact_key=expected_artifact_key,
+        expected_artifact_version=expected_artifact_version,
+    )
+
     resolved_actor_ref = actor_ref
     if not resolved_actor_ref and decision_origin == "web":
         resolved_actor_ref = os.getenv("GOODTEAM_OPERATOR_REF") or "web:local"
@@ -3543,6 +3562,7 @@ def decide_approval(
         after_node=state.next_node,
         artifact=_approval_artifact_for_gate(approval),
         artifact_path=state.artifacts.get(_approval_artifact_for_gate(approval), ""),
+        artifact_version=str(approval_target["artifact_version"]),
         debate_ref=debate_ref,
         note=note.strip(),
         decision_origin=decision_origin,
@@ -3701,6 +3721,63 @@ def decide_approval(
     payload = asdict(state)
     payload["decision"] = str(approval_decision)
     return payload
+
+
+def _validate_approval_target(
+    *,
+    state: AgileDevState,
+    workspace: Path,
+    approval: str,
+    expected_run_id: str = "",
+    expected_target_type: str = "",
+    expected_target_id: str = "",
+    expected_artifact_key: str = "",
+    expected_artifact_version: str = "",
+) -> dict[str, str]:
+    """Resolve the current actionable review and reject stale UI bindings."""
+
+    actionable = next(
+        (
+            review
+            for review in build_approval_reviews(state, workspace=workspace)
+            if str(review.get("approval", "")) == approval and bool(review.get("is_actionable"))
+        ),
+        None,
+    )
+    current = {
+        "run_id": str(state.run_id),
+        "target_type": "review",
+        "target_id": approval,
+        "artifact_key": str(actionable.get("artifact", "")) if actionable else "",
+        "artifact_version": str(actionable.get("artifact_version", "")) if actionable else "",
+    }
+    expected = {
+        "run_id": expected_run_id.strip(),
+        "target_type": expected_target_type.strip(),
+        "target_id": expected_target_id.strip(),
+        "artifact_key": expected_artifact_key.strip(),
+        "artifact_version": expected_artifact_version.strip(),
+    }
+    mismatches = [
+        field
+        for field, expected_value in expected.items()
+        if expected_value and expected_value != current[field]
+    ]
+    if actionable is None:
+        mismatches.append("actionable_review")
+    if mismatches:
+        raise ProjectApiError(
+            "stale_approval",
+            "This approval changed after the brief was loaded. Refresh the brief and review the current version before approving.",
+            409,
+            details={
+                "mismatches": list(dict.fromkeys(mismatches)),
+                "expected": expected,
+                "current": current,
+            },
+            recovery=["refresh_approval_brief"],
+        )
+    return current
 
 
 def recover_legacy_takeover_review(
@@ -6965,6 +7042,29 @@ def serve(
                 elif normalized_path == "/context-generate":
                     result = context_generate_for_request(workspace, request)
                 elif normalized_path == "/approve":
+                    approval_binding = {
+                        "expected_run_id": str(request.get("expected_run_id", "") or "").strip(),
+                        "expected_target_type": str(request.get("expected_target_type", "") or "").strip(),
+                        "expected_target_id": str(request.get("expected_target_id", "") or "").strip(),
+                        "expected_artifact_key": str(request.get("expected_artifact_key", "") or "").strip(),
+                        "expected_artifact_version": str(
+                            request.get("expected_artifact_version", "") or ""
+                        ).strip(),
+                    }
+                    if str(request.get("decision", "")) == "approved":
+                        missing_binding = [
+                            field
+                            for field, value in approval_binding.items()
+                            if not value
+                        ]
+                        if missing_binding:
+                            raise ProjectApiError(
+                                "approval_binding_required",
+                                "Approve requires the exact run, review target, artifact key, and artifact version from the current brief.",
+                                409,
+                                details={"missing": missing_binding},
+                                recovery=["refresh_approval_brief"],
+                            )
                     result = decide_approval(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
@@ -6972,6 +7072,7 @@ def serve(
                         decision=str(request.get("decision", "")),
                         debate_ref=str(request.get("debate_ref", "")),
                         note=str(request.get("note", "")),
+                        **approval_binding,
                     )
                 elif normalized_path == "/recover-takeover-brief":
                     result = recover_legacy_takeover_review(

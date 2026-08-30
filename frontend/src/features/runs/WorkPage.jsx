@@ -230,6 +230,248 @@ function recommendationReasonText(reason, t) {
   return reason.text || reason.kind || '';
 }
 
+function approvalBriefDecision(brief, t) {
+  const decision = brief?.decision || {};
+  const gate = brief?.approval || '';
+  return translated(
+    t,
+    `work.manager.approvalBrief.decision.${gate}`,
+    t('work.manager.approvalBrief.decision.general', {
+      gate: reviewGateName(gate, t),
+      subject: decision.subject || reviewGateName(gate, t),
+    }),
+    { gate: reviewGateName(gate, t), subject: decision.subject || reviewGateName(gate, t) },
+  );
+}
+
+function approvalBriefConsequence(brief, t) {
+  const consequence = brief?.consequence || {};
+  const nextStage = consequence.next_stage || '';
+  return translated(
+    t,
+    `work.manager.approvalBrief.after.${nextStage}`,
+    t('work.manager.approvalBrief.after.general'),
+    { task: consequence.task_title || '' },
+  );
+}
+
+function briefEvidenceLabel(item, t) {
+  if (item.label) return item.label;
+  return translated(t, `work.manager.approvalBrief.evidenceKinds.${item.kind}`, item.kind || '—');
+}
+
+function briefStatusLabel(status, t) {
+  if (!status) return '';
+  const value = String(status);
+  return translated(t, `work.manager.approvalBrief.status.${value}`, value.replaceAll('_', ' '));
+}
+
+function shortEvidenceRef(value) {
+  const text = String(value || '');
+  if (text.startsWith('sha256:') && text.length > 22) return `${text.slice(0, 19)}…`;
+  if (/^[a-f0-9]{20,}$/i.test(text)) return `${text.slice(0, 12)}…`;
+  return text;
+}
+
+function approvalTargetForReview(review, runId = '') {
+  if (!review) return null;
+  return {
+    run_id: runId,
+    target_type: 'review',
+    target_id: review.approval || '',
+    artifact_key: review.artifact || '',
+    artifact_version: review.artifact_version || '',
+  };
+}
+
+function BriefFactGroups({ emptyKey, groups = [], t }) {
+  if (!groups.length) return <p className="team-approval-brief__empty">{t(emptyKey)}</p>;
+  return groups.map((group, index) => (
+    <div className="team-approval-brief__fact-group" key={`${group.heading || group.source}-${index}`}>
+      <span>
+        {group.heading || translated(
+          t,
+          `work.manager.approvalBrief.sources.${group.source}`,
+          t('work.manager.approvalBrief.sources.task_contract'),
+        )}
+      </span>
+      <ul>
+        {(group.items || []).map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{item}</li>)}
+      </ul>
+    </div>
+  ));
+}
+
+function briefRiskText(risk, t) {
+  if (risk.text) return risk.text;
+  if (risk.kind === 'evidence_gap') {
+    return t('work.manager.approvalBrief.riskEvidenceGap', {
+      evidence: translated(
+        t,
+        `work.manager.approvalBrief.evidenceKinds.${risk.source}`,
+        risk.source || t('work.manager.approvalBrief.evidence'),
+      ),
+    });
+  }
+  if (risk.kind === 'blockers') {
+    return t('work.manager.approvalBrief.riskBlockers', { count: risk.count || 0 });
+  }
+  if (risk.kind === 'reviewer_aggregate') {
+    return t('work.manager.approvalBrief.riskReviewerAggregate');
+  }
+  return briefStatusLabel(risk.status || risk.severity, t);
+}
+
+function ManagerApprovalBrief({ brief, t }) {
+  const decision = brief.decision || {};
+  const artifact = decision.artifact || {};
+  const scope = brief.scope || {};
+  const evidence = brief.evidence || [];
+  const missionBlockers = brief.mission_blockers || [];
+  const risks = brief.risks || [];
+  const consequence = brief.consequence || {};
+  const recovery = consequence.recovery || [];
+  const recommendation = brief.recommendation || {};
+  const recommendationLabel = recommendation.verdict
+    ? translated(
+      t,
+      `work.manager.approvalBrief.recommendations.${recommendation.verdict}`,
+      String(recommendation.verdict).replaceAll('_', ' '),
+    )
+    : t('work.manager.approvalBrief.recommendations.none');
+
+  return (
+    <div className="team-approval-brief" data-approval-type={brief.approval_type || 'general'}>
+      <section className="team-approval-brief__decision">
+        <span className="team-approval-brief__kicker">{t('work.manager.approvalBrief.decisionLabel')}</span>
+        <p>{approvalBriefDecision(brief, t)}</p>
+        {decision.summary ? <blockquote>{decision.summary}</blockquote> : null}
+        {artifact.label || artifact.version ? (
+          <code title={artifact.version || artifact.label}>
+            {[artifact.label, shortEvidenceRef(artifact.version)].filter(Boolean).join(' · ')}
+          </code>
+        ) : null}
+      </section>
+
+      <section className="team-approval-brief__section">
+        <h4>{t('work.manager.approvalBrief.scope')}</h4>
+        <div className="team-approval-brief__scope-block">
+          <span>{t('work.manager.approvalBrief.inScope')}</span>
+          <BriefFactGroups
+            emptyKey="work.manager.approvalBrief.noScope"
+            groups={scope.included || []}
+            t={t}
+          />
+        </div>
+        <div className="team-approval-brief__scope-block">
+          <span>{t('work.manager.approvalBrief.outOfScope')}</span>
+          <BriefFactGroups
+            emptyKey="work.manager.approvalBrief.noExclusions"
+            groups={scope.excluded || []}
+            t={t}
+          />
+        </div>
+      </section>
+
+      <section className="team-approval-brief__section">
+        <h4>{t('work.manager.approvalBrief.evidence')}</h4>
+        {evidence.length ? (
+          <ul className="team-approval-brief__evidence-list">
+            {evidence.map((item, index) => {
+              const deliveryRefs = [
+                item.pr ? t('work.manager.approvalBrief.pullRequest', { value: item.pr }) : '',
+                item.branch ? t('work.manager.approvalBrief.branch', { value: item.branch }) : '',
+                item.commit ? t('work.manager.approvalBrief.commit', { value: shortEvidenceRef(item.commit) }) : '',
+              ].filter(Boolean);
+              return (
+                <li data-status={item.status || 'recorded'} key={`${item.kind}-${item.label}-${index}`}>
+                  <div>
+                    <span>{briefEvidenceLabel(item, t)}</span>
+                    {item.status ? <strong>{briefStatusLabel(item.status, t)}</strong> : null}
+                  </div>
+                  {item.detail ? (
+                    item.kind === 'artifact' ? (
+                      <code title={item.detail}>{shortEvidenceRef(item.detail)}</code>
+                    ) : <p>{item.detail}</p>
+                  ) : null}
+                  {deliveryRefs.length ? <code>{deliveryRefs.join(' · ')}</code> : null}
+                  {item.count ? <p>{t('work.manager.approvalBrief.itemCount', { count: item.count })}</p> : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : <p className="team-approval-brief__empty">{t('work.manager.approvalBrief.noEvidence')}</p>}
+      </section>
+
+      {missionBlockers.length ? (
+        <section className="team-approval-brief__section team-approval-brief__mission-blockers">
+          <h4>{t('work.manager.approvalBrief.missionBlockers')}</h4>
+          <p>{t('work.manager.approvalBrief.missionBlockersNote')}</p>
+          <ul>
+            {missionBlockers.map((blocker, index) => <li key={`${blocker}-${index}`}>{blocker}</li>)}
+          </ul>
+        </section>
+      ) : null}
+
+      <section className="team-approval-brief__section">
+        <h4>{t('work.manager.approvalBrief.risk')}</h4>
+        {risks.length ? (
+          <ul className="team-approval-brief__risk-list">
+            {risks.map((risk, index) => (
+              <li key={`${risk.kind}-${risk.text || risk.source}-${index}`}>
+                {risk.heading ? <span>{risk.heading}</span> : null}
+                <p>{briefRiskText(risk, t)}</p>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="team-approval-brief__empty">{t('work.manager.approvalBrief.noRisk')}</p>}
+      </section>
+
+      <section className="team-approval-brief__section">
+        <h4>{t('work.manager.approvalBrief.afterApproval')}</h4>
+        <p>{approvalBriefConsequence(brief, t)}</p>
+        {consequence.task_title ? (
+          <p className="team-approval-brief__next-task">
+            {t('work.manager.approvalBrief.nextTask', { task: consequence.task_title })}
+          </p>
+        ) : null}
+        {brief.approval_type === 'release' ? (
+          <div className="team-approval-brief__recovery">
+            <span>{t('work.manager.approvalBrief.recovery')}</span>
+            <BriefFactGroups
+              emptyKey="work.manager.approvalBrief.noRecovery"
+              groups={recovery}
+              t={t}
+            />
+          </div>
+        ) : null}
+      </section>
+
+      <section
+        className="team-approval-brief__recommendation"
+        data-verdict={recommendation.verdict || 'none'}
+      >
+        <span className="team-approval-brief__kicker">{t('work.manager.approvalBrief.recommendation')}</span>
+        <strong>{recommendationLabel}</strong>
+        {recommendation.confidence ? (
+          <small>
+            {t('work.manager.approvalBrief.confidence', {
+              confidence: briefStatusLabel(recommendation.confidence, t),
+            })}
+          </small>
+        ) : null}
+        {(recommendation.reasons || []).length ? (
+          <ul>
+            {recommendation.reasons.map((reason, index) => (
+              <li key={`${reason.kind}-${index}`}>{recommendationReasonText(reason, t)}</li>
+            ))}
+          </ul>
+        ) : <p>{t('work.manager.approvalBrief.noRecommendationReason')}</p>}
+      </section>
+    </div>
+  );
+}
+
 function reviewPrompt(review, t) {
   if (review?.recovery?.available) {
     return {
@@ -886,9 +1128,17 @@ function ManagerAttention({
   if (!attention) return null;
   const actions = new Set(attention.actions || []);
   const gate = attention.target_id || '';
+  const approvalBrief = attention.approval_brief?.schema_version === 'manager_approval_brief.v1'
+    ? attention.approval_brief
+    : null;
   const decide = (decision, decisionNote = '') => {
     Promise.resolve()
-      .then(() => onDecide?.(gate, decision, decisionNote))
+      .then(() => onDecide?.(
+        gate,
+        decision,
+        decisionNote,
+        decision === 'approved' ? approvalBrief?.approval_target : null,
+      ))
       .catch(() => {});
   };
   const submitChanges = (event) => {
@@ -905,11 +1155,17 @@ function ManagerAttention({
       <h3 id="team-attention-title">
         {translated(t, `work.manager.attentionKinds.${attention.kind}`, attention.reason)}
       </h3>
-      <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason)}</p>
+      {approvalBrief ? (
+        <ManagerApprovalBrief brief={approvalBrief} t={t} />
+      ) : (
+        <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason)}</p>
+      )}
       <div className="team-attention__actions">
         {actions.has('approve') ? (
           <Button busy={busy === 'decision'} onClick={() => decide('approved')}>
-            {t('work.review.quickApprove')}
+            {approvalBrief
+              ? t('work.manager.approvalBrief.approve')
+              : t('work.review.quickApprove')}
           </Button>
         ) : null}
         {actions.has('request_changes') ? (
@@ -1239,6 +1495,7 @@ function AdvancedInspector({
             onDecided={undefined}
             projectKey={projectKey}
             reviews={data.approval_reviews || []}
+            runId={data?.state?.run_id || ''}
             steps={data.workflow_steps || []}
             t={t}
           />
@@ -1613,12 +1870,24 @@ export default function WorkPage() {
     }
   };
 
-  const handleDecide = async (approval, decision, note = '') => {
+  const handleDecide = async (approval, decision, note = '', approvalTarget = null) => {
+    const currentReview = (data?.approval_reviews || []).find(
+      (review) => review.approval === approval && review.is_actionable,
+    );
+    const expectedApproval = approvalTarget
+      || approvalTargetForReview(currentReview, data?.state?.run_id || '');
     try {
-      const result = await mutate('decision', () => reviewApi.decideReview(projectKey, approval, decision, note));
+      const result = await mutate('decision', () => (
+        decision === 'approved'
+          ? reviewApi.decideReview(projectKey, approval, decision, note, { expectedApproval })
+          : reviewApi.decideReview(projectKey, approval, decision, note)
+      ));
       toast.success(t('toast.decisionSubmitted'));
       return result;
     } catch (caught) {
+      if (caught?.code === 'stale_approval') {
+        await Promise.allSettled([refresh(), loadRuns()]);
+      }
       toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
       throw caught;
     }
@@ -1641,7 +1910,7 @@ export default function WorkPage() {
   return (
     <main id="main-content" className="product-page product-work-page">
       <header className="product-page-header">
-        <div><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
+        <div className="product-work-page__identity"><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
           {hasRunContext ? (
             <section className="work-run-context" aria-label={t('work.manager.currentMission')}>
@@ -1702,7 +1971,6 @@ export default function WorkPage() {
                 {t('work.team.runDetails')}
               </Button>
             ) : null}
-            <Link to={routes.projectHome(projectKey)}>{t('work.backHome')}</Link>
           </div>
         </div>
       </header>
@@ -1744,6 +2012,7 @@ export default function WorkPage() {
             onDecided={refresh}
             projectKey={projectKey}
             reviews={data.approval_reviews || []}
+            runId={data?.state?.run_id || ''}
             steps={data.workflow_steps || []}
             t={t}
           />
