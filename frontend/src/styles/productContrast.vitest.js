@@ -111,8 +111,7 @@ test('Work uses one material system with authentic raised and inset neumorphic d
   const mobileAttention = blockFor('.product-shell .team-mobile-nav__attention');
   const actorCard = blockFor('.product-shell .team-actor-list li');
   const progress = blockFor('.product-shell .team-task-progress');
-  const composer = blockFor('.product-shell .team-manager-composer');
-  const viewSwitch = blockFor('.product-shell .team-outcome-view-switch');
+  const inspectorTabs = blockFor('.product-shell .team-inspector__tabs');
   const runContext = blockFor('.product-shell .product-work-page .work-run-context');
   const runTitle = blockFor('.product-shell .product-work-page .work-run-title');
 
@@ -139,10 +138,8 @@ test('Work uses one material system with authentic raised and inset neumorphic d
   expect(actorCard).toMatch(/border-radius:\s*17px;/);
   expect(actorCard).toMatch(/var\(--product-neu-shadow-soft\)/);
   expect(progress).toMatch(/var\(--product-neu-shadow-inset\)/);
-  expect(composer).toMatch(/background:\s*var\(--product-neu-material-deep\);/);
-  expect(composer).toMatch(/var\(--product-neu-shadow-inset\)/);
-  expect(viewSwitch).toMatch(/background:\s*var\(--product-neu-material-deep\);/);
-  expect(viewSwitch).toMatch(/var\(--product-neu-shadow-inset\)/);
+  expect(inspectorTabs).toMatch(/background:\s*var\(--product-neu-material-deep\);/);
+  expect(inspectorTabs).toMatch(/var\(--product-neu-shadow-inset\)/);
   expect(runContext).toMatch(/background:\s*var\(--product-neu-material\);/);
   expect(runContext).toMatch(/var\(--product-neu-shadow-soft\)/);
   expect(runTitle).toMatch(/white-space:\s*normal;/);

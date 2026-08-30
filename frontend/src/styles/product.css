@@ -2030,29 +2030,6 @@
   content: "";
 }
 
-.product-shell .team-pane__header-action {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 0.4rem;
-  align-items: center;
-  min-height: 2.2rem;
-  padding: 0 0.65rem;
-  color: var(--product-text-muted);
-  background: var(--product-neu-material);
-  border: 0;
-  border-radius: 11px;
-  box-shadow: var(--product-neu-shadow-compact);
-  font: inherit;
-  font-size: 0.72rem;
-  font-weight: 620;
-  cursor: pointer;
-}
-
-.product-shell .team-pane__header-action:hover {
-  color: var(--product-accent-strong);
-  box-shadow: var(--product-neu-shadow-soft);
-}
-
 .product-shell .team-pane__count {
   min-width: 1.8rem;
   padding: 0.2rem 0.4rem;
@@ -2399,44 +2376,10 @@
   z-index: 4;
   gap: 0.35rem;
   align-items: center;
+  justify-content: flex-end;
   padding: 0.85rem 1rem 1rem;
   background: var(--product-neu-material);
   border-top: 0;
-}
-
-.product-shell .team-manager-composer {
-  display: flex;
-  min-width: 0;
-  min-height: 3.05rem;
-  flex: 1 1 auto;
-  gap: 0.75rem;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 0.65rem 0 0.85rem;
-  color: var(--product-text-muted);
-  background: var(--product-neu-material-deep);
-  border: 0;
-  border-radius: 16px;
-  box-shadow: var(--product-neu-shadow-inset);
-  font: inherit;
-  font-size: 0.79rem;
-  text-align: left;
-  cursor: pointer;
-}
-
-.product-shell .team-manager-composer svg {
-  box-sizing: content-box;
-  padding: 0.42rem;
-  color: var(--product-on-accent);
-  background: var(--product-accent);
-  border-radius: 11px;
-  box-shadow:
-    -3px -3px 7px color-mix(in srgb, var(--product-neu-highlight) 48%, transparent),
-    4px 5px 10px color-mix(in srgb, var(--product-accent) 30%, transparent);
-}
-
-.product-shell .team-manager-composer:hover {
-  color: var(--product-text);
 }
 
 .product-shell .team-actor-list li {
@@ -2693,50 +2636,6 @@
   transform: translateY(0);
 }
 
-.product-shell .team-outcome-view-switch {
-  display: flex;
-  gap: 0.25rem;
-  width: fit-content;
-  margin: 0.2rem 0.9rem 0;
-  padding: 0.28rem;
-  background: var(--product-neu-material-deep);
-  border-radius: 13px;
-  box-shadow: var(--product-neu-shadow-inset);
-}
-
-.product-shell .team-outcome-view-switch span,
-.product-shell .team-outcome-view-switch button {
-  min-height: 1.9rem;
-  padding: 0 0.68rem;
-  color: var(--product-text-muted);
-  background: transparent;
-  border: 0;
-  border-radius: 9px;
-  font: inherit;
-  font-size: 0.68rem;
-  font-weight: 620;
-}
-
-.product-shell .team-outcome-view-switch span {
-  display: inline-flex;
-  align-items: center;
-}
-
-.product-shell .team-outcome-view-switch [data-active="true"] {
-  color: var(--product-accent-strong);
-  background: color-mix(in srgb, var(--product-neu-material-deep) 92%, var(--product-accent-soft));
-  box-shadow: var(--product-neu-shadow-inset);
-}
-
-.product-shell .team-outcome-view-switch button {
-  cursor: pointer;
-}
-
-.product-shell .team-outcome-view-switch button:hover {
-  color: var(--product-text);
-  background: var(--product-neu-material);
-}
-
 .product-shell .team-outcome-list {
   min-height: 0;
   flex: 1 1 auto;
@@ -2795,12 +2694,10 @@
 }
 
 .product-shell .team-outcome-list button:focus-visible,
-.product-shell .team-pane__inspect-actions button:focus-visible,
 .product-shell .team-inspector > header button:focus-visible,
+.product-shell .team-inspector__tabs button:focus-visible,
 .product-shell .team-mobile-nav [role="tab"]:focus-visible,
-.product-shell .team-pane__header-action:focus-visible,
-.product-shell .team-outcome-view-switch button:focus-visible,
-.product-shell .team-manager-composer:focus-visible {
+.product-shell .product-work-page .work-run-context__actions .product-button:focus-visible {
   outline: 3px solid var(--product-focus);
   outline-offset: -3px;
 }
@@ -2959,21 +2856,6 @@
   font-size: 0.84rem;
 }
 
-.product-shell .team-pane__inspect-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  margin-top: auto;
-  padding: 0.7rem 0.9rem 0.9rem;
-  background: var(--product-neu-material);
-  border-top: 0;
-}
-
-.product-shell .team-pane--manager .team-pane__inspect-actions {
-  background: var(--product-neu-material);
-}
-
-.product-shell .team-pane__inspect-actions button,
 .product-shell .team-inspector > header button {
   padding: 0.35rem 0.5rem;
   color: var(--product-text-muted);
@@ -2988,7 +2870,6 @@
   cursor: pointer;
 }
 
-.product-shell .team-pane__inspect-actions button:hover,
 .product-shell .team-inspector > header button:hover {
   color: var(--product-accent-strong);
   background: var(--product-neu-material);
@@ -2998,9 +2879,14 @@
 .product-shell .team-inspector {
   display: grid;
   gap: 1.25rem;
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--product-border);
+  margin: 2rem 1rem 0;
+  padding: 1.25rem;
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 24px;
+  box-shadow: var(--product-neu-shadow-raised);
+  outline: none;
+  scroll-margin-top: 7rem;
 }
 
 .product-shell .team-inspector > header {
@@ -3013,6 +2899,42 @@
 .product-shell .team-inspector > header > div {
   display: grid;
   gap: 0.2rem;
+}
+
+.product-shell .team-inspector__tabs {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  gap: 0.25rem;
+  padding: 0.3rem;
+  overflow-x: auto;
+  background: var(--product-neu-material-deep);
+  border-radius: 14px;
+  box-shadow: var(--product-neu-shadow-inset);
+}
+
+.product-shell .team-inspector__tabs button {
+  min-height: 2.1rem;
+  padding: 0 0.75rem;
+  color: var(--product-text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 620;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.product-shell .team-inspector__tabs button:hover {
+  color: var(--product-text);
+}
+
+.product-shell .team-inspector__tabs button[data-active="true"] {
+  color: var(--product-accent-strong);
+  background: var(--product-neu-material-deep);
+  box-shadow: var(--product-neu-shadow-inset);
 }
 
 .product-shell .work-plan-container {

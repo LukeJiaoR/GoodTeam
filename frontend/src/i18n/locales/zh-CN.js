@@ -510,6 +510,8 @@ export const zhCN = {
   'work.team.dependenciesCount': '{{count}} 项前置依赖',
   'work.team.noDependencies': '独立任务',
   'work.team.inspection': '详细检查',
+  'work.team.runDetails': '运行详情',
+  'work.team.detailViews': '运行详情视图',
   'work.team.closeInspection': '关闭详情',
   'work.team.inspectWorkers': '检查 Worker',
   'work.team.inspectWorkflow': '检查工作流',

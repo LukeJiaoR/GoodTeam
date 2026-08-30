@@ -510,6 +510,8 @@ export const en = {
   'work.team.dependenciesCount': '{{count}} dependencies',
   'work.team.noDependencies': 'Independent task',
   'work.team.inspection': 'Detailed inspection',
+  'work.team.runDetails': 'Run details',
+  'work.team.detailViews': 'Run detail views',
   'work.team.closeInspection': 'Close details',
   'work.team.inspectWorkers': 'Inspect workers',
   'work.team.inspectWorkflow': 'Inspect workflow',

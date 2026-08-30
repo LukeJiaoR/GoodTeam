@@ -313,12 +313,23 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
   expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('button', { name: 'Mission history' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Open the Manager conversation…' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Inspect workflow' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Inspect workers' })).not.toBeInTheDocument();
 
   await userEvent.click(screen.getByRole('button', { name: /Implement OAuth/ }));
   expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
 });
 
 test('keeps terminal Architect attempts out of Execution and in Outcomes/history', async () => {
+  const scrollIntoView = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoView,
+  });
   mocks.useProjectState.mockReturnValue({
     data: repeatedArchitectAttemptData(), error: null, refresh: vi.fn(), status: 'ready',
   });
@@ -336,9 +347,19 @@ test('keeps terminal Architect attempts out of Execution and in Outcomes/history
     name: /Design RFC & Security Review.*Completed/,
   })).toBeVisible();
 
-  await userEvent.click(within(executionPane).getByRole('button', { name: 'Inspect workers' }));
+  const runDetails = screen.getByRole('button', { name: 'Run details' });
+  await userEvent.click(runDetails);
   const inspector = document.querySelector('.team-inspector');
   expect(inspector).not.toBeNull();
+  expect(runDetails).toHaveAttribute('aria-expanded', 'true');
+  expect(inspector).toHaveFocus();
+  expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+  const detailTabs = within(inspector).getByRole('navigation', { name: 'Run detail views' });
+  expect(within(detailTabs).getAllByRole('button').map((button) => button.textContent)).toEqual([
+    'Board', 'Activity', 'Execution', 'Messages', 'Delivery',
+  ]);
+  await userEvent.click(within(detailTabs).getByRole('button', { name: 'Execution' }));
+  expect(screen.getByTestId('location-search')).toHaveTextContent('?view=execution');
   for (const jobId of ['job-architect-1', 'job-architect-2', 'job-architect-3', 'job-architect-4']) {
     expect(within(inspector).getByText(jobId)).toBeVisible();
   }
