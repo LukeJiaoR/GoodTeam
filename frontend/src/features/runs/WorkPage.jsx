@@ -1684,7 +1684,7 @@ export default function WorkPage() {
   return (
     <main id="main-content" className="product-page product-work-page">
       <header className="product-page-header">
-        <div><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
+        <div className="product-work-page__identity"><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
           {hasRunContext ? (
             <section className="work-run-context" aria-label={t('work.manager.currentMission')}>
@@ -1745,7 +1745,6 @@ export default function WorkPage() {
                 {t('work.team.runDetails')}
               </Button>
             ) : null}
-            <Link to={routes.projectHome(projectKey)}>{t('work.backHome')}</Link>
           </div>
         </div>
       </header>
