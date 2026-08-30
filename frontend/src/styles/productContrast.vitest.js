@@ -76,18 +76,107 @@ test('button feedback uses deliberate timing and includes a danger hover state',
   );
 });
 
+test('the neumorphic palette is scoped to Work and leaves the app shell tokens intact', () => {
+  const shell = tokensFor('.product-shell');
+  const darkShell = tokensFor('.dark .product-shell');
+  const work = tokensFor('.product-shell--work .product-work-page');
+  const darkWork = tokensFor('.dark .product-shell--work .product-work-page');
+
+  expect(shell).toMatchObject({
+    'product-bg': '#f3f0e9',
+    'product-surface': '#fffdf8',
+    'product-text': '#292723',
+    'product-accent': '#9d5d42',
+  });
+  expect(blockFor('.product-shell')).not.toContain('--product-neu-');
+  expect(darkShell).toMatchObject({
+    'product-bg': '#191816',
+    'product-surface': '#23211e',
+    'product-text': '#eee9df',
+    'product-accent': '#c07859',
+  });
+  expect(blockFor('.dark .product-shell')).not.toContain('--product-neu-');
+  expect(work).toMatchObject({
+    'product-bg': '#f4f7fc',
+    'product-text': '#102044',
+    'product-accent': '#315efb',
+    'product-neu-material': '#edf2f8',
+  });
+  expect(darkWork).toMatchObject({
+    'product-bg': '#0e1420',
+    'product-text': '#f2f6ff',
+    'product-accent': '#86a1ff',
+    'product-neu-material': '#182231',
+  });
+});
+
 test('Execution LEDs use semantic tokens and become static for reduced motion', () => {
-  const light = tokensFor('.product-shell');
-  const dark = { ...light, ...tokensFor('.dark .product-shell') };
+  const light = tokensFor('.product-shell--work .product-work-page');
+  const dark = {
+    ...light,
+    ...tokensFor('.dark .product-shell--work .product-work-page'),
+  };
   for (const state of [
     'working', 'reviewing', 'fixing', 'waiting', 'up-next', 'blocked', 'completed', 'stopped',
   ]) {
     expect(light[`product-led-${state}`], `light ${state} LED token`).toMatch(/^#[\da-f]{6}$/i);
     expect(dark[`product-led-${state}`], `dark ${state} LED token`).toMatch(/^#[\da-f]{6}$/i);
   }
+  for (const tokens of [light, dark]) {
+    expect(tokens['product-led-working']).toBe(tokens['product-accent']);
+    expect(tokens['product-led-reviewing']).toBe(tokens['product-accent-strong']);
+    expect(tokens['product-led-fixing']).toBe(tokens['product-accent']);
+    expect(tokens['product-led-blocked']).toBe(tokens['product-danger']);
+    expect(tokens['product-led-completed']).toBe(tokens['product-success']);
+  }
   expect(blockFor('.product-shell .team-status-led-trigger[data-motion="ambient"] .team-status-led'))
     .toMatch(/animation:\s*team-status-led-breathe/);
   expect(css).toMatch(
     /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.product-shell \.team-status-led \{[\s\S]*?animation:\s*none !important;/,
   );
+});
+
+test('Work uses one material system with authentic raised and inset neumorphic depth', () => {
+  const studio = blockFor('.product-shell .team-workspace');
+  const pane = blockFor('.product-shell .team-pane');
+  const manager = blockFor('.product-shell .team-pane--manager');
+  const attention = blockFor('.product-shell .team-attention');
+  const attentionLabel = blockFor('.product-shell .team-attention__label');
+  const attentionIcon = blockFor('.product-shell .team-attention__label svg');
+  const outcomeAttention = blockFor('.product-shell .team-outcome-list li[data-attention="true"]');
+  const outcomeAttentionLabel = blockFor('.product-shell .team-outcome-list__attention');
+  const mobileAttention = blockFor('.product-shell .team-mobile-nav__attention');
+  const actorCard = blockFor('.product-shell .team-actor-list li');
+  const inspectorTabs = blockFor('.product-shell .team-inspector__tabs');
+  const runContext = blockFor('.product-shell .product-work-page .work-run-context');
+  const runTitle = blockFor('.product-shell .product-work-page .work-run-title');
+
+  expect(studio).toMatch(/grid-template-areas:\s*"execution manager outcomes";/);
+  expect(studio).toMatch(/background-color:\s*var\(--product-neu-material\);/);
+  expect(studio).toMatch(/border:\s*0;/);
+  expect(studio).toMatch(/border-radius:\s*28px;/);
+  expect(studio).toMatch(/var\(--product-neu-shadow-raised\)/);
+  expect(pane).toMatch(/border:\s*0;/);
+  expect(pane).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(pane).toMatch(/border-radius:\s*22px;/);
+  expect(pane).toMatch(/var\(--product-neu-shadow-soft\)/);
+  expect(manager).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(manager).toMatch(/var\(--product-neu-shadow-raised\)/);
+  expect(attention).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(attention).toMatch(/var\(--product-neu-shadow-raised\)/);
+  expect(attentionLabel).toMatch(/color:\s*var\(--product-text-muted\);/);
+  expect(attentionIcon).toMatch(/color:\s*var\(--product-accent\);/);
+  expect(outcomeAttention).toMatch(/var\(--product-neu-material\)/);
+  expect(outcomeAttention).toMatch(/var\(--product-neu-shadow-raised\)/);
+  expect(outcomeAttentionLabel).toMatch(/color:\s*var\(--product-accent-strong\);/);
+  expect(mobileAttention).toMatch(/background:\s*var\(--product-accent\);/);
+  expect(actorCard).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(actorCard).toMatch(/border-radius:\s*17px;/);
+  expect(actorCard).toMatch(/var\(--product-neu-shadow-soft\)/);
+  expect(css).not.toContain('.team-task-progress');
+  expect(inspectorTabs).toMatch(/background:\s*var\(--product-neu-material-deep\);/);
+  expect(inspectorTabs).toMatch(/var\(--product-neu-shadow-inset\)/);
+  expect(runContext).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(runContext).toMatch(/var\(--product-neu-shadow-soft\)/);
+  expect(runTitle).toMatch(/white-space:\s*normal;/);
 });

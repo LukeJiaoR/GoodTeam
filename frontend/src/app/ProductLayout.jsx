@@ -25,11 +25,12 @@ export default function ProductLayout() {
   const projectKey = (() => {
     try { return projectMatch ? decodeURIComponent(projectMatch[1]) : ''; } catch { return ''; }
   })();
+  const isWorkRoute = Boolean(projectKey && /^\/projects\/[^/]+\/work(?:\/|$)/.test(pathname));
   const navClass = ({ isActive }) => `product-navigation__link${isActive ? ' is-active' : ''}`;
 
   return (
     <ToastProvider>
-      <div className="product-shell">
+      <div className={`product-shell${isWorkRoute ? ' product-shell--work' : ''}`}>
         <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
         <header className="product-chrome">
           <div className="product-chrome__inner">
