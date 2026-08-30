@@ -43,6 +43,7 @@ const state = {
       is_actionable: true,
       recommendation: { verdict: 'approve', reasons: [{ kind: 'clean' }] },
       evidence_snapshot: { ci_status: 'passed', smoke_status: 'unknown', qa_status: 'failed', blocker_count: 1 },
+      reviewer_provenance: { source: 'independent_reviewer', review_id: 'prd-review-1' },
     },
     {
       approval: 'rfc',
@@ -137,6 +138,7 @@ describe('ReviewPage workflow and navigation', () => {
     expect(screen.getByText('QA: Failed')).toBeVisible();
     expect(screen.getByText('Blockers 1')).toBeVisible();
     expect(screen.getByText(t('review.evidence.title'), { selector: 'summary' })).toBeVisible();
+    expect(screen.getByText(t('review.provenance.title'), { selector: 'summary' })).toBeVisible();
   });
 
   test('clears submitted question answers and confirms the count', async () => {

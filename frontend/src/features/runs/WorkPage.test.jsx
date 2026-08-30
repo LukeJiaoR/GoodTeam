@@ -93,6 +93,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function stubMediaPreferences({ mobile = false, reducedMotion = false } = {}) {
+  vi.stubGlobal('matchMedia', vi.fn((query) => ({
+    matches: query === '(max-width: 767px)' ? mobile : reducedMotion,
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })));
+}
+
 function projectedWorkData(overrides = {}) {
   return {
     active_run: { run_id: 'run-active' },
@@ -142,18 +151,7 @@ function repeatedArchitectAttemptData() {
     { id: 'job-architect-3', role: 'architect', status: 'blocked' },
     { id: 'job-architect-4', role: 'architect', status: 'completed' },
   ];
-  data.team_workspace.execution_actors = [
-    {
-      id: 'task-assignment:DEMO-1',
-      role: 'architect',
-      state: 'completed',
-      responsibility: 'Design RFC & Security Review',
-      task_id: 'DEMO-1',
-      attempt_count: 4,
-      current_attempt_id: 'job-architect-4',
-      source: 'worker_job',
-    },
-  ];
+  data.team_workspace.execution_actors = [];
   data.team_workspace.outcome_tasks = [
     {
       id: 'DEMO-1',
@@ -183,7 +181,6 @@ function orderedExecutionData() {
       dependency_task_id: 'DEMO-IMPL', dependency_task_title: 'Implement approved design',
     },
     { id: 'up-next', role: 'release', state: 'up_next', responsibility: 'Prepare release', status_reason: 'not_started' },
-    { id: 'completed', role: 'product_requirement', state: 'completed', responsibility: 'Draft and approve PRD', status_reason: 'delivered' },
   ];
   return data;
 }
@@ -302,7 +299,7 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
 });
 
-test('renders repeated Architect attempts once while retaining worker history in the inspector', async () => {
+test('keeps terminal Architect attempts out of Execution and in Outcomes/history', async () => {
   mocks.useProjectState.mockReturnValue({
     data: repeatedArchitectAttemptData(), error: null, refresh: vi.fn(), status: 'ready',
   });
@@ -313,10 +310,12 @@ test('renders repeated Architect attempts once while retaining worker history in
   renderWorkPage();
 
   const executionPane = screen.getByRole('region', { name: 'Execution' });
-  expect(within(executionPane).getAllByRole('listitem')).toHaveLength(1);
-  expect(within(executionPane).getByText('Architect')).toBeVisible();
-  expect(within(executionPane).getByText('Design RFC & Security Review')).toBeVisible();
-  expect(within(executionPane).getByRole('img', { name: 'Completed' })).toBeVisible();
+  expect(within(executionPane).queryAllByRole('listitem')).toHaveLength(0);
+  expect(within(executionPane).getByText('No active workers yet.')).toBeVisible();
+  const outcomesPane = screen.getByRole('region', { name: 'Outcomes' });
+  expect(within(outcomesPane).getByRole('button', {
+    name: /Design RFC & Security Review.*Completed/,
+  })).toBeVisible();
 
   await userEvent.click(within(executionPane).getByRole('button', { name: 'Inspect workers' }));
   const inspector = document.querySelector('.team-inspector');
@@ -353,10 +352,9 @@ test('renders the projection order stably with LED-only Execution states', async
     'Implement approved design',
     'Verify implementation',
     'Prepare release',
-    'Draft and approve PRD',
   ];
   expect(actorOrder()).toEqual(expected);
-  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(6);
+  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(5);
   expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();
 
   await user.hover(within(execution).getByRole('img', { name: /Reviewing/ }));
@@ -397,11 +395,7 @@ test('exposes the same localized LED explanation on hover and keyboard focus', a
 });
 
 test('keeps active Execution LEDs static when reduced motion is preferred', () => {
-  vi.stubGlobal('matchMedia', vi.fn(() => ({
-    matches: true,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  })));
+  stubMediaPreferences({ reducedMotion: true });
   mocks.useProjectState.mockReturnValue({
     data: orderedExecutionData(), error: null, refresh: vi.fn(), status: 'ready',
   });
@@ -597,7 +591,10 @@ test('opens the exact attention Outcome in-place and restores Manager focus on c
   expect(within(dialog).getByText('Pending')).toBeVisible();
   expect(within(dialog).queryByText('work.plan.status.pending')).not.toBeInTheDocument();
   expect(within(dialog).getByText('CI: Passed')).toBeVisible();
-  expect(within(dialog).getByText('Reviewer provenance')).toBeVisible();
+  expect(within(dialog).queryByText('Evidence snapshot')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('Reviewer provenance')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('independent_reviewer')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('security-review-3')).not.toBeInTheDocument();
 
   await user.click(within(dialog).getAllByRole('button', { name: 'Close' })[0]);
 
@@ -605,7 +602,7 @@ test('opens the exact attention Outcome in-place and restores Manager focus on c
   const restoredManager = screen.getByRole('region', { name: 'Manager' });
   expect(restoredManager).toBeVisible();
   expect(restoredManager.querySelector('.team-manager-objective')).toHaveTextContent('Make OAuth production ready');
-  expect(architecture).not.toHaveAttribute('data-active-review');
+  expect(architecture).toHaveAttribute('data-active-review', 'true');
   expect(reviewButton).toHaveFocus();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
   expect(screen.getByTestId('location-search')).toHaveTextContent('?context=manager');
@@ -650,31 +647,110 @@ test('does not lend an actionable review to another same-role Outcome', async ()
   expect(within(dialog).queryByText('work.plan.status.waiting')).not.toBeInTheDocument();
 });
 
-test('opens Manager review on the Manager-first mobile layout with reduced motion', async () => {
+test('uses a Manager-default mobile tab workspace with keyboard navigation and mounted pane state', async () => {
+  const data = managerReviewData();
+  stubMediaPreferences({ mobile: true });
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const user = userEvent.setup();
+
+  renderWorkPage('/projects/DEMO/work/runs/run-active?mobile=tabs');
+
+  const tablist = screen.getByRole('tablist', { name: 'Team panes' });
+  const tabs = within(tablist).getAllByRole('tab');
+  expect(tabs.map((tab) => tab.id)).toEqual([
+    'team-tab-execution',
+    'team-tab-manager',
+    'team-tab-outcomes',
+  ]);
+  const [executionTab, managerTab, outcomesTab] = tabs;
+  const managerPanel = document.getElementById('team-panel-manager');
+  const executionPanel = document.getElementById('team-panel-execution');
+  const outcomesPanel = document.getElementById('team-panel-outcomes');
+  expect(managerTab).toHaveAttribute('aria-selected', 'true');
+  expect(managerTab).toHaveAttribute('tabindex', '0');
+  expect(managerTab).toHaveAccessibleName('Manager. Needs you');
+  expect(managerTab.querySelector('.team-mobile-nav__attention')).toBeInTheDocument();
+  expect(executionTab).toHaveAttribute('aria-selected', 'false');
+  expect(outcomesTab).toHaveAttribute('aria-selected', 'false');
+  expect(managerPanel).toBeVisible();
+  expect(managerPanel).toHaveAttribute('role', 'tabpanel');
+  expect(executionPanel).not.toBeVisible();
+  expect(outcomesPanel).not.toBeVisible();
+  expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+
+  await user.click(within(managerPanel).getByRole('button', { name: 'Request changes' }));
+  const draft = within(managerPanel).getByLabelText('What should change?');
+  await user.type(draft, 'Keep this draft while switching panes.');
+
+  managerTab.focus();
+  await user.keyboard('{ArrowLeft}');
+  expect(executionTab).toHaveFocus();
+  expect(executionTab).toHaveAttribute('aria-selected', 'true');
+  expect(executionPanel).toBeVisible();
+  expect(managerPanel).not.toBeVisible();
+
+  await user.keyboard('{ArrowRight}');
+  expect(managerTab).toHaveFocus();
+  expect(managerTab).toHaveAttribute('aria-selected', 'true');
+  expect(managerPanel).toBeVisible();
+  expect(within(managerPanel).getByLabelText('What should change?'))
+    .toHaveValue('Keep this draft while switching panes.');
+
+  await user.keyboard('{ArrowRight}');
+  expect(outcomesTab).toHaveFocus();
+  expect(outcomesPanel).toBeVisible();
+  expect(managerPanel).not.toBeVisible();
+});
+
+test('opens exact Manager review from the mobile Manager tab and retains its Outcome target', async () => {
   const data = managerReviewData();
   const scrollIntoView = vi.fn();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     value: scrollIntoView,
   });
-  vi.stubGlobal('matchMedia', vi.fn(() => ({
-    matches: true,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  })));
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+  stubMediaPreferences({ mobile: true, reducedMotion: true });
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
   const user = userEvent.setup();
 
   renderWorkPage('/projects/DEMO/work/runs/run-active?mobile=manager-first');
-  await user.click(within(screen.getByRole('region', { name: 'Manager' })).getByRole('button', { name: 'Inspect details →' }));
+  const tablist = screen.getByRole('tablist', { name: 'Team panes' });
+  const managerTab = within(tablist).getByRole('tab', { name: /Manager/ });
+  const outcomesTab = within(tablist).getByRole('tab', { name: 'Outcomes' });
+  const managerPanel = document.getElementById('team-panel-manager');
+  const outcomesPanel = document.getElementById('team-panel-outcomes');
+  const reviewButton = within(managerPanel).getByRole('button', { name: 'Inspect details →' });
 
-  expect(await screen.findByRole('dialog', { name: 'Architecture' })).toBeVisible();
+  await user.click(reviewButton);
+
+  const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
+  expect(dialog).toBeVisible();
+  expect(within(dialog).getByText('Architecture security review')).toBeVisible();
+  expect(managerTab).toHaveAttribute('aria-selected', 'true');
+  expect(managerPanel).toBeVisible();
+  expect(outcomesPanel).not.toBeVisible();
+  expect(document.querySelector('[data-task-id="DEMO-ARCH"]')).toHaveAttribute('data-active-review', 'true');
+  expect(document.querySelector('[data-task-id="DEMO-SEC"]')).not.toHaveAttribute('data-active-review');
+  expect(scrollIntoView).not.toHaveBeenCalled();
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
+
+  await user.click(within(dialog).getAllByRole('button', { name: 'Close' })[0]);
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(managerTab).toHaveAttribute('aria-selected', 'true');
+  expect(managerPanel).toBeVisible();
+  expect(reviewButton).toHaveFocus();
+  expect(document.querySelector('[data-task-id="DEMO-ARCH"]')).toHaveAttribute('data-active-review', 'true');
+
+  await user.click(outcomesTab);
+
+  expect(outcomesTab).toHaveAttribute('aria-selected', 'true');
+  expect(outcomesPanel).toBeVisible();
+  expect(managerPanel).not.toBeVisible();
   expect(document.querySelector('[data-task-id="DEMO-ARCH"]')).toHaveAttribute('data-active-review', 'true');
   expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
-  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
-  expect(document.querySelector('.team-workspace')).toBeVisible();
 });
 
 test('requires confirmation before the Manager cancels a mission', async () => {

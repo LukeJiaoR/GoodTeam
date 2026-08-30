@@ -246,7 +246,6 @@ export default function TaskDetailModal({
     ? review.recommendation
     : null;
   const evidence = asReviewObject(review?.evidence_snapshot);
-  const provenance = asReviewObject(review?.reviewer_provenance);
 
   return (
     <div
@@ -571,22 +570,6 @@ export default function TaskDetailModal({
                 ) : null}
 
                 <EvidenceSummary evidence={evidence} t={t} />
-                {Object.keys(evidence).length || Object.keys(provenance).length ? (
-                  <div className="task-detail-review-records">
-                    {Object.keys(evidence).length ? (
-                      <details>
-                        <summary>{t('review.evidence.title')}</summary>
-                        <pre>{JSON.stringify(evidence, null, 2)}</pre>
-                      </details>
-                    ) : null}
-                    {Object.keys(provenance).length ? (
-                      <details>
-                        <summary>{t('review.provenance.title')}</summary>
-                        <pre>{JSON.stringify(provenance, null, 2)}</pre>
-                      </details>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
 
               {isActionable ? (

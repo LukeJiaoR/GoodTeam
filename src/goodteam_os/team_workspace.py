@@ -77,6 +77,7 @@ _OPERATOR_PHASE_ROLES = {
 }
 _REVIEW_ROLES = {"review", "reviewer", "code_review", "qa", "security"}
 _TERMINAL_TASK_STATUSES = {"done", "canceled"}
+_TERMINAL_EXECUTION_STATES = {"completed", "stopped"}
 _WORKFLOW_STAGE_BY_GATE = {
     "prd": "product_requirement",
     "rfc": "architect",
@@ -355,9 +356,12 @@ def _workflow_actors(
 
     A worker job is an attempt, never the primary row identity. Task ids produce
     stable actor ids; the latest durable attempt only supplies current state and
-    attempt metadata. Jobs that cannot be associated without guessing are
-    compressed into one unbound actor per role instead of being attached to an
-    arbitrary same-role task.
+    attempt metadata. Terminal assignments do not remain as completed/stopped
+    workers: their attempt history and deliverables belong to Outcomes and the
+    secondary inspectors. A pending review, fix, or retry derives a non-terminal
+    assignment state and therefore remains visible here. Jobs that cannot be
+    associated without guessing are compressed into one unbound actor per role
+    instead of being attached to an arbitrary same-role task.
     """
     actors: list[dict[str, Any]] = []
     stable_order: dict[str, int] = {}
@@ -372,6 +376,8 @@ def _workflow_actors(
         if not role:
             continue
         state = _text(task.get("status")) or "up_next"
+        if state in _TERMINAL_EXECUTION_STATES:
+            continue
         actor_id = f"task-assignment:{task_id}"
         stable_order[actor_id] = task_order
         unmet_dependencies = [
@@ -413,6 +419,8 @@ def _workflow_actors(
         if current_attempt is None:
             continue
         state = _worker_attempt_state(current_attempt, fallback="waiting")
+        if state in _TERMINAL_EXECUTION_STATES:
+            continue
         actor_id = f"unbound-role:{role}"
         stable_order[actor_id] = len(outcomes) + role_order
         actors.append(
@@ -1084,24 +1092,25 @@ def _operator_actors(
         run_state = _OPERATOR_RUN_STATES.get(str(run.status), "working")
         if phase == "executing" and run_state != "blocked":
             run_state = "working"
-        actor_id = run.worker_job_id or f"{mission_id}:builder"
-        stable_order[actor_id] = 0
-        actors.append(
-            {
-                "id": actor_id,
-                "role": "implementation",
-                "state": run_state,
-                "responsibility": responsibility,
-                "task_id": task_id,
-                "dependency_reason": "",
-                "dependency_task_id": "",
-                "dependency_task_title": "",
-                "status_reason": _task_status_reason(run_state, ()),
-                "attempt": "1",
-                "source": "execution_ledger",
-                "updated_at": run.updated_at,
-            }
-        )
+        if run_state not in _TERMINAL_EXECUTION_STATES:
+            actor_id = run.worker_job_id or f"{mission_id}:builder"
+            stable_order[actor_id] = 0
+            actors.append(
+                {
+                    "id": actor_id,
+                    "role": "implementation",
+                    "state": run_state,
+                    "responsibility": responsibility,
+                    "task_id": task_id,
+                    "dependency_reason": "",
+                    "dependency_task_id": "",
+                    "dependency_task_title": "",
+                    "status_reason": _task_status_reason(run_state, ()),
+                    "attempt": "1",
+                    "source": "execution_ledger",
+                    "updated_at": run.updated_at,
+                }
+            )
 
     role = _OPERATOR_PHASE_ROLES.get(phase, "orchestrator")
     phase_state = _OPERATOR_PHASE_STATES.get(phase, "working")

@@ -13,6 +13,8 @@ import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 
 const VIEWS = ['plan', 'activity', 'execution', 'messages', 'delivery'];
+const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
+const MOBILE_TEAM_QUERY = '(max-width: 767px)';
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(() => (
@@ -26,6 +28,20 @@ function usePrefersReducedMotion() {
     return () => mq.removeEventListener?.('change', handler);
   }, []);
   return reduced;
+}
+
+function useMobileTeamWorkspace() {
+  const [mobile, setMobile] = useState(() => (
+    globalThis.matchMedia?.(MOBILE_TEAM_QUERY)?.matches || false
+  ));
+  useEffect(() => {
+    const mq = globalThis.matchMedia?.(MOBILE_TEAM_QUERY);
+    if (!mq) return undefined;
+    const handler = (event) => setMobile(event.matches);
+    mq.addEventListener?.('change', handler);
+    return () => mq.removeEventListener?.('change', handler);
+  }, []);
+  return mobile;
 }
 
 function tone(status) {
@@ -924,11 +940,12 @@ function ManagerPane({
   onStart,
   onTerminate,
   projectKey,
+  sectionProps,
   timeline,
   t,
 }) {
   return (
-    <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')}>
+    <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
       <header className="team-pane__header">
         <div>
           <span>{t('work.team.managerLabel')}</span>
@@ -978,9 +995,9 @@ function ManagerPane({
   );
 }
 
-function ExecutionPane({ actors, hasMission, onInspect, reducedMotion, t }) {
+function ExecutionPane({ actors, hasMission, onInspect, reducedMotion, sectionProps, t }) {
   return (
-    <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')}>
+    <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')} {...sectionProps}>
       <header className="team-pane__header">
         <div><span>{t('work.team.liveExecution')}</span><h2 id="team-execution-title">{t('work.team.execution')}</h2></div>
         <span className="team-pane__count">{actors.length}</span>
@@ -1017,10 +1034,11 @@ function OutcomesPane({
   onRegisterOutcome,
   onSelectTask,
   outcomes,
+  sectionProps,
   t,
 }) {
   return (
-    <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')}>
+    <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')} {...sectionProps}>
       <header className="team-pane__header">
         <div><span>{t('work.team.convergence')}</span><h2 id="team-outcomes-title">{t('work.team.outcomes')}</h2></div>
         <span className="team-pane__count">{outcomes.length}</span>
@@ -1154,9 +1172,12 @@ function TeamWorkspace({
   t,
   view,
 }) {
+  const mobileWorkspace = useMobileTeamWorkspace();
+  const [mobileTab, setMobileTab] = useState('manager');
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [selectedReviewTargetId, setSelectedReviewTargetId] = useState('');
   const [activeReviewTaskId, setActiveReviewTaskId] = useState('');
+  const mobileTabRefs = useRef(new Map());
   const outcomeRefs = useRef(new Map());
   const returnFocusRef = useRef(null);
   const workspace = data.team_workspace;
@@ -1171,6 +1192,9 @@ function TeamWorkspace({
       && task.review_target_id === attention.target_id
     )) || null
     : null;
+  const activeReviewTargetId = activeReviewTaskId === attentionReviewTask?.id
+    ? activeReviewTaskId
+    : '';
   const taskForModal = selectedTask ? {
     ...selectedTask,
     title: selectedTask.objective,
@@ -1188,36 +1212,105 @@ function TeamWorkspace({
   }, []);
   const openOutcome = useCallback((task, trigger) => {
     returnFocusRef.current = trigger || document.activeElement;
+    setActiveReviewTaskId(task.id === attentionReviewTask?.id ? task.id : '');
     setSelectedReviewTargetId(task.review_target_id || '');
     setSelectedTaskId(task.id);
-  }, []);
+  }, [attentionReviewTask]);
   const reviewAttentionOutcome = useCallback((trigger) => {
     if (!attentionReviewTask) return;
     returnFocusRef.current = trigger || document.activeElement;
     setActiveReviewTaskId(attentionReviewTask.id);
-    outcomeRefs.current.get(attentionReviewTask.id)?.scrollIntoView?.({
-      behavior: reducedMotion ? 'auto' : 'smooth',
-      block: 'nearest',
-      inline: 'nearest',
-    });
+    if (!mobileWorkspace) {
+      outcomeRefs.current.get(attentionReviewTask.id)?.scrollIntoView?.({
+        behavior: reducedMotion ? 'auto' : 'smooth',
+        block: 'nearest',
+        inline: 'nearest',
+      });
+    }
     setSelectedReviewTargetId(attention.target_id);
     setSelectedTaskId(attentionReviewTask.id);
-  }, [attention, attentionReviewTask, reducedMotion]);
+  }, [attention, attentionReviewTask, mobileWorkspace, reducedMotion]);
   const closeTaskModal = useCallback(() => {
     const returnFocus = returnFocusRef.current;
     returnFocusRef.current = null;
     setSelectedTaskId('');
     setSelectedReviewTargetId('');
-    setActiveReviewTaskId('');
     returnFocus?.focus?.();
   }, []);
+  const handleMobileTabKeyDown = useCallback((event, currentTab) => {
+    const currentIndex = MOBILE_TEAM_TABS.indexOf(currentTab);
+    let nextIndex;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % MOBILE_TEAM_TABS.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + MOBILE_TEAM_TABS.length) % MOBILE_TEAM_TABS.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = MOBILE_TEAM_TABS.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = MOBILE_TEAM_TABS[nextIndex];
+    setMobileTab(nextTab);
+    mobileTabRefs.current.get(nextTab)?.focus();
+  }, []);
+  const sectionProps = (tab) => ({
+    id: `team-panel-${tab}`,
+    'data-mobile-active': mobileTab === tab ? 'true' : 'false',
+    ...(mobileWorkspace ? {
+      'aria-labelledby': `team-tab-${tab}`,
+      hidden: mobileTab !== tab,
+      role: 'tabpanel',
+    } : {}),
+  });
+  useEffect(() => {
+    if (!mobileWorkspace || mobileTab !== 'outcomes' || !activeReviewTargetId) return;
+    outcomeRefs.current.get(activeReviewTargetId)?.scrollIntoView?.({
+      behavior: reducedMotion ? 'auto' : 'smooth',
+      block: 'nearest',
+      inline: 'nearest',
+    });
+  }, [activeReviewTargetId, mobileTab, mobileWorkspace, reducedMotion]);
+  const mobileTabs = [
+    { id: 'execution', label: t('work.team.execution') },
+    { id: 'manager', label: t('work.team.manager') },
+    { id: 'outcomes', label: t('work.team.outcomes') },
+  ];
   return (
     <>
-      <nav className="team-mobile-nav" aria-label={t('work.team.navigation')}>
-        <a href="#team-manager-title">{t('work.team.manager')}</a>
-        <a href="#team-execution-title">{t('work.team.execution')}</a>
-        <a href="#team-outcomes-title">{t('work.team.outcomes')}</a>
-      </nav>
+      <div
+        aria-label={t('work.team.navigation')}
+        aria-orientation="horizontal"
+        className="team-mobile-nav"
+        role="tablist"
+      >
+        {mobileTabs.map((tab) => {
+          const selected = mobileTab === tab.id;
+          const hasAttention = tab.id === 'manager' && Boolean(attention);
+          return (
+            <button
+              aria-controls={`team-panel-${tab.id}`}
+              aria-label={hasAttention ? `${tab.label}. ${t('work.manager.needsYou')}` : tab.label}
+              aria-selected={selected}
+              data-active={selected ? 'true' : 'false'}
+              id={`team-tab-${tab.id}`}
+              key={tab.id}
+              onClick={() => setMobileTab(tab.id)}
+              onKeyDown={(event) => handleMobileTabKeyDown(event, tab.id)}
+              ref={(node) => {
+                if (node) mobileTabRefs.current.set(tab.id, node);
+                else mobileTabRefs.current.delete(tab.id);
+              }}
+              role="tab"
+              tabIndex={selected ? 0 : -1}
+              type="button"
+            >
+              <span>{tab.label}</span>
+              {hasAttention ? (
+                <span className="team-mobile-nav__attention">
+                  <span className="sr-only">{t('work.manager.needsYou')}</span>
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
       <div className="team-workspace" aria-label={t('work.team.workspace')}>
         <ManagerPane
           attention={workspace.attention_request}
@@ -1234,6 +1327,7 @@ function TeamWorkspace({
           onStart={onStart}
           onTerminate={onTerminate}
           projectKey={projectKey}
+          sectionProps={sectionProps('manager')}
           timeline={workspace.manager_timeline || []}
           t={t}
         />
@@ -1242,16 +1336,18 @@ function TeamWorkspace({
           hasMission={Boolean(mission)}
           onInspect={onInspect}
           reducedMotion={reducedMotion}
+          sectionProps={sectionProps('execution')}
           t={t}
         />
         <OutcomesPane
-          activeReviewTaskId={activeReviewTaskId}
+          activeReviewTaskId={activeReviewTargetId}
           attentionTaskId={attentionReviewTask?.id || ''}
           hasMission={Boolean(mission)}
           onInspect={onInspect}
           onRegisterOutcome={registerOutcome}
           onSelectTask={openOutcome}
           outcomes={outcomes}
+          sectionProps={sectionProps('outcomes')}
           t={t}
         />
       </div>
