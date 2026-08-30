@@ -23,9 +23,14 @@ _TASK_STATES = {
 _WORKER_STATES = {
     "queued": "waiting",
     "ready": "waiting",
+    "pending": "waiting",
+    "needs_review": "waiting",
     "running": "working",
+    "in_progress": "working",
     "completed": "completed",
     "ok": "completed",
+    "succeeded": "completed",
+    "blocked": "blocked",
     "failed": "blocked",
     "error": "blocked",
     "possibly_stuck": "blocked",
@@ -71,6 +76,30 @@ _OPERATOR_PHASE_ROLES = {
     "paused": "orchestrator",
 }
 _REVIEW_ROLES = {"review", "reviewer", "code_review", "qa", "security"}
+_TERMINAL_TASK_STATUSES = {"done", "canceled"}
+_WORKFLOW_STAGE_BY_GATE = {
+    "prd": "product_requirement",
+    "rfc": "architect",
+    "security": "architect",
+    "fix_plan": "implementation",
+    "code_review": "implementation",
+    "staging": "qa",
+    "qa": "qa",
+    "release": "release",
+}
+_WORKFLOW_STAGE_BY_ARTIFACT = {
+    "prd": "product_requirement",
+    "prd_proposed": "product_requirement",
+    "rfc": "architect",
+    "task_breakdown": "implementation",
+    "ui_spec": "implementation",
+    "implementation_handoff": "implementation",
+    "review_report": "implementation",
+    "code_review": "implementation",
+    "qa_report": "qa",
+    "staging_report": "qa",
+    "release_notes": "release",
+}
 
 
 def empty_team_workspace() -> dict[str, Any]:
@@ -137,16 +166,19 @@ def _build_workflow_workspace(
     action_items: Sequence[Mapping[str, object]],
 ) -> dict[str, Any]:
     run_actions = [item for item in action_items if _text(item.get("run_id")) in {"", state.run_id}]
-    run_jobs = [item for item in worker_jobs if _text(item.get("run_id")) in {"", state.run_id}]
+    # Worker jobs always persist a run id. Blank or foreign ids belong in the
+    # attempt inspector, not in an active workflow's current-team projection.
+    run_jobs = [item for item in worker_jobs if _text(item.get("run_id")) == state.run_id]
     ordered_actions = sorted(run_actions, key=lambda item: _text(item.get("timestamp")))
     started_at = next(
         (_text(item.get("timestamp")) for item in ordered_actions if item.get("action") == "workflow_started"),
         "",
     )
-    outcomes = _workflow_outcomes(tasks, run_jobs, approval_reviews)
+    jobs_by_task, unbound_jobs_by_role = _associate_workflow_jobs(tasks, run_jobs)
+    outcomes = _workflow_outcomes(tasks, jobs_by_task, approval_reviews)
     updated_at = _latest_timestamp(ordered_actions, run_jobs, outcomes)
-    actors = _workflow_actors(outcomes, run_jobs)
-    attention = _workflow_attention(state, outcomes, run_jobs, approval_reviews)
+    actors = _workflow_actors(outcomes, jobs_by_task, unbound_jobs_by_role)
+    attention = _workflow_attention(state, outcomes, actors, approval_reviews)
     mission_status = "waiting" if attention else "working"
 
     timeline = [
@@ -212,7 +244,7 @@ def _build_workflow_workspace(
 
 def _workflow_outcomes(
     tasks: Sequence[Mapping[str, object]],
-    worker_jobs: Sequence[Mapping[str, object]],
+    worker_jobs_by_task: Mapping[str, Sequence[Mapping[str, object]]],
     approval_reviews: Sequence[Mapping[str, object]],
 ) -> list[dict[str, Any]]:
     task_rows = [dict(task) for task in tasks]
@@ -227,15 +259,20 @@ def _workflow_outcomes(
         status = _TASK_STATES.get(raw_status, "up_next")
         if status == "up_next" and unmet:
             status = "waiting"
-        matching_jobs = [job for job in worker_jobs if _text(job.get("role")) == role]
-        latest_job = _latest_item(matching_jobs)
-        if latest_job and raw_status not in {"done", "canceled"}:
-            status = _actor_state(latest_job, fallback=status)
+        matching_jobs = list(worker_jobs_by_task.get(task_id, ()))
+        current_attempt = _authoritative_worker_attempt(matching_jobs)
+        status = _workflow_assignment_state(task, current_attempt, fallback=status)
         review = _matching_review(task, approval_reviews)
-        if review and bool(review.get("is_actionable")):
+        if (
+            review
+            and bool(review.get("is_actionable"))
+            and raw_status not in _TERMINAL_TASK_STATUSES
+            and status not in {"working", "fixing", "blocked"}
+        ):
             status = "reviewing"
         refs = [_text(item) for item in _list(task.get("artifact_refs")) if _text(item)]
         primary_outcome = _primary_artifact(refs)
+        current_attempt_id = _text(current_attempt.get("id")) if current_attempt else ""
         outcomes.append(
             {
                 "id": task_id,
@@ -247,10 +284,11 @@ def _workflow_outcomes(
                 "dependencies": dependencies,
                 "acceptance_criteria": [_text(item) for item in _list(task.get("acceptance_criteria"))],
                 "attempt_count": len(matching_jobs),
+                "current_attempt_id": current_attempt_id,
                 "review_state": _text(review.get("decision")) if review else "",
                 "primary_outcome": primary_outcome,
                 "supporting_refs": refs[1:] if primary_outcome else refs,
-                "updated_at": _text(task.get("updated_at")),
+                "updated_at": max(_text(task.get("updated_at")), _updated_at(current_attempt or {})),
             }
         )
     return outcomes
@@ -258,62 +296,315 @@ def _workflow_outcomes(
 
 def _workflow_actors(
     outcomes: Sequence[Mapping[str, object]],
-    worker_jobs: Sequence[Mapping[str, object]],
+    worker_jobs_by_task: Mapping[str, Sequence[Mapping[str, object]]],
+    unbound_jobs_by_role: Mapping[str, Sequence[Mapping[str, object]]],
 ) -> list[dict[str, Any]]:
+    """Project one current actor per logical task assignment.
+
+    A worker job is an attempt, never the primary row identity. Task ids produce
+    stable actor ids; the latest durable attempt only supplies current state and
+    attempt metadata. Jobs that cannot be associated without guessing are
+    compressed into one unbound actor per role instead of being attached to an
+    arbitrary same-role task.
+    """
     actors: list[dict[str, Any]] = []
-    jobs_by_role: dict[str, list[Mapping[str, object]]] = {}
-    for job in worker_jobs:
-        jobs_by_role.setdefault(_text(job.get("role")) or "worker", []).append(job)
-
-    for role, role_jobs in sorted(jobs_by_role.items()):
-        for job in sorted(role_jobs, key=_updated_at):
-            task = _latest_outcome_for_role(outcomes, role)
-            state = _actor_state(job, fallback=_text(task.get("status")) if task else "waiting")
-            if state == "working" and _is_review_role(role):
-                state = "reviewing"
-            if state == "working" and _text(job.get("retry_attempt")):
-                state = "fixing"
-            actors.append(
-                {
-                    "id": _text(job.get("id")) or f"role:{role}",
-                    "role": role,
-                    "state": state,
-                    "responsibility": (
-                        _text(task.get("objective")) if task else _text(job.get("summary"))
-                    ),
-                    "task_id": _text(task.get("id")) if task else "",
-                    "dependency_reason": _text(task.get("status_reason")) if task and state == "waiting" else "",
-                    "attempt": _text(job.get("retry_attempt")) or _text(job.get("attempt")),
-                    "source": "worker_job",
-                    "updated_at": _text(job.get("updated_at")),
-                }
-            )
-
-    roles_with_jobs = set(jobs_by_role)
     for task in outcomes:
+        task_id = _text(task.get("id"))
+        task_jobs = list(worker_jobs_by_task.get(task_id, ()))
+        current_attempt = _authoritative_worker_attempt(task_jobs)
         role = _text(task.get("owner"))
-        if not role or role in roles_with_jobs:
+        if not role and current_attempt is not None:
+            role = _text(current_attempt.get("role"))
+        if not role:
             continue
+        state = _text(task.get("status")) or "up_next"
         actors.append(
             {
-                "id": f"task-role:{task.get('id')}",
+                "id": f"task-assignment:{task_id}",
                 "role": role,
-                "state": _text(task.get("status")) or "up_next",
+                "state": state,
                 "responsibility": _text(task.get("objective")),
-                "task_id": _text(task.get("id")),
-                "dependency_reason": _text(task.get("status_reason")) if task.get("status") == "waiting" else "",
-                "attempt": "",
-                "source": "task_role",
+                "task_id": task_id,
+                "dependency_reason": _text(task.get("status_reason")) if state == "waiting" else "",
+                "attempt": (
+                    _text(current_attempt.get("retry_attempt") or current_attempt.get("attempt"))
+                    if current_attempt
+                    else ""
+                ),
+                "attempt_count": len(task_jobs),
+                "current_attempt_id": _text(current_attempt.get("id")) if current_attempt else "",
+                "source": "worker_job" if current_attempt else "task_role",
                 "updated_at": _text(task.get("updated_at")),
+            }
+        )
+
+    for role, role_jobs in sorted(unbound_jobs_by_role.items()):
+        current_attempt = _authoritative_worker_attempt(role_jobs)
+        if current_attempt is None:
+            continue
+        state = _worker_attempt_state(current_attempt, fallback="waiting")
+        actors.append(
+            {
+                "id": f"unbound-role:{role}",
+                "role": role,
+                "state": state,
+                "responsibility": _text(current_attempt.get("summary")),
+                "task_id": "",
+                "dependency_reason": "",
+                "attempt": _text(current_attempt.get("retry_attempt") or current_attempt.get("attempt")),
+                "attempt_count": len(role_jobs),
+                "current_attempt_id": _text(current_attempt.get("id")),
+                "source": "unbound_worker_job",
+                "updated_at": _updated_at(current_attempt),
             }
         )
     return actors
 
 
+def _associate_workflow_jobs(
+    tasks: Sequence[Mapping[str, object]],
+    worker_jobs: Sequence[Mapping[str, object]],
+) -> tuple[dict[str, list[Mapping[str, object]]], dict[str, list[Mapping[str, object]]]]:
+    """Associate attempts to tasks without inferring identity from display text.
+
+    The deterministic priority is: an explicit task/assignment id; exact durable
+    references (task source, external ref, execution id, or artifact path);
+    workflow gate/phase/artifact identity; retry or dispatch lineage; and finally
+    a compatibility role match only when that role owns exactly one task. Any
+    remaining attempts are grouped once by role as unbound current work.
+    """
+    task_rows = [task for task in tasks if _text(task.get("id"))]
+    tasks_by_id = {_text(task.get("id")): task for task in task_rows}
+    jobs_by_task: dict[str, list[Mapping[str, object]]] = {task_id: [] for task_id in tasks_by_id}
+    assigned_jobs: list[tuple[Mapping[str, object], str]] = []
+    pending_jobs: list[tuple[Mapping[str, object], bool]] = []
+
+    def assign(job: Mapping[str, object], task_id: str) -> None:
+        jobs_by_task[task_id].append(job)
+        assigned_jobs.append((job, task_id))
+
+    for job in worker_jobs:
+        task_id, protected = _explicit_task_match(job, task_rows, tasks_by_id)
+        if task_id:
+            assign(job, task_id)
+        else:
+            pending_jobs.append((job, protected))
+
+    # Retry and dispatch identities can connect a compatibility record to a job
+    # that already carries an explicit task reference. Resolve transitively.
+    while True:
+        next_pending: list[tuple[Mapping[str, object], bool]] = []
+        resolved = False
+        for job, protected in pending_jobs:
+            if protected:
+                next_pending.append((job, protected))
+                continue
+            lineage_matches = {
+                task_id
+                for assigned_job, task_id in assigned_jobs
+                if _worker_jobs_share_lineage(job, assigned_job)
+            }
+            if len(lineage_matches) == 1:
+                assign(job, lineage_matches.pop())
+                resolved = True
+            else:
+                next_pending.append((job, protected or len(lineage_matches) > 1))
+        pending_jobs = next_pending
+        if not resolved:
+            break
+
+    tasks_by_role: dict[str, list[str]] = {}
+    for task_id, task in tasks_by_id.items():
+        role = _text(task.get("role"))
+        if role:
+            tasks_by_role.setdefault(role, []).append(task_id)
+
+    unbound_jobs_by_role: dict[str, list[Mapping[str, object]]] = {}
+    for job, protected in pending_jobs:
+        role = _text(job.get("role")) or "worker"
+        compatible_tasks = tasks_by_role.get(role, [])
+        if not protected and len(compatible_tasks) == 1:
+            assign(job, compatible_tasks[0])
+            continue
+        unbound_jobs_by_role.setdefault(role, []).append(job)
+    return jobs_by_task, unbound_jobs_by_role
+
+
+def _explicit_task_match(
+    job: Mapping[str, object],
+    tasks: Sequence[Mapping[str, object]],
+    tasks_by_id: Mapping[str, Mapping[str, object]],
+) -> tuple[str, bool]:
+    direct_task_id = next(
+        (
+            _text(job.get(key))
+            for key in ("task_id", "assignment_id", "logical_task_id")
+            if _text(job.get(key))
+        ),
+        "",
+    )
+    if direct_task_id:
+        return (direct_task_id, True) if direct_task_id in tasks_by_id else ("", True)
+
+    exact_references = [
+        *[_text(item) for item in _list(job.get("external_refs")) if _text(item)],
+        _text(job.get("task_source")),
+        _text(job.get("execution_id")),
+        _text(job.get("artifact_path")),
+        _text(job.get("idempotency_key")),
+    ]
+    reference_matches = {
+        task_id
+        for reference in exact_references
+        if reference and reference != "inline"
+        for task_id in _task_ids_for_reference(tasks, reference)
+    }
+    if len(reference_matches) == 1:
+        return reference_matches.pop(), True
+    if len(reference_matches) > 1:
+        return "", True
+
+    execution_id = _text(job.get("execution_id"))
+    if execution_id:
+        return "", True
+    task_source = _text(job.get("task_source"))
+    if task_source.startswith(("task:", "task_id:", "assignment:", "logical_task:")):
+        return "", True
+
+    gate = _text(job.get("gate") or job.get("approval"))
+    stage = _WORKFLOW_STAGE_BY_GATE.get(gate)
+    if stage:
+        stage_matches = _task_ids_for_stage(tasks, stage)
+        if len(stage_matches) == 1:
+            return stage_matches[0], True
+        if len(stage_matches) > 1:
+            return "", True
+
+    artifact_stage = _WORKFLOW_STAGE_BY_ARTIFACT.get(_text(job.get("artifact_key")))
+    if artifact_stage:
+        stage_matches = _task_ids_for_stage(tasks, artifact_stage)
+        if len(stage_matches) == 1:
+            return stage_matches[0], True
+        if len(stage_matches) > 1:
+            return "", True
+
+    phase = _text(job.get("phase"))
+    if phase in {"product_requirement", "architect", "implementation", "qa", "release"}:
+        stage_matches = _task_ids_for_stage(tasks, phase)
+        if len(stage_matches) == 1:
+            return stage_matches[0], True
+        if len(stage_matches) > 1:
+            return "", True
+    return "", False
+
+
+def _task_ids_for_reference(tasks: Sequence[Mapping[str, object]], reference: str) -> list[str]:
+    references = {reference}
+    for prefix in ("task:", "task_id:", "assignment:", "logical_task:"):
+        if reference.startswith(prefix):
+            references.add(reference.removeprefix(prefix))
+    matches: list[str] = []
+    for task in tasks:
+        task_references = {
+            _text(task.get("id")),
+            *[_text(item) for item in _list(task.get("external_refs")) if _text(item)],
+            *[_text(item) for item in _list(task.get("artifact_refs")) if _text(item)],
+        }
+        if references & task_references:
+            matches.append(_text(task.get("id")))
+    return matches
+
+
+def _task_ids_for_stage(tasks: Sequence[Mapping[str, object]], stage: str) -> list[str]:
+    stage_ref = f"stage:{stage}"
+    explicit = [
+        _text(task.get("id"))
+        for task in tasks
+        if stage_ref in {_text(item) for item in _list(task.get("external_refs"))}
+    ]
+    if explicit:
+        return explicit
+    return [_text(task.get("id")) for task in tasks if _text(task.get("role")) == stage]
+
+
+def _worker_jobs_share_lineage(
+    left: Mapping[str, object],
+    right: Mapping[str, object],
+) -> bool:
+    left_id = _text(left.get("id"))
+    right_id = _text(right.get("id"))
+    if left_id and left_id == _text(right.get("original_failed_job_id")):
+        return True
+    if right_id and right_id == _text(left.get("original_failed_job_id")):
+        return True
+    left_key = _text(left.get("idempotency_key"))
+    right_key = _text(right.get("idempotency_key"))
+    if left_key and left_key == _text(right.get("retry_of_idempotency_key")):
+        return True
+    if right_key and right_key == _text(left.get("retry_of_idempotency_key")):
+        return True
+    left_group = _text(left.get("dispatch_group_id"))
+    right_group = _text(right.get("dispatch_group_id"))
+    return bool(left_group and left_group == right_group)
+
+
+def _workflow_assignment_state(
+    task: Mapping[str, object],
+    current_attempt: Mapping[str, object] | None,
+    *,
+    fallback: str,
+) -> str:
+    """Derive current assignment state with terminal task state as authority.
+
+    Otherwise only the authoritative latest attempt may override the task: a
+    historical failure cannot beat a later success, and a newer active retry
+    cannot be hidden by a historical success.
+    """
+    raw_task_status = _text(task.get("status"))
+    if raw_task_status in _TERMINAL_TASK_STATUSES:
+        return _TASK_STATES[raw_task_status]
+    if current_attempt is None:
+        return fallback
+    return _worker_attempt_state(current_attempt, fallback=fallback)
+
+
+def _worker_attempt_state(job: Mapping[str, object], *, fallback: str) -> str:
+    state = _actor_state(job, fallback=fallback)
+    if state == "working" and _is_retry_attempt(job):
+        return "fixing"
+    if state == "working" and _is_review_role(_text(job.get("role"))):
+        return "reviewing"
+    return state
+
+
+def _is_retry_attempt(job: Mapping[str, object]) -> bool:
+    return bool(
+        _text(job.get("retry_attempt"))
+        or _text(job.get("original_failed_job_id"))
+        or _text(job.get("retry_of_idempotency_key"))
+        or _integer(job.get("attempt")) > 1
+    )
+
+
+def _authoritative_worker_attempt(
+    worker_jobs: Sequence[Mapping[str, object]],
+) -> Mapping[str, object] | None:
+    if not worker_jobs:
+        return None
+    return max(
+        worker_jobs,
+        key=lambda job: (
+            _updated_at(job),
+            _integer(job.get("retry_attempt") or job.get("attempt")),
+            _text(job.get("id")),
+        ),
+    )
+
+
 def _workflow_attention(
     state: AgileDevState,
     outcomes: Sequence[Mapping[str, object]],
-    worker_jobs: Sequence[Mapping[str, object]],
+    execution_actors: Sequence[Mapping[str, object]],
     approval_reviews: Sequence[Mapping[str, object]],
 ) -> dict[str, Any] | None:
     actionable = next((item for item in approval_reviews if bool(item.get("is_actionable"))), None)
@@ -342,10 +633,13 @@ def _workflow_attention(
             "actions": ["review", "cancel_mission"],
         }
     blocked_tasks = [item for item in outcomes if item.get("status") == "blocked"]
-    blocked_jobs = [item for item in worker_jobs if _actor_state(item) == "blocked"]
-    if state.blockers or blocked_tasks or blocked_jobs:
+    blocked_actors = [item for item in execution_actors if item.get("state") == "blocked"]
+    if state.blockers or blocked_tasks or blocked_actors:
         refs = [_text(item.get("id")) for item in blocked_tasks]
-        refs.extend(_text(item.get("id")) for item in blocked_jobs)
+        refs.extend(
+            _text(item.get("current_attempt_id")) or _text(item.get("id"))
+            for item in blocked_actors
+        )
         return {
             "id": "workflow-blocked",
             "kind": "blocker",
@@ -839,17 +1133,6 @@ def _is_review_role(role: str) -> bool:
     return lowered in _REVIEW_ROLES or "review" in lowered
 
 
-def _latest_outcome_for_role(
-    outcomes: Sequence[Mapping[str, object]],
-    role: str,
-) -> Mapping[str, object] | None:
-    matches = [item for item in outcomes if _text(item.get("owner")) == role]
-    if not matches:
-        return None
-    active = [item for item in matches if item.get("status") not in {"completed", "stopped"}]
-    return max(active or matches, key=lambda item: _text(item.get("updated_at")))
-
-
 def _task_status_reason(status: str, unmet_dependencies: Sequence[str]) -> str:
     if status == "waiting" and unmet_dependencies:
         return "waiting_for_dependencies"
@@ -890,10 +1173,6 @@ def _latest_timestamp(*collections: Sequence[Mapping[str, object]]) -> str:
         if _updated_at(item)
     ]
     return max(values, default="")
-
-
-def _latest_item(items: Sequence[Mapping[str, object]]) -> Mapping[str, object] | None:
-    return max(items, key=_updated_at) if items else None
 
 
 def _updated_at(item: Mapping[str, object]) -> str:

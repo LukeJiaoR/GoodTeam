@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@xyflow/react', async () => {
@@ -124,6 +124,43 @@ function projectedWorkData(overrides = {}) {
   };
 }
 
+function repeatedArchitectAttemptData() {
+  const data = projectedWorkData();
+  data.worker_jobs = [
+    { id: 'job-architect-1', role: 'architect', status: 'blocked' },
+    { id: 'job-architect-2', role: 'architect', status: 'completed' },
+    { id: 'job-architect-3', role: 'architect', status: 'blocked' },
+    { id: 'job-architect-4', role: 'architect', status: 'completed' },
+  ];
+  data.team_workspace.execution_actors = [
+    {
+      id: 'task-assignment:DEMO-1',
+      role: 'architect',
+      state: 'completed',
+      responsibility: 'Design RFC & Security Review',
+      task_id: 'DEMO-1',
+      attempt_count: 4,
+      current_attempt_id: 'job-architect-4',
+      source: 'worker_job',
+    },
+  ];
+  data.team_workspace.outcome_tasks = [
+    {
+      id: 'DEMO-1',
+      objective: 'Design RFC & Security Review',
+      owner: 'architect',
+      status: 'completed',
+      status_reason: 'delivered',
+      dependencies: [],
+      acceptance_criteria: [],
+      attempt_count: 4,
+      current_attempt_id: 'job-architect-4',
+      supporting_refs: [],
+    },
+  ];
+  return data;
+}
+
 test('renders the Manager-centered three-pane workspace from the durable projection', async () => {
   mocks.useProjectState.mockReturnValue({
     data: projectedWorkData(), error: null, refresh: vi.fn(), status: 'ready',
@@ -148,6 +185,30 @@ test('renders the Manager-centered three-pane workspace from the durable project
 
   await userEvent.click(screen.getByRole('button', { name: /Implement OAuth/ }));
   expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
+});
+
+test('renders repeated Architect attempts once while retaining worker history in the inspector', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: repeatedArchitectAttemptData(), error: null, refresh: vi.fn(), status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
+  });
+
+  renderWorkPage();
+
+  const executionPane = screen.getByRole('region', { name: 'Execution' });
+  expect(within(executionPane).getAllByRole('listitem')).toHaveLength(1);
+  expect(within(executionPane).getByText('Architect')).toBeVisible();
+  expect(within(executionPane).getByText('Design RFC & Security Review')).toBeVisible();
+  expect(within(executionPane).getByText('Completed')).toBeVisible();
+
+  await userEvent.click(within(executionPane).getByRole('button', { name: 'Inspect workers' }));
+  const inspector = document.querySelector('.team-inspector');
+  expect(inspector).not.toBeNull();
+  for (const jobId of ['job-architect-1', 'job-architect-2', 'job-architect-3', 'job-architect-4']) {
+    expect(within(inspector).getByText(jobId)).toBeVisible();
+  }
 });
 
 test('starts empty Work from the Manager inside the three-pane workspace', async () => {

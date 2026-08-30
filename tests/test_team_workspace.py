@@ -10,6 +10,65 @@ from goodteam_os.state import create_initial_state
 from goodteam_os.team_workspace import build_team_workspace, empty_team_workspace
 
 
+def _workflow_task(
+    task_id: str,
+    title: str,
+    role: str,
+    *,
+    status: str = "in_progress",
+    dependencies: list[str] | None = None,
+    external_refs: list[str] | None = None,
+    updated_at: str = "2026-08-30T10:00:00Z",
+) -> dict[str, object]:
+    return {
+        "id": task_id,
+        "title": title,
+        "description": f"Logical assignment for {title}.",
+        "role": role,
+        "status": status,
+        "dependencies": dependencies or [],
+        "acceptance_criteria": [],
+        "artifact_refs": [],
+        "external_refs": external_refs or [],
+        "updated_at": updated_at,
+    }
+
+
+def _workflow_job(
+    job_id: str,
+    status: str,
+    updated_at: str,
+    *,
+    run_id: str = "run-identity",
+    role: str = "architect",
+    **identity: object,
+) -> dict[str, object]:
+    return {
+        "id": job_id,
+        "run_id": run_id,
+        "role": role,
+        "status": status,
+        "updated_at": updated_at,
+        **identity,
+    }
+
+
+def _workflow_identity_projection(
+    tasks: list[dict[str, object]],
+    jobs: list[dict[str, object]],
+) -> dict[str, object]:
+    state = create_initial_state("run-identity", "DEMO", "Deliver the architecture mission")
+    state.current_node = "implementation"
+    state.next_node = "code_review"
+    return build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        tasks=tasks,
+        worker_jobs=jobs,
+    )
+
+
 def test_workflow_projection_compresses_durable_state_into_team_contract(tmp_path: Path) -> None:
     state = create_initial_state("run-1", "DEMO", "Make OAuth production ready")
     state.current_node = "implementation"
@@ -114,6 +173,214 @@ def test_workflow_projection_compresses_durable_state_into_team_contract(tmp_pat
     assert projection["outcome_tasks"][0]["supporting_refs"] == ["/tmp/oauth-test.log"]
     assert projection["outcome_tasks"][1]["status_reason"] == "waiting_for_dependencies"
     assert projection["attention_request"] is None
+
+
+def test_same_task_and_role_with_many_attempts_projects_one_execution_actor() -> None:
+    task = _workflow_task("DEMO-1", "Design RFC & Security Review", "architect")
+    jobs = [
+        _workflow_job("job-1", "blocked", "2026-08-30T10:01:00Z"),
+        _workflow_job("job-2", "completed", "2026-08-30T10:02:00Z"),
+        _workflow_job("job-3", "blocked", "2026-08-30T10:03:00Z"),
+        _workflow_job("job-4", "completed", "2026-08-30T10:04:00Z"),
+    ]
+
+    projection = _workflow_identity_projection([task], jobs)
+
+    assert projection["execution_actors"] == [
+        {
+            "id": "task-assignment:DEMO-1",
+            "role": "architect",
+            "state": "completed",
+            "responsibility": "Design RFC & Security Review",
+            "task_id": "DEMO-1",
+            "dependency_reason": "",
+            "attempt": "",
+            "attempt_count": 4,
+            "current_attempt_id": "job-4",
+            "source": "worker_job",
+            "updated_at": "2026-08-30T10:04:00Z",
+        }
+    ]
+    assert projection["outcome_tasks"][0]["attempt_count"] == 4
+    assert projection["outcome_tasks"][0]["current_attempt_id"] == "job-4"
+
+
+def test_blocked_attempt_followed_by_completed_attempt_is_one_completed_actor() -> None:
+    projection = _workflow_identity_projection(
+        [_workflow_task("DEMO-1", "Design RFC & Security Review", "architect")],
+        [
+            _workflow_job("job-blocked", "blocked", "2026-08-30T10:01:00Z"),
+            _workflow_job("job-completed", "completed", "2026-08-30T10:02:00Z"),
+        ],
+    )
+
+    assert len(projection["execution_actors"]) == 1
+    assert projection["execution_actors"][0]["state"] == "completed"
+    assert projection["outcome_tasks"][0]["status"] == "completed"
+    assert projection["attention_request"] is None
+
+
+def test_newer_running_retry_overrides_historical_completed_attempt() -> None:
+    projection = _workflow_identity_projection(
+        [_workflow_task("DEMO-1", "Design RFC & Security Review", "architect")],
+        [
+            _workflow_job(
+                "job-completed",
+                "completed",
+                "2026-08-30T10:01:00Z",
+                idempotency_key="architect-base",
+            ),
+            _workflow_job(
+                "job-retry",
+                "running",
+                "2026-08-30T10:02:00Z",
+                retry_attempt=2,
+                retry_of_idempotency_key="architect-base",
+            ),
+        ],
+    )
+
+    assert len(projection["execution_actors"]) == 1
+    assert projection["execution_actors"][0]["state"] == "fixing"
+    assert projection["execution_actors"][0]["current_attempt_id"] == "job-retry"
+    assert projection["outcome_tasks"][0]["status"] == "fixing"
+
+
+def test_same_role_with_two_durable_task_references_projects_two_assignments() -> None:
+    tasks = [
+        _workflow_task(
+            "DEMO-1",
+            "Design RFC",
+            "architect",
+            external_refs=["assignment:architecture-design"],
+        ),
+        _workflow_task(
+            "DEMO-2",
+            "Security architecture review",
+            "architect",
+            external_refs=["assignment:security-review"],
+        ),
+    ]
+    jobs = [
+        _workflow_job(
+            "job-design",
+            "completed",
+            "2026-08-30T10:01:00Z",
+            task_id="DEMO-1",
+        ),
+        _workflow_job(
+            "job-security",
+            "running",
+            "2026-08-30T10:02:00Z",
+            task_source="assignment:security-review",
+        ),
+    ]
+
+    projection = _workflow_identity_projection(tasks, jobs)
+
+    assert [(actor["task_id"], actor["responsibility"]) for actor in projection["execution_actors"]] == [
+        ("DEMO-1", "Design RFC"),
+        ("DEMO-2", "Security architecture review"),
+    ]
+    assert [actor["id"] for actor in projection["execution_actors"]] == [
+        "task-assignment:DEMO-1",
+        "task-assignment:DEMO-2",
+    ]
+
+
+def test_planned_task_without_worker_attempt_projects_once_as_waiting() -> None:
+    projection = _workflow_identity_projection(
+        [
+            _workflow_task(
+                "DEMO-2",
+                "Review implementation",
+                "reviewer",
+                status="todo",
+                dependencies=["DEMO-1"],
+            )
+        ],
+        [],
+    )
+
+    assert projection["execution_actors"] == [
+        {
+            "id": "task-assignment:DEMO-2",
+            "role": "reviewer",
+            "state": "waiting",
+            "responsibility": "Review implementation",
+            "task_id": "DEMO-2",
+            "dependency_reason": "waiting_for_dependencies",
+            "attempt": "",
+            "attempt_count": 0,
+            "current_attempt_id": "",
+            "source": "task_role",
+            "updated_at": "2026-08-30T10:00:00Z",
+        }
+    ]
+
+
+def test_worker_jobs_from_another_run_do_not_contaminate_current_assignment() -> None:
+    projection = _workflow_identity_projection(
+        [_workflow_task("DEMO-1", "Design RFC & Security Review", "architect")],
+        [
+            _workflow_job("job-current", "completed", "2026-08-30T10:01:00Z"),
+            _workflow_job(
+                "job-old-run",
+                "failed",
+                "2026-08-30T10:10:00Z",
+                run_id="run-old",
+                task_id="DEMO-1",
+            ),
+            _workflow_job(
+                "job-no-run",
+                "failed",
+                "2026-08-30T10:11:00Z",
+                run_id="",
+                task_id="DEMO-1",
+            ),
+        ],
+    )
+
+    assert len(projection["execution_actors"]) == 1
+    assert projection["execution_actors"][0]["state"] == "completed"
+    assert projection["execution_actors"][0]["attempt_count"] == 1
+    assert projection["execution_actors"][0]["current_attempt_id"] == "job-current"
+    assert projection["attention_request"] is None
+
+
+def test_assignment_actor_id_is_stable_across_projection_order_and_reload() -> None:
+    task = _workflow_task("DEMO-1", "Design RFC & Security Review", "architect")
+    jobs = [
+        _workflow_job("job-1", "failed", "2026-08-30T10:01:00Z"),
+        _workflow_job("job-2", "completed", "2026-08-30T10:02:00Z"),
+    ]
+
+    first = _workflow_identity_projection([dict(task)], [dict(job) for job in jobs])
+    reloaded = _workflow_identity_projection([dict(task)], [dict(job) for job in reversed(jobs)])
+
+    assert [actor["id"] for actor in first["execution_actors"]] == ["task-assignment:DEMO-1"]
+    assert [actor["id"] for actor in reloaded["execution_actors"]] == ["task-assignment:DEMO-1"]
+    assert reloaded["execution_actors"][0]["current_attempt_id"] == "job-2"
+
+
+def test_ambiguous_same_role_attempts_remain_one_unbound_actor_instead_of_fake_task_membership() -> None:
+    tasks = [
+        _workflow_task("DEMO-1", "Design RFC", "architect"),
+        _workflow_task("DEMO-2", "Security architecture review", "architect"),
+    ]
+    jobs = [
+        _workflow_job("job-unbound-old", "failed", "2026-08-30T10:01:00Z"),
+        _workflow_job("job-unbound-current", "running", "2026-08-30T10:02:00Z"),
+    ]
+
+    projection = _workflow_identity_projection(tasks, jobs)
+    unbound = [actor for actor in projection["execution_actors"] if actor["source"] == "unbound_worker_job"]
+
+    assert len(unbound) == 1
+    assert unbound[0]["id"] == "unbound-role:architect"
+    assert unbound[0]["task_id"] == ""
+    assert unbound[0]["current_attempt_id"] == "job-unbound-current"
+    assert unbound[0]["attempt_count"] == 2
 
 
 def test_approval_attention_outranks_existing_blockers() -> None:
