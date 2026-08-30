@@ -107,6 +107,8 @@ test('Work reads as one three-domain console with restrained neumorphic depth', 
   const attentionLabel = blockFor('.product-shell .team-attention__label');
   const attentionIcon = blockFor('.product-shell .team-attention__label svg');
   const outcomeAttention = blockFor('.product-shell .team-outcome-list li[data-attention="true"]');
+  const outcomeAttentionLabel = blockFor('.product-shell .team-outcome-list__attention');
+  const mobileAttention = blockFor('.product-shell .team-mobile-nav__attention');
   const actorCard = blockFor('.product-shell .team-actor-list li');
   const progress = blockFor('.product-shell .team-task-progress');
   const runContext = blockFor('.product-shell .product-work-page .work-run-context');
@@ -124,6 +126,8 @@ test('Work reads as one three-domain console with restrained neumorphic depth', 
   expect(attentionIcon).toMatch(/color:\s*var\(--product-accent\);/);
   expect(outcomeAttention).toMatch(/background:\s*var\(--product-surface-raised\);/);
   expect(outcomeAttention).toMatch(/inset 2px 0 0 var\(--product-accent\)/);
+  expect(outcomeAttentionLabel).toMatch(/color:\s*var\(--product-accent-strong\);/);
+  expect(mobileAttention).toMatch(/background:\s*var\(--product-accent\);/);
   expect(actorCard).toMatch(/-4px -4px 10px/);
   expect(actorCard).toMatch(/5px 6px 14px/);
   expect(progress).toMatch(/inset 1px 1px 2px/);

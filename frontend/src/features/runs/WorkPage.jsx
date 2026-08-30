@@ -56,8 +56,11 @@ function useMobileTeamWorkspace() {
 function tone(status) {
   if (['complete', 'completed', 'done', 'approved', 'success'].includes(status)) return 'success';
   if (['blocked', 'failed', 'error', 'stopped'].includes(status)) return 'danger';
-  if (['active', 'running', 'doing', 'working', 'reviewing', 'fixing'].includes(status)) return 'active';
-  return 'pending';
+  if ([
+    'active', 'running', 'doing', 'working', 'reviewing', 'fixing',
+    'review-needed', 'needs_input', 'attention_required', 'changes_requested',
+  ].includes(status)) return 'active';
+  return 'neutral';
 }
 
 function translated(t, key, fallback, params = {}) {
@@ -1011,10 +1014,10 @@ function ManagerPane({
   const managerTone = attention?.kind === 'blocker'
     ? 'danger'
     : attention
-      ? 'pending'
+      ? 'active'
       : mission
         ? tone(mission.status)
-        : 'pending';
+        : 'neutral';
   const managerStatus = attention
     ? t('work.manager.needsYou')
     : mission

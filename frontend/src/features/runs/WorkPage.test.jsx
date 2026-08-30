@@ -294,7 +294,9 @@ test('renders the Manager-centered three-pane workspace from the durable project
   const missionContext = document.querySelector('.work-run-context');
   expect(within(missionContext).getByText('Current mission')).toBeVisible();
   expect(within(missionContext).getByText('PRD Review')).toBeVisible();
-  expect(within(missionContext).getByText('Needs review')).toBeVisible();
+  const reviewStatus = within(missionContext).getByText('Needs review');
+  expect(reviewStatus).toBeVisible();
+  expect(reviewStatus).toHaveAttribute('data-tone', 'active');
   expect(within(missionContext).getByText('1 / 3 stages complete')).toBeVisible();
   expect(screen.queryByRole('combobox', { name: 'Select run' })).not.toBeInTheDocument();
   expect(screen.getByText('I organized this mission into 2 outcome tasks and identified the next eligible work.')).toBeVisible();
@@ -306,6 +308,8 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(within(execution).getAllByText('Current task')).toHaveLength(2);
   expect(within(execution).getByText('1 acceptance criteria')).toBeVisible();
   expect(within(execution).getByText('Outcome: PR #42')).toBeVisible();
+  expect(document.querySelector('[data-task-id="DEMO-2"] .product-status-badge'))
+    .toHaveAttribute('data-tone', 'neutral');
   expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
   expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
@@ -577,6 +581,8 @@ test('keeps Manager attention in the conversation after recorded mission history
   renderWorkPage();
 
   const manager = screen.getByRole('region', { name: 'Manager' });
+  expect(within(manager).getByText('Needs you', { selector: '.product-status-badge' }))
+    .toHaveAttribute('data-tone', 'active');
   const attention = manager.querySelector('.team-attention');
   const history = manager.querySelector('.team-manager-timeline');
   expect(attention).toBeInTheDocument();

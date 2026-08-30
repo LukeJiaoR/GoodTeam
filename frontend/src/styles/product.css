@@ -2799,9 +2799,9 @@
 .product-shell .team-outcome-list__attention {
   align-self: flex-start;
   padding: 0.18rem 0.42rem;
-  color: color-mix(in srgb, var(--product-warning) 82%, var(--product-text));
-  background: color-mix(in srgb, var(--product-warning) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--product-warning) 38%, var(--product-border));
+  color: var(--product-accent-strong);
+  background: color-mix(in srgb, var(--product-accent-soft) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--product-accent) 34%, var(--product-border));
   border-radius: 4px;
   font-size: 0.68rem;
   font-weight: 680;
@@ -4446,10 +4446,10 @@
     width: 0.34rem;
     height: 0.34rem;
     flex: 0 0 auto;
-    background: var(--product-warning);
-    border: 1px solid color-mix(in srgb, var(--product-warning) 68%, var(--product-surface));
+    background: var(--product-accent);
+    border: 1px solid color-mix(in srgb, var(--product-accent) 68%, var(--product-surface));
     border-radius: 50%;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--product-warning) 10%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--product-accent) 10%, transparent);
   }
 
   .product-shell .team-workspace {
