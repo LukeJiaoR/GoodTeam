@@ -2312,6 +2312,197 @@
   line-height: 1.5;
 }
 
+.product-shell .team-approval-brief {
+  display: grid;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.product-shell .team-approval-brief__decision,
+.product-shell .team-approval-brief__recommendation {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.8rem;
+  background: var(--product-neu-material-deep);
+  border-radius: 13px;
+  box-shadow: var(--product-neu-shadow-inset);
+}
+
+.product-shell .team-approval-brief__kicker,
+.product-shell .team-approval-brief__scope-block > span,
+.product-shell .team-approval-brief__recovery > span,
+.product-shell .team-approval-brief__fact-group > span {
+  color: var(--product-text-muted);
+  font-size: 0.68rem;
+  font-weight: 720;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.product-shell .team-approval-brief__decision > p,
+.product-shell .team-approval-brief__decision blockquote,
+.product-shell .team-approval-brief__section > p,
+.product-shell .team-approval-brief__recommendation > p,
+.product-shell .team-approval-brief__recommendation > small {
+  margin: 0;
+}
+
+.product-shell .team-approval-brief__decision > p {
+  color: var(--product-text);
+  font-size: 0.9rem;
+  font-weight: 630;
+  line-height: 1.48;
+}
+
+.product-shell .team-approval-brief__decision blockquote {
+  padding-left: 0.65rem;
+  color: var(--product-text-muted);
+  border-left: 2px solid color-mix(in srgb, var(--product-accent) 35%, transparent);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.product-shell .team-approval-brief__decision code,
+.product-shell .team-approval-brief__evidence-list code {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--product-text-muted);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.product-shell .team-approval-brief__section {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--product-neu-shadow) 16%, transparent);
+}
+
+.product-shell .team-approval-brief__section h4 {
+  margin: 0;
+  color: var(--product-text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.product-shell .team-approval-brief__section > * {
+  min-width: 0;
+}
+
+.product-shell .team-approval-brief__scope-block,
+.product-shell .team-approval-brief__recovery,
+.product-shell .team-approval-brief__fact-group {
+  display: grid;
+  gap: 0.32rem;
+}
+
+.product-shell .team-approval-brief__fact-group > span {
+  color: var(--product-text-muted);
+  font-size: 0.64rem;
+  text-transform: none;
+}
+
+.product-shell .team-approval-brief ul {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.product-shell .team-approval-brief li,
+.product-shell .team-approval-brief__section > p,
+.product-shell .team-approval-brief__empty {
+  color: var(--product-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.product-shell .team-approval-brief__empty {
+  margin: 0;
+  font-style: italic;
+}
+
+.product-shell .team-approval-brief__evidence-list,
+.product-shell .team-approval-brief__risk-list {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-shell .team-approval-brief__evidence-list > li,
+.product-shell .team-approval-brief__risk-list > li {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+  padding: 0.55rem 0.6rem;
+  background: color-mix(in srgb, var(--product-neu-material-deep) 72%, transparent);
+  border-radius: 10px;
+}
+
+.product-shell .team-approval-brief__evidence-list > li > div {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.product-shell .team-approval-brief__evidence-list span,
+.product-shell .team-approval-brief__risk-list span {
+  color: var(--product-text);
+  font-weight: 650;
+}
+
+.product-shell .team-approval-brief__evidence-list strong {
+  color: var(--product-text-muted);
+  font-size: 0.65rem;
+  font-weight: 680;
+  text-align: right;
+}
+
+.product-shell .team-approval-brief__evidence-list p,
+.product-shell .team-approval-brief__risk-list p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.product-shell .team-approval-brief__evidence-list > li[data-status="passed"] strong,
+.product-shell .team-approval-brief__evidence-list > li[data-status="ok"] strong,
+.product-shell .team-approval-brief__recommendation[data-verdict="approve"] > strong {
+  color: var(--product-success);
+}
+
+.product-shell .team-approval-brief__evidence-list > li[data-status="failed"] strong,
+.product-shell .team-approval-brief__evidence-list > li[data-status="failed_invocation"] strong,
+.product-shell .team-approval-brief__recommendation[data-verdict="reject"] > strong,
+.product-shell .team-approval-brief__recommendation[data-verdict="changes_requested"] > strong,
+.product-shell .team-approval-brief__recommendation[data-verdict="request_changes"] > strong {
+  color: var(--product-danger);
+}
+
+.product-shell .team-approval-brief__next-task {
+  font-weight: 620;
+}
+
+.product-shell .team-approval-brief__recommendation {
+  border-left: 3px solid color-mix(in srgb, var(--product-accent) 60%, transparent);
+}
+
+.product-shell .team-approval-brief__recommendation > strong {
+  color: var(--product-text);
+  font-size: 0.92rem;
+}
+
+.product-shell .team-approval-brief__recommendation > small {
+  color: var(--product-text-muted);
+  font-size: 0.68rem;
+}
+
 .product-shell .team-attention__actions,
 .product-shell .team-attention__form > div,
 .product-shell .team-attention__confirm > div {

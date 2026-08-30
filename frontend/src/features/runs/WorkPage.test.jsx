@@ -219,6 +219,53 @@ function managerReviewData() {
     reason: 'approval_required',
     actions: ['approve', 'request_changes', 'review'],
     refs: ['security', 'DEMO-ARCH'],
+    approval_brief: {
+      schema_version: 'manager_approval_brief.v1',
+      approval: 'security',
+      approval_type: 'architecture',
+      decision: {
+        subject: 'Architecture security review',
+        summary: 'Keep a generic provider boundary while shipping Google first.',
+        artifact: { key: 'rfc', label: 'rfc-v3.md', version: 'sha256:1234567890abcdef1234567890abcdef' },
+      },
+      scope: {
+        included: [
+          {
+            source: 'artifact_section',
+            heading: 'Scope',
+            items: ['Google login in this iteration.', 'Preserve the current session and user model.'],
+          },
+        ],
+        excluded: [
+          {
+            source: 'artifact_section',
+            heading: 'Non-Goals',
+            items: ['GitHub login is not implemented yet.'],
+          },
+        ],
+      },
+      evidence: [
+        { kind: 'artifact', label: 'rfc-v3.md', status: 'versioned', detail: 'sha256:1234567890abcdef1234567890abcdef' },
+        { kind: 'reviewer', label: 'Security review', status: 'ok', detail: 'No blocking security issues found.' },
+        { kind: 'ci', label: '', status: 'passed', detail: '' },
+      ],
+      risks: [
+        {
+          kind: 'artifact', heading: 'Risks and trade-offs',
+          text: 'The provider abstraction adds a small amount of initial complexity.',
+        },
+      ],
+      consequence: {
+        next_stage: 'planner',
+        task_id: 'DEMO-IMPL',
+        task_title: 'Implementation',
+        recovery: [],
+      },
+      recommendation: {
+        verdict: 'approve', confidence: 'high', blocking_count: 0,
+        reasons: [{ kind: 'clean', text: 'The threat model is complete.' }],
+      },
+    },
   };
   data.team_workspace.outcome_tasks = [
     {
@@ -649,6 +696,63 @@ test('keeps Manager attention in the conversation after recorded mission history
   expect(history).toBeInTheDocument();
   expect(history.compareDocumentPosition(attention) & Node.DOCUMENT_POSITION_FOLLOWING)
     .toBeTruthy();
+});
+
+test('renders a decision-ready Manager approval brief and keeps exact approval direct', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  const data = managerReviewData();
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.decideReview.mockResolvedValue({ decision: 'approved' });
+  const user = userEvent.setup();
+
+  renderWorkPage();
+
+  const manager = screen.getByRole('region', { name: 'Manager' });
+  const attention = manager.querySelector('.team-attention');
+  expect(within(attention).getByText('You are approving')).toBeVisible();
+  expect(within(attention).getByText(
+    'Accept the recorded security posture for Architecture security review and let Planning / Implementation begin.',
+  )).toBeVisible();
+  expect(within(attention).getByText('Google login in this iteration.')).toBeVisible();
+  expect(within(attention).getByText('GitHub login is not implemented yet.')).toBeVisible();
+  expect(within(attention).getByText('Security review')).toBeVisible();
+  expect(within(attention).getByText('Verified')).toBeVisible();
+  expect(within(attention).getByText('CI')).toBeVisible();
+  expect(within(attention).getByText('Passed')).toBeVisible();
+  expect(within(attention).getByText(
+    'The provider abstraction adds a small amount of initial complexity.',
+  )).toBeVisible();
+  expect(within(attention).getByText(
+    'Planning and implementation begin against the approved architecture and security posture.',
+  )).toBeVisible();
+  expect(within(attention).getByText('Next assigned outcome: Implementation')).toBeVisible();
+  expect(within(attention).getByText('Approve and continue', { selector: 'strong' })).toBeVisible();
+  expect(within(attention).getByText('The brief is present and no blocking signals were found.')).toBeVisible();
+  expect(within(attention).queryByText(
+    'Review the current evidence and decide whether the team should continue.',
+  )).not.toBeInTheDocument();
+
+  await user.click(within(attention).getByRole('button', { name: 'Approve and continue' }));
+
+  expect(mocks.decideReview).toHaveBeenCalledWith('DEMO', 'security', 'approved', '');
+});
+
+test('falls back to generic attention for an unsupported approval brief version', async () => {
+  const data = managerReviewData();
+  data.team_workspace.attention_request.approval_brief.schema_version = 'manager_approval_brief.v2';
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+
+  renderWorkPage();
+
+  const manager = screen.getByRole('region', { name: 'Manager' });
+  const attention = manager.querySelector('.team-attention');
+  expect(within(attention).getByText(
+    'Review the current evidence and decide whether the team should continue.',
+  )).toBeVisible();
+  expect(within(attention).queryByText('You are approving')).not.toBeInTheDocument();
+  expect(within(attention).getByRole('button', { name: 'Approve' })).toBeVisible();
 });
 
 test('opens the exact attention Outcome in-place and restores Manager focus on close', async () => {

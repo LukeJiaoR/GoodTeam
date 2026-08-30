@@ -560,6 +560,9 @@ def test_project_state_exposes_versioned_team_workspace_projection(tmp_path: Pat
     assert workspace["attention_request"]["target_type"] == "review"
     assert workspace["attention_request"]["target_id"] == "takeover"
     assert workspace["attention_request"]["task_id"] == ""
+    assert workspace["attention_request"]["approval_brief"]["schema_version"] == "manager_approval_brief.v1"
+    assert workspace["attention_request"]["approval_brief"]["approval_type"] == "research_planning"
+    assert workspace["attention_request"]["approval_brief"]["consequence"]["next_stage"] == "product_requirement"
     assert workspace["outcome_tasks"]
     assert payload["agile_board"]["counts"]["backlog"] == 5
 
@@ -583,6 +586,11 @@ def test_project_state_attention_targets_synced_outcome_by_task_id(tmp_path: Pat
     assert workspace["attention_request"]["target_type"] == "review"
     assert workspace["attention_request"]["target_id"] == "prd"
     assert workspace["attention_request"]["task_id"] == "TEAM-1"
+    brief = workspace["attention_request"]["approval_brief"]
+    assert brief["approval"] == "prd"
+    assert brief["approval_type"] == "research_planning"
+    assert brief["consequence"]["next_stage"] == "architect"
+    assert brief["consequence"]["task_id"] == "TEAM-2"
     target = next(item for item in workspace["outcome_tasks"] if item["id"] == "TEAM-1")
     assert target["review_target_type"] == "review"
     assert target["review_target_id"] == "prd"

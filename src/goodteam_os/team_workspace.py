@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -8,9 +9,11 @@ from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.models import ExecutionRun, ExecutionTask, LedgerEvent
 from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.state import AgileDevState
+from goodteam_os.workflow_table import resolve_profile
 
 
 TEAM_WORKSPACE_SCHEMA_VERSION = "team_workspace.v1"
+MANAGER_APPROVAL_BRIEF_SCHEMA_VERSION = "manager_approval_brief.v1"
 
 _TASK_STATES = {
     "todo": "up_next",
@@ -116,6 +119,126 @@ _EXECUTION_STATE_PRIORITY = {
     "up_next": 5,
     "completed": 6,
     "stopped": 7,
+}
+_APPROVAL_TYPE_BY_GATE = {
+    "takeover": "research_planning",
+    "prd": "research_planning",
+    "fix_plan": "research_planning",
+    "rfc": "architecture",
+    "security": "architecture",
+    "code_review": "qa",
+    "staging": "qa",
+    "qa": "qa",
+    "release": "release",
+}
+_SCOPE_HEADINGS_BY_TYPE = {
+    "research_planning": (
+        "v1 scope",
+        "scope",
+        "minimal change plan",
+        "acceptance criteria",
+        "v1 范围",
+        "本次范围",
+        "最小变更计划",
+        "验收标准",
+    ),
+    "architecture": (
+        "scope",
+        "data model",
+        "api contract",
+        "frontend and ux contract",
+        "security assessment",
+        "verification plan",
+        "范围",
+        "数据模型",
+        "api 契约",
+        "接口契约",
+        "前端与 ux 契约",
+        "安全评估",
+        "验证计划",
+    ),
+    "qa": (
+        "scope",
+        "test scope",
+        "verification matrix",
+        "acceptance results",
+        "healthcheck results",
+        "review findings",
+        "范围",
+        "测试范围",
+        "验证矩阵",
+        "验收结果",
+        "健康检查结果",
+        "审查发现",
+    ),
+    "release": (
+        "release contents",
+        "release scope",
+        "impact",
+        "changes",
+        "发布内容",
+        "发布范围",
+        "影响",
+        "变更",
+    ),
+    "general": ("scope", "acceptance criteria", "范围", "验收标准"),
+}
+_SUMMARY_HEADINGS_BY_TYPE = {
+    "research_planning": (
+        "product decision",
+        "my current assessment",
+        "conclusion",
+        "summary",
+        "产品决策",
+        "当前判断",
+        "结论",
+        "摘要",
+    ),
+    "architecture": ("architecture decision", "proposal", "overview", "summary", "架构决策", "方案", "概述", "摘要"),
+    "qa": ("conclusion", "summary", "result", "assessment", "结论", "摘要", "结果", "评估"),
+    "release": ("release decision", "summary", "impact", "发布决策", "摘要", "影响"),
+    "general": ("decision", "summary", "conclusion", "决策", "摘要", "结论"),
+}
+_EXCLUDED_SCOPE_HEADINGS = (
+    "non-goal",
+    "out of scope",
+    "not in scope",
+    "excluded",
+    "非目标",
+    "不在范围",
+    "范围外",
+    "排除",
+)
+_RISK_HEADINGS = (
+    "risk",
+    "caveat",
+    "known issue",
+    "limitation",
+    "unknown",
+    "open question",
+    "assumption",
+    "trade-off",
+    "tradeoff",
+    "风险",
+    "已知问题",
+    "限制",
+    "未知",
+    "待确认",
+    "开放问题",
+    "假设",
+    "权衡",
+    "取舍",
+    "注意事项",
+)
+_RECOVERY_HEADINGS = ("rollback", "recovery", "回滚", "恢复")
+_NEXT_TASK_STAGE = {
+    "product_requirement": "product_requirement",
+    "architect": "architect",
+    "security": "architect",
+    "planner": "implementation",
+    "release": "release",
+    "fix_implement": "implementation",
+    "fix_qa": "qa",
 }
 
 
@@ -769,6 +892,13 @@ def _workflow_attention(
             "reason": "approval_required",
             "refs": [value for value in (gate, task_id) if value],
             "actions": ["approve", "request_changes", "review"],
+            "approval_brief": _manager_approval_brief(
+                state=state,
+                review=actionable,
+                task_id=task_id,
+                tasks=tasks,
+                outcomes=outcomes,
+            ),
         }
     recovery = next(
         (item for item in approval_reviews if isinstance(item.get("recovery"), Mapping) and item["recovery"].get("available")),
@@ -804,6 +934,442 @@ def _workflow_attention(
             "actions": ["retry", "cancel_mission"],
         }
     return None
+
+
+def _manager_approval_brief(
+    *,
+    state: AgileDevState,
+    review: Mapping[str, object],
+    task_id: str,
+    tasks: Sequence[Mapping[str, object]],
+    outcomes: Sequence[Mapping[str, object]],
+) -> dict[str, Any]:
+    """Compress durable approval inputs without asserting facts that are absent.
+
+    The projection deliberately carries structured facts and source wording. The
+    frontend localizes labels and consequence copy, while empty collections stay
+    empty so the Manager can say that scope, risk, or evidence was not recorded.
+    """
+
+    gate = _text(review.get("approval"))
+    approval_type = _APPROVAL_TYPE_BY_GATE.get(gate, "general")
+    content = _text(review.get("content"))
+    sections = _markdown_sections(content)
+    outcome = next((item for item in outcomes if _text(item.get("id")) == task_id), None)
+    artifact_path = _text(review.get("artifact_path"))
+    artifact_version = _text(review.get("artifact_version"))
+    if artifact_version == "missing":
+        artifact_version = ""
+    artifact_title = _clean_markdown_fact(review.get("title"), limit=120)
+    artifact_label = _clean_markdown_fact(Path(artifact_path).name, limit=120) if artifact_path else artifact_title
+
+    included = _section_groups(
+        sections,
+        _SCOPE_HEADINGS_BY_TYPE.get(approval_type, _SCOPE_HEADINGS_BY_TYPE["general"]),
+        exclude_terms=(*_EXCLUDED_SCOPE_HEADINGS, *_RISK_HEADINGS, *_RECOVERY_HEADINGS),
+    )
+    if not included and outcome is not None:
+        included = _task_contract_scope(outcome)
+
+    return {
+        "schema_version": MANAGER_APPROVAL_BRIEF_SCHEMA_VERSION,
+        "approval": gate,
+        "approval_type": approval_type,
+        "decision": {
+            "subject": (
+                artifact_title
+                or _clean_markdown_fact(outcome.get("objective") if outcome else "", limit=120)
+                or gate
+            ),
+            "summary": _first_section_fact(
+                sections,
+                _SUMMARY_HEADINGS_BY_TYPE.get(approval_type, _SUMMARY_HEADINGS_BY_TYPE["general"]),
+            ),
+            "artifact": {
+                "key": _text(review.get("artifact")),
+                "label": artifact_label,
+                "version": artifact_version,
+            },
+        },
+        "scope": {
+            "included": included,
+            "excluded": _section_groups(sections, _EXCLUDED_SCOPE_HEADINGS),
+        },
+        "evidence": _approval_brief_evidence(review, approval_type),
+        "risks": _approval_brief_risks(state, review, sections, approval_type),
+        "consequence": _approval_brief_consequence(state, gate, tasks, sections),
+        "recommendation": _approval_brief_recommendation(review),
+    }
+
+
+def _markdown_sections(content: str) -> list[dict[str, object]]:
+    sections: list[dict[str, object]] = []
+    heading = ""
+    items: list[str] = []
+    paragraph: list[str] = []
+    in_fence = False
+
+    def flush_paragraph() -> None:
+        if not paragraph:
+            return
+        fact = _clean_markdown_fact(" ".join(paragraph))
+        if fact:
+            items.append(fact)
+        paragraph.clear()
+
+    def flush_section() -> None:
+        flush_paragraph()
+        if heading or items:
+            sections.append({"heading": heading, "items": list(items)})
+        items.clear()
+
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            flush_paragraph()
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        heading_match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", raw_line)
+        if heading_match:
+            flush_section()
+            heading = _clean_markdown_fact(heading_match.group(1), limit=120)
+            continue
+        if not stripped:
+            flush_paragraph()
+            continue
+        if stripped.startswith("|") or re.fullmatch(r"[-:|\s]+", stripped):
+            flush_paragraph()
+            continue
+        bullet_match = re.match(r"^\s*(?:[-*+] |\d+[.)]\s+)(.+)$", raw_line)
+        if bullet_match:
+            flush_paragraph()
+            fact = _clean_markdown_fact(bullet_match.group(1))
+            if fact:
+                items.append(fact)
+            continue
+        paragraph.append(stripped)
+    flush_section()
+    return sections
+
+
+def _clean_markdown_fact(value: object, *, limit: int = 240) -> str:
+    text = _text(value)
+    if not text or text == "[Preview truncated]":
+        return ""
+    text = re.sub(r"!\[([^]]*)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("`", "")
+    text = re.sub(r"[*~]", "", text)
+    text = re.sub(r"(?<!\w)_+|_+(?!\w)", "", text)
+    text = re.sub(r"\s+", " ", text).strip(" -")
+    text = re.sub(
+        r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|API_KEY|PASSWORD))\s*=\s*[^\s]+",
+        r"\1=[REDACTED]",
+        text,
+    )
+    text = re.sub(r"\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b", "[REDACTED]", text)
+    text = re.sub(r"[a-zA-Z0-9_\-]+@\d{1,3}(?:\.\d{1,3}){3}", "staging-host", text)
+    text = re.sub(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", "staging-ip", text)
+    text = re.sub(r"/srv/[a-zA-Z0-9_\-/]+", "deployment-dir", text)
+    text = re.sub(r"/Users/[^/\s]+/[a-zA-Z0-9_\-/.]+", "local-workspace-dir", text)
+    if len(text) > limit:
+        return text[: limit - 1].rstrip() + "…"
+    return text
+
+
+def _normalized_heading(value: object) -> str:
+    return re.sub(r"[\W_]+", " ", _text(value).casefold(), flags=re.UNICODE).strip()
+
+
+def _section_groups(
+    sections: Sequence[Mapping[str, object]],
+    terms: Sequence[str],
+    *,
+    exclude_terms: Sequence[str] = (),
+    group_limit: int = 2,
+    item_limit: int = 4,
+) -> list[dict[str, object]]:
+    normalized_terms = tuple(_normalized_heading(term) for term in terms)
+    normalized_exclusions = tuple(_normalized_heading(term) for term in exclude_terms)
+    groups: list[dict[str, object]] = []
+    remaining = item_limit
+    for section in sections:
+        normalized = _normalized_heading(section.get("heading"))
+        if not normalized or not any(term in normalized for term in normalized_terms):
+            continue
+        if any(term in normalized for term in normalized_exclusions):
+            continue
+        facts = []
+        for raw_item in _list(section.get("items")):
+            fact = _clean_markdown_fact(raw_item)
+            if fact and fact not in facts:
+                facts.append(fact)
+            if len(facts) >= min(3, remaining):
+                break
+        if not facts:
+            continue
+        groups.append(
+            {
+                "source": "artifact_section",
+                "heading": _text(section.get("heading")),
+                "items": facts,
+            }
+        )
+        remaining -= len(facts)
+        if len(groups) >= group_limit or remaining <= 0:
+            break
+    return groups
+
+
+def _first_section_fact(
+    sections: Sequence[Mapping[str, object]],
+    terms: Sequence[str],
+) -> str:
+    groups = _section_groups(sections, terms, group_limit=1, item_limit=1)
+    return _text(_list(groups[0].get("items"))[0]) if groups else ""
+
+
+def _task_contract_scope(outcome: Mapping[str, object]) -> list[dict[str, object]]:
+    facts: list[str] = []
+    for value in (
+        outcome.get("description"),
+        *_list(outcome.get("acceptance_criteria")),
+    ):
+        fact = _clean_markdown_fact(value)
+        if fact and fact not in facts:
+            facts.append(fact)
+        if len(facts) >= 5:
+            break
+    if not facts:
+        objective = _clean_markdown_fact(outcome.get("objective"))
+        if objective:
+            facts.append(objective)
+    return [{"source": "task_contract", "heading": "", "items": facts}] if facts else []
+
+
+def _approval_brief_evidence(
+    review: Mapping[str, object],
+    approval_type: str,
+) -> list[dict[str, object]]:
+    evidence: list[dict[str, object]] = []
+    artifact_path = _text(review.get("artifact_path"))
+    artifact_title = _clean_markdown_fact(review.get("title"), limit=120)
+    artifact_version = _text(review.get("artifact_version"))
+    artifact_available = bool(
+        artifact_path
+        or _text(review.get("content"))
+        or (artifact_version and artifact_version != "missing")
+    )
+    if artifact_available:
+        evidence.append(
+            {
+                "kind": "artifact",
+                "label": (
+                    _clean_markdown_fact(Path(artifact_path).name, limit=120)
+                    if artifact_path
+                    else artifact_title
+                ),
+                "status": "versioned" if artifact_version and artifact_version != "missing" else "available",
+                "detail": artifact_version if artifact_version != "missing" else "",
+            }
+        )
+
+    multi = _mapping(review.get("multi_reviewer_projection"))
+    reviewers = [item for item in _list(multi.get("reviewers")) if isinstance(item, Mapping)]
+    if approval_type == "release":
+        snapshot = _mapping(review.get("evidence_snapshot"))
+        for reference in _list(snapshot.get("provenance_refs"))[:2]:
+            if not isinstance(reference, Mapping):
+                continue
+            if not any(
+                _text(reference.get(field))
+                for field in ("pr", "branch", "merge_sha", "ci_status")
+            ):
+                continue
+            evidence.append(
+                {
+                    "kind": "delivery",
+                    "label": "",
+                    "status": _text(reference.get("ci_status")) or "recorded",
+                    "detail": "",
+                    "pr": _text(reference.get("pr")),
+                    "branch": _text(reference.get("branch")),
+                    "commit": _text(reference.get("merge_sha")),
+                }
+            )
+
+    for reviewer in reviewers[:2]:
+        status = _mapping(reviewer.get("status"))
+        policy = _mapping(reviewer.get("policy"))
+        evidence.append(
+            {
+                "kind": "reviewer",
+                "label": (
+                    _clean_markdown_fact(reviewer.get("profile_label"), limit=120)
+                    or _clean_markdown_fact(reviewer.get("profile_id"), limit=120)
+                    or _clean_markdown_fact(status.get("role"), limit=120)
+                ),
+                "status": _text(policy.get("state")) or _text(status.get("status")) or "missing_evidence",
+                "detail": _clean_markdown_fact(status.get("summary") or policy.get("rationale")),
+            }
+        )
+    if not reviewers:
+        policy = _mapping(review.get("review_evidence_policy"))
+        if policy:
+            evidence.append(
+                {
+                    "kind": "reviewer",
+                    "label": artifact_title,
+                    "status": _text(policy.get("state")) or "missing_evidence",
+                    "detail": _clean_markdown_fact(policy.get("rationale")),
+                }
+            )
+
+    snapshot = _mapping(review.get("evidence_snapshot"))
+    include_unknown = approval_type in {"qa", "release"}
+    for kind, field in (("ci", "ci_status"), ("smoke", "smoke_status"), ("qa", "qa_status")):
+        status = _text(snapshot.get(field)).lower()
+        if status and (include_unknown or status != "unknown"):
+            evidence.append({"kind": kind, "label": "", "status": status, "detail": ""})
+    screenshot_count = len(_list(snapshot.get("screenshot_refs")))
+    if screenshot_count and approval_type in {"qa", "release"}:
+        evidence.append(
+            {
+                "kind": "screenshots",
+                "label": "",
+                "status": "available",
+                "detail": "",
+                "count": screenshot_count,
+            }
+        )
+    return evidence[:8]
+
+
+def _approval_brief_risks(
+    state: AgileDevState,
+    review: Mapping[str, object],
+    sections: Sequence[Mapping[str, object]],
+    approval_type: str,
+) -> list[dict[str, object]]:
+    risks: list[dict[str, object]] = []
+    for blocker in state.blockers:
+        text = _clean_markdown_fact(blocker)
+        if text:
+            risks.append({"kind": "blocker", "text": text})
+    for group in _section_groups(sections, _RISK_HEADINGS, group_limit=2, item_limit=4):
+        for item in _list(group.get("items")):
+            risks.append(
+                {
+                    "kind": "artifact",
+                    "heading": _text(group.get("heading")),
+                    "text": _text(item),
+                }
+            )
+
+    recommendation = _mapping(review.get("recommendation"))
+    for raw_reason in _list(recommendation.get("reasons")):
+        reason = _mapping(raw_reason)
+        kind = _text(reason.get("kind"))
+        text = _clean_markdown_fact(reason.get("text") if reason else raw_reason)
+        if kind == "clean" or not text:
+            continue
+        risks.append({"kind": "recommendation", "reason_kind": kind, "text": text})
+
+    policy = _mapping(review.get("review_evidence_policy"))
+    if policy and _text(policy.get("state")) != "ok":
+        risks.append(
+            {
+                "kind": "review_evidence",
+                "status": _text(policy.get("state")),
+                "severity": _text(policy.get("severity")),
+                "text": _clean_markdown_fact(policy.get("rationale")),
+            }
+        )
+    aggregate = _mapping(_mapping(review.get("multi_reviewer_projection")).get("aggregate_policy"))
+    if _text(aggregate.get("severity")) == "blocker":
+        risks.append(
+            {
+                "kind": "reviewer_aggregate",
+                "severity": "blocker",
+                "state_counts": dict(_mapping(aggregate.get("state_counts"))),
+                "text": "",
+            }
+        )
+
+    snapshot = _mapping(review.get("evidence_snapshot"))
+    if approval_type in {"qa", "release"}:
+        for source, field in (("ci", "ci_status"), ("smoke", "smoke_status"), ("qa", "qa_status")):
+            if _text(snapshot.get(field)).lower() in {"", "unknown"}:
+                risks.append({"kind": "evidence_gap", "source": source, "text": ""})
+    blocker_count = _integer(snapshot.get("blocker_count"))
+    if blocker_count:
+        risks.append({"kind": "blockers", "count": blocker_count, "text": ""})
+
+    deduped: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    seen_text: set[str] = set()
+    for risk in risks:
+        key = (
+            _text(risk.get("kind")),
+            _text(risk.get("source")),
+            _text(risk.get("text")),
+        )
+        text = _text(risk.get("text"))
+        if key in seen or (text and text in seen_text):
+            continue
+        seen.add(key)
+        if text:
+            seen_text.add(text)
+        deduped.append(risk)
+        if len(deduped) >= 5:
+            break
+    return deduped
+
+
+def _approval_brief_consequence(
+    state: AgileDevState,
+    gate: str,
+    tasks: Sequence[Mapping[str, object]],
+    sections: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    try:
+        next_stage = resolve_profile(_text(getattr(state, "load_profile", ""))).approved_next_for_gate(gate)
+    except ValueError:
+        next_stage = ""
+    task_stage = _NEXT_TASK_STAGE.get(next_stage, "")
+    matches = [
+        task
+        for task in tasks
+        if task_stage and f"stage:{task_stage}" in {_text(item) for item in _list(task.get("external_refs"))}
+    ]
+    next_task = matches[0] if len(matches) == 1 else None
+    return {
+        "next_stage": next_stage,
+        "task_id": _text(next_task.get("id") if next_task else ""),
+        "task_title": _clean_markdown_fact(next_task.get("title") if next_task else "", limit=120),
+        "recovery": _section_groups(sections, _RECOVERY_HEADINGS, group_limit=2, item_limit=4),
+    }
+
+
+def _approval_brief_recommendation(review: Mapping[str, object]) -> dict[str, object]:
+    recommendation = _mapping(review.get("recommendation"))
+    reasons: list[dict[str, str]] = []
+    for raw_reason in _list(recommendation.get("reasons")):
+        reason = _mapping(raw_reason)
+        text = _clean_markdown_fact(reason.get("text") if reason else raw_reason)
+        if text:
+            reasons.append({"kind": _text(reason.get("kind")), "text": text})
+        if len(reasons) >= 3:
+            break
+    return {
+        "verdict": _text(recommendation.get("verdict")),
+        "confidence": _text(recommendation.get("confidence")),
+        "blocking_count": _integer(recommendation.get("blocking_count")),
+        "reasons": reasons,
+    }
 
 
 def _workflow_capabilities(
