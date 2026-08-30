@@ -100,6 +100,22 @@ _WORKFLOW_STAGE_BY_ARTIFACT = {
     "staging_report": "qa",
     "release_notes": "release",
 }
+_WORKFLOW_STAGE_PREDECESSOR = {
+    "architect": "product_requirement",
+    "implementation": "architect",
+    "qa": "implementation",
+    "release": "qa",
+}
+_EXECUTION_STATE_PRIORITY = {
+    "blocked": 0,
+    "reviewing": 1,
+    "fixing": 2,
+    "working": 3,
+    "waiting": 4,
+    "up_next": 5,
+    "completed": 6,
+    "stopped": 7,
+}
 
 
 def empty_team_workspace() -> dict[str, Any]:
@@ -179,6 +195,7 @@ def _build_workflow_workspace(
     updated_at = _latest_timestamp(ordered_actions, run_jobs, outcomes)
     actors = _workflow_actors(outcomes, jobs_by_task, unbound_jobs_by_role)
     attention = _workflow_attention(state, tasks, outcomes, actors, approval_reviews)
+    actors = _apply_workflow_attention_reason(actors, attention)
     mission_status = "waiting" if attention else "working"
 
     timeline = [
@@ -242,6 +259,32 @@ def _build_workflow_workspace(
     }
 
 
+def _apply_workflow_attention_reason(
+    actors: Sequence[Mapping[str, object]],
+    attention: Mapping[str, object] | None,
+) -> list[dict[str, Any]]:
+    """Attach a user-attention reason only through the exact projected task id."""
+    task_id = _text(attention.get("task_id")) if attention else ""
+    is_exact_review = bool(
+        task_id
+        and _text(attention.get("kind")) == "approval"
+        and _text(attention.get("target_type")) == "review"
+    )
+    return [
+        {
+            **actor,
+            **(
+                {"status_reason": "awaiting_your_approval"}
+                if is_exact_review
+                and _text(actor.get("task_id")) == task_id
+                and _text(actor.get("state")) == "reviewing"
+                else {}
+            ),
+        }
+        for actor in actors
+    ]
+
+
 def _workflow_outcomes(
     tasks: Sequence[Mapping[str, object]],
     worker_jobs_by_task: Mapping[str, Sequence[Mapping[str, object]]],
@@ -254,7 +297,7 @@ def _workflow_outcomes(
         task_id = _text(task.get("id"))
         role = _text(task.get("role"))
         raw_status = _text(task.get("status"))
-        dependencies = [_text(item) for item in _list(task.get("dependencies")) if _text(item)]
+        dependencies = _workflow_task_dependencies(task, task_rows)
         unmet = [item for item in dependencies if status_by_id.get(item) != "done"]
         status = _TASK_STATES.get(raw_status, "up_next")
         if status == "up_next" and unmet:
@@ -263,11 +306,17 @@ def _workflow_outcomes(
         current_attempt = _authoritative_worker_attempt(matching_jobs)
         status = _workflow_assignment_state(task, current_attempt, fallback=status)
         review = _matching_review(task, approval_reviews, task_rows)
+        current_attempt_state = (
+            _worker_attempt_state(current_attempt, fallback=status)
+            if current_attempt is not None
+            else ""
+        )
         if (
             review
             and bool(review.get("is_actionable"))
             and raw_status not in _TERMINAL_TASK_STATUSES
-            and status not in {"working", "fixing", "blocked"}
+            and status != "blocked"
+            and current_attempt_state not in {"working", "fixing", "blocked"}
         ):
             status = "reviewing"
         refs = [_text(item) for item in _list(task.get("artifact_refs")) if _text(item)]
@@ -282,6 +331,7 @@ def _workflow_outcomes(
                 "status": status,
                 "status_reason": _task_status_reason(status, unmet),
                 "dependencies": dependencies,
+                "unmet_dependencies": unmet,
                 "acceptance_criteria": [_text(item) for item in _list(task.get("acceptance_criteria"))],
                 "attempt_count": len(matching_jobs),
                 "current_attempt_id": current_attempt_id,
@@ -310,7 +360,9 @@ def _workflow_actors(
     arbitrary same-role task.
     """
     actors: list[dict[str, Any]] = []
-    for task in outcomes:
+    stable_order: dict[str, int] = {}
+    outcomes_by_id = {_text(item.get("id")): item for item in outcomes}
+    for task_order, task in enumerate(outcomes):
         task_id = _text(task.get("id"))
         task_jobs = list(worker_jobs_by_task.get(task_id, ()))
         current_attempt = _authoritative_worker_attempt(task_jobs)
@@ -320,14 +372,30 @@ def _workflow_actors(
         if not role:
             continue
         state = _text(task.get("status")) or "up_next"
+        actor_id = f"task-assignment:{task_id}"
+        stable_order[actor_id] = task_order
+        unmet_dependencies = [
+            dependency_id
+            for dependency_id in (_text(item) for item in _list(task.get("unmet_dependencies")))
+            if dependency_id
+        ]
+        dependency_task_id = unmet_dependencies[0] if len(unmet_dependencies) == 1 else ""
+        dependency_task_title = (
+            _text(outcomes_by_id[dependency_task_id].get("objective"))
+            if dependency_task_id in outcomes_by_id
+            else ""
+        )
         actors.append(
             {
-                "id": f"task-assignment:{task_id}",
+                "id": actor_id,
                 "role": role,
                 "state": state,
                 "responsibility": _text(task.get("objective")),
                 "task_id": task_id,
                 "dependency_reason": _text(task.get("status_reason")) if state == "waiting" else "",
+                "dependency_task_id": dependency_task_id if state == "waiting" else "",
+                "dependency_task_title": dependency_task_title if state == "waiting" else "",
+                "status_reason": _text(task.get("status_reason")),
                 "attempt": (
                     _text(current_attempt.get("retry_attempt") or current_attempt.get("attempt"))
                     if current_attempt
@@ -340,19 +408,24 @@ def _workflow_actors(
             }
         )
 
-    for role, role_jobs in sorted(unbound_jobs_by_role.items()):
+    for role_order, (role, role_jobs) in enumerate(sorted(unbound_jobs_by_role.items())):
         current_attempt = _authoritative_worker_attempt(role_jobs)
         if current_attempt is None:
             continue
         state = _worker_attempt_state(current_attempt, fallback="waiting")
+        actor_id = f"unbound-role:{role}"
+        stable_order[actor_id] = len(outcomes) + role_order
         actors.append(
             {
-                "id": f"unbound-role:{role}",
+                "id": actor_id,
                 "role": role,
                 "state": state,
                 "responsibility": _text(current_attempt.get("summary")),
                 "task_id": "",
                 "dependency_reason": "",
+                "dependency_task_id": "",
+                "dependency_task_title": "",
+                "status_reason": _task_status_reason(state, ()),
                 "attempt": _text(current_attempt.get("retry_attempt") or current_attempt.get("attempt")),
                 "attempt_count": len(role_jobs),
                 "current_attempt_id": _text(current_attempt.get("id")),
@@ -360,7 +433,72 @@ def _workflow_actors(
                 "updated_at": _updated_at(current_attempt),
             }
         )
-    return actors
+    return _order_execution_actors(actors, stable_order)
+
+
+def _workflow_task_dependencies(
+    task: Mapping[str, object],
+    tasks: Sequence[Mapping[str, object]],
+) -> list[str]:
+    """Return explicit dependencies or the canonical-stage compatibility edge.
+
+    Historical stage tasks were synced without dependency ids. When, and only
+    when, exact ``stage:*`` durable refs identify both a canonical assignment
+    and its single predecessor, the presentation projection reconstructs that
+    one edge. Labels and roles never participate, and the task ledger remains
+    unchanged.
+    """
+    explicit = [_text(item) for item in _list(task.get("dependencies")) if _text(item)]
+    if explicit:
+        return explicit
+
+    external_refs = {_text(item) for item in _list(task.get("external_refs"))}
+    stages = {
+        stage
+        for stage in ("product_requirement", "architect", "implementation", "qa", "release")
+        if f"stage:{stage}" in external_refs
+    }
+    if len(stages) != 1:
+        return []
+    predecessor = _WORKFLOW_STAGE_PREDECESSOR.get(next(iter(stages)))
+    if not predecessor:
+        return []
+    predecessor_ids = [
+        _text(candidate.get("id"))
+        for candidate in tasks
+        if f"stage:{predecessor}"
+        in {_text(item) for item in _list(candidate.get("external_refs"))}
+        and _text(candidate.get("id"))
+    ]
+    return predecessor_ids if len(predecessor_ids) == 1 else []
+
+
+def _order_execution_actors(
+    actors: Sequence[Mapping[str, object]],
+    stable_order: Mapping[str, int],
+) -> list[dict[str, Any]]:
+    """Order the live-team projection by urgency without refresh jitter.
+
+    State priority is authoritative for presentation. Within a state, durable
+    workflow/task order wins, followed by timestamp and actor id. Every client
+    therefore receives the same deterministic Execution order.
+    """
+    fallback_order = len(stable_order)
+    return [
+        dict(actor)
+        for actor in sorted(
+            actors,
+            key=lambda actor: (
+                _EXECUTION_STATE_PRIORITY.get(
+                    _text(actor.get("state")),
+                    len(_EXECUTION_STATE_PRIORITY),
+                ),
+                stable_order.get(_text(actor.get("id")), fallback_order),
+                _text(actor.get("updated_at")),
+                _text(actor.get("id")),
+            ),
+        )
+    ]
 
 
 def _associate_workflow_jobs(
@@ -853,6 +991,7 @@ def _build_operator_workspace(
                 "status": status,
                 "status_reason": f"operator_{phase}",
                 "dependencies": [],
+                "unmet_dependencies": [],
                 "acceptance_criteria": [
                     _text(item)
                     for item in _list(task_contract.get("acceptance_criteria"))
@@ -940,18 +1079,24 @@ def _operator_actors(
     mission_id = _text(queue_item.get("id"))
     updated_at = _text(queue_item.get("updated_at"))
     actors: list[dict[str, Any]] = []
+    stable_order: dict[str, int] = {}
     if run is not None:
         run_state = _OPERATOR_RUN_STATES.get(str(run.status), "working")
         if phase == "executing" and run_state != "blocked":
             run_state = "working"
+        actor_id = run.worker_job_id or f"{mission_id}:builder"
+        stable_order[actor_id] = 0
         actors.append(
             {
-                "id": run.worker_job_id or f"{mission_id}:builder",
+                "id": actor_id,
                 "role": "implementation",
                 "state": run_state,
                 "responsibility": responsibility,
                 "task_id": task_id,
                 "dependency_reason": "",
+                "dependency_task_id": "",
+                "dependency_task_title": "",
+                "status_reason": _task_status_reason(run_state, ()),
                 "attempt": "1",
                 "source": "execution_ledger",
                 "updated_at": run.updated_at,
@@ -962,20 +1107,25 @@ def _operator_actors(
     phase_state = _OPERATOR_PHASE_STATES.get(phase, "working")
     builder_is_current = run is not None and phase == "executing" and role == "implementation"
     if not builder_is_current:
+        actor_id = f"{mission_id}:phase:{phase}"
+        stable_order[actor_id] = 1
         actors.append(
             {
-                "id": f"{mission_id}:phase:{phase}",
+                "id": actor_id,
                 "role": role,
                 "state": phase_state,
                 "responsibility": responsibility,
                 "task_id": task_id,
                 "dependency_reason": f"operator_{phase}" if phase_state in {"waiting", "blocked"} else "",
+                "dependency_task_id": "",
+                "dependency_task_title": "",
+                "status_reason": f"operator_{phase}",
                 "attempt": _text(queue_item.get("attempt")),
                 "source": "operator_queue",
                 "updated_at": updated_at,
             }
         )
-    return actors
+    return _order_execution_actors(actors, stable_order)
 
 
 def _operator_phase_timeline_item(

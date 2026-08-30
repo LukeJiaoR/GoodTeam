@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
 import Button from '../../components/ui/Button';
@@ -42,6 +42,63 @@ function translated(t, key, fallback, params = {}) {
 
 function statusText(status, t) {
   return translated(t, `work.team.status.${status}`, status || t('work.team.status.up_next'));
+}
+
+function executionStatusReason(actor, t) {
+  if (actor.state === 'waiting' && actor.dependency_task_title) {
+    return translated(
+      t,
+      'work.team.reasons.waiting_for_dependency',
+      `Waiting for “${actor.dependency_task_title}” to complete.`,
+      { dependency: actor.dependency_task_title },
+    );
+  }
+  const reason = actor.status_reason || actor.dependency_reason;
+  return reason ? translated(t, `work.team.reasons.${reason}`, reason) : '';
+}
+
+function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const tooltipId = useId();
+  const status = statusText(actor.state, t);
+  const reason = executionStatusReason(actor, t);
+  const label = reason
+    ? translated(
+      t,
+      'work.team.executionStatusLabel',
+      `${status}. ${reason}`,
+      { status, reason },
+    )
+    : status;
+  const ambient = ['working', 'reviewing', 'fixing'].includes(actor.state) && !reducedMotion;
+
+  return (
+    <span
+      aria-describedby={tooltipOpen ? tooltipId : undefined}
+      aria-label={label}
+      className="team-status-led-trigger"
+      data-motion={ambient ? 'ambient' : 'static'}
+      data-state={actor.state || 'up_next'}
+      onBlur={() => setTooltipOpen(false)}
+      onFocus={() => setTooltipOpen(true)}
+      onMouseEnter={() => setTooltipOpen(true)}
+      onMouseLeave={() => setTooltipOpen(false)}
+      role="img"
+      tabIndex={0}
+    >
+      <span aria-hidden="true" className="team-status-led" />
+      <span
+        aria-hidden={!tooltipOpen}
+        className="team-status-led-tooltip"
+        data-open={tooltipOpen ? 'true' : 'false'}
+        id={tooltipId}
+        role="tooltip"
+      >
+        <strong>{status}</strong>
+        {reason ? <span>{reason}</span> : null}
+      </span>
+    </span>
+  );
 }
 
 function shortRunId(runId) {
@@ -921,7 +978,7 @@ function ManagerPane({
   );
 }
 
-function ExecutionPane({ actors, hasMission, onInspect, t }) {
+function ExecutionPane({ actors, hasMission, onInspect, reducedMotion, t }) {
   return (
     <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')}>
       <header className="team-pane__header">
@@ -932,12 +989,13 @@ function ExecutionPane({ actors, hasMission, onInspect, t }) {
         <ol className="team-actor-list">
           {actors.map((actor) => (
             <li key={actor.id} data-state={actor.state}>
-              <div className="team-actor-list__topline">
-                <strong>{translated(t, `work.plan.role.${actor.role}`, actor.role)}</strong>
-                <StatusBadge tone={tone(actor.state)}>{statusText(actor.state, t)}</StatusBadge>
+              <div className="team-actor-list__summary">
+                <ExecutionStatusIndicator actor={actor} reducedMotion={reducedMotion} t={t} />
+                <div className="team-actor-list__copy">
+                  <strong>{translated(t, `work.plan.role.${actor.role}`, actor.role)}</strong>
+                  <p>{actor.responsibility || t('work.team.noResponsibility')}</p>
+                </div>
               </div>
-              <p>{actor.responsibility || t('work.team.noResponsibility')}</p>
-              {actor.dependency_reason ? <small>{translated(t, `work.team.reasons.${actor.dependency_reason}`, actor.dependency_reason)}</small> : null}
             </li>
           ))}
         </ol>
@@ -1183,6 +1241,7 @@ function TeamWorkspace({
           actors={workspace.execution_actors || []}
           hasMission={Boolean(mission)}
           onInspect={onInspect}
+          reducedMotion={reducedMotion}
           t={t}
         />
         <OutcomesPane

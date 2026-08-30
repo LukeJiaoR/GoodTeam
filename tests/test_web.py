@@ -586,6 +586,20 @@ def test_project_state_attention_targets_synced_outcome_by_task_id(tmp_path: Pat
     target = next(item for item in workspace["outcome_tasks"] if item["id"] == "TEAM-1")
     assert target["review_target_type"] == "review"
     assert target["review_target_id"] == "prd"
+    assert [
+        (actor["task_id"], actor["state"])
+        for actor in workspace["execution_actors"]
+    ] == [
+        ("TEAM-1", "reviewing"),
+        ("TEAM-2", "waiting"),
+        ("TEAM-3", "waiting"),
+        ("TEAM-4", "waiting"),
+        ("TEAM-5", "waiting"),
+    ]
+    architect = next(actor for actor in workspace["execution_actors"] if actor["task_id"] == "TEAM-2")
+    assert architect["dependency_task_id"] == "TEAM-1"
+    assert architect["dependency_task_title"] == "Draft and approve PRD"
+    assert workspace["execution_actors"][0]["status_reason"] == "awaiting_your_approval"
 
 
 def test_project_state_prefers_active_operator_queue_over_historical_workflow_state(

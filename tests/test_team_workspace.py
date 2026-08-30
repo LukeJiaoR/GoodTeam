@@ -194,6 +194,9 @@ def test_same_task_and_role_with_many_attempts_projects_one_execution_actor() ->
             "responsibility": "Design RFC & Security Review",
             "task_id": "DEMO-1",
             "dependency_reason": "",
+            "dependency_task_id": "",
+            "dependency_task_title": "",
+            "status_reason": "delivered",
             "attempt": "",
             "attempt_count": 4,
             "current_attempt_id": "job-4",
@@ -279,12 +282,12 @@ def test_same_role_with_two_durable_task_references_projects_two_assignments() -
     projection = _workflow_identity_projection(tasks, jobs)
 
     assert [(actor["task_id"], actor["responsibility"]) for actor in projection["execution_actors"]] == [
-        ("DEMO-1", "Design RFC"),
         ("DEMO-2", "Security architecture review"),
+        ("DEMO-1", "Design RFC"),
     ]
     assert [actor["id"] for actor in projection["execution_actors"]] == [
-        "task-assignment:DEMO-1",
         "task-assignment:DEMO-2",
+        "task-assignment:DEMO-1",
     ]
 
 
@@ -310,6 +313,9 @@ def test_planned_task_without_worker_attempt_projects_once_as_waiting() -> None:
             "responsibility": "Review implementation",
             "task_id": "DEMO-2",
             "dependency_reason": "waiting_for_dependencies",
+            "dependency_task_id": "DEMO-1",
+            "dependency_task_title": "",
+            "status_reason": "waiting_for_dependencies",
             "attempt": "",
             "attempt_count": 0,
             "current_attempt_id": "",
@@ -317,6 +323,113 @@ def test_planned_task_without_worker_attempt_projects_once_as_waiting() -> None:
             "updated_at": "2026-08-30T10:00:00Z",
         }
     ]
+
+
+def test_canonical_stage_projection_derives_waiting_chain_and_current_first_order() -> None:
+    state = create_initial_state("run-stage-chain", "DEMO", "Ship the approved implementation")
+    state.next_node = "await_security_approval"
+    tasks = [
+        _workflow_task(
+            "DEMO-1",
+            "Draft and approve PRD",
+            "product_requirement",
+            status="done",
+            external_refs=["stage:product_requirement"],
+        ),
+        _workflow_task(
+            "DEMO-2",
+            "Design RFC & Security Review",
+            "architect",
+            status="in_progress",
+            external_refs=["stage:architect"],
+        ),
+        _workflow_task(
+            "DEMO-3",
+            "Implement approved design",
+            "implementation",
+            status="todo",
+            external_refs=["stage:implementation"],
+        ),
+        _workflow_task(
+            "DEMO-4",
+            "Verify implementation",
+            "qa",
+            status="todo",
+            external_refs=["stage:qa"],
+        ),
+        _workflow_task(
+            "DEMO-5",
+            "Approve and complete release",
+            "release",
+            status="todo",
+            external_refs=["stage:release"],
+        ),
+    ]
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        tasks=tasks,
+        approval_reviews=[{"approval": "security", "is_actionable": True}],
+    )
+
+    assert [
+        (actor["task_id"], actor["state"])
+        for actor in projection["execution_actors"]
+    ] == [
+        ("DEMO-2", "reviewing"),
+        ("DEMO-3", "waiting"),
+        ("DEMO-4", "waiting"),
+        ("DEMO-5", "waiting"),
+        ("DEMO-1", "completed"),
+    ]
+    waiting = {
+        actor["task_id"]: (actor["dependency_task_id"], actor["dependency_task_title"])
+        for actor in projection["execution_actors"]
+        if actor["state"] == "waiting"
+    }
+    assert waiting == {
+        "DEMO-3": ("DEMO-2", "Design RFC & Security Review"),
+        "DEMO-4": ("DEMO-3", "Implement approved design"),
+        "DEMO-5": ("DEMO-4", "Verify implementation"),
+    }
+    architect = projection["execution_actors"][0]
+    assert architect["status_reason"] == "awaiting_your_approval"
+    assert [task["dependencies"] for task in projection["outcome_tasks"]] == [
+        [],
+        ["DEMO-1"],
+        ["DEMO-2"],
+        ["DEMO-3"],
+        ["DEMO-4"],
+    ]
+
+
+def test_execution_order_uses_state_priority_and_is_stable() -> None:
+    tasks = [
+        _workflow_task("DEMO-DONE", "Completed task", "release", status="done"),
+        _workflow_task(
+            "DEMO-WAIT",
+            "Waiting task",
+            "qa",
+            status="todo",
+            dependencies=["DEMO-MISSING"],
+        ),
+        _workflow_task("DEMO-WORK", "Working task", "implementation", status="in_progress"),
+        _workflow_task("DEMO-BLOCK", "Blocked task", "architect", status="blocked"),
+        _workflow_task("DEMO-REVIEW", "Reviewing task", "reviewer", status="review"),
+        _workflow_task("DEMO-NEXT", "Eligible task", "product_requirement", status="todo"),
+    ]
+
+    first = _workflow_identity_projection([dict(task) for task in tasks], [])
+    second = _workflow_identity_projection([dict(task) for task in tasks], [])
+
+    expected = ["blocked", "reviewing", "working", "waiting", "up_next", "completed"]
+    assert [actor["state"] for actor in first["execution_actors"]] == expected
+    assert [actor["id"] for actor in first["execution_actors"]] == [
+        actor["id"] for actor in second["execution_actors"]
+    ]
+    assert first == second
 
 
 def test_worker_jobs_from_another_run_do_not_contaminate_current_assignment() -> None:
@@ -658,8 +771,9 @@ def test_operator_queue_keeps_mission_visible_across_post_execution_lifecycle(
     if phase == "executing":
         assert first["execution_actors"][0]["state"] == "working"
     else:
-        assert first["execution_actors"][0]["state"] == "completed"
-        assert any(actor["source"] == "operator_queue" for actor in first["execution_actors"])
+        assert first["execution_actors"][0]["state"] == expected_status
+        assert first["execution_actors"][0]["source"] == "operator_queue"
+        assert any(actor["state"] == "completed" for actor in first["execution_actors"])
     if phase not in {"executing", "pr_ready"}:
         assert first["outcome_tasks"][0]["primary_outcome"] == {
             "kind": "pull_request",
@@ -694,7 +808,7 @@ def test_operator_queue_remains_authoritative_when_joined_ledger_is_malformed(tm
     assert projection["mission"]["id"] == item["id"]
     assert projection["mission"]["phase"] == "review_ready"
     assert projection["mission"]["title"] == "Manager-centered team interaction"
-    assert projection["execution_actors"][-1]["source"] == "operator_queue"
+    assert projection["execution_actors"][0]["source"] == "operator_queue"
 
 
 def test_running_execution_without_an_active_operator_queue_is_not_a_mission(tmp_path: Path) -> None:

@@ -10,6 +10,14 @@
   --product-success: #41735a;
   --product-warning: #8a6b25;
   --product-danger: #984f49;
+  --product-led-working: #536ec1;
+  --product-led-reviewing: #705fc2;
+  --product-led-fixing: #a47132;
+  --product-led-waiting: #748796;
+  --product-led-up-next: #aaa59c;
+  --product-led-blocked: #a84f49;
+  --product-led-completed: #3f7b59;
+  --product-led-stopped: #8d8982;
   --product-on-accent: #fffdf8;
   --product-focus: #7f4933;
   --product-radius: 8px;
@@ -1310,6 +1318,14 @@
   --product-success: #78a98c;
   --product-warning: #d0ad61;
   --product-danger: #d3827b;
+  --product-led-working: #839cf2;
+  --product-led-reviewing: #a190ef;
+  --product-led-fixing: #dfa85d;
+  --product-led-waiting: #8fa2b1;
+  --product-led-up-next: #77736d;
+  --product-led-blocked: #df817a;
+  --product-led-completed: #78b18e;
+  --product-led-stopped: #74716c;
   --product-on-accent: #191816;
   --product-focus: #d18b6c;
 }
@@ -1421,6 +1437,11 @@
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  .product-shell .team-status-led {
+    animation: none !important;
+    transform: none !important;
   }
 }
 
@@ -1954,34 +1975,134 @@
 
 .product-shell .team-actor-list li {
   display: grid;
-  gap: 0.45rem;
   padding: 0.9rem 1rem;
   border-bottom: 1px solid var(--product-border);
 }
 
-.product-shell .team-actor-list__topline {
+.product-shell .team-actor-list__summary {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.65rem;
   align-items: flex-start;
-  justify-content: space-between;
 }
 
-.product-shell .team-actor-list p,
-.product-shell .team-actor-list small {
+.product-shell .team-actor-list__copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.24rem;
+}
+
+.product-shell .team-actor-list__copy strong {
+  line-height: 1.35;
+}
+
+.product-shell .team-actor-list__copy p {
   margin: 0;
   color: var(--product-text-muted);
   font-size: 0.8rem;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
-.product-shell .team-actor-list li[data-state="working"],
-.product-shell .team-actor-list li[data-state="reviewing"],
-.product-shell .team-actor-list li[data-state="fixing"] {
-  box-shadow: inset 3px 0 0 var(--product-accent-strong);
+.product-shell .team-status-led-trigger {
+  --team-led-color: var(--product-led-up-next);
+  display: inline-grid;
+  position: relative;
+  flex: 0 0 1.35rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  margin-top: 0.02rem;
+  place-items: center;
+  border-radius: 999px;
+  outline: none;
 }
 
-.product-shell .team-actor-list li[data-state="blocked"] {
-  box-shadow: inset 3px 0 0 var(--product-danger);
+.product-shell .team-status-led-trigger:focus-visible {
+  box-shadow: 0 0 0 2px var(--product-surface), 0 0 0 4px var(--product-focus);
+}
+
+.product-shell .team-status-led-trigger[data-state="working"] { --team-led-color: var(--product-led-working); }
+.product-shell .team-status-led-trigger[data-state="reviewing"] { --team-led-color: var(--product-led-reviewing); }
+.product-shell .team-status-led-trigger[data-state="fixing"] { --team-led-color: var(--product-led-fixing); }
+.product-shell .team-status-led-trigger[data-state="waiting"] { --team-led-color: var(--product-led-waiting); }
+.product-shell .team-status-led-trigger[data-state="blocked"] { --team-led-color: var(--product-led-blocked); }
+.product-shell .team-status-led-trigger[data-state="completed"] { --team-led-color: var(--product-led-completed); }
+.product-shell .team-status-led-trigger[data-state="stopped"] { --team-led-color: var(--product-led-stopped); }
+
+.product-shell .team-status-led {
+  display: block;
+  width: 9px;
+  height: 9px;
+  background: var(--team-led-color);
+  border: 1px solid color-mix(in srgb, var(--team-led-color) 68%, var(--product-text));
+  border-radius: 50%;
+  box-shadow:
+    inset 1px 1px 1px color-mix(in srgb, white 54%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--team-led-color) 16%, transparent),
+    0 1px 2px color-mix(in srgb, var(--team-led-color) 35%, transparent);
+}
+
+.product-shell .team-status-led-trigger[data-state="completed"] .team-status-led {
+  box-shadow:
+    inset 1px 1px 1px color-mix(in srgb, white 50%, transparent),
+    0 0 5px color-mix(in srgb, var(--team-led-color) 24%, transparent);
+}
+
+.product-shell .team-status-led-trigger[data-state="up_next"] .team-status-led,
+.product-shell .team-status-led-trigger[data-state="stopped"] .team-status-led {
+  opacity: 0.72;
+}
+
+.product-shell .team-status-led-trigger[data-motion="ambient"] .team-status-led {
+  animation: team-status-led-breathe 2.8s ease-in-out infinite;
+}
+
+@keyframes team-status-led-breathe {
+  0%, 100% {
+    box-shadow:
+      inset 1px 1px 1px color-mix(in srgb, white 50%, transparent),
+      0 0 3px color-mix(in srgb, var(--team-led-color) 24%, transparent);
+    transform: scale(0.96);
+  }
+
+  50% {
+    box-shadow:
+      inset 1px 1px 1px color-mix(in srgb, white 56%, transparent),
+      0 0 7px color-mix(in srgb, var(--team-led-color) 38%, transparent);
+    transform: scale(1.03);
+  }
+}
+
+.product-shell .team-status-led-tooltip {
+  display: grid;
+  position: absolute;
+  z-index: 14;
+  top: calc(100% + 0.38rem);
+  left: -0.2rem;
+  width: max-content;
+  max-width: min(12rem, calc(100vw - 3rem));
+  gap: 0.16rem;
+  padding: 0.5rem 0.6rem;
+  color: var(--product-text);
+  background: color-mix(in srgb, var(--product-surface) 96%, var(--product-bg));
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--product-text) 13%, transparent);
+  font-size: 0.74rem;
+  line-height: 1.4;
+  opacity: 0;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  transform: translateY(-0.2rem);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.product-shell .team-status-led-tooltip span {
+  color: var(--product-text-muted);
+}
+
+.product-shell .team-status-led-tooltip[data-open="true"] {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .product-shell .team-outcome-list li {

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@xyflow/react', async () => {
@@ -114,8 +114,15 @@ function projectedWorkData(overrides = {}) {
       ],
       attention_request: null,
       execution_actors: [
-        { id: 'job-1', role: 'implementation', state: 'working', responsibility: 'Implement OAuth', task_id: 'DEMO-1', source: 'worker_job' },
-        { id: 'role-reviewer', role: 'reviewer', state: 'waiting', responsibility: 'Review OAuth', task_id: 'DEMO-2', source: 'task_role', dependency_reason: 'waiting_for_dependencies' },
+        {
+          id: 'job-1', role: 'implementation', state: 'working', responsibility: 'Implement OAuth', task_id: 'DEMO-1',
+          source: 'worker_job', status_reason: 'worker_running',
+        },
+        {
+          id: 'role-reviewer', role: 'reviewer', state: 'waiting', responsibility: 'Review OAuth', task_id: 'DEMO-2',
+          source: 'task_role', dependency_reason: 'waiting_for_dependencies', status_reason: 'waiting_for_dependencies',
+          dependency_task_id: 'DEMO-1', dependency_task_title: 'Implement OAuth',
+        },
       ],
       outcome_tasks: [
         { id: 'DEMO-1', objective: 'Implement OAuth', owner: 'implementation', status: 'working', status_reason: 'worker_running', dependencies: [], acceptance_criteria: ['CI passes'], attempt_count: 1, primary_outcome: { kind: 'pull_request', label: 'PR #42', href: 'https://github.com/example/demo/pull/42', path: '', status: 'ready' }, supporting_refs: [] },
@@ -160,6 +167,23 @@ function repeatedArchitectAttemptData() {
       current_attempt_id: 'job-architect-4',
       supporting_refs: [],
     },
+  ];
+  return data;
+}
+
+function orderedExecutionData() {
+  const data = projectedWorkData();
+  data.team_workspace.execution_actors = [
+    { id: 'blocked', role: 'architect', state: 'blocked', responsibility: 'Resolve CI failure', status_reason: 'execution_blocked' },
+    { id: 'reviewing', role: 'reviewer', state: 'reviewing', responsibility: 'Review architecture', status_reason: 'awaiting_review' },
+    { id: 'working', role: 'implementation', state: 'working', responsibility: 'Implement approved design', status_reason: 'worker_running' },
+    {
+      id: 'waiting', role: 'qa', state: 'waiting', responsibility: 'Verify implementation',
+      status_reason: 'waiting_for_dependencies', dependency_reason: 'waiting_for_dependencies',
+      dependency_task_id: 'DEMO-IMPL', dependency_task_title: 'Implement approved design',
+    },
+    { id: 'up-next', role: 'release', state: 'up_next', responsibility: 'Prepare release', status_reason: 'not_started' },
+    { id: 'completed', role: 'product_requirement', state: 'completed', responsibility: 'Draft and approve PRD', status_reason: 'delivered' },
   ];
   return data;
 }
@@ -265,8 +289,12 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.getByRole('heading', { name: 'Execution' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Outcomes' })).toBeVisible();
   expect(screen.getByText('I organized this mission into 2 outcome tasks and identified the next eligible work.')).toBeVisible();
-  expect(screen.getAllByText('Working', { selector: '.product-status-badge' }).length).toBeGreaterThanOrEqual(1);
-  expect(screen.getAllByText('Waiting for a dependency to complete.').length).toBe(2);
+  const execution = screen.getByRole('region', { name: 'Execution' });
+  expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();
+  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(2);
+  expect(within(execution).getByRole('img', { name: 'Working. A worker is executing this task now.' })).toBeVisible();
+  expect(within(execution).getByRole('img', { name: 'Waiting. Waiting for “Implement OAuth” to complete.' })).toBeVisible();
+  expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
   expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
 
@@ -288,13 +316,105 @@ test('renders repeated Architect attempts once while retaining worker history in
   expect(within(executionPane).getAllByRole('listitem')).toHaveLength(1);
   expect(within(executionPane).getByText('Architect')).toBeVisible();
   expect(within(executionPane).getByText('Design RFC & Security Review')).toBeVisible();
-  expect(within(executionPane).getByText('Completed')).toBeVisible();
+  expect(within(executionPane).getByRole('img', { name: 'Completed' })).toBeVisible();
 
   await userEvent.click(within(executionPane).getByRole('button', { name: 'Inspect workers' }));
   const inspector = document.querySelector('.team-inspector');
   expect(inspector).not.toBeNull();
   for (const jobId of ['job-architect-1', 'job-architect-2', 'job-architect-3', 'job-architect-4']) {
     expect(within(inspector).getByText(jobId)).toBeVisible();
+  }
+});
+
+test('localizes up_next as an eligible assignment rather than a generic next step', () => {
+  expect(translate('en', 'work.team.status.up_next')).toBe('Up next');
+  expect(translate('zh-CN', 'work.team.status.up_next')).toBe('待执行');
+  expect(translate('zh-CN', 'work.team.status.up_next')).not.toBe('下一步');
+});
+
+test('renders the projection order stably with LED-only Execution states', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: orderedExecutionData(), error: null, refresh: vi.fn(), status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
+  });
+  const user = userEvent.setup();
+
+  renderWorkPage();
+
+  const execution = screen.getByRole('region', { name: 'Execution' });
+  const actorOrder = () => within(execution).getAllByRole('listitem').map((item) => (
+    item.querySelector('.team-actor-list__copy p')?.textContent
+  ));
+  const expected = [
+    'Resolve CI failure',
+    'Review architecture',
+    'Implement approved design',
+    'Verify implementation',
+    'Prepare release',
+    'Draft and approve PRD',
+  ];
+  expect(actorOrder()).toEqual(expected);
+  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(6);
+  expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();
+
+  await user.hover(within(execution).getByRole('img', { name: /Reviewing/ }));
+  expect(actorOrder()).toEqual(expected);
+});
+
+test('exposes the same localized LED explanation on hover and keyboard focus', async () => {
+  mocks.useProjectState.mockReturnValue({
+    data: orderedExecutionData(), error: null, refresh: vi.fn(), status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
+  });
+  const user = userEvent.setup();
+
+  renderWorkPage();
+
+  const execution = screen.getByRole('region', { name: 'Execution' });
+  const indicator = within(execution).getByRole('img', {
+    name: 'Waiting. Waiting for “Implement approved design” to complete.',
+  });
+  expect(indicator).toHaveAttribute('tabindex', '0');
+  expect(within(execution).queryByRole('tooltip')).not.toBeInTheDocument();
+
+  await user.hover(indicator);
+  let tooltip = within(execution).getByRole('tooltip');
+  expect(tooltip).toHaveTextContent('Waiting');
+  expect(tooltip).toHaveTextContent('Waiting for “Implement approved design” to complete.');
+  expect(indicator).toHaveAttribute('aria-describedby', tooltip.id);
+
+  await user.unhover(indicator);
+  expect(within(execution).queryByRole('tooltip')).not.toBeInTheDocument();
+  fireEvent.focus(indicator);
+  tooltip = within(execution).getByRole('tooltip');
+  expect(tooltip).toHaveTextContent('Waiting for “Implement approved design” to complete.');
+  fireEvent.blur(indicator);
+  expect(within(execution).queryByRole('tooltip')).not.toBeInTheDocument();
+});
+
+test('keeps active Execution LEDs static when reduced motion is preferred', () => {
+  vi.stubGlobal('matchMedia', vi.fn(() => ({
+    matches: true,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })));
+  mocks.useProjectState.mockReturnValue({
+    data: orderedExecutionData(), error: null, refresh: vi.fn(), status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
+  });
+
+  renderWorkPage();
+
+  const execution = screen.getByRole('region', { name: 'Execution' });
+  for (const state of ['working', 'reviewing']) {
+    expect(execution.querySelector(`.team-status-led-trigger[data-state="${state}"]`))
+      .toHaveAttribute('data-motion', 'static');
   }
 });
 

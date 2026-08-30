@@ -109,13 +109,13 @@ describe('TaskDetailModal', () => {
 
   test.each([
     ['todo', '待办', 'pending'],
-    ['up_next', '下一步', 'pending'],
+    ['up_next', '待执行', 'pending'],
     ['in_progress', '进行中', 'active'],
-    ['working', '工作中', 'active'],
+    ['working', '进行中', 'active'],
     ['review', '审查中', 'active'],
     ['reviewing', '审查中', 'active'],
     ['changes_requested', '要求修改', 'active'],
-    ['fixing', '修复中', 'active'],
+    ['fixing', '修改中', 'active'],
     ['pending', '待审批', 'pending'],
     ['waiting', '等待中', 'pending'],
     ['done', '已完成', 'success'],

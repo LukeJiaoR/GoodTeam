@@ -75,3 +75,19 @@ test('button feedback uses deliberate timing and includes a danger hover state',
     /background:/,
   );
 });
+
+test('Execution LEDs use semantic tokens and become static for reduced motion', () => {
+  const light = tokensFor('.product-shell');
+  const dark = { ...light, ...tokensFor('.dark .product-shell') };
+  for (const state of [
+    'working', 'reviewing', 'fixing', 'waiting', 'up-next', 'blocked', 'completed', 'stopped',
+  ]) {
+    expect(light[`product-led-${state}`], `light ${state} LED token`).toMatch(/^#[\da-f]{6}$/i);
+    expect(dark[`product-led-${state}`], `dark ${state} LED token`).toMatch(/^#[\da-f]{6}$/i);
+  }
+  expect(blockFor('.product-shell .team-status-led-trigger[data-motion="ambient"] .team-status-led'))
+    .toMatch(/animation:\s*team-status-led-breathe/);
+  expect(css).toMatch(
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.product-shell \.team-status-led \{[\s\S]*?animation:\s*none !important;/,
+  );
+});
