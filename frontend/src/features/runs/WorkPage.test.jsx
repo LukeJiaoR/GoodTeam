@@ -377,7 +377,8 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Inspect workflow' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Inspect workers' })).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Back to Home' })).toHaveAttribute('href', '/projects/DEMO/home');
+  expect(document.querySelector('.product-work-page__identity')).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Back to Home' })).not.toBeInTheDocument();
 
   await userEvent.click(screen.getByRole('button', { name: /Implement OAuth/ }));
   expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();

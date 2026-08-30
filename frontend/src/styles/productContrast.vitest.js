@@ -79,8 +79,8 @@ test('button feedback uses deliberate timing and includes a danger hover state',
 test('the neumorphic palette is scoped to Work and leaves the app shell tokens intact', () => {
   const shell = tokensFor('.product-shell');
   const darkShell = tokensFor('.dark .product-shell');
-  const work = tokensFor('.product-shell--work .product-work-page');
-  const darkWork = tokensFor('.dark .product-shell--work .product-work-page');
+  const work = tokensFor('.product-shell--work');
+  const darkWork = tokensFor('.dark .product-shell--work');
 
   expect(shell).toMatchObject({
     'product-bg': '#f3f0e9',
@@ -111,10 +111,10 @@ test('the neumorphic palette is scoped to Work and leaves the app shell tokens i
 });
 
 test('Execution LEDs use semantic tokens and become static for reduced motion', () => {
-  const light = tokensFor('.product-shell--work .product-work-page');
+  const light = tokensFor('.product-shell--work');
   const dark = {
     ...light,
-    ...tokensFor('.dark .product-shell--work .product-work-page'),
+    ...tokensFor('.dark .product-shell--work'),
   };
   for (const state of [
     'working', 'reviewing', 'fixing', 'waiting', 'up-next', 'blocked', 'completed', 'stopped',
@@ -137,6 +137,8 @@ test('Execution LEDs use semantic tokens and become static for reduced motion', 
 });
 
 test('Work uses one material system with authentic raised and inset neumorphic depth', () => {
+  const chrome = blockFor('.product-shell--work .product-work-chrome');
+  const activeNavigation = blockFor('.product-shell--work .product-work-navigation__link.is-active');
   const studio = blockFor('.product-shell .team-workspace');
   const pane = blockFor('.product-shell .team-pane');
   const manager = blockFor('.product-shell .team-pane--manager');
@@ -151,6 +153,9 @@ test('Work uses one material system with authentic raised and inset neumorphic d
   const runContext = blockFor('.product-shell .product-work-page .work-run-context');
   const runTitle = blockFor('.product-shell .product-work-page .work-run-title');
 
+  expect(chrome).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(chrome).toMatch(/var\(--product-neu-shadow\)/);
+  expect(activeNavigation).toMatch(/var\(--product-neu-shadow-soft\)/);
   expect(studio).toMatch(/grid-template-areas:\s*"execution manager outcomes";/);
   expect(studio).toMatch(/background-color:\s*var\(--product-neu-material\);/);
   expect(studio).toMatch(/border:\s*0;/);
