@@ -11,7 +11,8 @@ const globalCss = readCss('src/styles/product.css');
 const workspaceCss = readCss('src/features/runs/workspace/workspace.css');
 const presentationCss = readCss('src/features/runs/workspace/workspacePresentation.css');
 const responsiveCss = readCss('src/features/runs/workspace/workspaceResponsive.css');
-const localCss = `${workspaceCss}\n${presentationCss}\n${responsiveCss}`;
+const taskDetailCss = readCss('src/features/runs/workspace/workspaceTaskDetail.css');
+const localCss = `${workspaceCss}\n${presentationCss}\n${responsiveCss}\n${taskDetailCss}`;
 
 const globalWorkLeaks = [
   '.product-shell--work',
@@ -24,6 +25,8 @@ const globalWorkLeaks = [
   '.team-pane--manager',
   '.team-pane--execution',
   '.team-pane--outcomes',
+  '.task-detail-dialog',
+  '.task-detail-backdrop',
 ];
 
 test('global product CSS contains no Manager workspace presentation rules', () => {
@@ -42,16 +45,17 @@ test('the Work visual system is rooted under the feature-owned workspace shell',
   expect(localCss).toContain('.work-workspace-shell .team-approval-brief');
   expect(localCss).toContain('.work-workspace-shell .team-mobile-nav');
   expect(localCss).toContain('.work-workspace-shell .team-inspector');
-  expect(localCss).toContain('.work-workspace-shell .task-detail-dialog');
+  expect(taskDetailCss).toContain('.work-workspace-shell .task-detail-dialog');
+  expect(taskDetailCss).toContain('.work-workspace-shell .task-detail-backdrop');
   expect(responsiveCss).toContain('bottom: max(0.65rem, env(safe-area-inset-bottom));');
   expect(localCss).not.toContain('.product-shell--work');
   expect(localCss).not.toContain('--product-neu-');
 });
 
 test('Work-owned selectors cannot escape the workspace root', () => {
-  const presentationMarkers = ['.team-', '.task-detail-', '.product-work-page', '.work-run-'];
+  const presentationMarkers = ['.team-', '.task-detail-', '.product-work-page', '.work-run-', '.md-renderer', '.md-code-', '.md-table'];
 
-  for (const css of [workspaceCss, presentationCss, responsiveCss]) {
+  for (const css of [workspaceCss, presentationCss, responsiveCss, taskDetailCss]) {
     for (const chunk of css.split('{').slice(0, -1)) {
       const selector = chunk.slice(chunk.lastIndexOf('}') + 1).trim();
       if (!presentationMarkers.some((marker) => selector.includes(marker))) continue;
