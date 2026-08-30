@@ -2,14 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from 'vitest';
 
-const globalCss = fs.readFileSync(
-  path.resolve(globalThis.process.cwd(), 'src/styles/product.css'),
+const readCss = (relativePath) => fs.readFileSync(
+  path.resolve(globalThis.process.cwd(), relativePath),
   'utf8',
 );
-const workspaceCss = fs.readFileSync(
-  path.resolve(globalThis.process.cwd(), 'src/features/runs/workspace/workspace.css'),
-  'utf8',
-);
+
+const globalCss = readCss('src/styles/product.css');
+const workspaceCss = readCss('src/features/runs/workspace/workspace.css');
+const presentationCss = readCss('src/features/runs/workspace/workspacePresentation.css');
+const localCss = `${workspaceCss}\n${presentationCss}`;
 
 const globalWorkLeaks = [
   '.product-shell--work',
@@ -36,24 +37,26 @@ test('the Work visual system is rooted under the feature-owned workspace shell',
   expect(workspaceCss).toContain('.dark .work-workspace-shell {');
   expect(workspaceCss).toContain('--work-material: #edf2f8;');
   expect(workspaceCss).toContain('--work-accent: #315efb;');
-  expect(workspaceCss).toContain('.work-workspace-shell .team-workspace');
-  expect(workspaceCss).toContain('.work-workspace-shell .team-approval-brief');
-  expect(workspaceCss).toContain('.work-workspace-shell .team-mobile-nav');
-  expect(workspaceCss).toContain('.work-workspace-shell .team-inspector');
-  expect(workspaceCss).toContain('.work-workspace-shell .task-detail-dialog');
-  expect(workspaceCss).not.toContain('.product-shell--work');
-  expect(workspaceCss).not.toContain('--product-neu-');
+  expect(localCss).toContain('.work-workspace-shell .team-workspace');
+  expect(localCss).toContain('.work-workspace-shell .team-approval-brief');
+  expect(localCss).toContain('.work-workspace-shell .team-mobile-nav');
+  expect(localCss).toContain('.work-workspace-shell .team-inspector');
+  expect(localCss).toContain('.work-workspace-shell .task-detail-dialog');
+  expect(localCss).not.toContain('.product-shell--work');
+  expect(localCss).not.toContain('--product-neu-');
 });
 
 test('Work-owned selectors cannot escape the workspace root', () => {
-  const selectorBlocks = workspaceCss.match(/(?:^|\n)([^@\n][^{]+)\{/g) || [];
   const presentationMarkers = ['.team-', '.task-detail-', '.product-work-page', '.work-run-'];
 
-  for (const rawSelector of selectorBlocks) {
-    const selector = rawSelector.replace(/\{$/, '').trim();
-    if (!presentationMarkers.some((marker) => selector.includes(marker))) continue;
-    for (const part of selector.split(',')) {
-      expect(part.trim(), `unscoped Work selector: ${part.trim()}`).toContain('.work-workspace-shell');
+  for (const css of [workspaceCss, presentationCss]) {
+    for (const chunk of css.split('{').slice(0, -1)) {
+      const selector = chunk.slice(chunk.lastIndexOf('}') + 1).trim();
+      if (!presentationMarkers.some((marker) => selector.includes(marker))) continue;
+      for (const part of selector.split(',')) {
+        if (!presentationMarkers.some((marker) => part.includes(marker))) continue;
+        expect(part.trim(), `unscoped Work selector: ${part.trim()}`).toContain('.work-workspace-shell');
+      }
     }
   }
 });
