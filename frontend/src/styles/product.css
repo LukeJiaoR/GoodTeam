@@ -16,7 +16,7 @@
   --product-danger: #b13f4a;
   --product-led-working: #315efb;
   --product-led-reviewing: #2147c8;
-  --product-led-fixing: #8a6200;
+  --product-led-fixing: #315efb;
   --product-led-waiting: #6f7f98;
   --product-led-up-next: #a8b3c3;
   --product-led-blocked: #b13f4a;
@@ -25,6 +25,22 @@
   --product-on-accent: #ffffff;
   --product-focus: #315efb;
   --product-radius: 8px;
+  --product-neu-material: #edf2f8;
+  --product-neu-material-deep: #e8eef6;
+  --product-neu-highlight: #ffffff;
+  --product-neu-shadow: #8090aa;
+  --product-neu-shadow-raised:
+    -10px -10px 24px color-mix(in srgb, var(--product-neu-highlight) 86%, transparent),
+    10px 12px 28px color-mix(in srgb, var(--product-neu-shadow) 23%, transparent);
+  --product-neu-shadow-soft:
+    -6px -6px 14px color-mix(in srgb, var(--product-neu-highlight) 78%, transparent),
+    6px 7px 17px color-mix(in srgb, var(--product-neu-shadow) 20%, transparent);
+  --product-neu-shadow-compact:
+    -3px -3px 7px color-mix(in srgb, var(--product-neu-highlight) 74%, transparent),
+    3px 4px 8px color-mix(in srgb, var(--product-neu-shadow) 18%, transparent);
+  --product-neu-shadow-inset:
+    inset 4px 4px 9px color-mix(in srgb, var(--product-neu-shadow) 22%, transparent),
+    inset -4px -4px 9px color-mix(in srgb, var(--product-neu-highlight) 82%, transparent);
   min-height: 100dvh;
   color: var(--product-text);
   background-color: var(--product-bg);
@@ -1334,7 +1350,7 @@
   --product-danger: #ef8b93;
   --product-led-working: #86a1ff;
   --product-led-reviewing: #b3c2ff;
-  --product-led-fixing: #e7bd5f;
+  --product-led-fixing: #86a1ff;
   --product-led-waiting: #a9b5c7;
   --product-led-up-next: #637086;
   --product-led-blocked: #ef8b93;
@@ -1342,6 +1358,22 @@
   --product-led-stopped: #7b8799;
   --product-on-accent: #0c1530;
   --product-focus: #86a1ff;
+  --product-neu-material: #182231;
+  --product-neu-material-deep: #141d2b;
+  --product-neu-highlight: #3e4c61;
+  --product-neu-shadow: #030812;
+  --product-neu-shadow-raised:
+    -10px -10px 24px color-mix(in srgb, var(--product-neu-highlight) 38%, transparent),
+    10px 12px 28px color-mix(in srgb, var(--product-neu-shadow) 58%, transparent);
+  --product-neu-shadow-soft:
+    -6px -6px 14px color-mix(in srgb, var(--product-neu-highlight) 32%, transparent),
+    6px 7px 17px color-mix(in srgb, var(--product-neu-shadow) 52%, transparent);
+  --product-neu-shadow-compact:
+    -3px -3px 7px color-mix(in srgb, var(--product-neu-highlight) 28%, transparent),
+    3px 4px 8px color-mix(in srgb, var(--product-neu-shadow) 48%, transparent);
+  --product-neu-shadow-inset:
+    inset 4px 4px 9px color-mix(in srgb, var(--product-neu-shadow) 58%, transparent),
+    inset -4px -4px 9px color-mix(in srgb, var(--product-neu-highlight) 30%, transparent);
 }
 
 @media (max-width: 640px) {
@@ -1657,8 +1689,39 @@
 
 .product-shell .product-work-page {
   width: min(100% - 1rem, 1680px);
-  padding-top: 0.75rem;
-  padding-bottom: 1rem;
+  padding-top: 1rem;
+  padding-bottom: 1.5rem;
+}
+
+.product-shell:has(.product-work-page) {
+  background-color: var(--product-neu-material);
+  background-image: none;
+}
+
+.product-shell:has(.product-work-page) .product-chrome,
+.product-shell:has(.product-work-page) .product-project-navigation {
+  background: var(--product-neu-material);
+  border-color: transparent;
+  backdrop-filter: none;
+}
+
+.product-shell:has(.product-work-page) .product-project-navigation {
+  box-shadow:
+    inset 0 -1px 0 color-mix(in srgb, var(--product-neu-highlight) 52%, transparent),
+    0 8px 20px color-mix(in srgb, var(--product-neu-shadow) 10%, transparent);
+}
+
+.product-shell:has(.product-work-page) .product-navigation__link.is-active {
+  margin-block: 0.62rem;
+  padding-inline: 0.72rem;
+  color: var(--product-accent-strong);
+  background: var(--product-neu-material);
+  border-radius: 12px;
+  box-shadow: var(--product-neu-shadow-compact);
+}
+
+.product-shell:has(.product-work-page) .product-navigation__link.is-active::after {
+  display: none;
 }
 
 .product-shell .product-work-page > .product-page-header {
@@ -1667,8 +1730,8 @@
   align-items: center;
   justify-content: space-between;
   min-height: 3.25rem;
-  margin-bottom: 0.65rem;
-  padding: 0.35rem 0.55rem 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.35rem 0.9rem 0.75rem;
 }
 
 .product-shell .product-work-page > .product-page-header h1 {
@@ -1705,13 +1768,11 @@
   display: grid;
   min-width: 0;
   gap: 0.5rem;
-  padding: 0.58rem 0.7rem 0.62rem;
-  background: var(--product-surface-raised);
-  border: 1px solid var(--product-border);
-  border-radius: 9px;
-  box-shadow:
-    -3px -3px 8px color-mix(in srgb, var(--product-surface-raised) 88%, transparent),
-    4px 5px 12px color-mix(in srgb, var(--product-border-strong) 18%, transparent);
+  padding: 0.72rem 0.88rem 0.76rem;
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 18px;
+  box-shadow: var(--product-neu-shadow-soft);
 }
 
 .product-shell .product-work-page .work-run-context__mission {
@@ -1755,7 +1816,7 @@
   min-width: 0;
   gap: 0.02rem;
   padding-left: 0.75rem;
-  border-left: 1px solid var(--product-border);
+  border-left: 1px solid color-mix(in srgb, var(--product-neu-shadow) 18%, transparent);
 }
 
 .product-shell .product-work-page .work-run-context__fact strong {
@@ -1793,7 +1854,45 @@
 
 .product-shell .product-work-page .work-run-selector select {
   width: min(20rem, 26vw);
-  background-color: var(--product-surface-raised);
+  background-color: var(--product-neu-material-deep);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: var(--product-neu-shadow-inset);
+}
+
+.product-shell .product-work-page .product-status-badge {
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: var(--product-neu-shadow-compact);
+}
+
+.product-shell .product-work-page .product-button {
+  border: 0;
+  border-radius: 12px;
+  box-shadow: var(--product-neu-shadow-compact);
+}
+
+.product-shell .product-work-page .product-button--secondary {
+  background: var(--product-neu-material);
+}
+
+.product-shell .product-work-page .product-button--secondary:hover:not(:disabled) {
+  color: var(--product-accent-strong);
+  background: var(--product-neu-material);
+  box-shadow: var(--product-neu-shadow-soft);
+}
+
+.product-shell .product-work-page .product-button--primary {
+  background: var(--product-accent-strong);
+  box-shadow:
+    -3px -3px 8px color-mix(in srgb, var(--product-neu-highlight) 58%, transparent),
+    4px 5px 11px color-mix(in srgb, var(--product-accent-strong) 28%, transparent);
+}
+
+.product-shell .product-work-page .product-button:active:not(:disabled) {
+  box-shadow: var(--product-neu-shadow-inset);
+  transform: translateY(1px);
 }
 
 .product-shell .team-mobile-nav {
@@ -1806,13 +1905,16 @@
   grid-template-areas: "execution manager outcomes";
   height: max(40rem, calc(100dvh - 15rem));
   min-height: 40rem;
-  overflow: hidden;
-  background-color: color-mix(in srgb, var(--product-surface) 92%, var(--product-bg));
-  border: 1px solid var(--product-border);
-  border-radius: 8px;
+  gap: 1rem;
+  padding: 1rem;
+  overflow: visible;
+  background-color: var(--product-neu-material);
+  border: 0;
+  border-radius: 28px;
   box-shadow:
-    0 1px 2px color-mix(in srgb, var(--product-text) 4%, transparent),
-    0 16px 44px color-mix(in srgb, var(--product-accent) 5%, transparent);
+    inset 1px 1px 0 color-mix(in srgb, var(--product-neu-highlight) 54%, transparent),
+    inset -1px -1px 0 color-mix(in srgb, var(--product-neu-shadow) 10%, transparent),
+    var(--product-neu-shadow-raised);
 }
 
 .product-shell .team-pane {
@@ -1822,27 +1924,26 @@
   min-height: 0;
   flex-direction: column;
   color: var(--product-text);
-  background: color-mix(in srgb, var(--product-surface) 84%, var(--product-bg));
+  background: var(--product-neu-material);
   border: 0;
-  border-radius: 0;
+  border-radius: 22px;
+  box-shadow: var(--product-neu-shadow-soft);
   overflow: hidden;
 }
 
 .product-shell .team-pane--execution {
   grid-area: execution;
-  border-right: 1px solid var(--product-border);
 }
 
 .product-shell .team-pane--manager {
   grid-area: manager;
   z-index: 1;
-  background: var(--product-surface-raised);
-  box-shadow: 0 0 28px color-mix(in srgb, var(--product-accent) 5%, transparent);
+  background: var(--product-neu-material);
+  box-shadow: var(--product-neu-shadow-raised);
 }
 
 .product-shell .team-pane--outcomes {
   grid-area: outcomes;
-  border-left: 1px solid var(--product-border);
 }
 
 .product-shell .team-pane--execution,
@@ -1859,8 +1960,8 @@
   justify-content: space-between;
   min-height: 4.7rem;
   padding: 0.9rem 1rem;
-  background: color-mix(in srgb, var(--product-surface-raised) 95%, transparent);
-  border-bottom: 1px solid var(--product-border);
+  background: var(--product-neu-material);
+  border-bottom: 0;
 }
 
 .product-shell .team-pane--manager .team-pane__header {
@@ -1937,10 +2038,10 @@
   min-height: 2.2rem;
   padding: 0 0.65rem;
   color: var(--product-text-muted);
-  background: var(--product-surface-raised);
-  border: 1px solid var(--product-border);
-  border-radius: 7px;
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--product-text) 5%, transparent);
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 11px;
+  box-shadow: var(--product-neu-shadow-compact);
   font: inherit;
   font-size: 0.72rem;
   font-weight: 620;
@@ -1949,16 +2050,17 @@
 
 .product-shell .team-pane__header-action:hover {
   color: var(--product-accent-strong);
-  border-color: color-mix(in srgb, var(--product-accent) 44%, var(--product-border));
+  box-shadow: var(--product-neu-shadow-soft);
 }
 
 .product-shell .team-pane__count {
   min-width: 1.8rem;
   padding: 0.2rem 0.4rem;
   color: var(--product-text-muted);
-  background: var(--product-surface-muted);
-  border: 1px solid var(--product-border);
-  border-radius: 5px;
+  background: var(--product-neu-material-deep);
+  border: 0;
+  border-radius: 9px;
+  box-shadow: var(--product-neu-shadow-inset);
   font-family: "Geist Mono Variable", ui-monospace, monospace;
   font-size: 0.75rem;
   text-align: center;
@@ -1969,11 +2071,12 @@
   max-width: 88%;
   gap: 0.28rem;
   margin: 0.9rem auto 0.35rem 3.55rem;
-  padding: 0.8rem 0.95rem;
+  padding: 0.9rem 1rem;
   color: var(--product-text);
-  background: color-mix(in srgb, var(--product-accent-soft) 48%, var(--product-surface-raised));
-  border: 1px solid color-mix(in srgb, var(--product-accent) 20%, var(--product-border));
-  border-radius: 9px;
+  background: color-mix(in srgb, var(--product-neu-material) 94%, var(--product-accent-soft));
+  border: 0;
+  border-radius: 16px;
+  box-shadow: var(--product-neu-shadow-soft);
   font-size: 0.84rem;
   line-height: 1.48;
   text-wrap: pretty;
@@ -1995,12 +2098,10 @@
   height: 2rem;
   flex: 0 0 2rem;
   color: var(--product-accent-strong);
-  background: color-mix(in srgb, var(--product-accent-soft) 78%, var(--product-surface-raised));
-  border: 1px solid color-mix(in srgb, var(--product-accent) 22%, var(--product-border));
+  background: var(--product-neu-material);
+  border: 0;
   border-radius: 50%;
-  box-shadow:
-    -3px -3px 7px color-mix(in srgb, var(--product-surface-raised) 92%, transparent),
-    4px 5px 11px color-mix(in srgb, var(--product-border-strong) 24%, transparent);
+  box-shadow: var(--product-neu-shadow-compact);
   font-size: 0.72rem;
   font-weight: 760;
   place-items: center;
@@ -2011,8 +2112,8 @@
   height: 2.45rem;
   flex-basis: 2.45rem;
   color: var(--product-accent);
-  background: var(--product-surface-raised);
-  border-color: color-mix(in srgb, var(--product-accent) 30%, var(--product-border));
+  background: var(--product-neu-material);
+  box-shadow: var(--product-neu-shadow-soft);
 }
 
 .product-shell .team-manager-conversation {
@@ -2081,8 +2182,8 @@
 
 .product-shell .team-manager-timeline {
   display: grid;
-  gap: 0.78rem;
-  padding: 0.7rem 1rem 0.8rem;
+  gap: 1rem;
+  padding: 0.85rem 1.1rem 1rem;
 }
 
 .product-shell .team-manager-event {
@@ -2106,19 +2207,19 @@
 .product-shell .team-manager-event__bubble {
   min-width: 0;
   max-width: min(88%, 34rem);
-  padding: 0.72rem 0.82rem;
-  background: var(--product-surface-raised);
-  border: 1px solid var(--product-border);
-  border-radius: 9px;
-  box-shadow:
-    -4px -4px 10px color-mix(in srgb, var(--product-surface-raised) 88%, transparent),
-    5px 6px 14px color-mix(in srgb, var(--product-border-strong) 20%, transparent);
+  padding: 0.8rem 0.92rem;
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 16px;
+  box-shadow: var(--product-neu-shadow-soft);
 }
 
 .product-shell .team-manager-event[data-actor="user"] .team-manager-event__bubble {
   color: var(--product-accent-strong);
-  background: var(--product-accent-soft);
-  border-color: color-mix(in srgb, var(--product-accent) 20%, var(--product-border));
+  background: color-mix(in srgb, var(--product-neu-material) 90%, var(--product-accent-soft));
+  box-shadow:
+    -5px -5px 12px color-mix(in srgb, var(--product-neu-highlight) 72%, transparent),
+    5px 6px 14px color-mix(in srgb, var(--product-accent) 13%, var(--product-neu-shadow));
 }
 
 .product-shell .team-manager-event__meta {
@@ -2163,14 +2264,13 @@
   gap: 0.65rem;
   max-width: min(82%, 30rem);
   margin: 0.2rem 1rem 1.15rem 3.5rem;
-  padding: 0.9rem 0.95rem 1rem;
-  background: var(--product-surface-raised);
-  border: 1px solid color-mix(in srgb, var(--product-accent) 20%, var(--product-border));
-  border-radius: 9px;
+  padding: 1rem 1.05rem 1.1rem;
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 18px;
   box-shadow:
-    inset 2px 0 0 var(--product-accent),
-    -4px -4px 10px color-mix(in srgb, var(--product-surface-raised) 90%, transparent),
-    5px 6px 14px color-mix(in srgb, var(--product-border-strong) 20%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--product-accent) 10%, transparent),
+    var(--product-neu-shadow-raised);
   scroll-margin-top: 8rem;
 }
 
@@ -2185,7 +2285,12 @@
 }
 
 .product-shell .team-attention__label svg {
+  box-sizing: content-box;
+  padding: 0.3rem;
   color: var(--product-accent);
+  background: var(--product-neu-material-deep);
+  border-radius: 50%;
+  box-shadow: var(--product-neu-shadow-inset);
 }
 
 .product-shell .team-attention[data-kind="blocker"] .team-attention__label svg {
@@ -2222,7 +2327,7 @@
   display: grid;
   gap: 0.65rem;
   padding-top: 0.75rem;
-  border-top: 1px solid var(--product-border);
+  border-top: 1px solid color-mix(in srgb, var(--product-neu-shadow) 16%, transparent);
 }
 
 .product-shell .team-attention__form label {
@@ -2235,6 +2340,10 @@
 
 .product-shell .team-attention__form textarea {
   width: 100%;
+  background: var(--product-neu-material-deep);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: var(--product-neu-shadow-inset);
   resize: vertical;
 }
 
@@ -2278,10 +2387,10 @@
   left: 1rem;
   z-index: 5;
   padding: 0.85rem;
-  background: var(--product-surface-raised);
-  border: 1px solid var(--product-border);
-  border-radius: 8px;
-  box-shadow: 0 12px 30px color-mix(in srgb, var(--product-text) 14%, transparent);
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 16px;
+  box-shadow: var(--product-neu-shadow-raised);
 }
 
 .product-shell .team-manager-dock {
@@ -2290,28 +2399,25 @@
   z-index: 4;
   gap: 0.35rem;
   align-items: center;
-  padding: 0.72rem 0.85rem;
-  background: color-mix(in srgb, var(--product-surface-raised) 96%, transparent);
-  border-top: 1px solid var(--product-border);
+  padding: 0.85rem 1rem 1rem;
+  background: var(--product-neu-material);
+  border-top: 0;
 }
 
 .product-shell .team-manager-composer {
   display: flex;
   min-width: 0;
-  min-height: 2.85rem;
+  min-height: 3.05rem;
   flex: 1 1 auto;
   gap: 0.75rem;
   align-items: center;
   justify-content: space-between;
   padding: 0 0.65rem 0 0.85rem;
   color: var(--product-text-muted);
-  background: var(--product-surface-raised);
-  border: 1px solid var(--product-border);
-  border-radius: 9px;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--product-surface) 88%, transparent),
-    -3px -3px 8px color-mix(in srgb, var(--product-surface-raised) 86%, transparent),
-    4px 5px 12px color-mix(in srgb, var(--product-border-strong) 20%, transparent);
+  background: var(--product-neu-material-deep);
+  border: 0;
+  border-radius: 16px;
+  box-shadow: var(--product-neu-shadow-inset);
   font: inherit;
   font-size: 0.79rem;
   text-align: left;
@@ -2323,36 +2429,35 @@
   padding: 0.42rem;
   color: var(--product-on-accent);
   background: var(--product-accent);
-  border-radius: 7px;
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--product-accent) 28%, transparent);
+  border-radius: 11px;
+  box-shadow:
+    -3px -3px 7px color-mix(in srgb, var(--product-neu-highlight) 48%, transparent),
+    4px 5px 10px color-mix(in srgb, var(--product-accent) 30%, transparent);
 }
 
 .product-shell .team-manager-composer:hover {
   color: var(--product-text);
-  border-color: color-mix(in srgb, var(--product-accent) 42%, var(--product-border));
 }
 
 .product-shell .team-actor-list li {
   display: grid;
   gap: 0.72rem;
-  margin: 0 0.72rem 0.72rem;
-  padding: 0.82rem;
-  background: color-mix(in srgb, var(--product-surface-raised) 92%, transparent);
-  border: 1px solid var(--product-border);
-  border-radius: 9px;
-  box-shadow:
-    -4px -4px 10px color-mix(in srgb, var(--product-surface-raised) 90%, transparent),
-    5px 6px 14px color-mix(in srgb, var(--product-border-strong) 20%, transparent);
-  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  margin: 0 0.9rem 1rem;
+  padding: 0.92rem;
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 17px;
+  box-shadow: var(--product-neu-shadow-soft);
+  transition: background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
 .product-shell .team-actor-list li[data-state="working"],
 .product-shell .team-actor-list li[data-state="reviewing"],
 .product-shell .team-actor-list li[data-state="fixing"] {
-  border-color: color-mix(in srgb, var(--product-accent) 28%, var(--product-border));
+  background: color-mix(in srgb, var(--product-neu-material) 96%, var(--product-accent-soft));
   box-shadow:
-    inset 2px 0 0 color-mix(in srgb, var(--product-accent) 62%, transparent),
-    0 6px 18px color-mix(in srgb, var(--product-accent) 7%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--product-accent) 8%, transparent),
+    var(--product-neu-shadow-soft);
 }
 
 .product-shell .team-actor-list {
@@ -2416,9 +2521,10 @@
 .product-shell .team-actor-card__task {
   display: grid;
   gap: 0.48rem;
-  padding: 0.62rem 0.68rem;
-  background: color-mix(in srgb, var(--product-accent-soft) 32%, var(--product-surface-muted));
-  border-radius: 7px;
+  padding: 0.68rem 0.74rem;
+  background: var(--product-neu-material-deep);
+  border-radius: 12px;
+  box-shadow: var(--product-neu-shadow-inset);
 }
 
 .product-shell .team-actor-card__task > div {
@@ -2447,13 +2553,11 @@
 .product-shell .team-task-progress {
   display: block;
   width: 100%;
-  height: 3px;
+  height: 6px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--product-border-strong) 34%, transparent);
+  background: var(--product-neu-material-deep);
   border-radius: 999px;
-  box-shadow:
-    inset 1px 1px 2px color-mix(in srgb, var(--product-border-strong) 28%, transparent),
-    inset -1px -1px 2px color-mix(in srgb, var(--product-surface-raised) 72%, transparent);
+  box-shadow: var(--product-neu-shadow-inset);
 }
 
 .product-shell .team-task-progress > span {
@@ -2461,6 +2565,9 @@
   height: 100%;
   background: var(--product-accent);
   border-radius: inherit;
+  box-shadow:
+    inset 0 1px 1px color-mix(in srgb, var(--product-neu-highlight) 44%, transparent),
+    0 1px 3px color-mix(in srgb, var(--product-accent) 28%, transparent);
   transition: width 220ms ease;
 }
 
@@ -2564,10 +2671,10 @@
   gap: 0.16rem;
   padding: 0.5rem 0.6rem;
   color: var(--product-text);
-  background: color-mix(in srgb, var(--product-surface) 96%, var(--product-bg));
-  border: 1px solid var(--product-border);
-  border-radius: 6px;
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--product-text) 13%, transparent);
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: var(--product-neu-shadow-raised);
   font-size: 0.74rem;
   line-height: 1.4;
   opacity: 0;
@@ -2589,7 +2696,12 @@
 .product-shell .team-outcome-view-switch {
   display: flex;
   gap: 0.25rem;
-  padding: 0.62rem 0.72rem 0;
+  width: fit-content;
+  margin: 0.2rem 0.9rem 0;
+  padding: 0.28rem;
+  background: var(--product-neu-material-deep);
+  border-radius: 13px;
+  box-shadow: var(--product-neu-shadow-inset);
 }
 
 .product-shell .team-outcome-view-switch span,
@@ -2599,7 +2711,7 @@
   color: var(--product-text-muted);
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 9px;
   font: inherit;
   font-size: 0.68rem;
   font-weight: 620;
@@ -2612,10 +2724,8 @@
 
 .product-shell .team-outcome-view-switch [data-active="true"] {
   color: var(--product-accent-strong);
-  background: var(--product-accent-soft);
-  box-shadow:
-    inset 2px 2px 4px color-mix(in srgb, var(--product-border-strong) 20%, transparent),
-    inset -2px -2px 4px color-mix(in srgb, var(--product-surface-raised) 72%, transparent);
+  background: color-mix(in srgb, var(--product-neu-material-deep) 92%, var(--product-accent-soft));
+  box-shadow: var(--product-neu-shadow-inset);
 }
 
 .product-shell .team-outcome-view-switch button {
@@ -2624,7 +2734,7 @@
 
 .product-shell .team-outcome-view-switch button:hover {
   color: var(--product-text);
-  background: var(--product-surface-muted);
+  background: var(--product-neu-material);
 }
 
 .product-shell .team-outcome-list {
@@ -2638,30 +2748,26 @@
 
 .product-shell .team-outcome-list li {
   position: relative;
-  margin: 0 0.72rem 0.72rem;
+  margin: 0 0.9rem 1rem;
   overflow: hidden;
-  background: color-mix(in srgb, var(--product-surface-raised) 94%, transparent);
-  border: 1px solid var(--product-border);
-  border-radius: 9px;
-  box-shadow:
-    -4px -4px 10px color-mix(in srgb, var(--product-surface-raised) 90%, transparent),
-    5px 6px 14px color-mix(in srgb, var(--product-border-strong) 20%, transparent);
+  background: var(--product-neu-material);
+  border: 0;
+  border-radius: 17px;
+  box-shadow: var(--product-neu-shadow-soft);
   scroll-margin-block: 8rem 1.5rem;
-  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  transition: background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
 .product-shell .team-outcome-list li[data-attention="true"] {
-  background: var(--product-surface-raised);
-  border-color: color-mix(in srgb, var(--product-accent) 24%, var(--product-border));
+  background: color-mix(in srgb, var(--product-neu-material) 96%, var(--product-accent-soft));
   box-shadow:
-    inset 2px 0 0 var(--product-accent),
-    -4px -4px 10px color-mix(in srgb, var(--product-surface-raised) 90%, transparent),
-    5px 6px 14px color-mix(in srgb, var(--product-border-strong) 20%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--product-accent) 9%, transparent),
+    var(--product-neu-shadow-raised);
 }
 
 .product-shell .team-outcome-list li[data-active-review="true"] {
-  background: color-mix(in srgb, var(--product-accent) 10%, var(--product-surface));
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--product-accent) 70%, var(--product-border));
+  background: color-mix(in srgb, var(--product-neu-material-deep) 92%, var(--product-accent-soft));
+  box-shadow: var(--product-neu-shadow-inset);
 }
 
 .product-shell .team-outcome-list button {
@@ -2681,7 +2787,7 @@
 }
 
 .product-shell .team-outcome-list button:hover {
-  background: color-mix(in srgb, var(--product-accent-soft) 28%, transparent);
+  background: color-mix(in srgb, var(--product-accent-soft) 22%, transparent);
 }
 
 .product-shell .team-outcome-list button:active {
@@ -2725,8 +2831,9 @@
   height: 1.25rem;
   flex: 0 0 1.25rem;
   color: var(--product-accent-strong);
-  background: var(--product-accent-soft);
-  border-radius: 4px;
+  background: var(--product-neu-material-deep);
+  border-radius: 8px;
+  box-shadow: var(--product-neu-shadow-inset);
   font-family: "Geist Mono Variable", ui-monospace, monospace;
   font-size: 0.65rem;
   font-weight: 700;
@@ -2800,9 +2907,10 @@
   align-self: flex-start;
   padding: 0.18rem 0.42rem;
   color: var(--product-accent-strong);
-  background: color-mix(in srgb, var(--product-accent-soft) 72%, transparent);
-  border: 1px solid color-mix(in srgb, var(--product-accent) 34%, var(--product-border));
-  border-radius: 4px;
+  background: var(--product-neu-material-deep);
+  border: 0;
+  border-radius: 9px;
+  box-shadow: var(--product-neu-shadow-inset);
   font-size: 0.68rem;
   font-weight: 680;
   line-height: 1.2;
@@ -2829,7 +2937,7 @@
   justify-content: flex-end;
   padding: 0.48rem 0.82rem 0.55rem;
   color: var(--product-accent-strong);
-  border-top: 1px solid var(--product-border);
+  border-top: 1px solid color-mix(in srgb, var(--product-neu-shadow) 13%, transparent);
   font-size: 0.75rem;
   font-weight: 620;
   text-decoration: none;
@@ -2856,22 +2964,23 @@
   flex-wrap: wrap;
   gap: 0.25rem;
   margin-top: auto;
-  padding: 0.55rem 0.72rem;
-  background: color-mix(in srgb, var(--product-surface-raised) 92%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--product-border) 70%, transparent);
+  padding: 0.7rem 0.9rem 0.9rem;
+  background: var(--product-neu-material);
+  border-top: 0;
 }
 
 .product-shell .team-pane--manager .team-pane__inspect-actions {
-  background: color-mix(in srgb, var(--product-surface-muted) 26%, transparent);
+  background: var(--product-neu-material);
 }
 
 .product-shell .team-pane__inspect-actions button,
 .product-shell .team-inspector > header button {
   padding: 0.35rem 0.5rem;
   color: var(--product-text-muted);
-  background: transparent;
+  background: var(--product-neu-material);
   border: 0;
-  border-radius: 6px;
+  border-radius: 9px;
+  box-shadow: var(--product-neu-shadow-compact);
   font: inherit;
   font-size: 0.76rem;
   font-weight: 600;
@@ -2881,8 +2990,9 @@
 
 .product-shell .team-pane__inspect-actions button:hover,
 .product-shell .team-inspector > header button:hover {
-  color: var(--product-text);
-  background: var(--product-surface-muted);
+  color: var(--product-accent-strong);
+  background: var(--product-neu-material);
+  box-shadow: var(--product-neu-shadow-soft);
 }
 
 .product-shell .team-inspector {
@@ -4331,7 +4441,6 @@
   .product-shell .team-pane--manager {
     height: 40rem;
     min-height: 40rem;
-    border-bottom: 1px solid var(--product-border);
   }
 
   .product-shell .team-pane--execution,
@@ -4379,17 +4488,15 @@
     bottom: max(0.65rem, env(safe-area-inset-bottom));
     left: 50%;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0;
+    gap: 0.2rem;
     width: min(calc(100% - 2rem), 42rem);
-    padding: 0.24rem;
-    background: color-mix(in srgb, var(--product-surface-raised) 94%, transparent);
-    border: 1px solid color-mix(in srgb, var(--product-border-strong) 72%, transparent);
-    border-radius: 9px;
-    box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--product-surface-raised) 82%, transparent),
-      0 12px 30px color-mix(in srgb, var(--product-text) 16%, transparent);
+    padding: 0.35rem;
+    background: var(--product-neu-material);
+    border: 0;
+    border-radius: 16px;
+    box-shadow: var(--product-neu-shadow-raised);
     transform: translateX(-50%);
-    backdrop-filter: blur(14px);
+    backdrop-filter: none;
   }
 
   .product-shell .team-mobile-nav [role="tab"] {
@@ -4404,7 +4511,7 @@
     color: var(--product-text-muted);
     background: transparent;
     border: 0;
-    border-radius: 6px;
+    border-radius: 11px;
     font: inherit;
     font-size: 0.76rem;
     font-weight: 620;
@@ -4413,33 +4520,19 @@
   }
 
   .product-shell .team-mobile-nav [role="tab"]::after {
-    position: absolute;
-    right: 0.55rem;
-    bottom: 0;
-    left: 0.55rem;
-    height: 2px;
-    background: var(--product-accent);
-    border-radius: 999px;
-    content: "";
-    opacity: 0;
-    transform: scaleX(0.72);
-    transition: opacity 140ms ease, transform 140ms ease;
+    display: none;
   }
 
   .product-shell .team-mobile-nav [role="tab"]:hover {
     color: var(--product-text);
-    background: color-mix(in srgb, var(--product-surface-muted) 70%, transparent);
+    background: var(--product-neu-material);
   }
 
   .product-shell .team-mobile-nav [role="tab"][data-active="true"] {
-    color: var(--product-text);
-    background: color-mix(in srgb, var(--product-accent) 7%, transparent);
+    color: var(--product-accent-strong);
+    background: var(--product-neu-material-deep);
+    box-shadow: var(--product-neu-shadow-inset);
     font-weight: 700;
-  }
-
-  .product-shell .team-mobile-nav [role="tab"][data-active="true"]::after {
-    opacity: 1;
-    transform: scaleX(1);
   }
 
   .product-shell .team-mobile-nav__attention {
@@ -4447,7 +4540,7 @@
     height: 0.34rem;
     flex: 0 0 auto;
     background: var(--product-accent);
-    border: 1px solid color-mix(in srgb, var(--product-accent) 68%, var(--product-surface));
+    border: 0;
     border-radius: 50%;
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--product-accent) 10%, transparent);
   }
@@ -4457,7 +4550,7 @@
     height: auto;
     min-height: 0;
     overflow: visible;
-    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+    padding: 0 0 calc(4.5rem + env(safe-area-inset-bottom));
     background: transparent;
     border: 0;
     border-radius: 0;
@@ -4467,15 +4560,16 @@
   .product-shell .team-pane {
     height: auto;
     min-height: 0;
-    background: var(--product-surface);
-    border: 1px solid var(--product-border);
-    border-radius: 8px;
+    background: var(--product-neu-material);
+    border: 0;
+    border-radius: 22px;
+    box-shadow: var(--product-neu-shadow-raised);
     overflow: hidden;
   }
 
   .product-shell .team-pane--manager {
     min-height: 0;
-    background: var(--product-surface-raised);
+    background: var(--product-neu-material);
   }
 
   .product-shell .team-pane[data-mobile-active="false"] {

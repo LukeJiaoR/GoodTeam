@@ -88,7 +88,7 @@ test('Execution LEDs use semantic tokens and become static for reduced motion', 
   for (const tokens of [light, dark]) {
     expect(tokens['product-led-working']).toBe(tokens['product-accent']);
     expect(tokens['product-led-reviewing']).toBe(tokens['product-accent-strong']);
-    expect(tokens['product-led-fixing']).toBe(tokens['product-warning']);
+    expect(tokens['product-led-fixing']).toBe(tokens['product-accent']);
     expect(tokens['product-led-blocked']).toBe(tokens['product-danger']);
     expect(tokens['product-led-completed']).toBe(tokens['product-success']);
   }
@@ -99,7 +99,7 @@ test('Execution LEDs use semantic tokens and become static for reduced motion', 
   );
 });
 
-test('Work reads as one three-domain console with restrained neumorphic depth', () => {
+test('Work uses one material system with authentic raised and inset neumorphic depth', () => {
   const studio = blockFor('.product-shell .team-workspace');
   const pane = blockFor('.product-shell .team-pane');
   const manager = blockFor('.product-shell .team-pane--manager');
@@ -111,27 +111,39 @@ test('Work reads as one three-domain console with restrained neumorphic depth', 
   const mobileAttention = blockFor('.product-shell .team-mobile-nav__attention');
   const actorCard = blockFor('.product-shell .team-actor-list li');
   const progress = blockFor('.product-shell .team-task-progress');
+  const composer = blockFor('.product-shell .team-manager-composer');
+  const viewSwitch = blockFor('.product-shell .team-outcome-view-switch');
   const runContext = blockFor('.product-shell .product-work-page .work-run-context');
   const runTitle = blockFor('.product-shell .product-work-page .work-run-title');
 
   expect(studio).toMatch(/grid-template-areas:\s*"execution manager outcomes";/);
-  expect(studio).toMatch(/background-color:/);
-  expect(studio).toMatch(/border:\s*1px solid var\(--product-border\);/);
+  expect(studio).toMatch(/background-color:\s*var\(--product-neu-material\);/);
+  expect(studio).toMatch(/border:\s*0;/);
+  expect(studio).toMatch(/border-radius:\s*28px;/);
+  expect(studio).toMatch(/var\(--product-neu-shadow-raised\)/);
   expect(pane).toMatch(/border:\s*0;/);
-  expect(manager).toMatch(/background:\s*var\(--product-surface-raised\);/);
-  expect(manager).toMatch(/box-shadow:/);
-  expect(attention).toMatch(/background:\s*var\(--product-surface-raised\);/);
-  expect(attention).toMatch(/inset 2px 0 0 var\(--product-accent\)/);
+  expect(pane).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(pane).toMatch(/border-radius:\s*22px;/);
+  expect(pane).toMatch(/var\(--product-neu-shadow-soft\)/);
+  expect(manager).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(manager).toMatch(/var\(--product-neu-shadow-raised\)/);
+  expect(attention).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(attention).toMatch(/var\(--product-neu-shadow-raised\)/);
   expect(attentionLabel).toMatch(/color:\s*var\(--product-text-muted\);/);
   expect(attentionIcon).toMatch(/color:\s*var\(--product-accent\);/);
-  expect(outcomeAttention).toMatch(/background:\s*var\(--product-surface-raised\);/);
-  expect(outcomeAttention).toMatch(/inset 2px 0 0 var\(--product-accent\)/);
+  expect(outcomeAttention).toMatch(/var\(--product-neu-material\)/);
+  expect(outcomeAttention).toMatch(/var\(--product-neu-shadow-raised\)/);
   expect(outcomeAttentionLabel).toMatch(/color:\s*var\(--product-accent-strong\);/);
   expect(mobileAttention).toMatch(/background:\s*var\(--product-accent\);/);
-  expect(actorCard).toMatch(/-4px -4px 10px/);
-  expect(actorCard).toMatch(/5px 6px 14px/);
-  expect(progress).toMatch(/inset 1px 1px 2px/);
-  expect(runContext).toMatch(/background:\s*var\(--product-surface-raised\);/);
-  expect(runContext).toMatch(/box-shadow:/);
+  expect(actorCard).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(actorCard).toMatch(/border-radius:\s*17px;/);
+  expect(actorCard).toMatch(/var\(--product-neu-shadow-soft\)/);
+  expect(progress).toMatch(/var\(--product-neu-shadow-inset\)/);
+  expect(composer).toMatch(/background:\s*var\(--product-neu-material-deep\);/);
+  expect(composer).toMatch(/var\(--product-neu-shadow-inset\)/);
+  expect(viewSwitch).toMatch(/background:\s*var\(--product-neu-material-deep\);/);
+  expect(viewSwitch).toMatch(/var\(--product-neu-shadow-inset\)/);
+  expect(runContext).toMatch(/background:\s*var\(--product-neu-material\);/);
+  expect(runContext).toMatch(/var\(--product-neu-shadow-soft\)/);
   expect(runTitle).toMatch(/white-space:\s*normal;/);
 });
