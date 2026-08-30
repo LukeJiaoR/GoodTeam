@@ -1,4 +1,5 @@
 import './workspace.css';
+import './workspacePresentation.css';
 
 export function WorkWorkspaceShell({ children }) {
   return (
