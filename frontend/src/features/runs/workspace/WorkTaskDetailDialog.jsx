@@ -21,12 +21,12 @@ import {
   User,
   X,
 } from 'lucide-react';
-import { routes } from '../lib/routing/routes';
-import EvidenceSummary from './EvidenceSummary';
-import Button from './ui/Button';
-import MarkdownView from './ui/MarkdownView';
-import ProductError from './ui/ProductError';
-import StatusBadge from './ui/StatusBadge';
+import EvidenceSummary from '../../../components/EvidenceSummary';
+import Button from '../../../components/ui/Button';
+import MarkdownView from '../../../components/ui/MarkdownView';
+import ProductError from '../../../components/ui/ProductError';
+import StatusBadge from '../../../components/ui/StatusBadge';
+import { routes } from '../../../lib/routing/routes';
 
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -151,7 +151,7 @@ export function findMatchingReview(task, reviews) {
   return null;
 }
 
-export default function TaskDetailModal({
+export default function WorkTaskDetailDialog({
   task,
   reviews = [],
   projectKey = '',

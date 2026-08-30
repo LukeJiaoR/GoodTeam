@@ -1,68 +1,119 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import postcss from 'postcss';
 import { expect, test } from 'vitest';
 
-const readCss = (relativePath) => fs.readFileSync(
+const readSource = (relativePath) => fs.readFileSync(
   path.resolve(globalThis.process.cwd(), relativePath),
   'utf8',
 );
 
-const globalCss = readCss('src/styles/product.css');
-const workspaceCss = readCss('src/features/runs/workspace/workspace.css');
-const presentationCss = readCss('src/features/runs/workspace/workspacePresentation.css');
-const responsiveCss = readCss('src/features/runs/workspace/workspaceResponsive.css');
-const taskDetailCss = readCss('src/features/runs/workspace/workspaceTaskDetail.css');
-const localCss = `${workspaceCss}\n${presentationCss}\n${responsiveCss}\n${taskDetailCss}`;
+const sources = {
+  workspace: readSource('src/features/runs/workspace/workspace.css'),
+  responsive: readSource('src/features/runs/workspace/workspaceResponsive.css'),
+  taskDetail: readSource('src/features/runs/workspace/workspaceTaskDetail.css'),
+};
+const roots = Object.fromEntries(
+  Object.entries(sources).map(([name, css]) => [name, postcss.parse(css, { from: name })]),
+);
+const globalCss = readSource('src/styles/product.css');
+const globalRoot = postcss.parse(globalCss, { from: 'product.css' });
+const shellSource = readSource('src/features/runs/workspace/WorkWorkspaceShell.jsx');
+const workPageSource = readSource('src/features/runs/WorkPage.jsx');
+const teamWorkspaceSource = readSource('src/features/runs/workspace/TeamWorkspace.jsx');
+const workSelector = /\.(?:work-|team-|task-detail-)|\.product-work-page/;
+const rootedWorkSelector = /^(?:\.dark\s+)?\.work-workspace-shell(?=$|\s|[.:#>+~]|\[)/;
 
-const globalWorkLeaks = [
-  '.product-shell--work',
-  '--product-neu-',
-  '.team-workspace',
-  '.team-approval-brief',
-  '.team-status-led',
-  '.team-inspector',
-  '.team-mobile-nav',
-  '.team-pane--manager',
-  '.team-pane--execution',
-  '.team-pane--outcomes',
-  '.task-detail-dialog',
-  '.task-detail-backdrop',
-];
-
-test('global product CSS contains no Manager workspace presentation rules', () => {
-  for (const marker of globalWorkLeaks) {
-    expect(globalCss, `global CSS leaked ${marker}`).not.toContain(marker);
+function insideKeyframes(rule) {
+  let parent = rule.parent;
+  while (parent) {
+    if (parent.type === 'atrule' && /keyframes$/i.test(parent.name)) return true;
+    parent = parent.parent;
   }
+  return false;
+}
+
+function ruleContext(rule) {
+  const context = [];
+  let parent = rule.parent;
+  while (parent) {
+    if (parent.type === 'atrule') context.unshift(`@${parent.name} ${parent.params}`);
+    parent = parent.parent;
+  }
+  return context.join(' > ');
+}
+
+test('global product CSS has no Work-owned selectors or animation names', () => {
+  globalRoot.walkRules((rule) => {
+    if (insideKeyframes(rule)) return;
+    for (const selector of rule.selectors || []) {
+      expect(workSelector.test(selector), `global Work selector: ${selector}`).toBe(false);
+    }
+  });
+  globalRoot.walkAtRules(/keyframes$/i, (atRule) => {
+    expect(atRule.params, 'global Work animation').not.toMatch(/^(?:work-|taskDetail)/);
+  });
   expect(globalCss).not.toContain('.work-workspace-shell');
 });
 
-test('the Work visual system is rooted under the feature-owned workspace shell', () => {
-  expect(workspaceCss).toContain('.work-workspace-shell {');
-  expect(workspaceCss).toContain('.dark .work-workspace-shell {');
-  expect(workspaceCss).toContain('--work-material: #edf2f8;');
-  expect(workspaceCss).toContain('--work-accent: #315efb;');
-  expect(localCss).toContain('.work-workspace-shell .team-workspace');
-  expect(localCss).toContain('.work-workspace-shell .team-approval-brief');
-  expect(localCss).toContain('.work-workspace-shell .team-mobile-nav');
-  expect(localCss).toContain('.work-workspace-shell .team-inspector');
-  expect(taskDetailCss).toContain('.work-workspace-shell .task-detail-dialog');
-  expect(taskDetailCss).toContain('.work-workspace-shell .task-detail-backdrop');
-  expect(responsiveCss).toContain('bottom: max(0.65rem, env(safe-area-inset-bottom));');
-  expect(localCss).not.toContain('.product-shell--work');
-  expect(localCss).not.toContain('--product-neu-');
+test('every workspace presentation rule is rooted and has one file owner', () => {
+  const owners = new Map();
+
+  for (const [file, root] of Object.entries(roots)) {
+    root.walkRules((rule) => {
+      if (insideKeyframes(rule)) return;
+      for (const selector of rule.selectors || []) {
+        expect(selector.trim(), `unscoped selector in ${file}`).toMatch(rootedWorkSelector);
+        const key = `${ruleContext(rule)} || ${selector.trim()}`;
+        const previousOwner = owners.get(key);
+        if (previousOwner && previousOwner !== file) {
+          throw new Error(`selector context owned by both ${previousOwner} and ${file}: ${key}`);
+        }
+        owners.set(key, file);
+      }
+    });
+  }
 });
 
-test('Work-owned selectors cannot escape the workspace root', () => {
-  const presentationMarkers = ['.team-', '.task-detail-', '.product-work-page', '.work-run-', '.md-renderer', '.md-code-', '.md-table'];
+test('workspace stylesheets keep their declared responsibilities', () => {
+  roots.workspace.walkAtRules('media', (atRule) => {
+    throw new Error(`workspace.css leaked responsive rule: @media ${atRule.params}`);
+  });
+  roots.workspace.walkRules((rule) => {
+    expect(rule.selector || '').not.toContain('.task-detail-');
+  });
 
-  for (const css of [workspaceCss, presentationCss, responsiveCss, taskDetailCss]) {
-    for (const chunk of css.split('{').slice(0, -1)) {
-      const selector = chunk.slice(chunk.lastIndexOf('}') + 1).trim();
-      if (!presentationMarkers.some((marker) => selector.includes(marker))) continue;
-      for (const part of selector.split(',')) {
-        if (!presentationMarkers.some((marker) => part.includes(marker))) continue;
-        expect(part.trim(), `unscoped Work selector: ${part.trim()}`).toContain('.work-workspace-shell');
-      }
-    }
+  for (const node of roots.responsive.nodes) {
+    if (node.type === 'comment') continue;
+    expect(node.type, 'workspaceResponsive.css may only contain at-rules').toBe('atrule');
+    expect(node.name).toBe('media');
   }
+
+  roots.taskDetail.walkRules((rule) => {
+    if (insideKeyframes(rule)) return;
+    const localSelector = (rule.selector || '').replaceAll('.work-workspace-shell', '');
+    expect(localSelector).not.toMatch(/\.(?:work-|team-)|\.product-work-page/);
+  });
+
+  expect(sources.workspace).toContain('--work-material: #edf2f8;');
+  expect(sources.workspace).toContain('.dark .work-workspace-shell {');
+  expect(sources.responsive).toContain('bottom: max(0.65rem, env(safe-area-inset-bottom));');
+  expect(sources.taskDetail).toContain('.work-workspace-shell .task-detail-dialog');
+  expect(sources.taskDetail).toContain('.work-workspace-shell .task-detail-processing-banner');
+  expect(shellSource).not.toContain('workspacePresentation.css');
+  expect(shellSource).toContain("import './workspaceResponsive.css';");
+  expect(shellSource).toContain("import './workspaceTaskDetail.css';");
+});
+
+test('Manager presentation components are owned by the workspace feature', () => {
+  expect(workPageSource).toContain("from './workspace/TeamWorkspace'");
+  expect(workPageSource).toContain("from './workspace/WorkTaskDetailDialog'");
+  expect(workPageSource).not.toContain('function TeamWorkspace(');
+  expect(workPageSource).not.toContain('function ManagerApprovalBrief(');
+  expect(teamWorkspaceSource).toContain('function ManagerPane(');
+  expect(teamWorkspaceSource).toContain('function AdvancedInspector(');
+  expect(fs.existsSync(path.resolve(
+    globalThis.process.cwd(),
+    'src/components/TaskDetailModal.jsx',
+  ))).toBe(false);
 });

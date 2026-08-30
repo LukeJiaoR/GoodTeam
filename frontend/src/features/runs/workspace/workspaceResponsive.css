@@ -1,3 +1,201 @@
+@media (max-width: 1000px) {
+  .work-workspace-shell .work-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .work-section-header { flex-direction: column; }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .work-primary-view,
+.work-workspace-shell .work-delivery-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .work-focus-panel { position: static; }
+}
+
+@media (max-width: 480px) {
+  .work-workspace-shell .work-board { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 480px) {
+  .work-workspace-shell .work-start-panel .product-button { width: 100%; }
+}
+
+@media (max-width: 1100px) {
+  .work-workspace-shell .team-workspace {
+    grid-template-areas:
+      "manager manager"
+      "execution outcomes";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1100px) {
+  .work-workspace-shell .team-pane--manager {
+    min-height: 28rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .product-work-page {
+    width: min(100% - 0.7rem, 46rem);
+    padding-top: 0.65rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .product-page-header {
+    padding-inline: 0.25rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .work-run-context {
+    border-radius: 16px;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-mobile-nav {
+    position: sticky;
+    z-index: 12;
+    top: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.35rem;
+    margin-bottom: 0.7rem;
+    padding: 0.35rem;
+    background: color-mix(in srgb, var(--work-material) 92%, transparent);
+    border-radius: 16px;
+    box-shadow: var(--work-shadow-soft);
+    backdrop-filter: blur(12px);
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-mobile-nav button {
+    position: relative;
+    min-height: 2.55rem;
+    padding: 0.35rem 0.5rem;
+    color: var(--work-text-muted);
+    background: transparent;
+    border: 0;
+    border-radius: 12px;
+    font-size: 0.78rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-mobile-nav button[data-active="true"] {
+    color: var(--work-accent-strong);
+    background: var(--work-material);
+    box-shadow: var(--work-shadow-compact);
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-mobile-nav__attention {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    width: 0.42rem;
+    height: 0.42rem;
+    background: var(--work-accent);
+    border-radius: 999px;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-workspace {
+    display: block;
+    padding: 0.55rem;
+    border-radius: 20px;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-pane {
+    min-height: calc(100dvh - 18rem);
+    border-radius: 18px;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-pane[hidden] {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-inspector {
+    border-radius: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-workspace-shell *,
+  .work-workspace-shell *::before,
+  .work-workspace-shell *::after {
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-workspace-shell .team-status-led {
+    animation: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-workspace-shell .product-button,
+  .work-workspace-shell .team-mobile-nav button {
+    transition: none !important;
+  }
+}
+
+@media (max-width: 1100px) and (min-width: 768px) {
+  .work-workspace-shell .team-workspace {
+    grid-template-areas:
+      "manager manager"
+      "execution outcomes";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+  }
+
+  .work-workspace-shell .team-pane--manager {
+    min-height: 34rem;
+  }
+
+  .work-workspace-shell .team-pane--execution,
+  .work-workspace-shell .team-pane--outcomes {
+    min-height: 28rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-workspace {
+    height: auto;
+    min-height: 0;
+  }
+
+  .work-workspace-shell .team-pane {
+    min-height: min(42rem, calc(100dvh - 15rem));
+  }
+
+  .work-workspace-shell .team-attention {
+    max-width: calc(100% - 1.7rem);
+    margin: 0.25rem auto 1rem;
+  }
+
+  .work-workspace-shell .team-manager-objective {
+    max-width: calc(100% - 1.7rem);
+    margin-left: auto;
+  }
+}
+
 @media (max-width: 1100px) {
   .work-workspace-shell .product-work-page > .product-page-header {
     flex-direction: column;
