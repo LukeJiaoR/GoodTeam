@@ -10,7 +10,8 @@ const readCss = (relativePath) => fs.readFileSync(
 const globalCss = readCss('src/styles/product.css');
 const workspaceCss = readCss('src/features/runs/workspace/workspace.css');
 const presentationCss = readCss('src/features/runs/workspace/workspacePresentation.css');
-const localCss = `${workspaceCss}\n${presentationCss}`;
+const responsiveCss = readCss('src/features/runs/workspace/workspaceResponsive.css');
+const localCss = `${workspaceCss}\n${presentationCss}\n${responsiveCss}`;
 
 const globalWorkLeaks = [
   '.product-shell--work',
@@ -42,6 +43,7 @@ test('the Work visual system is rooted under the feature-owned workspace shell',
   expect(localCss).toContain('.work-workspace-shell .team-mobile-nav');
   expect(localCss).toContain('.work-workspace-shell .team-inspector');
   expect(localCss).toContain('.work-workspace-shell .task-detail-dialog');
+  expect(responsiveCss).toContain('bottom: max(0.65rem, env(safe-area-inset-bottom));');
   expect(localCss).not.toContain('.product-shell--work');
   expect(localCss).not.toContain('--product-neu-');
 });
@@ -49,7 +51,7 @@ test('the Work visual system is rooted under the feature-owned workspace shell',
 test('Work-owned selectors cannot escape the workspace root', () => {
   const presentationMarkers = ['.team-', '.task-detail-', '.product-work-page', '.work-run-'];
 
-  for (const css of [workspaceCss, presentationCss]) {
+  for (const css of [workspaceCss, presentationCss, responsiveCss]) {
     for (const chunk of css.split('{').slice(0, -1)) {
       const selector = chunk.slice(chunk.lastIndexOf('}') + 1).trim();
       if (!presentationMarkers.some((marker) => selector.includes(marker))) continue;
