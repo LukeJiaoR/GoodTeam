@@ -178,7 +178,7 @@ def _build_workflow_workspace(
     outcomes = _workflow_outcomes(tasks, jobs_by_task, approval_reviews)
     updated_at = _latest_timestamp(ordered_actions, run_jobs, outcomes)
     actors = _workflow_actors(outcomes, jobs_by_task, unbound_jobs_by_role)
-    attention = _workflow_attention(state, outcomes, actors, approval_reviews)
+    attention = _workflow_attention(state, tasks, outcomes, actors, approval_reviews)
     mission_status = "waiting" if attention else "working"
 
     timeline = [
@@ -262,7 +262,7 @@ def _workflow_outcomes(
         matching_jobs = list(worker_jobs_by_task.get(task_id, ()))
         current_attempt = _authoritative_worker_attempt(matching_jobs)
         status = _workflow_assignment_state(task, current_attempt, fallback=status)
-        review = _matching_review(task, approval_reviews)
+        review = _matching_review(task, approval_reviews, task_rows)
         if (
             review
             and bool(review.get("is_actionable"))
@@ -286,6 +286,8 @@ def _workflow_outcomes(
                 "attempt_count": len(matching_jobs),
                 "current_attempt_id": current_attempt_id,
                 "review_state": _text(review.get("decision")) if review else "",
+                "review_target_type": "review" if review else "",
+                "review_target_id": _text(review.get("approval")) if review else "",
                 "primary_outcome": primary_outcome,
                 "supporting_refs": refs[1:] if primary_outcome else refs,
                 "updated_at": max(_text(task.get("updated_at")), _updated_at(current_attempt or {})),
@@ -603,6 +605,7 @@ def _authoritative_worker_attempt(
 
 def _workflow_attention(
     state: AgileDevState,
+    tasks: Sequence[Mapping[str, object]],
     outcomes: Sequence[Mapping[str, object]],
     execution_actors: Sequence[Mapping[str, object]],
     approval_reviews: Sequence[Mapping[str, object]],
@@ -610,12 +613,15 @@ def _workflow_attention(
     actionable = next((item for item in approval_reviews if bool(item.get("is_actionable"))), None)
     if actionable is not None:
         gate = _text(actionable.get("approval"))
+        task_id = _review_task_id(actionable, tasks)
         return {
             "id": f"approval:{gate}",
             "kind": "approval",
+            "target_type": "review",
             "target_id": gate,
+            "task_id": task_id,
             "reason": "approval_required",
-            "refs": [gate],
+            "refs": [value for value in (gate, task_id) if value],
             "actions": ["approve", "request_changes", "review"],
         }
     recovery = next(
@@ -624,12 +630,15 @@ def _workflow_attention(
     )
     if recovery is not None:
         gate = _text(recovery.get("approval")) or "takeover"
+        task_id = _review_task_id(recovery, tasks)
         return {
             "id": f"recovery:{gate}",
             "kind": "blocker",
+            "target_type": "review",
             "target_id": gate,
+            "task_id": task_id,
             "reason": "review_recovery_required",
-            "refs": [gate],
+            "refs": [value for value in (gate, task_id) if value],
             "actions": ["review", "cancel_mission"],
         }
     blocked_tasks = [item for item in outcomes if item.get("status") == "blocked"]
@@ -1098,17 +1107,82 @@ def _operator_review_state(metadata: Mapping[str, object], event: LedgerEvent | 
 def _matching_review(
     task: Mapping[str, object],
     reviews: Sequence[Mapping[str, object]],
+    tasks: Sequence[Mapping[str, object]],
 ) -> Mapping[str, object] | None:
-    refs = {_text(item).removeprefix("stage:") for item in _list(task.get("external_refs"))}
-    role = _text(task.get("role"))
-    aliases = {
-        "product_requirement": {"prd"},
-        "architect": {"rfc", "security"},
-        "qa": {"staging", "qa"},
-        "release": {"release"},
+    task_id = _text(task.get("id"))
+    matches = [review for review in reviews if _review_task_id(review, tasks) == task_id]
+    if not matches:
+        return None
+    return next((review for review in matches if bool(review.get("is_actionable"))), None) or next(
+        (review for review in matches if bool(review.get("is_current"))),
+        None,
+    ) or next((review for review in matches if bool(review.get("is_pending"))), None) or matches[0]
+
+
+def _review_task_id(
+    review: Mapping[str, object],
+    tasks: Sequence[Mapping[str, object]],
+) -> str:
+    """Resolve a review to one logical task without presentation heuristics.
+
+    Durable task identifiers win. Compatibility matching then uses exact
+    workflow-stage/gate references or an exact artifact path. A missing or
+    ambiguous association intentionally returns blank: role and title strings
+    are not safe task identity when one role owns multiple assignments.
+    """
+
+    task_rows = [dict(task) for task in tasks]
+    tasks_by_id = {
+        _text(task.get("id")): task
+        for task in task_rows
+        if _text(task.get("id"))
     }
-    wanted = refs | aliases.get(role, {role})
-    return next((review for review in reviews if _text(review.get("approval")) in wanted), None)
+    explicit_ids = {
+        value
+        for value in (
+            _text(review.get("task_id")),
+            _text(review.get("assignment_id")),
+            _text(review.get("logical_task_id")),
+        )
+        if value
+    }
+    for reference in [
+        *(_text(item) for item in _list(review.get("refs"))),
+        *(_text(item) for item in _list(review.get("external_refs"))),
+    ]:
+        for prefix in ("task:", "task_id:", "assignment:", "logical_task:"):
+            if reference.startswith(prefix) and reference.removeprefix(prefix):
+                explicit_ids.add(reference.removeprefix(prefix))
+    if explicit_ids:
+        return next(iter(explicit_ids)) if len(explicit_ids) == 1 and explicit_ids <= tasks_by_id.keys() else ""
+
+    gate = _text(review.get("approval"))
+    stage = _WORKFLOW_STAGE_BY_GATE.get(gate, "")
+    wanted_refs = {
+        value
+        for value in (
+            f"stage:{stage}" if stage else "",
+            f"review:{gate}" if gate else "",
+            f"approval:{gate}" if gate else "",
+            f"gate:{gate}" if gate else "",
+        )
+        if value
+    }
+    referenced_matches = [
+        task_id
+        for task_id, task in tasks_by_id.items()
+        if wanted_refs & {_text(item) for item in _list(task.get("external_refs"))}
+    ]
+    if referenced_matches:
+        return referenced_matches[0] if len(referenced_matches) == 1 else ""
+
+    artifact_path = _text(review.get("artifact_path"))
+    artifact_matches = [
+        task_id
+        for task_id, task in tasks_by_id.items()
+        if artifact_path and artifact_path in {_text(item) for item in _list(task.get("artifact_refs"))}
+    ]
+    return artifact_matches[0] if len(artifact_matches) == 1 else ""
 
 
 def _primary_artifact(refs: Sequence[str]) -> dict[str, str] | None:

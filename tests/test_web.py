@@ -557,9 +557,35 @@ def test_project_state_exposes_versioned_team_workspace_projection(tmp_path: Pat
     assert workspace["schema_version"] == "team_workspace.v1"
     assert workspace["mission"]["objective"] == "Make OAuth production ready"
     assert workspace["attention_request"]["kind"] == "approval"
+    assert workspace["attention_request"]["target_type"] == "review"
     assert workspace["attention_request"]["target_id"] == "takeover"
+    assert workspace["attention_request"]["task_id"] == ""
     assert workspace["outcome_tasks"]
     assert payload["agile_board"]["counts"]["backlog"] == 5
+
+
+def test_project_state_attention_targets_synced_outcome_by_task_id(tmp_path: Path) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
+    state = create_initial_state("run-team-review", "TEAM", "Review the product requirements")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    ledger = project_root / ".goodteam" / "tasks" / "tasks.json"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"tasks": [], "next_id": 1}', encoding="utf-8")
+    state.artifacts["task_ledger"] = str(ledger)
+    web.sync_project_stage_tasks(state, config)
+    StateStore(tmp_path).write_project_current(state)
+
+    workspace = web.build_project_work_state(tmp_path, "TEAM")["team_workspace"]
+
+    assert workspace["attention_request"]["target_type"] == "review"
+    assert workspace["attention_request"]["target_id"] == "prd"
+    assert workspace["attention_request"]["task_id"] == "TEAM-1"
+    target = next(item for item in workspace["outcome_tasks"] if item["id"] == "TEAM-1")
+    assert target["review_target_type"] == "review"
+    assert target["review_target_id"] == "prd"
 
 
 def test_project_state_prefers_active_operator_queue_over_historical_workflow_state(

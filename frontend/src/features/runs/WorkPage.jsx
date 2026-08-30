@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
 import Button from '../../components/ui/Button';
@@ -765,6 +765,7 @@ function ManagerAttention({
   attention,
   busy,
   onDecide,
+  onReview,
   onRetry,
   projectKey,
   t,
@@ -802,7 +803,11 @@ function ManagerAttention({
             {t('work.manager.requestChanges')}
           </Button>
         ) : null}
-        {actions.has('review') ? (
+        {actions.has('review') && onReview ? (
+          <Button variant="secondary" onClick={(event) => onReview(event.currentTarget)}>
+            {t('work.review.viewDetails')}
+          </Button>
+        ) : actions.has('review') ? (
           <Link className="product-button product-button--secondary" to={routes.projectReviewItem(projectKey, gate)}>
             {t('work.review.viewDetails')}
           </Link>
@@ -857,6 +862,7 @@ function ManagerPane({
   mission,
   onDecide,
   onInspect,
+  onReview,
   onRetry,
   onStart,
   onTerminate,
@@ -886,6 +892,7 @@ function ManagerPane({
             attention={attention}
             busy={busy}
             onDecide={onDecide}
+            onReview={onReview}
             onRetry={onRetry}
             projectKey={projectKey}
             t={t}
@@ -944,7 +951,16 @@ function ExecutionPane({ actors, hasMission, onInspect, t }) {
   );
 }
 
-function OutcomesPane({ hasMission, onInspect, onSelectTask, outcomes, t }) {
+function OutcomesPane({
+  activeReviewTaskId,
+  attentionTaskId,
+  hasMission,
+  onInspect,
+  onRegisterOutcome,
+  onSelectTask,
+  outcomes,
+  t,
+}) {
   return (
     <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')}>
       <header className="team-pane__header">
@@ -953,30 +969,48 @@ function OutcomesPane({ hasMission, onInspect, onSelectTask, outcomes, t }) {
       </header>
       {outcomes.length ? (
         <ol className="team-outcome-list">
-          {outcomes.map((task) => (
-            <li key={task.id} data-state={task.status}>
-              <button type="button" onClick={() => onSelectTask(task)}>
-                <span className="team-outcome-list__title"><strong>{task.objective}</strong><small>{task.id}</small></span>
-                <StatusBadge tone={tone(task.status)}>{statusText(task.status, t)}</StatusBadge>
-                <span className="team-outcome-list__reason">{translated(t, `work.team.reasons.${task.status_reason}`, task.status_reason)}</span>
-                {task.primary_outcome ? (
-                  <span className="team-outcome-list__deliverable">
-                    {t('work.team.primaryOutcome')}: {task.primary_outcome.label}
-                  </span>
-                ) : null}
-              </button>
-              {task.primary_outcome?.href ? (
-                <a
-                  className="team-outcome-list__link"
-                  href={task.primary_outcome.href}
-                  rel="noreferrer"
-                  target="_blank"
+          {outcomes.map((task) => {
+            const isAttentionTarget = task.id === attentionTaskId;
+            const isActiveReviewTarget = task.id === activeReviewTaskId;
+            return (
+              <li
+                key={task.id}
+                ref={(node) => onRegisterOutcome(task.id, node)}
+                data-active-review={isActiveReviewTarget ? 'true' : undefined}
+                data-attention={isAttentionTarget ? 'true' : undefined}
+                data-state={task.status}
+                data-task-id={task.id}
+              >
+                <button
+                  type="button"
+                  aria-pressed={isActiveReviewTarget}
+                  onClick={(event) => onSelectTask(task, event.currentTarget)}
                 >
-                  {t('work.team.openOutcome', { outcome: task.primary_outcome.label })} ↗
-                </a>
-              ) : null}
-            </li>
-          ))}
+                  <span className="team-outcome-list__title"><strong>{task.objective}</strong><small>{task.id}</small></span>
+                  <StatusBadge tone={tone(task.status)}>{statusText(task.status, t)}</StatusBadge>
+                  {isAttentionTarget ? (
+                    <span className="team-outcome-list__attention">{t('work.team.needsReview')}</span>
+                  ) : null}
+                  <span className="team-outcome-list__reason">{translated(t, `work.team.reasons.${task.status_reason}`, task.status_reason)}</span>
+                  {task.primary_outcome ? (
+                    <span className="team-outcome-list__deliverable">
+                      {t('work.team.primaryOutcome')}: {task.primary_outcome.label}
+                    </span>
+                  ) : null}
+                </button>
+                {task.primary_outcome?.href ? (
+                  <a
+                    className="team-outcome-list__link"
+                    href={task.primary_outcome.href}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {t('work.team.openOutcome', { outcome: task.primary_outcome.label })} ↗
+                  </a>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       ) : <p className="team-pane__empty">{t('work.team.outcomesEmpty')}</p>}
       {hasMission ? (
@@ -1062,19 +1096,63 @@ function TeamWorkspace({
   t,
   view,
 }) {
-  const [selectedTask, setSelectedTask] = useState(null);
+  const [selectedTaskId, setSelectedTaskId] = useState('');
+  const [selectedReviewTargetId, setSelectedReviewTargetId] = useState('');
+  const [activeReviewTaskId, setActiveReviewTaskId] = useState('');
+  const outcomeRefs = useRef(new Map());
+  const returnFocusRef = useRef(null);
   const workspace = data.team_workspace;
   const mission = workspace.mission;
+  const outcomes = workspace.outcome_tasks || [];
+  const selectedTask = outcomes.find((task) => task.id === selectedTaskId) || null;
+  const attention = workspace.attention_request;
+  const attentionReviewTask = attention?.target_type === 'review' && attention?.target_id
+    ? outcomes.find((task) => (
+      task.id === attention.task_id
+      && task.review_target_type === 'review'
+      && task.review_target_id === attention.target_id
+    )) || null
+    : null;
   const taskForModal = selectedTask ? {
     ...selectedTask,
     title: selectedTask.objective,
     role: selectedTask.owner,
     status: selectedTask.status,
+    review_target_id: selectedReviewTargetId || selectedTask.review_target_id || '',
     artifact_refs: [
       selectedTask.primary_outcome?.path,
       ...(selectedTask.supporting_refs || []),
     ].filter(Boolean),
   } : null;
+  const registerOutcome = useCallback((taskId, node) => {
+    if (node) outcomeRefs.current.set(taskId, node);
+    else outcomeRefs.current.delete(taskId);
+  }, []);
+  const openOutcome = useCallback((task, trigger) => {
+    returnFocusRef.current = trigger || document.activeElement;
+    setSelectedReviewTargetId(task.review_target_id || '');
+    setSelectedTaskId(task.id);
+  }, []);
+  const reviewAttentionOutcome = useCallback((trigger) => {
+    if (!attentionReviewTask) return;
+    returnFocusRef.current = trigger || document.activeElement;
+    setActiveReviewTaskId(attentionReviewTask.id);
+    outcomeRefs.current.get(attentionReviewTask.id)?.scrollIntoView?.({
+      behavior: reducedMotion ? 'auto' : 'smooth',
+      block: 'nearest',
+      inline: 'nearest',
+    });
+    setSelectedReviewTargetId(attention.target_id);
+    setSelectedTaskId(attentionReviewTask.id);
+  }, [attention, attentionReviewTask, reducedMotion]);
+  const closeTaskModal = useCallback(() => {
+    const returnFocus = returnFocusRef.current;
+    returnFocusRef.current = null;
+    setSelectedTaskId('');
+    setSelectedReviewTargetId('');
+    setActiveReviewTaskId('');
+    returnFocus?.focus?.();
+  }, []);
   return (
     <>
       <nav className="team-mobile-nav" aria-label={t('work.team.navigation')}>
@@ -1093,6 +1171,7 @@ function TeamWorkspace({
           mission={mission}
           onDecide={onDecide}
           onInspect={onInspect}
+          onReview={attentionReviewTask ? reviewAttentionOutcome : undefined}
           onRetry={onRetry}
           onStart={onStart}
           onTerminate={onTerminate}
@@ -1107,10 +1186,13 @@ function TeamWorkspace({
           t={t}
         />
         <OutcomesPane
+          activeReviewTaskId={activeReviewTaskId}
+          attentionTaskId={attentionReviewTask?.id || ''}
           hasMission={Boolean(mission)}
           onInspect={onInspect}
-          onSelectTask={setSelectedTask}
-          outcomes={workspace.outcome_tasks || []}
+          onRegisterOutcome={registerOutcome}
+          onSelectTask={openOutcome}
+          outcomes={outcomes}
           t={t}
         />
       </div>
@@ -1120,7 +1202,7 @@ function TeamWorkspace({
           reviews={data.approval_reviews || []}
           projectKey={projectKey}
           onDecide={onDecide}
-          onClose={() => setSelectedTask(null)}
+          onClose={closeTaskModal}
           t={t}
         />
       ) : null}

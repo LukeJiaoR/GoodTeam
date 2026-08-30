@@ -68,6 +68,7 @@ function TranslationOutlet() {
   return (
     <>
       <output data-testid="location-path">{location.pathname}</output>
+      <output data-testid="location-search">{location.search}</output>
       <Outlet context={{ language: 'en', t: (key, params) => translate('en', key, params) }} />
     </>
   );
@@ -80,6 +81,7 @@ function renderWorkPage(initialEntry = '/projects/DEMO/work/runs/run-active') {
         <Route element={<TranslationOutlet />}>
           <Route path="/projects/:projectKey/work" element={<WorkPage />} />
           <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
+          <Route path="/projects/:projectKey/review/:approval" element={<div data-testid="full-review-page">Full review workbench</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -88,6 +90,7 @@ function renderWorkPage(initialEntry = '/projects/DEMO/work/runs/run-active') {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function projectedWorkData(overrides = {}) {
@@ -155,6 +158,86 @@ function repeatedArchitectAttemptData() {
       acceptance_criteria: [],
       attempt_count: 4,
       current_attempt_id: 'job-architect-4',
+      supporting_refs: [],
+    },
+  ];
+  return data;
+}
+
+function managerReviewData() {
+  const data = projectedWorkData();
+  data.approval_reviews = [
+    {
+      approval: 'rfc',
+      title: 'RFC architecture review',
+      decision: 'approved',
+      is_actionable: false,
+      content: '# RFC v2\n\nPreviously approved architecture.',
+    },
+    {
+      approval: 'security',
+      title: 'Architecture security review',
+      artifact: 'rfc',
+      artifact_path: '/tmp/rfc-v3.md',
+      decision: 'pending',
+      is_actionable: true,
+      content: '# RFC v3\n\nSecurity boundaries and evidence.',
+      recommendation: { verdict: 'approve', reasons: ['The threat model is complete.'] },
+      evidence_snapshot: {
+        ci_status: 'passed', smoke_status: 'passed', qa_status: 'passed', blocker_count: 0, pr_number: 376,
+      },
+      reviewer_provenance: { source: 'independent_reviewer', review_id: 'security-review-3' },
+    },
+  ];
+  data.team_workspace.attention_request = {
+    id: 'approval:security',
+    kind: 'approval',
+    target_type: 'review',
+    target_id: 'security',
+    task_id: 'DEMO-ARCH',
+    reason: 'approval_required',
+    actions: ['approve', 'request_changes', 'review'],
+    refs: ['security', 'DEMO-ARCH'],
+  };
+  data.team_workspace.outcome_tasks = [
+    {
+      id: 'DEMO-ARCH',
+      objective: 'Architecture',
+      description: 'Review RFC v3 and its security boundaries.',
+      owner: 'architect',
+      status: 'reviewing',
+      status_reason: 'awaiting_review',
+      dependencies: [],
+      acceptance_criteria: ['Threat model covers the production boundary.'],
+      attempt_count: 2,
+      review_state: 'pending',
+      review_target_type: 'review',
+      review_target_id: 'security',
+      primary_outcome: {
+        kind: 'document', label: 'RFC v3', href: '', path: '/tmp/rfc-v3.md', status: 'ready',
+      },
+      supporting_refs: ['/tmp/security-evidence.json'],
+    },
+    {
+      id: 'DEMO-IMPL',
+      objective: 'Implementation',
+      owner: 'implementation',
+      status: 'working',
+      status_reason: 'worker_running',
+      dependencies: ['DEMO-ARCH'],
+      acceptance_criteria: [],
+      attempt_count: 1,
+      supporting_refs: [],
+    },
+    {
+      id: 'DEMO-SEC',
+      objective: 'Security review',
+      owner: 'architect',
+      status: 'waiting',
+      status_reason: 'waiting_for_dependencies',
+      dependencies: ['DEMO-IMPL'],
+      acceptance_criteria: [],
+      attempt_count: 0,
       supporting_refs: [],
     },
   ];
@@ -351,6 +434,103 @@ test('keeps approval and change-request decisions inside the Manager pane', asyn
   expect(mocks.decideReview).toHaveBeenCalledWith(
     'DEMO', 'takeover', 'changes_requested', 'Keep the provider boundary extensible.',
   );
+});
+
+test('opens the exact attention Outcome in-place and restores Manager focus on close', async () => {
+  const data = managerReviewData();
+  const scrollIntoView = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoView,
+  });
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const user = userEvent.setup();
+
+  renderWorkPage('/projects/DEMO/work/runs/run-active?context=manager');
+
+  const manager = screen.getByRole('region', { name: 'Manager' });
+  const reviewButton = within(manager).getByRole('button', { name: 'Inspect details →' });
+  const architecture = document.querySelector('[data-task-id="DEMO-ARCH"]');
+  const implementation = document.querySelector('[data-task-id="DEMO-IMPL"]');
+  const security = document.querySelector('[data-task-id="DEMO-SEC"]');
+  expect(architecture).toHaveAttribute('data-attention', 'true');
+  expect(within(architecture).getByText('Needs review')).toBeVisible();
+  expect(implementation).not.toHaveAttribute('data-attention');
+  expect(security).not.toHaveAttribute('data-attention');
+
+  await user.click(reviewButton);
+
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
+  expect(screen.getByTestId('location-search')).toHaveTextContent('?context=manager');
+  expect(screen.queryByTestId('full-review-page')).not.toBeInTheDocument();
+  expect(architecture).toHaveAttribute('data-active-review', 'true');
+  expect(implementation).not.toHaveAttribute('data-active-review');
+  expect(security).not.toHaveAttribute('data-active-review');
+  expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
+  expect(within(dialog).getByText('Architecture security review')).toBeVisible();
+  expect(within(dialog).getByText('Pending')).toBeVisible();
+  expect(within(dialog).queryByText('work.plan.status.pending')).not.toBeInTheDocument();
+  expect(within(dialog).getByText('CI: Passed')).toBeVisible();
+  expect(within(dialog).getByText('Reviewer provenance')).toBeVisible();
+
+  await user.click(within(dialog).getAllByRole('button', { name: 'Close' })[0]);
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  const restoredManager = screen.getByRole('region', { name: 'Manager' });
+  expect(restoredManager).toBeVisible();
+  expect(restoredManager.querySelector('.team-manager-objective')).toHaveTextContent('Make OAuth production ready');
+  expect(architecture).not.toHaveAttribute('data-active-review');
+  expect(reviewButton).toHaveFocus();
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
+  expect(screen.getByTestId('location-search')).toHaveTextContent('?context=manager');
+});
+
+test('uses only the modal Full Review action for dedicated review navigation', async () => {
+  const data = managerReviewData();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const user = userEvent.setup();
+
+  renderWorkPage();
+  await user.click(screen.getByRole('button', { name: 'Inspect details →' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
+  await user.click(within(dialog).getByRole('link', { name: /Full Review View/ }));
+
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/review/security');
+  expect(screen.getByTestId('full-review-page')).toBeVisible();
+});
+
+test('opens Manager review on the Manager-first mobile layout with reduced motion', async () => {
+  const data = managerReviewData();
+  const scrollIntoView = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoView,
+  });
+  vi.stubGlobal('matchMedia', vi.fn(() => ({
+    matches: true,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })));
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const user = userEvent.setup();
+
+  renderWorkPage('/projects/DEMO/work/runs/run-active?mobile=manager-first');
+  await user.click(within(screen.getByRole('region', { name: 'Manager' })).getByRole('button', { name: 'Inspect details →' }));
+
+  expect(await screen.findByRole('dialog', { name: 'Architecture' })).toBeVisible();
+  expect(document.querySelector('[data-task-id="DEMO-ARCH"]')).toHaveAttribute('data-active-review', 'true');
+  expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
+  expect(document.querySelector('.team-workspace')).toBeVisible();
 });
 
 test('requires confirmation before the Manager cancels a mission', async () => {

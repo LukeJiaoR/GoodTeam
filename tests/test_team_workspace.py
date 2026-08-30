@@ -397,7 +397,9 @@ def test_approval_attention_outranks_existing_blockers() -> None:
     assert projection["attention_request"] == {
         "id": "approval:takeover",
         "kind": "approval",
+        "target_type": "review",
         "target_id": "takeover",
+        "task_id": "",
         "reason": "approval_required",
         "refs": ["takeover"],
         "actions": ["approve", "request_changes", "review"],
@@ -408,6 +410,94 @@ def test_approval_attention_outranks_existing_blockers() -> None:
         "review",
         "cancel_mission",
     }
+
+
+def test_approval_attention_targets_one_outcome_by_durable_stage_identity() -> None:
+    state = create_initial_state("run-review", "DEMO", "Review the architecture")
+    state.next_node = "await_security_approval"
+    tasks = [
+        _workflow_task(
+            "DEMO-ARCH",
+            "Design RFC & Security Review",
+            "architect",
+            status="review",
+            external_refs=["stage:architect"],
+        ),
+        _workflow_task(
+            "DEMO-AUDIT",
+            "Audit infrastructure boundaries",
+            "architect",
+            status="todo",
+            external_refs=["assignment:infrastructure-audit"],
+        ),
+        _workflow_task(
+            "DEMO-IMPL",
+            "Implement approved design",
+            "implementation",
+            status="todo",
+            external_refs=["stage:implementation"],
+        ),
+    ]
+    reviews = [
+        {"approval": "rfc", "decision": "approved", "is_actionable": False},
+        {"approval": "security", "decision": "pending", "is_actionable": True},
+    ]
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        tasks=tasks,
+        approval_reviews=reviews,
+    )
+
+    assert projection["attention_request"] == {
+        "id": "approval:security",
+        "kind": "approval",
+        "target_type": "review",
+        "target_id": "security",
+        "task_id": "DEMO-ARCH",
+        "reason": "approval_required",
+        "refs": ["security", "DEMO-ARCH"],
+        "actions": ["approve", "request_changes", "review"],
+    }
+    outcomes = {item["id"]: item for item in projection["outcome_tasks"]}
+    assert outcomes["DEMO-ARCH"]["review_target_type"] == "review"
+    assert outcomes["DEMO-ARCH"]["review_target_id"] == "security"
+    assert outcomes["DEMO-AUDIT"]["review_target_id"] == ""
+    assert outcomes["DEMO-IMPL"]["review_target_id"] == ""
+
+
+def test_approval_attention_refuses_ambiguous_stage_task_membership() -> None:
+    state = create_initial_state("run-review", "DEMO", "Review the architecture")
+    state.next_node = "await_security_approval"
+    tasks = [
+        _workflow_task(
+            "DEMO-ARCH-A",
+            "Architecture A",
+            "architect",
+            status="review",
+            external_refs=["stage:architect"],
+        ),
+        _workflow_task(
+            "DEMO-ARCH-B",
+            "Architecture B",
+            "architect",
+            status="review",
+            external_refs=["stage:architect"],
+        ),
+    ]
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        tasks=tasks,
+        approval_reviews=[{"approval": "security", "is_actionable": True}],
+    )
+
+    assert projection["attention_request"]["task_id"] == ""
+    assert all(not item["review_target_id"] for item in projection["outcome_tasks"])
 
 
 def _operator_projection_fixture(

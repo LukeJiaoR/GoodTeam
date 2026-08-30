@@ -1985,7 +1985,19 @@
 }
 
 .product-shell .team-outcome-list li {
+  scroll-margin-block: 8rem 1.5rem;
   border-bottom: 1px solid var(--product-border);
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.product-shell .team-outcome-list li[data-attention="true"] {
+  background: color-mix(in srgb, var(--product-warning) 7%, var(--product-surface));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--product-warning) 72%, var(--product-border));
+}
+
+.product-shell .team-outcome-list li[data-active-review="true"] {
+  background: color-mix(in srgb, var(--product-accent) 10%, var(--product-surface));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--product-accent) 70%, var(--product-border));
 }
 
 .product-shell .team-outcome-list button {
@@ -2036,6 +2048,19 @@
 .product-shell .team-outcome-list__reason,
 .product-shell .team-outcome-list__deliverable {
   grid-column: 1 / -1;
+}
+
+.product-shell .team-outcome-list__attention {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 0.18rem 0.42rem;
+  color: color-mix(in srgb, var(--product-warning) 82%, var(--product-text));
+  background: color-mix(in srgb, var(--product-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--product-warning) 38%, var(--product-border));
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 680;
+  line-height: 1.2;
 }
 
 .product-shell .team-outcome-list__deliverable {
@@ -3309,6 +3334,34 @@
   margin: 0.25rem 0 0;
   color: var(--product-text-muted, #a1a1aa);
   font-size: 0.76rem;
+}
+
+.task-detail-review-records {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.task-detail-review-records details {
+  padding: 0.65rem 0.75rem;
+  background: var(--product-surface-muted);
+  border: 1px solid var(--product-border);
+  border-radius: 8px;
+}
+
+.task-detail-review-records summary {
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.task-detail-review-records pre {
+  max-height: 14rem;
+  margin: 0.65rem 0 0;
+  overflow: auto;
+  color: var(--product-text-muted);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .task-detail-decision-form {

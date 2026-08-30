@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { routes } from '../lib/routing/routes';
+import EvidenceSummary from './EvidenceSummary';
 import Button from './ui/Button';
 import MarkdownView from './ui/MarkdownView';
 import ProductError from './ui/ProductError';
@@ -51,8 +52,22 @@ function reviewTone(review) {
   return 'neutral';
 }
 
+function asReviewObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return { value }; }
+}
+
 export function findMatchingReview(task, reviews) {
   if (!task || !Array.isArray(reviews) || !reviews.length) return null;
+
+  // Manager-centered Work passes the durable review identity projected for
+  // this exact outcome. Never let role/title compatibility heuristics override
+  // that authoritative association.
+  const reviewTargetId = String(task.review_target_id || '').trim();
+  if (reviewTargetId) {
+    return reviews.find((review) => String(review.approval || '') === reviewTargetId) || null;
+  }
 
   // 1. If any review is actionable, check if it belongs to this task's scope
   const actionable = reviews.find((r) => r.is_actionable);
@@ -207,6 +222,8 @@ export default function TaskDetailModal({
   const recommendation = review?.recommendation && typeof review.recommendation === 'object'
     ? review.recommendation
     : null;
+  const evidence = asReviewObject(review?.evidence_snapshot);
+  const provenance = asReviewObject(review?.reviewer_provenance);
 
   return (
     <div
@@ -404,6 +421,26 @@ export default function TaskDetailModal({
                   </ul>
                 </section>
               ) : null}
+
+              {task.primary_outcome ? (
+                <section className="task-detail-section">
+                  <h3>{t('work.team.primaryOutcome')}</h3>
+                  {task.primary_outcome.href ? (
+                    <a
+                      className="task-detail-workbench-link"
+                      href={task.primary_outcome.href}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <ExternalLink size={13} />
+                      {task.primary_outcome.label}
+                    </a>
+                  ) : <p>{task.primary_outcome.label}</p>}
+                  {task.primary_outcome.path ? (
+                    <p className="task-detail-preview-path">{task.primary_outcome.path}</p>
+                  ) : null}
+                </section>
+              ) : null}
             </>
           )}
 
@@ -507,6 +544,24 @@ export default function TaskDetailModal({
                     {recommendation.reasons?.map((reason, idx) => (
                       <p key={idx}>{typeof reason === 'string' ? reason : reason.text}</p>
                     ))}
+                  </div>
+                ) : null}
+
+                <EvidenceSummary evidence={evidence} t={t} />
+                {Object.keys(evidence).length || Object.keys(provenance).length ? (
+                  <div className="task-detail-review-records">
+                    {Object.keys(evidence).length ? (
+                      <details>
+                        <summary>{t('review.evidence.title')}</summary>
+                        <pre>{JSON.stringify(evidence, null, 2)}</pre>
+                      </details>
+                    ) : null}
+                    {Object.keys(provenance).length ? (
+                      <details>
+                        <summary>{t('review.provenance.title')}</summary>
+                        <pre>{JSON.stringify(provenance, null, 2)}</pre>
+                      </details>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

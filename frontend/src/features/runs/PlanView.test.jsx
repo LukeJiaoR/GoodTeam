@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
-import TaskDetailModal from '../../components/TaskDetailModal';
+import TaskDetailModal, { findMatchingReview } from '../../components/TaskDetailModal';
 import { translate } from '../../i18n';
 import { PlanView } from './WorkPage';
 
@@ -82,6 +82,18 @@ const sampleReviews = [
 const t = (key, params) => translate('zh-CN', key, params);
 
 describe('TaskDetailModal', () => {
+  test('prefers the projected review target id over role heuristics', () => {
+    const review = findMatchingReview(
+      { id: 'GT-ARCH', role: 'architect', review_target_id: 'rfc' },
+      [
+        { approval: 'security', is_actionable: true },
+        { approval: 'rfc', is_actionable: false },
+      ],
+    );
+
+    expect(review?.approval).toBe('rfc');
+  });
+
   test('renders all task properties accessibly without reviews', () => {
     const task = sampleBoard.columns.backlog[0];
     let closed = false;
