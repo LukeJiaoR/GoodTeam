@@ -273,6 +273,17 @@ function shortEvidenceRef(value) {
   return text;
 }
 
+function approvalTargetForReview(review, runId = '') {
+  if (!review) return null;
+  return {
+    run_id: runId,
+    target_type: 'review',
+    target_id: review.approval || '',
+    artifact_key: review.artifact || '',
+    artifact_version: review.artifact_version || '',
+  };
+}
+
 function BriefFactGroups({ emptyKey, groups = [], t }) {
   if (!groups.length) return <p className="team-approval-brief__empty">{t(emptyKey)}</p>;
   return groups.map((group, index) => (
@@ -316,6 +327,7 @@ function ManagerApprovalBrief({ brief, t }) {
   const artifact = decision.artifact || {};
   const scope = brief.scope || {};
   const evidence = brief.evidence || [];
+  const missionBlockers = brief.mission_blockers || [];
   const risks = brief.risks || [];
   const consequence = brief.consequence || {};
   const recovery = consequence.recovery || [];
@@ -390,6 +402,16 @@ function ManagerApprovalBrief({ brief, t }) {
           </ul>
         ) : <p className="team-approval-brief__empty">{t('work.manager.approvalBrief.noEvidence')}</p>}
       </section>
+
+      {missionBlockers.length ? (
+        <section className="team-approval-brief__section team-approval-brief__mission-blockers">
+          <h4>{t('work.manager.approvalBrief.missionBlockers')}</h4>
+          <p>{t('work.manager.approvalBrief.missionBlockersNote')}</p>
+          <ul>
+            {missionBlockers.map((blocker, index) => <li key={`${blocker}-${index}`}>{blocker}</li>)}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="team-approval-brief__section">
         <h4>{t('work.manager.approvalBrief.risk')}</h4>
@@ -1111,7 +1133,12 @@ function ManagerAttention({
     : null;
   const decide = (decision, decisionNote = '') => {
     Promise.resolve()
-      .then(() => onDecide?.(gate, decision, decisionNote))
+      .then(() => onDecide?.(
+        gate,
+        decision,
+        decisionNote,
+        decision === 'approved' ? approvalBrief?.approval_target : null,
+      ))
       .catch(() => {});
   };
   const submitChanges = (event) => {
@@ -1468,6 +1495,7 @@ function AdvancedInspector({
             onDecided={undefined}
             projectKey={projectKey}
             reviews={data.approval_reviews || []}
+            runId={data?.state?.run_id || ''}
             steps={data.workflow_steps || []}
             t={t}
           />
@@ -1842,12 +1870,24 @@ export default function WorkPage() {
     }
   };
 
-  const handleDecide = async (approval, decision, note = '') => {
+  const handleDecide = async (approval, decision, note = '', approvalTarget = null) => {
+    const currentReview = (data?.approval_reviews || []).find(
+      (review) => review.approval === approval && review.is_actionable,
+    );
+    const expectedApproval = approvalTarget
+      || approvalTargetForReview(currentReview, data?.state?.run_id || '');
     try {
-      const result = await mutate('decision', () => reviewApi.decideReview(projectKey, approval, decision, note));
+      const result = await mutate('decision', () => (
+        decision === 'approved'
+          ? reviewApi.decideReview(projectKey, approval, decision, note, { expectedApproval })
+          : reviewApi.decideReview(projectKey, approval, decision, note)
+      ));
       toast.success(t('toast.decisionSubmitted'));
       return result;
     } catch (caught) {
+      if (caught?.code === 'stale_approval') {
+        await Promise.allSettled([refresh(), loadRuns()]);
+      }
       toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
       throw caught;
     }
@@ -1973,6 +2013,7 @@ export default function WorkPage() {
             onDecided={refresh}
             projectKey={projectKey}
             reviews={data.approval_reviews || []}
+            runId={data?.state?.run_id || ''}
             steps={data.workflow_steps || []}
             t={t}
           />

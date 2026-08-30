@@ -1607,6 +1607,96 @@ def test_api_approve_forwards_rejected_note(tmp_path, monkeypatch):
     assert captured["note"] == "Safety validation failed."
 
 
+def test_api_approve_requires_and_forwards_exact_approval_binding(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_decide_approval(**kwargs):
+        captured.update(kwargs)
+        return {"run_id": "run-1", "decision": kwargs["decision"], "next_node": "architect"}
+
+    monkeypatch.setattr("goodteam_os.web.decide_approval", fake_decide_approval)
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    unbound = simulate_post(
+        "/api/approve",
+        {"project_key": "CONTENTOPS", "approval": "prd", "decision": "approved"},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 409 in unbound.responses
+    assert captured == {}
+    unbound_payload = json.loads(unbound.wfile.getvalue().decode("utf-8"))
+    assert unbound_payload["code"] == "approval_binding_required"
+    assert unbound_payload["recovery"] == ["refresh_approval_brief"]
+
+    bound = simulate_post(
+        "/api/approve",
+        {
+            "project_key": "CONTENTOPS",
+            "approval": "prd",
+            "decision": "approved",
+            "expected_run_id": "run-1",
+            "expected_target_type": "review",
+            "expected_target_id": "prd",
+            "expected_artifact_key": "prd",
+            "expected_artifact_version": "sha256:prd-v1",
+        },
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 200 in bound.responses
+    assert {
+        key: captured[key]
+        for key in (
+            "expected_run_id",
+            "expected_target_type",
+            "expected_target_id",
+            "expected_artifact_key",
+            "expected_artifact_version",
+        )
+    } == {
+        "expected_run_id": "run-1",
+        "expected_target_type": "review",
+        "expected_target_id": "prd",
+        "expected_artifact_key": "prd",
+        "expected_artifact_version": "sha256:prd-v1",
+    }
+
+
+def test_api_approve_returns_409_when_artifact_version_is_stale(tmp_path, monkeypatch):
+    artifact = tmp_path / "prd.md"
+    artifact.write_text("# PRD\n\nVersion A\n", encoding="utf-8")
+    state = create_initial_state("run-1", "CONTENTOPS", "Approve an exact PRD")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    state.artifacts["prd"] = str(artifact)
+    StateStore(tmp_path).write_project_current(state)
+    shown_version = web.artifact_version_for_path(str(artifact))
+    artifact.write_text("# PRD\n\nVersion B\n", encoding="utf-8")
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    handler = simulate_post(
+        "/api/approve",
+        {
+            "project_key": "CONTENTOPS",
+            "approval": "prd",
+            "decision": "approved",
+            "expected_run_id": "run-1",
+            "expected_target_type": "review",
+            "expected_target_id": "prd",
+            "expected_artifact_key": "prd",
+            "expected_artifact_version": shown_version,
+        },
+        headers={"Host": "127.0.0.1:8788"},
+    )
+
+    assert 409 in handler.responses
+    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert payload["code"] == "stale_approval"
+    assert payload["details"]["mismatches"] == ["artifact_version"]
+    assert payload["recovery"] == ["refresh_approval_brief"]
+
+
 def test_api_recover_takeover_brief_forwards_optional_note(tmp_path, monkeypatch):
     captured = {}
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@xyflow/react', async () => {
@@ -200,6 +200,7 @@ function managerReviewData() {
       title: 'Architecture security review',
       artifact: 'rfc',
       artifact_path: '/tmp/rfc-v3.md',
+      artifact_version: 'sha256:1234567890abcdef1234567890abcdef',
       decision: 'pending',
       is_actionable: true,
       content: '# RFC v3\n\nSecurity boundaries and evidence.',
@@ -223,6 +224,14 @@ function managerReviewData() {
       schema_version: 'manager_approval_brief.v1',
       approval: 'security',
       approval_type: 'architecture',
+      approval_target: {
+        run_id: 'run-active',
+        target_type: 'review',
+        target_id: 'security',
+        task_id: 'DEMO-ARCH',
+        artifact_key: 'rfc',
+        artifact_version: 'sha256:1234567890abcdef1234567890abcdef',
+      },
       decision: {
         subject: 'Architecture security review',
         summary: 'Keep a generic provider boundary while shipping Google first.',
@@ -249,6 +258,7 @@ function managerReviewData() {
         { kind: 'reviewer', label: 'Security review', status: 'ok', detail: 'No blocking security issues found.' },
         { kind: 'ci', label: '', status: 'passed', detail: '' },
       ],
+      mission_blockers: ['Worker capacity is unavailable for a separate delivery task.'],
       risks: [
         {
           kind: 'artifact', heading: 'Risks and trade-offs',
@@ -263,7 +273,7 @@ function managerReviewData() {
       },
       recommendation: {
         verdict: 'approve', confidence: 'high', blocking_count: 0,
-        reasons: [{ kind: 'clean', text: 'The threat model is complete.' }],
+        reasons: [{ kind: 'clean', text: 'No approval-specific blocking signals were found.' }],
       },
     },
   };
@@ -720,6 +730,13 @@ test('renders a decision-ready Manager approval brief and keeps exact approval d
   expect(within(attention).getByText('Verified')).toBeVisible();
   expect(within(attention).getByText('CI')).toBeVisible();
   expect(within(attention).getByText('Passed')).toBeVisible();
+  expect(within(attention).getByText('Mission blockers')).toBeVisible();
+  expect(within(attention).getByText(
+    'These affect the run but are not attributed to this approval decision.',
+  )).toBeVisible();
+  expect(within(attention).getByText(
+    'Worker capacity is unavailable for a separate delivery task.',
+  )).toBeVisible();
   expect(within(attention).getByText(
     'The provider abstraction adds a small amount of initial complexity.',
   )).toBeVisible();
@@ -728,14 +745,29 @@ test('renders a decision-ready Manager approval brief and keeps exact approval d
   )).toBeVisible();
   expect(within(attention).getByText('Next assigned outcome: Implementation')).toBeVisible();
   expect(within(attention).getByText('Approve and continue', { selector: 'strong' })).toBeVisible();
-  expect(within(attention).getByText('The brief is present and no blocking signals were found.')).toBeVisible();
+  expect(within(attention).getByText('No approval-specific blocking signal is recorded.')).toBeVisible();
   expect(within(attention).queryByText(
     'Review the current evidence and decide whether the team should continue.',
   )).not.toBeInTheDocument();
 
   await user.click(within(attention).getByRole('button', { name: 'Approve and continue' }));
 
-  expect(mocks.decideReview).toHaveBeenCalledWith('DEMO', 'security', 'approved', '');
+  expect(mocks.decideReview).toHaveBeenCalledWith(
+    'DEMO',
+    'security',
+    'approved',
+    '',
+    {
+      expectedApproval: {
+        run_id: 'run-active',
+        target_type: 'review',
+        target_id: 'security',
+        task_id: 'DEMO-ARCH',
+        artifact_key: 'rfc',
+        artifact_version: 'sha256:1234567890abcdef1234567890abcdef',
+      },
+    },
+  );
 });
 
 test('falls back to generic attention for an unsupported approval brief version', async () => {
@@ -753,6 +785,28 @@ test('falls back to generic attention for an unsupported approval brief version'
   )).toBeVisible();
   expect(within(attention).queryByText('You are approving')).not.toBeInTheDocument();
   expect(within(attention).getByRole('button', { name: 'Approve' })).toBeVisible();
+});
+
+test('refreshes the Manager brief when exact approval binding is stale', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  const stale = Object.assign(
+    new Error('This approval changed after the brief was loaded.'),
+    { code: 'stale_approval', status: 409 },
+  );
+  mocks.useProjectState.mockReturnValue({
+    data: managerReviewData(), error: null, refresh, status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.decideReview.mockRejectedValue(stale);
+  const user = userEvent.setup();
+
+  renderWorkPage();
+
+  const manager = screen.getByRole('region', { name: 'Manager' });
+  await user.click(within(manager).getByRole('button', { name: 'Approve and continue' }));
+
+  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText('This approval changed after the brief was loaded.')).toBeVisible();
 });
 
 test('opens the exact attention Outcome in-place and restores Manager focus on close', async () => {

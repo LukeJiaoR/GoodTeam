@@ -957,9 +957,9 @@ def _manager_approval_brief(
     sections = _markdown_sections(content)
     outcome = next((item for item in outcomes if _text(item.get("id")) == task_id), None)
     artifact_path = _text(review.get("artifact_path"))
-    artifact_version = _text(review.get("artifact_version"))
-    if artifact_version == "missing":
-        artifact_version = ""
+    approval_artifact_version = _text(review.get("artifact_version")) or "missing"
+    artifact_version = "" if approval_artifact_version == "missing" else approval_artifact_version
+    artifact_key = _text(review.get("artifact"))
     artifact_title = _clean_markdown_fact(review.get("title"), limit=120)
     artifact_label = _clean_markdown_fact(Path(artifact_path).name, limit=120) if artifact_path else artifact_title
 
@@ -975,6 +975,14 @@ def _manager_approval_brief(
         "schema_version": MANAGER_APPROVAL_BRIEF_SCHEMA_VERSION,
         "approval": gate,
         "approval_type": approval_type,
+        "approval_target": {
+            "run_id": _text(state.run_id),
+            "target_type": "review",
+            "target_id": gate,
+            "task_id": task_id,
+            "artifact_key": artifact_key,
+            "artifact_version": approval_artifact_version,
+        },
         "decision": {
             "subject": (
                 artifact_title
@@ -986,7 +994,7 @@ def _manager_approval_brief(
                 _SUMMARY_HEADINGS_BY_TYPE.get(approval_type, _SUMMARY_HEADINGS_BY_TYPE["general"]),
             ),
             "artifact": {
-                "key": _text(review.get("artifact")),
+                "key": artifact_key,
                 "label": artifact_label,
                 "version": artifact_version,
             },
@@ -996,7 +1004,8 @@ def _manager_approval_brief(
             "excluded": _section_groups(sections, _EXCLUDED_SCOPE_HEADINGS),
         },
         "evidence": _approval_brief_evidence(review, approval_type),
-        "risks": _approval_brief_risks(state, review, sections, approval_type),
+        "mission_blockers": _approval_brief_mission_blockers(state),
+        "risks": _approval_brief_risks(review, sections, approval_type),
         "consequence": _approval_brief_consequence(state, gate, tasks, sections),
         "recommendation": _approval_brief_recommendation(review),
     }
@@ -1248,17 +1257,23 @@ def _approval_brief_evidence(
     return evidence[:8]
 
 
+def _approval_brief_mission_blockers(state: AgileDevState) -> list[str]:
+    blockers: list[str] = []
+    for raw_blocker in state.blockers:
+        blocker = _clean_markdown_fact(raw_blocker)
+        if blocker and blocker not in blockers:
+            blockers.append(blocker)
+        if len(blockers) >= 5:
+            break
+    return blockers
+
+
 def _approval_brief_risks(
-    state: AgileDevState,
     review: Mapping[str, object],
     sections: Sequence[Mapping[str, object]],
     approval_type: str,
 ) -> list[dict[str, object]]:
     risks: list[dict[str, object]] = []
-    for blocker in state.blockers:
-        text = _clean_markdown_fact(blocker)
-        if text:
-            risks.append({"kind": "blocker", "text": text})
     for group in _section_groups(sections, _RISK_HEADINGS, group_limit=2, item_limit=4):
         for item in _list(group.get("items")):
             risks.append(

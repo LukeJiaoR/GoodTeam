@@ -546,9 +546,18 @@ def test_approval_attention_outranks_existing_blockers() -> None:
     brief = attention["approval_brief"]
     assert brief["schema_version"] == "manager_approval_brief.v1"
     assert brief["approval_type"] == "research_planning"
+    assert brief["approval_target"] == {
+        "run_id": "run-2",
+        "target_type": "review",
+        "target_id": "takeover",
+        "task_id": "",
+        "artifact_key": "",
+        "artifact_version": "missing",
+    }
     assert brief["scope"] == {"included": [], "excluded": []}
     assert brief["evidence"] == []
-    assert brief["risks"] == [{"kind": "blocker", "text": "Worker is unavailable"}]
+    assert brief["mission_blockers"] == ["Worker is unavailable"]
+    assert brief["risks"] == []
     assert brief["consequence"]["next_stage"] == "product_requirement"
     assert brief["recommendation"]["verdict"] == ""
     assert {item["action"] for item in projection["capabilities"]} >= {
@@ -716,6 +725,15 @@ Keep one generic provider interface while shipping Google first.
     )
 
     brief = projection["attention_request"]["approval_brief"]
+    assert brief["approval_target"] == {
+        "run_id": "run-brief",
+        "target_type": "review",
+        "target_id": "security",
+        "task_id": "DEMO-ARCH",
+        "artifact_key": "rfc",
+        "artifact_version": "sha256:abc123",
+    }
+    assert brief["mission_blockers"] == []
     assert brief["decision"] == {
         "subject": "Federated login RFC",
         "summary": "Keep one generic provider interface while shipping Google first.",

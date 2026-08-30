@@ -76,7 +76,7 @@ function StageNode({ data }) {
   );
 }
 
-function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
+function CanvasInner({ fallback, onDecided, projectKey, reviews, runId = '', steps, t }) {
   const { fitView, zoomIn, zoomOut } = useReactFlow();
   const [level, setLevel] = useState(0);
   const [expanded, setExpanded] = useState(null);
@@ -158,11 +158,29 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, steps, t }) {
     setBusy(decision);
     setError(null);
     try {
-      await reviewApi.decideReview(projectKey, actionableReview.approval, decision, note);
+      const expectedApproval = {
+        run_id: runId,
+        target_type: 'review',
+        target_id: actionableReview.approval || '',
+        artifact_key: actionableReview.artifact || '',
+        artifact_version: actionableReview.artifact_version || '',
+      };
+      if (decision === 'approved') {
+        await reviewApi.decideReview(
+          projectKey,
+          actionableReview.approval,
+          decision,
+          note,
+          { expectedApproval },
+        );
+      } else {
+        await reviewApi.decideReview(projectKey, actionableReview.approval, decision, note);
+      }
       setExpanded(null);
       onDecided?.();
     } catch (caught) {
       setError(caught);
+      if (caught?.code === 'stale_approval') await onDecided?.();
     } finally {
       setBusy('');
     }

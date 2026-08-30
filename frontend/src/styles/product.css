@@ -2428,6 +2428,7 @@
 }
 
 .product-shell .team-approval-brief__evidence-list,
+.product-shell .team-approval-brief__mission-blockers > ul,
 .product-shell .team-approval-brief__risk-list {
   width: 100%;
   min-width: 0;
@@ -2436,6 +2437,7 @@
 }
 
 .product-shell .team-approval-brief__evidence-list > li,
+.product-shell .team-approval-brief__mission-blockers > ul > li,
 .product-shell .team-approval-brief__risk-list > li {
   display: grid;
   gap: 0.22rem;
@@ -2466,9 +2468,17 @@
 }
 
 .product-shell .team-approval-brief__evidence-list p,
+.product-shell .team-approval-brief__mission-blockers p,
 .product-shell .team-approval-brief__risk-list p {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.product-shell .team-approval-brief__mission-blockers {
+  padding: 0.75rem;
+  background: color-mix(in srgb, var(--product-warning) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--product-warning) 22%, transparent);
+  border-radius: 11px;
 }
 
 .product-shell .team-approval-brief__evidence-list > li[data-status="passed"] strong,

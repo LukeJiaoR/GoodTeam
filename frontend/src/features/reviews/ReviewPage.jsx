@@ -346,6 +346,7 @@ export default function ReviewPage() {
       return result;
     } catch (caught) {
       setMutationError(caught);
+      if (caught?.code === 'stale_approval') await refresh().catch(() => {});
       toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
       return null;
     } finally {
@@ -386,7 +387,18 @@ export default function ReviewPage() {
     if (result) setBaseline(content);
   };
   const decide = async (decision, note) => {
-    const result = await mutate(decision, () => reviewApi.decideReview(projectKey, selected.approval, decision, note));
+    const expectedApproval = {
+      run_id: data?.state?.run_id || '',
+      target_type: 'review',
+      target_id: selected.approval || '',
+      artifact_key: selected.artifact || '',
+      artifact_version: selected.artifact_version || '',
+    };
+    const result = await mutate(decision, () => (
+      decision === 'approved'
+        ? reviewApi.decideReview(projectKey, selected.approval, decision, note, { expectedApproval })
+        : reviewApi.decideReview(projectKey, selected.approval, decision, note)
+    ));
     if (!result) return;
     toast.success(t('toast.decisionSubmitted'));
     const payload = await refresh();

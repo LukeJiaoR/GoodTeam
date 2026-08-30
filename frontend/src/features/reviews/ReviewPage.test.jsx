@@ -32,6 +32,7 @@ vi.mock('./reviewApi', () => ({
 }));
 
 const state = {
+  state: { run_id: 'run-1' },
   start_context: { project_key: 'DEMO', project_name: 'Demo project' },
   approval_reviews: [
     {
@@ -39,6 +40,7 @@ const state = {
       title: 'PRD',
       artifact: 'prd',
       artifact_path: '/runs/x/prd.md',
+      artifact_version: 'sha256:prd-v1',
       content: '# PRD\nInitial plan.',
       is_actionable: true,
       recommendation: { verdict: 'approve', reasons: [{ kind: 'clean' }] },
@@ -127,7 +129,21 @@ describe('ReviewPage workflow and navigation', () => {
     expect(screen.getByText(`Next: ${t('review.decision.node.rfc')}`)).toBeVisible();
     expect(screen.getByRole('link', { name: t('review.decision.viewNext') }))
       .toHaveAttribute('href', '/projects/DEMO/work');
-    expect(mocks.decideReview).toHaveBeenCalledWith('DEMO', 'prd', 'approved', '');
+    expect(mocks.decideReview).toHaveBeenCalledWith(
+      'DEMO',
+      'prd',
+      'approved',
+      '',
+      {
+        expectedApproval: {
+          run_id: 'run-1',
+          target_type: 'review',
+          target_id: 'prd',
+          artifact_key: 'prd',
+          artifact_version: 'sha256:prd-v1',
+        },
+      },
+    );
   });
 
   test('renders the evidence summary badges from the snapshot', async () => {
