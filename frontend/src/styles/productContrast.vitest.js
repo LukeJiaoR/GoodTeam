@@ -85,9 +85,31 @@ test('Execution LEDs use semantic tokens and become static for reduced motion', 
     expect(light[`product-led-${state}`], `light ${state} LED token`).toMatch(/^#[\da-f]{6}$/i);
     expect(dark[`product-led-${state}`], `dark ${state} LED token`).toMatch(/^#[\da-f]{6}$/i);
   }
+  for (const tokens of [light, dark]) {
+    expect(tokens['product-led-working']).toBe(tokens['product-accent']);
+    expect(tokens['product-led-reviewing']).toBe(tokens['product-accent-strong']);
+    expect(tokens['product-led-fixing']).toBe(tokens['product-warning']);
+    expect(tokens['product-led-blocked']).toBe(tokens['product-danger']);
+    expect(tokens['product-led-completed']).toBe(tokens['product-success']);
+  }
   expect(blockFor('.product-shell .team-status-led-trigger[data-motion="ambient"] .team-status-led'))
     .toMatch(/animation:\s*team-status-led-breathe/);
   expect(css).toMatch(
     /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.product-shell \.team-status-led \{[\s\S]*?animation:\s*none !important;/,
   );
+});
+
+test('Work reads as one team studio with an elevated Manager surface', () => {
+  const studio = blockFor('.product-shell .team-workspace');
+  const pane = blockFor('.product-shell .team-pane');
+  const manager = blockFor('.product-shell .team-pane--manager');
+  const attention = blockFor('.product-shell .team-attention');
+
+  expect(studio).toMatch(/grid-template-areas:\s*"execution manager outcomes";/);
+  expect(studio).toMatch(/background-color:/);
+  expect(studio).toMatch(/border:\s*1px solid var\(--product-border\);/);
+  expect(pane).toMatch(/border:\s*1px solid transparent;/);
+  expect(manager).toMatch(/background:\s*var\(--product-surface-raised\);/);
+  expect(manager).toMatch(/box-shadow:/);
+  expect(attention).toMatch(/inset 3px 0 0 var\(--product-warning\)/);
 });

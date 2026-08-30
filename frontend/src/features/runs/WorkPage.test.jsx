@@ -554,6 +554,22 @@ test('keeps approval and change-request decisions inside the Manager pane', asyn
   );
 });
 
+test('places exceptional Manager attention before routine mission history', async () => {
+  const data = managerReviewData();
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+
+  renderWorkPage();
+
+  const manager = screen.getByRole('region', { name: 'Manager' });
+  const attention = manager.querySelector('.team-attention');
+  const history = manager.querySelector('.team-manager-timeline');
+  expect(attention).toBeInTheDocument();
+  expect(history).toBeInTheDocument();
+  expect(attention.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING)
+    .toBeTruthy();
+});
+
 test('opens the exact attention Outcome in-place and restores Manager focus on close', async () => {
   const data = managerReviewData();
   const scrollIntoView = vi.fn();

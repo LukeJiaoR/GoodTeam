@@ -958,9 +958,6 @@ function ManagerPane({
       {mission ? (
         <>
           <p className="team-manager-objective">{mission.objective}</p>
-          <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
-            {(timeline || []).map((item) => <TimelineItem item={item} key={item.id} language={language} t={t} />)}
-          </ol>
           {error ? <ProductError error={error} t={t} /> : null}
           <ManagerAttention
             attention={attention}
@@ -971,6 +968,9 @@ function ManagerPane({
             projectKey={projectKey}
             t={t}
           />
+          <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
+            {(timeline || []).map((item) => <TimelineItem item={item} key={item.id} language={language} t={t} />)}
+          </ol>
           <ManagerMissionControls
             busy={busy}
             canCancel={(capabilities || []).some((item) => item.action === 'cancel_mission')}
