@@ -1,5 +1,13 @@
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  AlertCircle,
+  Bot,
+  ChevronRight,
+  Clock3,
+  FileCheck2,
+  Send,
+} from 'lucide-react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
 import Button from '../../components/ui/Button';
@@ -71,6 +79,39 @@ function executionStatusReason(actor, t) {
   }
   const reason = actor.status_reason || actor.dependency_reason;
   return reason ? translated(t, `work.team.reasons.${reason}`, reason) : '';
+}
+
+function taskProgress(status) {
+  if (['complete', 'completed', 'done', 'approved', 'success'].includes(status)) return 100;
+  if (['reviewing'].includes(status)) return 78;
+  if (['fixing'].includes(status)) return 62;
+  if (['active', 'running', 'doing', 'working'].includes(status)) return 48;
+  if (['blocked', 'failed', 'error'].includes(status)) return 24;
+  if (['waiting', 'pending'].includes(status)) return 12;
+  return 4;
+}
+
+function matchingOutcome(actor, outcomes) {
+  return outcomes.find((task) => task.id === actor.task_id)
+    || outcomes.find((task) => task.owner === actor.role && !['completed', 'stopped'].includes(task.status))
+    || null;
+}
+
+function TeamAvatar({ label, manager = false }) {
+  const initial = String(label || '').trim().slice(0, 1).toUpperCase() || 'G';
+  return (
+    <span aria-hidden="true" className={`team-avatar${manager ? ' team-avatar--manager' : ''}`}>
+      {manager ? <Bot size={18} strokeWidth={1.9} /> : initial}
+    </span>
+  );
+}
+
+function TaskProgress({ status }) {
+  return (
+    <span aria-hidden="true" className="team-task-progress">
+      <span style={{ width: `${taskProgress(status)}%` }} />
+    </span>
+  );
 }
 
 function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
@@ -820,16 +861,21 @@ function TimelineItem({ item, language, t }) {
   const formatted = Number.isFinite(timestamp)
     ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp))
     : '';
+  const actorLabel = item.actor === 'user' ? t('work.manager.you') : t('work.manager.name');
+  const copy = timelineCopy(item, t);
   return (
     <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind}>
-      <div className="team-manager-event__meta">
-        <strong>{item.actor === 'user' ? t('work.manager.you') : t('work.manager.name')}</strong>
-        {formatted ? <time dateTime={item.timestamp}>{formatted}</time> : null}
+      <TeamAvatar label={actorLabel} manager={item.actor !== 'user'} />
+      <div className="team-manager-event__bubble">
+        <div className="team-manager-event__meta">
+          <strong>{actorLabel}</strong>
+          {formatted ? <time dateTime={item.timestamp}>{formatted}</time> : null}
+        </div>
+        <p>{copy}</p>
+        {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
+          <blockquote>{item.content}</blockquote>
+        ) : null}
       </div>
-      <p>{timelineCopy(item, t)}</p>
-      {item.content && item.event !== 'mission_requested' && timelineCopy(item, t) !== item.content ? (
-        <blockquote>{item.content}</blockquote>
-      ) : null}
     </li>
   );
 }
@@ -860,7 +906,10 @@ function ManagerAttention({
   };
   return (
     <section className="team-attention" data-kind={attention.kind} aria-label={t('work.manager.attention')}>
-      <p className="team-attention__label">{t('work.manager.attention')}</p>
+      <p className="team-attention__label">
+        <AlertCircle aria-hidden="true" size={15} strokeWidth={2} />
+        <span>{t('work.manager.attention')}</span>
+      </p>
       <h3 id="team-attention-title">
         {translated(t, `work.manager.attentionKinds.${attention.kind}`, attention.reason)}
       </h3>
@@ -944,77 +993,141 @@ function ManagerPane({
   timeline,
   t,
 }) {
+  const managerTone = attention?.kind === 'blocker'
+    ? 'danger'
+    : attention
+      ? 'pending'
+      : mission
+        ? tone(mission.status)
+        : 'pending';
+  const managerStatus = attention
+    ? t('work.manager.needsYou')
+    : mission
+      ? statusText(mission.status, t)
+      : t('work.manager.ready');
+  const timelineHasMissionRequest = (timeline || []).some((item) => item.event === 'mission_requested');
   return (
     <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
       <header className="team-pane__header">
-        <div>
-          <span>{t('work.team.managerLabel')}</span>
-          <h2 id="team-manager-title">{t('work.manager.name')}</h2>
+        <div className="team-manager-heading">
+          <TeamAvatar label={t('work.manager.name')} manager />
+          <div>
+            <div className="team-manager-heading__title">
+              <h2 id="team-manager-title">{t('work.manager.name')}</h2>
+              <StatusBadge tone={managerTone}>{managerStatus}</StatusBadge>
+            </div>
+            <span className="team-pane__eyebrow">{t('work.manager.subtitle')}</span>
+          </div>
         </div>
-        <StatusBadge tone={attention?.kind === 'blocker' ? 'danger' : attention ? 'pending' : mission ? tone(mission.status) : 'pending'}>
-          {attention ? t('work.manager.needsYou') : mission ? statusText(mission.status, t) : t('work.manager.ready')}
-        </StatusBadge>
+        {mission ? (
+          <button className="team-pane__header-action" type="button" onClick={() => onInspect('activity')}>
+            <Clock3 aria-hidden="true" size={15} />
+            <span>{t('work.manager.history')}</span>
+          </button>
+        ) : null}
       </header>
-      {mission ? (
-        <>
-          <p className="team-manager-objective">{mission.objective}</p>
-          {error ? <ProductError error={error} t={t} /> : null}
-          <ManagerAttention
-            attention={attention}
-            busy={busy}
-            onDecide={onDecide}
-            onReview={onReview}
-            onRetry={onRetry}
-            projectKey={projectKey}
+      <div className="team-manager-conversation">
+        {mission ? (
+          <>
+            {!timelineHasMissionRequest ? (
+              <p className="team-manager-objective">
+                <span>{t('work.manager.currentMission')}</span>
+                <strong>{mission.objective}</strong>
+              </p>
+            ) : null}
+            {error ? <ProductError error={error} t={t} /> : null}
+            <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
+              {(timeline || []).map((item) => <TimelineItem item={item} key={item.id} language={language} t={t} />)}
+            </ol>
+            <ManagerAttention
+              attention={attention}
+              busy={busy}
+              onDecide={onDecide}
+              onReview={onReview}
+              onRetry={onRetry}
+              projectKey={projectKey}
+              t={t}
+            />
+          </>
+        ) : (
+          <ManagerMissionEntry
+            busy={busy === 'start'}
+            data={data}
+            error={error}
+            onStart={onStart}
             t={t}
           />
-          <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
-            {(timeline || []).map((item) => <TimelineItem item={item} key={item.id} language={language} t={t} />)}
-          </ol>
+        )}
+      </div>
+      {mission ? (
+        <footer className="team-manager-dock">
+          <button className="team-manager-composer" type="button" onClick={() => onInspect('messages')}>
+            <span>{t('work.manager.composer')}</span>
+            <Send aria-hidden="true" size={17} strokeWidth={1.9} />
+          </button>
           <ManagerMissionControls
             busy={busy}
             canCancel={(capabilities || []).some((item) => item.action === 'cancel_mission')}
             onTerminate={onTerminate}
             t={t}
           />
-          <div className="team-pane__inspect-actions">
-            <button type="button" onClick={() => onInspect('activity')}>{t('work.views.activity')}</button>
-            <button type="button" onClick={() => onInspect('messages')}>{t('work.views.messages')}</button>
-          </div>
-        </>
-      ) : (
-        <ManagerMissionEntry
-          busy={busy === 'start'}
-          data={data}
-          error={error}
-          onStart={onStart}
-          t={t}
-        />
-      )}
+        </footer>
+      ) : null}
     </section>
   );
 }
 
-function ExecutionPane({ actors, hasMission, onInspect, reducedMotion, sectionProps, t }) {
+function ExecutionPane({ actors, hasMission, onInspect, outcomes, reducedMotion, sectionProps, t }) {
   return (
     <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')} {...sectionProps}>
       <header className="team-pane__header">
-        <div><span>{t('work.team.liveExecution')}</span><h2 id="team-execution-title">{t('work.team.execution')}</h2></div>
+        <div>
+          <h2 id="team-execution-title">{t('work.team.executionBoard')}</h2>
+          <span className="team-pane__eyebrow">{t('work.team.liveExecution')}</span>
+        </div>
         <span className="team-pane__count">{actors.length}</span>
       </header>
       {actors.length ? (
         <ol className="team-actor-list">
-          {actors.map((actor) => (
-            <li key={actor.id} data-state={actor.state}>
-              <div className="team-actor-list__summary">
-                <ExecutionStatusIndicator actor={actor} reducedMotion={reducedMotion} t={t} />
-                <div className="team-actor-list__copy">
-                  <strong>{translated(t, `work.plan.role.${actor.role}`, actor.role)}</strong>
-                  <p>{actor.responsibility || t('work.team.noResponsibility')}</p>
+          {actors.map((actor) => {
+            const task = matchingOutcome(actor, outcomes);
+            const role = translated(t, `work.plan.role.${actor.role}`, actor.role);
+            const reason = executionStatusReason(actor, t);
+            const progressStatus = task?.status || actor.state;
+            return (
+              <li key={actor.id} data-state={actor.state}>
+                <div className="team-actor-list__summary">
+                  <TeamAvatar label={role} />
+                  <div className="team-actor-list__copy">
+                    <div className="team-actor-list__identity">
+                      <strong>{role}</strong>
+                      <span className="team-actor-list__state">
+                        <ExecutionStatusIndicator actor={actor} reducedMotion={reducedMotion} t={t} />
+                        <span>{statusText(actor.state, t)}</span>
+                      </span>
+                    </div>
+                    <p>{actor.responsibility || t('work.team.noResponsibility')}</p>
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
+                <div className="team-actor-card__task">
+                  <div>
+                    <span>{t('work.team.currentTask')}</span>
+                    <strong>{task?.objective || actor.responsibility || t('work.team.noResponsibility')}</strong>
+                  </div>
+                  <TaskProgress status={progressStatus} />
+                </div>
+                <div className="team-actor-card__signals">
+                  {reason ? <p>{reason}</p> : null}
+                  {task?.acceptance_criteria?.length ? (
+                    <span>{t('work.team.acceptanceCount', { count: task.acceptance_criteria.length })}</span>
+                  ) : null}
+                  {task?.primary_outcome?.label ? (
+                    <span>{t('work.team.primaryOutcome')}: {task.primary_outcome.label}</span>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
         </ol>
       ) : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
       {hasMission ? (
@@ -1040,14 +1153,24 @@ function OutcomesPane({
   return (
     <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')} {...sectionProps}>
       <header className="team-pane__header">
-        <div><span>{t('work.team.convergence')}</span><h2 id="team-outcomes-title">{t('work.team.outcomes')}</h2></div>
+        <div>
+          <h2 id="team-outcomes-title">{t('work.team.deliveryBoard')}</h2>
+          <span className="team-pane__eyebrow">{t('work.team.convergence')}</span>
+        </div>
         <span className="team-pane__count">{outcomes.length}</span>
       </header>
+      {hasMission ? (
+        <div className="team-outcome-view-switch" aria-label={t('work.team.outcomeViews')} role="group">
+          <span data-active="true">{t('work.team.taskView')}</span>
+          <button type="button" onClick={() => onInspect('activity')}>{t('work.team.timelineView')}</button>
+        </div>
+      ) : null}
       {outcomes.length ? (
         <ol className="team-outcome-list">
-          {outcomes.map((task) => {
+          {outcomes.map((task, index) => {
             const isAttentionTarget = task.id === attentionTaskId;
             const isActiveReviewTarget = task.id === activeReviewTaskId;
+            const owner = translated(t, `work.plan.role.${task.owner}`, task.owner);
             return (
               <li
                 key={task.id}
@@ -1062,17 +1185,41 @@ function OutcomesPane({
                   aria-pressed={isActiveReviewTarget}
                   onClick={(event) => onSelectTask(task, event.currentTarget)}
                 >
-                  <span className="team-outcome-list__title"><strong>{task.objective}</strong><small>{task.id}</small></span>
-                  <StatusBadge tone={tone(task.status)}>{statusText(task.status, t)}</StatusBadge>
+                  <span className="team-outcome-card__heading">
+                    <span className="team-outcome-card__index">{index + 1}</span>
+                    <span className="team-outcome-list__title">
+                      <strong>{task.objective}</strong>
+                      <small>{task.id}</small>
+                    </span>
+                    <StatusBadge tone={tone(task.status)}>{statusText(task.status, t)}</StatusBadge>
+                  </span>
+                  <TaskProgress status={task.status} />
+                  <span className="team-outcome-card__owner">
+                    <TeamAvatar label={owner} />
+                    <span>
+                      <small>{t('work.team.owner')}</small>
+                      <strong>{owner}</strong>
+                    </span>
+                  </span>
                   {isAttentionTarget ? (
                     <span className="team-outcome-list__attention">{t('work.team.needsReview')}</span>
                   ) : null}
                   <span className="team-outcome-list__reason">{translated(t, `work.team.reasons.${task.status_reason}`, task.status_reason)}</span>
+                  <span className="team-outcome-card__facts">
+                    {task.dependencies?.length ? (
+                      <span>{t('work.team.dependenciesCount', { count: task.dependencies.length })}</span>
+                    ) : <span>{t('work.team.noDependencies')}</span>}
+                    {task.acceptance_criteria?.length ? (
+                      <span>{t('work.team.acceptanceCount', { count: task.acceptance_criteria.length })}</span>
+                    ) : null}
+                  </span>
                   {task.primary_outcome ? (
                     <span className="team-outcome-list__deliverable">
-                      {t('work.team.primaryOutcome')}: {task.primary_outcome.label}
+                      <FileCheck2 aria-hidden="true" size={14} />
+                      <span>{t('work.team.primaryOutcome')}: {task.primary_outcome.label}</span>
                     </span>
                   ) : null}
+                  <ChevronRight aria-hidden="true" className="team-outcome-card__chevron" size={16} />
                 </button>
                 {task.primary_outcome?.href ? (
                   <a
@@ -1081,7 +1228,7 @@ function OutcomesPane({
                     rel="noreferrer"
                     target="_blank"
                   >
-                    {t('work.team.openOutcome', { outcome: task.primary_outcome.label })} ↗
+                    <span>{t('work.team.openOutcome', { outcome: task.primary_outcome.label })} ↗</span>
                   </a>
                 ) : null}
               </li>
@@ -1335,6 +1482,7 @@ function TeamWorkspace({
           actors={workspace.execution_actors || []}
           hasMission={Boolean(mission)}
           onInspect={onInspect}
+          outcomes={outcomes}
           reducedMotion={reducedMotion}
           sectionProps={sectionProps('execution')}
           t={t}

@@ -99,17 +99,22 @@ test('Execution LEDs use semantic tokens and become static for reduced motion', 
   );
 });
 
-test('Work reads as one team studio with an elevated Manager surface', () => {
+test('Work reads as one three-domain console with restrained neumorphic depth', () => {
   const studio = blockFor('.product-shell .team-workspace');
   const pane = blockFor('.product-shell .team-pane');
   const manager = blockFor('.product-shell .team-pane--manager');
   const attention = blockFor('.product-shell .team-attention');
+  const actorCard = blockFor('.product-shell .team-actor-list li');
+  const progress = blockFor('.product-shell .team-task-progress');
 
   expect(studio).toMatch(/grid-template-areas:\s*"execution manager outcomes";/);
   expect(studio).toMatch(/background-color:/);
   expect(studio).toMatch(/border:\s*1px solid var\(--product-border\);/);
-  expect(pane).toMatch(/border:\s*1px solid transparent;/);
+  expect(pane).toMatch(/border:\s*0;/);
   expect(manager).toMatch(/background:\s*var\(--product-surface-raised\);/);
   expect(manager).toMatch(/box-shadow:/);
-  expect(attention).toMatch(/inset 3px 0 0 var\(--product-warning\)/);
+  expect(attention).toMatch(/inset 2px 0 0 var\(--product-warning\)/);
+  expect(actorCard).toMatch(/-4px -4px 10px/);
+  expect(actorCard).toMatch(/5px 6px 14px/);
+  expect(progress).toMatch(/inset 1px 1px 2px/);
 });

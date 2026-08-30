@@ -283,14 +283,17 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.getByRole('heading', { name: 'Manager' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Execution' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Outcomes' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Team & tasks' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Outcomes & delivery' })).toBeVisible();
   expect(screen.getByText('I organized this mission into 2 outcome tasks and identified the next eligible work.')).toBeVisible();
   const execution = screen.getByRole('region', { name: 'Execution' });
   expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();
   expect(execution.querySelectorAll('.team-status-led')).toHaveLength(2);
   expect(within(execution).getByRole('img', { name: 'Working. A worker is executing this task now.' })).toBeVisible();
   expect(within(execution).getByRole('img', { name: 'Waiting. Waiting for “Implement OAuth” to complete.' })).toBeVisible();
+  expect(within(execution).getAllByText('Current task')).toHaveLength(2);
+  expect(within(execution).getByText('1 acceptance criteria')).toBeVisible();
+  expect(within(execution).getByText('Outcome: PR #42')).toBeVisible();
   expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
   expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
@@ -554,7 +557,7 @@ test('keeps approval and change-request decisions inside the Manager pane', asyn
   );
 });
 
-test('places exceptional Manager attention before routine mission history', async () => {
+test('keeps Manager attention in the conversation after recorded mission history', async () => {
   const data = managerReviewData();
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
@@ -566,7 +569,7 @@ test('places exceptional Manager attention before routine mission history', asyn
   const history = manager.querySelector('.team-manager-timeline');
   expect(attention).toBeInTheDocument();
   expect(history).toBeInTheDocument();
-  expect(attention.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(history.compareDocumentPosition(attention) & Node.DOCUMENT_POSITION_FOLLOWING)
     .toBeTruthy();
 });
 
@@ -617,7 +620,7 @@ test('opens the exact attention Outcome in-place and restores Manager focus on c
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   const restoredManager = screen.getByRole('region', { name: 'Manager' });
   expect(restoredManager).toBeVisible();
-  expect(restoredManager.querySelector('.team-manager-objective')).toHaveTextContent('Make OAuth production ready');
+  expect(within(restoredManager).getByText('Make OAuth production ready')).toBeVisible();
   expect(architecture).toHaveAttribute('data-active-review', 'true');
   expect(reviewButton).toHaveFocus();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
