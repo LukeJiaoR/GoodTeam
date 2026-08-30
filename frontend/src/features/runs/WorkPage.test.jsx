@@ -227,6 +227,8 @@ function managerReviewData() {
       dependencies: ['DEMO-ARCH'],
       acceptance_criteria: [],
       attempt_count: 1,
+      review_target_type: '',
+      review_target_id: '',
       supporting_refs: [],
     },
     {
@@ -238,6 +240,8 @@ function managerReviewData() {
       dependencies: ['DEMO-IMPL'],
       acceptance_criteria: [],
       attempt_count: 0,
+      review_target_type: '',
+      review_target_id: '',
       supporting_refs: [],
     },
   ];
@@ -504,6 +508,26 @@ test('uses only the modal Full Review action for dedicated review navigation', a
 
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/review/security');
   expect(screen.getByTestId('full-review-page')).toBeVisible();
+});
+
+test('does not lend an actionable review to another same-role Outcome', async () => {
+  const data = managerReviewData();
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const user = userEvent.setup();
+
+  renderWorkPage();
+  const outcomes = screen.getByRole('region', { name: 'Outcomes' });
+  await user.click(within(outcomes).getByRole('button', { name: /Security review.*DEMO-SEC/ }));
+
+  const dialog = await screen.findByRole('dialog', { name: 'Security review' });
+  expect(within(dialog).queryByText('Architecture security review')).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole('button', { name: 'Approval Decision' })).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument();
+  const waitingBadge = within(dialog).getByText('Waiting', { selector: '.product-status-badge' });
+  expect(waitingBadge).toHaveAttribute('data-tone', 'pending');
+  expect(within(dialog).queryByText('work.plan.status.waiting')).not.toBeInTheDocument();
 });
 
 test('opens Manager review on the Manager-first mobile layout with reduced motion', async () => {

@@ -94,6 +94,58 @@ describe('TaskDetailModal', () => {
     expect(review?.approval).toBe('rfc');
   });
 
+  test('treats an explicit empty projected review target as no review', () => {
+    const reviews = [{ approval: 'security', is_actionable: true }];
+
+    expect(findMatchingReview(
+      { id: 'GT-FUTURE', role: 'architect', review_target_id: '' },
+      reviews,
+    )).toBeNull();
+    expect(findMatchingReview(
+      { id: 'GT-LEGACY', role: 'architect' },
+      reviews,
+    )?.approval).toBe('security');
+  });
+
+  test.each([
+    ['todo', '待办', 'pending'],
+    ['up_next', '下一步', 'pending'],
+    ['in_progress', '进行中', 'active'],
+    ['working', '工作中', 'active'],
+    ['review', '审查中', 'active'],
+    ['reviewing', '审查中', 'active'],
+    ['changes_requested', '要求修改', 'active'],
+    ['fixing', '修复中', 'active'],
+    ['pending', '待审批', 'pending'],
+    ['waiting', '等待中', 'pending'],
+    ['done', '已完成', 'success'],
+    ['completed', '已完成', 'success'],
+    ['blocked', '受阻', 'danger'],
+    ['canceled', '已停止', 'danger'],
+    ['stopped', '已停止', 'danger'],
+  ])('renders task status %s with a translated %s tone', (status, label, tone) => {
+    render(
+      <MemoryRouter>
+        <TaskDetailModal
+          task={{
+            id: `GT-${status}`,
+            title: `Task ${status}`,
+            role: 'architect',
+            status,
+            review_target_id: '',
+          }}
+          reviews={[{ approval: 'security', is_actionable: true }]}
+          onClose={() => {}}
+          t={t}
+        />
+      </MemoryRouter>,
+    );
+
+    const badge = screen.getByText(label, { selector: '.product-status-badge' });
+    expect(badge).toHaveAttribute('data-tone', tone);
+    expect(screen.queryByText(`work.plan.status.${status}`)).not.toBeInTheDocument();
+  });
+
   test('renders all task properties accessibly without reviews', () => {
     const task = sampleBoard.columns.backlog[0];
     let closed = false;

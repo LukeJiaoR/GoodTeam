@@ -37,11 +37,33 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+const TEAM_STATUS_ALIASES = {
+  canceled: 'stopped',
+  complete: 'completed',
+  doing: 'working',
+  review: 'reviewing',
+};
+
 function statusTone(status) {
-  if (['done', 'complete', 'approved'].includes(status)) return 'success';
-  if (['blocked', 'failed', 'rejected'].includes(status)) return 'danger';
-  if (['in_progress', 'doing', 'active', 'changes_requested'].includes(status)) return 'active';
+  if (['done', 'complete', 'completed', 'approved'].includes(status)) return 'success';
+  if (['blocked', 'failed', 'rejected', 'canceled', 'stopped'].includes(status)) return 'danger';
+  if ([
+    'in_progress', 'doing', 'active', 'working', 'review', 'reviewing',
+    'changes_requested', 'fixing',
+  ].includes(status)) return 'active';
+  if (['todo', 'up_next', 'pending', 'waiting'].includes(status)) return 'pending';
   return 'neutral';
+}
+
+function taskStatusLabel(status, t) {
+  const planKey = `work.plan.status.${status}`;
+  const planLabel = t(planKey);
+  if (planLabel !== planKey) return planLabel;
+
+  const teamStatus = TEAM_STATUS_ALIASES[status] || status;
+  const teamKey = `work.team.status.${teamStatus}`;
+  const teamLabel = t(teamKey);
+  return teamLabel === teamKey ? status : teamLabel;
 }
 
 function reviewTone(review) {
@@ -62,10 +84,11 @@ export function findMatchingReview(task, reviews) {
   if (!task || !Array.isArray(reviews) || !reviews.length) return null;
 
   // Manager-centered Work passes the durable review identity projected for
-  // this exact outcome. Never let role/title compatibility heuristics override
-  // that authoritative association.
-  const reviewTargetId = String(task.review_target_id || '').trim();
-  if (reviewTargetId) {
+  // this exact outcome. An explicit blank means "this task has no review";
+  // compatibility heuristics are only for legacy tasks that lack the field.
+  if (Object.prototype.hasOwnProperty.call(task, 'review_target_id')) {
+    const reviewTargetId = String(task.review_target_id || '').trim();
+    if (!reviewTargetId) return null;
     return reviews.find((review) => String(review.approval || '') === reviewTargetId) || null;
   }
 
@@ -188,7 +211,7 @@ export default function TaskDetailModal({
     ? t(`work.plan.role.${task.role}`, {}, task.role)
     : '—';
   const statusLabel = task.status
-    ? t(`work.plan.status.${task.status}`, {}, task.status)
+    ? taskStatusLabel(task.status, t)
     : '—';
   const priorityLabel = task.priority
     ? t(`work.plan.priority.${task.priority}`, {}, task.priority)
