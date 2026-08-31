@@ -38,6 +38,8 @@ def test_all_routine_jobs_use_guarded_goodteam_runner_without_hosted_fallback():
 def test_persistent_runner_uses_local_caches_with_reproducible_installs():
     workflow = _workflow_text()
 
+    assert "python3.12 -m venv" in workflow
+    assert 'echo "$RUNNER_TEMP/goodteam-venv/bin" >> "$GITHUB_PATH"' in workflow
     assert 'pip install -e ".[dev]"' in workflow
     assert "npm ci" in workflow
     assert "cache: pip" not in workflow

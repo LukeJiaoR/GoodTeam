@@ -53,12 +53,12 @@ infrastructure.
 
 ## Dependencies and caches
 
-The host provides Git, a bootstrap Python, npm, and standard Python build
-tooling. `actions/setup-python` installs/selects Python 3.12 and
-`actions/setup-node` installs/selects Node 20 in the runner tool cache for each
-job; the PR job logs are the runtime-version proof. Their GitHub-backed
-dependency caches are disabled. Persistent runner-local pip and npm caches
-remain available while reproducibility stays anchored by
+The host provides Git, a checksum-pinned CPython 3.12.11 build, npm, and standard
+Python build tooling. Each backend job verifies Python 3.12 and creates a fresh
+virtual environment in `RUNNER_TEMP`; `actions/setup-node` installs/selects
+Node 20 in the runner tool cache. The PR job logs are the runtime-version proof.
+GitHub-backed dependency caches are disabled. Persistent runner-local pip and
+npm caches remain available while reproducibility stays anchored by
 `pip install -e ".[dev]"` and `npm ci`.
 
 The start/completion hook removes only the current runner's job-temp children
@@ -74,10 +74,10 @@ registration token, and run the provisioner as root. Pass the token through the
 hidden prompt or a protected process environment; never store it in the repo,
 shell history, issue, or PR.
 
-The provisioner pins Actions Runner 2.337.0 and verifies its official SHA-256.
-It creates the dedicated account and directories, installs the cleanup hooks,
-registers the runner, and places both CI services in the aggregate systemd
-slice.
+The provisioner pins Actions Runner 2.337.0 and CPython 3.12.11, verifies both
+official SHA-256 values, creates the dedicated account and directories,
+installs the cleanup hooks, registers with an explicit non-root PATH, and places
+both CI services in the aggregate systemd slice.
 
 Operational checks:
 

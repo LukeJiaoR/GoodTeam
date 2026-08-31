@@ -59,9 +59,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - name: Create isolated Python 3.12 environment
+        shell: bash
+        run: |
+          if [[ "$(python3.12 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" != "3.12" ]]; then
+            echo "The goodteam-ci runner must provide Python 3.12." >&2
+            exit 1
+          fi
+          python3.12 -m venv "$RUNNER_TEMP/goodteam-venv"
+          echo "$RUNNER_TEMP/goodteam-venv/bin" >> "$GITHUB_PATH"
 
       - run: pip install -e ".[dev]"
 
