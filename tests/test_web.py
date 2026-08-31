@@ -500,6 +500,13 @@ def test_project_run_history_and_detail_are_server_authoritative(tmp_path):
     archived = create_initial_state("run-archived", "RUNS", "Archived goal")
     archived.current_node = "prd_review_gate"
     archived.next_node = "await_prd_approval"
+    task_ledger = project_root / ".goodteam" / "tasks" / "tasks.json"
+    task_ledger.parent.mkdir(parents=True)
+    task_ledger.write_text(
+        json.dumps({"next_id": 2, "tasks": [{"id": "RUNS-1", "title": "Archived stage", "role": "product_requirement", "status": "done"}]}),
+        encoding="utf-8",
+    )
+    archived.artifacts["task_ledger"] = str(task_ledger)
     store.write_project_current(archived)
     store.archive_project_current("RUNS", reason="cancelled")
 
@@ -507,6 +514,10 @@ def test_project_run_history_and_detail_are_server_authoritative(tmp_path):
     active.current_node = "takeover_review_gate"
     active.next_node = "await_takeover_approval"
     store.write_project_current(active)
+    task_ledger.write_text(
+        json.dumps({"next_id": 2, "tasks": [{"id": "RUNS-1", "title": "Current mission stage", "role": "product_requirement", "status": "in_progress"}]}),
+        encoding="utf-8",
+    )
 
     status, history = web.handle_project_api_get(tmp_path, "/api/projects/RUNS/runs")
     assert status == 200
@@ -521,6 +532,16 @@ def test_project_run_history_and_detail_are_server_authoritative(tmp_path):
     assert detail["run"]["reason"] == "cancelled"
     assert detail["state"]["idea"] == "Archived goal"
     assert detail["workflow_steps"]
+    assert detail["team_workspace"]["mission"]["id"] == "run-archived"
+    assert detail["team_workspace"]["mission"]["read_only"] is True
+    assert detail["team_workspace"]["attention_request"] is None
+    assert detail["team_workspace"]["capabilities"] == []
+    assert detail["team_workspace"]["outcome_tasks"] == []
+
+    # A fresh request rebuilds the same semantic story from durable stores;
+    # there is no process-local or browser conversation dependency.
+    reloaded = web.build_project_run_detail(tmp_path, "RUNS", "run-archived")
+    assert reloaded["team_workspace"] == detail["team_workspace"]
 
     with pytest.raises(web.ProjectApiError) as missing:
         web.handle_project_api_get(tmp_path, "/api/projects/RUNS/runs/run-missing")

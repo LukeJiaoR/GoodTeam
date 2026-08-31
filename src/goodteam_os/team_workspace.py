@@ -266,6 +266,8 @@ def build_team_workspace(
     approval_reviews: Sequence[Mapping[str, object]] = (),
     action_items: Sequence[Mapping[str, object]] = (),
     intent_commits: Sequence[Mapping[str, object]] = (),
+    read_only: bool = False,
+    historical_reason: str = "",
 ) -> dict[str, Any]:
     """Project durable records into the Manager-centered Work contract.
 
@@ -282,8 +284,10 @@ def build_team_workspace(
             approval_reviews=approval_reviews,
             action_items=action_items,
             intent_commits=intent_commits,
+            read_only=read_only,
+            historical_reason=historical_reason,
         )
-    if operator_state_dir is not None and project_key:
+    if not read_only and operator_state_dir is not None and project_key:
         queue_item = _active_operator_item(operator_state_dir, project_key)
         if queue_item is not None:
             task, run, events = _operator_execution_details(
@@ -296,6 +300,17 @@ def build_team_workspace(
                 run=run,
                 events=events,
             )
+    if state is not None:
+        return _build_workflow_workspace(
+            state=state,
+            tasks=tasks,
+            worker_jobs=worker_jobs,
+            approval_reviews=approval_reviews,
+            action_items=action_items,
+            intent_commits=intent_commits,
+            read_only=True,
+            historical_reason=historical_reason,
+        )
     return empty_team_workspace()
 
 
@@ -307,8 +322,15 @@ def _build_workflow_workspace(
     approval_reviews: Sequence[Mapping[str, object]],
     action_items: Sequence[Mapping[str, object]],
     intent_commits: Sequence[Mapping[str, object]],
+    read_only: bool,
+    historical_reason: str,
 ) -> dict[str, Any]:
-    run_actions = [item for item in action_items if _text(item.get("run_id")) in {"", state.run_id}]
+    run_actions = [
+        item
+        for item in action_items
+        if _text(item.get("run_id")) == state.run_id
+        or (not read_only and not _text(item.get("run_id")))
+    ]
     # Worker jobs always persist a run id. Blank or foreign ids belong in the
     # attempt inspector, not in an active workflow's current-team projection.
     run_jobs = [item for item in worker_jobs if _text(item.get("run_id")) == state.run_id]
@@ -325,9 +347,9 @@ def _build_workflow_workspace(
         if _text(_mapping(item.get("mission")).get("id")) == state.run_id
     ]
     updated_at = _latest_timestamp(ordered_actions, run_jobs, outcomes, run_intents)
-    actors = _workflow_actors(outcomes, jobs_by_task, unbound_jobs_by_role)
-    attention = _workflow_attention(state, tasks, outcomes, actors, approval_reviews)
-    unresolved_intent = _unresolved_confirmation_intent(state.run_id, run_intents)
+    actors = [] if read_only else _workflow_actors(outcomes, jobs_by_task, unbound_jobs_by_role)
+    attention = None if read_only else _workflow_attention(state, tasks, outcomes, actors, approval_reviews)
+    unresolved_intent = None if read_only else _unresolved_confirmation_intent(state.run_id, run_intents)
     if unresolved_intent is not None and not _attention_matches_intent(
         attention,
         unresolved_intent,
@@ -338,7 +360,11 @@ def _build_workflow_workspace(
         if active_intent is not None:
             attention = {**attention, "intent_commit": active_intent}
     actors = _apply_workflow_attention_reason(actors, attention)
-    mission_status = "waiting" if attention else "working"
+    mission_status = (
+        _historical_mission_status(state, historical_reason)
+        if read_only
+        else "waiting" if attention else "working"
+    )
 
     timeline = [
         {
@@ -362,7 +388,8 @@ def _build_workflow_workspace(
             "refs": [item["id"] for item in outcomes],
         },
     ]
-    timeline.extend(_workflow_timeline_items(state.run_id, ordered_actions))
+    timeline.extend(_workflow_timeline_items(state.run_id, ordered_actions, approvals=state.approvals))
+    timeline.extend(_workflow_attempt_timeline_items(state.run_id, jobs_by_task, unbound_jobs_by_role))
     timeline.extend(_intent_commit_timeline_items(state.run_id, run_intents))
 
     if attention:
@@ -379,6 +406,8 @@ def _build_workflow_workspace(
                 "refs": list(attention.get("refs", [])),
             }
         )
+    elif read_only:
+        timeline.append(_historical_outcome_timeline_item(state, updated_at, historical_reason))
 
     return {
         "schema_version": TEAM_WORKSPACE_SCHEMA_VERSION,
@@ -391,6 +420,7 @@ def _build_workflow_workspace(
             "title": _mission_title(state.idea),
             "objective": state.idea,
             "status": mission_status,
+            "read_only": read_only,
             "started_at": started_at,
             "updated_at": updated_at,
         },
@@ -398,7 +428,7 @@ def _build_workflow_workspace(
         "attention_request": attention,
         "execution_actors": actors,
         "outcome_tasks": outcomes,
-        "capabilities": _workflow_capabilities(state, attention),
+        "capabilities": [] if read_only else _workflow_capabilities(state, attention),
     }
 
 
@@ -821,6 +851,10 @@ def _worker_jobs_share_lineage(
     left: Mapping[str, object],
     right: Mapping[str, object],
 ) -> bool:
+    left_task_id = _text(left.get("task_id"))
+    right_task_id = _text(right.get("task_id"))
+    if left_task_id and left_task_id == right_task_id:
+        return True
     left_id = _text(left.get("id"))
     right_id = _text(right.get("id"))
     if left_id and left_id == _text(right.get("original_failed_job_id")):
@@ -1526,6 +1560,7 @@ def _intent_commit_timeline_items(
     intent_commits: Sequence[Mapping[str, object]],
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, ...]] = set()
     for intent in intent_commits:
         mission = _mapping(intent.get("mission"))
         target = _mapping(intent.get("target"))
@@ -1539,6 +1574,18 @@ def _intent_commit_timeline_items(
             actor = _text(event.get("actor"))
             if not event_name or actor not in {"user", "manager"}:
                 continue
+            source_identity = (
+                intent_id,
+                _text(event.get("id")),
+                actor,
+                event_name,
+                _text(event.get("timestamp")),
+                _text(event.get("content")),
+                _text(target.get("target_id")),
+            )
+            if source_identity in seen_sources:
+                continue
+            seen_sources.add(source_identity)
             items.append(
                 {
                     "id": _text(event.get("id")) or f"{intent_id}:{event_name}:{len(items)}",
@@ -1559,9 +1606,44 @@ def _intent_commit_timeline_items(
     return items
 
 
-def _workflow_timeline_items(run_id: str, actions: Sequence[Mapping[str, object]]) -> list[dict[str, Any]]:
+def _workflow_timeline_items(
+    run_id: str,
+    actions: Sequence[Mapping[str, object]],
+    *,
+    approvals: Mapping[str, object],
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, ...]] = set()
+    unique_actions: list[tuple[int, Mapping[str, object]]] = []
     for index, action in enumerate(actions):
+        source_identity = tuple(
+            _text(action.get(key))
+            for key in (
+                "timestamp",
+                "run_id",
+                "actor",
+                "action",
+                "gate",
+                "decision",
+                "before_node",
+                "after_node",
+                "artifact",
+                "artifact_path",
+                "artifact_version",
+                "actor_ref",
+                "review_session_id",
+            )
+        )
+        if source_identity in seen_sources:
+            continue
+        seen_sources.add(source_identity)
+        unique_actions.append((index, action))
+    latest_decision_by_gate = {
+        _text(action.get("gate")): action
+        for _, action in unique_actions
+        if _text(action.get("action")) == "approval_decided" and _text(action.get("gate"))
+    }
+    for index, action in unique_actions:
         action_name = _text(action.get("action"))
         if action_name == "workflow_started":
             continue
@@ -1574,6 +1656,13 @@ def _workflow_timeline_items(run_id: str, actions: Sequence[Mapping[str, object]
         event = _workflow_event_name(action_name)
         if not event:
             continue
+        gate = _text(action.get("gate"))
+        decision = _text(action.get("decision"))
+        if action_name == "approval_decided" and (
+            latest_decision_by_gate.get(gate) is not action
+            or _text(approvals.get(gate)) != decision
+        ):
+            event = "approval_decided_historical"
         is_human = action_name == "approval_decided" or _text(action.get("actor")) == "human"
         kind = "decision" if action_name == "approval_decided" else "outcome" if action_name == "run_terminated" else "progress"
         items.append(
@@ -1587,8 +1676,10 @@ def _workflow_timeline_items(run_id: str, actions: Sequence[Mapping[str, object]
                 "details": {
                     "action": action_name,
                     "artifact": _text(action.get("artifact")),
-                    "gate": _text(action.get("gate")),
-                    "decision": _text(action.get("decision")),
+                    "gate": gate,
+                    "decision": decision,
+                    "artifact_version": _text(action.get("artifact_version")),
+                    "authority": "historical" if event == "approval_decided_historical" else "current",
                     "after_node": _text(action.get("after_node")),
                 },
                 "refs": [
@@ -1599,6 +1690,135 @@ def _workflow_timeline_items(run_id: str, actions: Sequence[Mapping[str, object]
             }
         )
     return items
+
+
+def _workflow_attempt_timeline_items(
+    run_id: str,
+    jobs_by_task: Mapping[str, Sequence[Mapping[str, object]]],
+    unbound_jobs_by_role: Mapping[str, Sequence[Mapping[str, object]]],
+) -> list[dict[str, Any]]:
+    """Compress durable attempts without discarding their exact identities."""
+    groups = [
+        (f"task:{task_id}", task_id, list(jobs))
+        for task_id, jobs in jobs_by_task.items()
+    ]
+    for role, jobs in unbound_jobs_by_role.items():
+        for group_index, lineage in enumerate(_worker_lineage_groups(jobs)):
+            groups.append((f"role:{role}:lineage:{group_index}", role, lineage))
+    items: list[dict[str, Any]] = []
+    for identity, label, raw_jobs in groups:
+        unique: dict[str, Mapping[str, object]] = {}
+        for index, job in enumerate(raw_jobs):
+            job_id = _text(job.get("id")) or f"anonymous:{index}:{_updated_at(job)}"
+            unique.setdefault(job_id, job)
+        jobs = sorted(unique.values(), key=lambda job: (_updated_at(job), _text(job.get("id"))))
+        if len(jobs) < 2:
+            continue
+        latest = jobs[-1]
+        latest_state = _WORKER_STATES.get(_text(latest.get("status")), "waiting")
+        timestamps = [_updated_at(job) for job in jobs]
+        ambiguous = not all(timestamps) or len(set(timestamps)) != len(timestamps)
+        review_group = _text(latest.get("role")) in _REVIEW_ROLES
+        if ambiguous:
+            event = "work_retry_ambiguous"
+            kind = "attention"
+        elif latest_state == "completed":
+            had_blocker = any(
+                _WORKER_STATES.get(_text(job.get("status"))) == "blocked"
+                for job in jobs[:-1]
+            )
+            event = "review_blocker_resolved" if review_group and had_blocker else "work_retry_converged"
+            kind = "outcome"
+        elif latest_state == "blocked":
+            event = "work_retry_blocked"
+            kind = "attention"
+        else:
+            event = "work_retry_in_progress"
+            kind = "progress"
+        job_ids = [_text(job.get("id")) for job in jobs if _text(job.get("id"))]
+        items.append(
+            {
+                "id": f"{run_id}:attempts:{identity}:{job_ids[-1] if job_ids else len(jobs)}",
+                "actor": "manager",
+                "kind": kind,
+                "event": event,
+                "timestamp": _updated_at(latest),
+                "content": "",
+                "details": {
+                    "attempt_count": len(jobs),
+                    "attempt_identity": identity,
+                    "task_id": label if identity.startswith("task:") else "",
+                    "role": _text(latest.get("role")),
+                    "final_state": latest_state,
+                    "ambiguous": ambiguous,
+                },
+                "refs": job_ids,
+            }
+        )
+    return items
+
+
+def _worker_lineage_groups(
+    jobs: Sequence[Mapping[str, object]],
+) -> list[list[Mapping[str, object]]]:
+    """Partition unbound attempts only when durable lineage joins them."""
+    groups: list[list[Mapping[str, object]]] = []
+    for job in jobs:
+        matches = [
+            index
+            for index, group in enumerate(groups)
+            if any(_worker_jobs_share_lineage(job, candidate) for candidate in group)
+        ]
+        if not matches:
+            groups.append([job])
+            continue
+        first = matches[0]
+        groups[first].append(job)
+        for index in reversed(matches[1:]):
+            groups[first].extend(groups.pop(index))
+    return groups
+
+
+def _historical_mission_status(state: AgileDevState, historical_reason: str) -> str:
+    if state.blockers:
+        return "blocked"
+    if not state.next_node or state.current_node in {"end", "complete", "completed"}:
+        return "completed"
+    return "stopped" if historical_reason else "blocked"
+
+
+def _historical_outcome_timeline_item(
+    state: AgileDevState,
+    updated_at: str,
+    historical_reason: str,
+) -> dict[str, Any]:
+    if state.blockers:
+        event = "mission_ended_blocked"
+        kind = "attention"
+    elif not state.next_node or state.current_node in {"end", "complete", "completed"}:
+        event = "mission_completed"
+        kind = "outcome"
+    elif historical_reason:
+        event = "mission_stopped_historical"
+        kind = "outcome"
+    else:
+        event = "mission_recovery_ambiguous"
+        kind = "attention"
+    return {
+        "id": f"{state.run_id}:historical-outcome:{event}",
+        "actor": "manager",
+        "kind": kind,
+        "event": event,
+        "timestamp": updated_at,
+        "content": "",
+        "details": {
+            "current_node": state.current_node,
+            "next_node": state.next_node,
+            "blocker_count": len(state.blockers),
+            "reason": historical_reason,
+        },
+        "refs": [state.run_id],
+    }
 
 
 def _workflow_event_name(action: str) -> str:
@@ -2136,7 +2356,9 @@ def _dedupe_timeline(items: Sequence[Mapping[str, object]]) -> list[dict[str, An
             continue
         seen.add(identifier)
         result.append(item)
-    return sorted(result, key=lambda item: (_text(item.get("timestamp")), _text(item.get("id"))))
+    # Stable source order breaks ties for legacy records with equal or missing
+    # timestamps; sorting by id could place the final outcome before the request.
+    return sorted(result, key=lambda item: _text(item.get("timestamp")))
 
 
 def _latest_timestamp(*collections: Sequence[Mapping[str, object]]) -> str:

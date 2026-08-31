@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   dispatchTrack: vi.fn(),
   getDevLoop: vi.fn(),
   getMessages: vi.fn(),
+  getProjectRun: vi.fn(),
   getProjectRuns: vi.fn(),
   getProjectState: vi.fn(),
   keepDiscussingChangeIntent: vi.fn(),
@@ -60,6 +61,7 @@ vi.mock('./runApi', () => ({
     dispatchTrack: mocks.dispatchTrack,
     getDevLoop: mocks.getDevLoop,
     getMessages: mocks.getMessages,
+    getProjectRun: mocks.getProjectRun,
     getProjectRuns: mocks.getProjectRuns,
     getProjectState: mocks.getProjectState,
     keepDiscussingChangeIntent: mocks.keepDiscussingChangeIntent,
@@ -1357,6 +1359,53 @@ test('labels the active run and run selector with task titles instead of raw IDs
     'Archived · Review the previous delivery',
   ]);
   expect(screen.queryByText('run-active')).not.toBeInTheDocument();
+});
+
+test.each([false, true])('renders historical Manager history read-only in semantic order (mobile=%s)', async (mobile) => {
+  stubMediaPreferences({ mobile });
+  mocks.useProjectState.mockReturnValue({
+    data: projectedWorkData(),
+    error: null,
+    refresh: vi.fn(),
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({
+    runs: [
+      { run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' },
+      { run_id: 'run-history', idea: 'Ship the earlier OAuth revision', status: 'archived' },
+    ],
+  });
+  mocks.getProjectRun.mockResolvedValue({
+    state: { run_id: 'run-history', idea: 'Ship the earlier OAuth revision', current_node: 'end', next_node: '' },
+    team_workspace: {
+      schema_version: 'team_workspace.v1',
+      mission: {
+        id: 'run-history', run_id: 'run-history', source: 'workflow',
+        objective: 'Ship the earlier OAuth revision', status: 'completed', read_only: true,
+      },
+      manager_timeline: [
+        { id: 'history-request', actor: 'user', event: 'mission_requested', timestamp: '2026-08-30T10:00:00Z', content: 'Ship the earlier OAuth revision', details: {} },
+        { id: 'history-retry', actor: 'manager', event: 'work_retry_converged', timestamp: '2026-08-30T10:01:00Z', content: '', details: { attempt_count: 2 } },
+        { id: 'history-complete', actor: 'manager', event: 'mission_completed', timestamp: '2026-08-30T10:02:00Z', content: '', details: {} },
+      ],
+      attention_request: null,
+      execution_actors: [],
+      outcome_tasks: [],
+      capabilities: [],
+    },
+  });
+
+  renderWorkPage('/projects/DEMO/work/runs/run-history');
+
+  expect(await screen.findByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
+  const manager = screen.getByRole('region', { name: 'Manager' });
+  const request = within(manager).getByText('Ship the earlier OAuth revision');
+  const retry = within(manager).getByText('The work needed 2 attempts and then completed.');
+  const complete = within(manager).getByText('The mission reached its recorded completion state.');
+  expect(request.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(retry.compareDocumentPosition(complete) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(manager).queryByRole('button')).not.toBeInTheDocument();
+  expect(screen.getByText('Run details', { selector: 'summary' })).toBeVisible();
 });
 
 test('makes an actionable takeover review the primary next step', async () => {

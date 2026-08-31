@@ -6,7 +6,7 @@ from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.idempotency import execution_id_from_task
 from goodteam_os.execution.models import ExecutionRun, ExecutionTask, LedgerEvent
 from goodteam_os.operator_queue import DurableOperatorQueue
-from goodteam_os.state import create_initial_state
+from goodteam_os.state import ApprovalDecision, create_initial_state
 from goodteam_os.team_workspace import build_team_workspace, empty_team_workspace
 
 
@@ -896,6 +896,229 @@ def test_committed_intent_timeline_uses_semantic_chain_not_raw_approval_event() 
         item["event"] == "approval_decided"
         for item in projection["manager_timeline"]
     )
+
+    restored = build_team_workspace(
+        state=state,
+        workflow_active=False,
+        project_root=None,
+        action_items=[approval_action],
+        intent_commits=[intent],
+        read_only=True,
+        historical_reason="superseded",
+    )
+    assert [
+        item["event"]
+        for item in restored["manager_timeline"]
+        if item.get("details", {}).get("intent_id") == "intent-committed"
+    ] == semantic_events
+    assert restored["attention_request"] is None
+
+
+def test_retry_history_compresses_replayed_attempts_and_preserves_provenance() -> None:
+    state = create_initial_state("run-retry-history", "DEMO", "Complete the implementation")
+    state.current_node = "end"
+    state.next_node = ""
+    task = _workflow_task("DEMO-IMPL", "Implement the change", "implementation", status="done")
+    blocked = _workflow_job(
+        "job-blocked",
+        "blocked",
+        "2026-08-31T10:01:00Z",
+        run_id=state.run_id,
+        role="implementation",
+        task_id=task["id"],
+    )
+    completed = _workflow_job(
+        "job-completed",
+        "completed",
+        "2026-08-31T10:02:00Z",
+        run_id=state.run_id,
+        role="implementation",
+        task_id=task["id"],
+        retry_attempt=2,
+    )
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=False,
+        project_root=None,
+        tasks=[task],
+        worker_jobs=[blocked, blocked, completed, completed],
+        read_only=True,
+    )
+
+    retry_items = [item for item in projection["manager_timeline"] if item["event"] == "work_retry_converged"]
+    assert len(retry_items) == 1
+    assert retry_items[0]["details"]["attempt_count"] == 2
+    assert retry_items[0]["refs"] == ["job-blocked", "job-completed"]
+    assert projection["manager_timeline"][-1]["event"] == "mission_completed"
+
+
+def test_review_blocker_fix_and_revised_review_form_one_semantic_update() -> None:
+    state = create_initial_state("run-review-history", "DEMO", "Ship reviewed work")
+    review = _workflow_task("DEMO-REVIEW", "Review implementation", "reviewer", status="done")
+    jobs = [
+        _workflow_job(
+            "review-v1",
+            "blocked",
+            "2026-08-31T10:01:00Z",
+            run_id=state.run_id,
+            role="reviewer",
+            task_id=review["id"],
+        ),
+        _workflow_job(
+            "review-v2",
+            "completed",
+            "2026-08-31T10:03:00Z",
+            run_id=state.run_id,
+            role="reviewer",
+            task_id=review["id"],
+        ),
+    ]
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        tasks=[review],
+        worker_jobs=jobs,
+    )
+
+    semantic = [item for item in projection["manager_timeline"] if item["event"] == "review_blocker_resolved"]
+    assert len(semantic) == 1
+    assert semantic[0]["refs"] == ["review-v1", "review-v2"]
+
+
+def test_superseded_decision_is_historical_and_ambiguous_attempt_fails_closed() -> None:
+    state = create_initial_state("run-ambiguous", "DEMO", "Recover durable history")
+    state.approvals["prd"] = ApprovalDecision.PENDING
+    action = {
+        "id": "decision-old",
+        "run_id": state.run_id,
+        "action": "approval_decided",
+        "actor": "human",
+        "gate": "prd",
+        "decision": "approved",
+        "artifact_version": "sha256:old",
+        "timestamp": "2026-08-31T10:01:00Z",
+    }
+    jobs = [
+        _workflow_job(
+            "attempt-a",
+            "blocked",
+            "",
+            run_id=state.run_id,
+            role="implementation",
+            dispatch_group_id="retry-lineage",
+        ),
+        _workflow_job(
+            "attempt-b",
+            "completed",
+            "",
+            run_id=state.run_id,
+            role="implementation",
+            dispatch_group_id="retry-lineage",
+        ),
+    ]
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        action_items=[action, action],
+        worker_jobs=jobs,
+    )
+
+    decisions = [item for item in projection["manager_timeline"] if item["event"] == "approval_decided_historical"]
+    assert len(decisions) == 1
+    assert decisions[0]["details"]["authority"] == "historical"
+    ambiguous = next(item for item in projection["manager_timeline"] if item["event"] == "work_retry_ambiguous")
+    assert ambiguous["details"]["ambiguous"] is True
+
+
+def test_replayed_current_decision_remains_current_after_semantic_deduplication() -> None:
+    state = create_initial_state("run-current-decision", "DEMO", "Keep approval authority exact")
+    state.approvals["prd"] = ApprovalDecision.APPROVED
+    action = {
+        "id": "decision-current",
+        "run_id": state.run_id,
+        "action": "approval_decided",
+        "actor": "human",
+        "gate": "prd",
+        "decision": "approved",
+        "timestamp": "2026-08-31T10:01:00Z",
+    }
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        action_items=[action, dict(action)],
+    )
+
+    decisions = [item for item in projection["manager_timeline"] if item["details"].get("action") == "approval_decided"]
+    assert len(decisions) == 1
+    assert decisions[0]["event"] == "approval_decided"
+    assert decisions[0]["details"]["authority"] == "current"
+
+
+def test_historical_projection_is_read_only_and_does_not_inherit_attention() -> None:
+    state = create_initial_state("run-history", "DEMO", "Explain the previous mission")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=False,
+        project_root=None,
+        approval_reviews=[{"approval": "prd", "is_actionable": True}],
+        action_items=[
+            {
+                "run_id": "",
+                "action": "implementation_failed",
+                "timestamp": "2026-08-31T10:01:00Z",
+            }
+        ],
+        read_only=True,
+        historical_reason="cancelled",
+    )
+
+    assert projection["mission"]["read_only"] is True
+    assert projection["attention_request"] is None
+    assert projection["capabilities"] == []
+    assert projection["execution_actors"] == []
+    assert not any(item["event"] == "work_blocked" for item in projection["manager_timeline"])
+    assert projection["manager_timeline"][-1]["event"] == "mission_stopped_historical"
+
+
+def test_unbound_same_role_jobs_do_not_become_a_retry_without_lineage() -> None:
+    state = create_initial_state("run-unbound", "DEMO", "Keep identities separate")
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        worker_jobs=[
+            _workflow_job("job-a", "blocked", "2026-08-31T10:01:00Z", run_id=state.run_id),
+            _workflow_job("job-b", "completed", "2026-08-31T10:02:00Z", run_id=state.run_id),
+        ],
+    )
+
+    assert not any(
+        item["event"].startswith("work_retry")
+        for item in projection["manager_timeline"]
+    )
+
+
+def test_historical_projection_exposes_ambiguous_stopping_condition() -> None:
+    state = create_initial_state("run-ambiguous-history", "DEMO", "Recover the old mission")
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=False,
+        project_root=None,
+        read_only=True,
+    )
+
+    assert projection["mission"]["status"] == "blocked"
+    assert projection["manager_timeline"][-1]["event"] == "mission_recovery_ambiguous"
 
 
 def test_approval_attention_targets_one_outcome_by_durable_stage_identity() -> None:
