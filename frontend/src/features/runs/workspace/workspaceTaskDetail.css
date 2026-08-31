@@ -75,18 +75,6 @@
   flex: 1;
 }
 
-.work-workspace-shell .task-detail-id-chip {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.78rem;
-  font-weight: 700;
-  padding: 0.2rem 0.5rem;
-  background: var(--work-surface-muted, #27272a);
-  border: 1px solid var(--work-border, #3f3f46);
-  border-radius: 6px;
-  color: var(--work-text, #f4f4f5);
-  flex-shrink: 0;
-}
-
 .work-workspace-shell .task-detail-title {
   margin: 0;
   font-size: 1.15rem;
@@ -234,20 +222,13 @@
   word-break: break-word;
 }
 
-.work-workspace-shell .task-detail-tag-list {
+.work-workspace-shell .task-detail-value-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.work-workspace-shell .task-detail-code-tag {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.75rem;
-  padding: 0.12rem 0.4rem;
-  background: var(--work-surface, #1f1f23);
-  border: 1px solid var(--work-border, #3f3f46);
-  border-radius: 4px;
-  color: var(--work-accent, #60a5fa);
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .work-workspace-shell .task-detail-criteria-list {
@@ -760,19 +741,6 @@
   gap: 0.65rem;
 }
 
-.work-workspace-shell .task-detail-id-chip,
-.work-workspace-shell .task-detail-code-tag {
-  flex-shrink: 0;
-  padding: 0.2rem 0.5rem;
-  color: var(--work-accent-strong);
-  background: var(--work-material-deep);
-  border: 1px solid color-mix(in srgb, var(--work-border) 72%, transparent);
-  border-radius: 7px;
-  font-family: "Geist Mono Variable", ui-monospace, monospace;
-  font-size: 0.75rem;
-  font-weight: 650;
-}
-
 .work-workspace-shell .task-detail-title {
   min-width: 0;
   margin: 0;
@@ -931,7 +899,7 @@
   overflow-wrap: anywhere;
 }
 
-.work-workspace-shell .task-detail-tag-list,
+.work-workspace-shell .task-detail-value-list,
 .work-workspace-shell .task-detail-criteria-list {
   display: flex;
   margin: 0;
@@ -939,9 +907,9 @@
   list-style: none;
 }
 
-.work-workspace-shell .task-detail-tag-list {
-  flex-wrap: wrap;
-  gap: 0.35rem;
+.work-workspace-shell .task-detail-value-list {
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .work-workspace-shell .task-detail-criteria-list {

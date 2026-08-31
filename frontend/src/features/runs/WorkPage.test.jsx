@@ -903,6 +903,35 @@ test('does not lend an actionable review to another same-role Outcome', async ()
   expect(within(dialog).queryByText('work.plan.status.waiting')).not.toBeInTheDocument();
 });
 
+test('keeps Outcome task details project-facing and resolves dependencies exactly', async () => {
+  const data = projectedWorkData();
+  data.team_workspace.outcome_tasks[1] = {
+    ...data.team_workspace.outcome_tasks[1],
+    description: 'Workflow stage task for reviewer.',
+    updated_at: '2026-08-30T11:50:32.201021+00:00',
+    supporting_refs: ['stage:reviewer'],
+  };
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const user = userEvent.setup();
+
+  renderWorkPage();
+  const outcomes = screen.getByRole('region', { name: 'Outcomes' });
+  await user.click(within(outcomes).getByRole('button', { name: /Review OAuth.*DEMO-2/ }));
+
+  const dialog = await screen.findByRole('dialog', { name: 'Review OAuth' });
+  const localizedUpdate = new Intl.DateTimeFormat('en', {
+    dateStyle: 'medium', timeStyle: 'short',
+  }).format(new Date('2026-08-30T11:50:32.201021+00:00'));
+  expect(within(dialog).getByText('Implement OAuth')).toBeVisible();
+  expect(within(dialog).getByText(localizedUpdate)).toBeVisible();
+  expect(within(dialog).queryByText('DEMO-2')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('DEMO-1')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('Workflow stage task for reviewer.')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('stage:reviewer')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('2026-08-30T11:50:32.201021+00:00')).not.toBeInTheDocument();
+});
+
 test('uses a Manager-default mobile tab workspace with keyboard navigation and mounted pane state', async () => {
   const data = managerReviewData();
   stubMediaPreferences({ mobile: true });

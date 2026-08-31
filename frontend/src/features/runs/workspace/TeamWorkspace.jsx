@@ -746,7 +746,9 @@ function TeamWorkspace({
       </div>
       {taskForModal ? (
         <WorkTaskDetailDialog
+          language={language}
           task={taskForModal}
+          tasks={outcomes}
           reviews={data.approval_reviews || []}
           projectKey={projectKey}
           onDecide={onDecide}

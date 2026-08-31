@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import TaskDetailModal, { findMatchingReview } from './workspace/WorkTaskDetailDialog';
@@ -146,27 +146,130 @@ describe('WorkTaskDetailDialog', () => {
     expect(screen.queryByText(`work.plan.status.${status}`)).not.toBeInTheDocument();
   });
 
-  test('renders all task properties accessibly without reviews', () => {
-    const task = sampleBoard.columns.backlog[0];
+  test('renders only meaningful project-facing task context without reviews', () => {
+    const task = sampleBoard.columns.backlog[1];
+    const tasks = Object.values(sampleBoard.columns).flat();
     let closed = false;
     render(
       <MemoryRouter>
-        <TaskDetailModal task={task} onClose={() => { closed = true; }} t={t} />
+        <TaskDetailModal
+          language="zh-CN"
+          task={task}
+          tasks={tasks}
+          onClose={() => { closed = true; }}
+          t={t}
+        />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('dialog')).toBeVisible();
-    expect(screen.getByText('GT-1')).toBeVisible();
-    expect(screen.getByText('Draft and approve PRD')).toBeVisible();
-    expect(screen.getByText('Workflow stage task for product_requirement.')).toBeVisible();
-    expect(screen.getByText('PRD generated')).toBeVisible();
-    expect(screen.getByText('Approved by lead')).toBeVisible();
-    expect(screen.getByText('stage:product_requirement')).toBeVisible();
+    const dialog = screen.getByRole('dialog');
+    const created = new Intl.DateTimeFormat('zh-CN', {
+      dateStyle: 'medium', timeStyle: 'short',
+    }).format(new Date(task.created_at));
+    const updated = new Intl.DateTimeFormat('zh-CN', {
+      dateStyle: 'medium', timeStyle: 'short',
+    }).format(new Date(task.updated_at));
+
+    expect(dialog).toBeVisible();
+    expect(within(dialog).getByText('Design and approve RFC')).toBeVisible();
+    expect(within(dialog).getByText('Draft and approve PRD')).toBeVisible();
+    expect(within(dialog).getByText('架构师')).toBeVisible();
+    expect(within(dialog).getByText(created)).toBeVisible();
+    expect(within(dialog).getByText(updated)).toBeVisible();
+    expect(within(dialog).queryByText('GT-2')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('GT-1')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Workflow stage task for architect.')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('stage:architect')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('架构师 (Architect)')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(task.created_at)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(task.updated_at)).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('heading', { name: '任务描述' })).not.toBeInTheDocument();
 
     const closeButtons = screen.getAllByRole('button', { name: /关闭|Close/i });
     expect(closeButtons.length).toBeGreaterThan(0);
     fireEvent.click(closeButtons[0]);
     expect(closed).toBe(true);
+  });
+
+  test('keeps meaningful descriptions and acceptance criteria', () => {
+    const task = {
+      id: 'GT-CONTEXT',
+      title: 'Prepare the production rollout',
+      description: 'Confirm the rollout is safe for the current OAuth mission.',
+      acceptance_criteria: ['Rollback path is documented'],
+      review_target_id: '',
+    };
+    render(
+      <MemoryRouter>
+        <TaskDetailModal task={task} tasks={[task]} onClose={() => {}} t={t} />
+      </MemoryRouter>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(task.description)).toBeVisible();
+    expect(within(dialog).getByText('Rollback path is documented')).toBeVisible();
+  });
+
+  test('does not expose or guess unresolved and non-informative metadata', () => {
+    const task = {
+      id: 'GT-UNRESOLVED',
+      title: 'GT-UNRESOLVED',
+      description: 'None',
+      role: '—',
+      status: 'None',
+      priority: '—',
+      dependencies: ['GT-MISSING'],
+      external_refs: ['stage:architect'],
+      artifact_refs: ['artifact:missing'],
+      created_at: 'not-a-timestamp',
+      review_target_id: '',
+    };
+    const sameRoleTask = {
+      id: 'GT-SAME-ROLE',
+      title: 'Do not infer this task',
+      role: 'architect',
+    };
+    render(
+      <MemoryRouter>
+        <TaskDetailModal
+          task={task}
+          tasks={[task, sameRoleTask]}
+          onClose={() => {}}
+          t={t}
+        />
+      </MemoryRouter>,
+    );
+
+    const dialog = screen.getByRole('dialog', { name: '任务详情' });
+    expect(within(dialog).queryByText('GT-UNRESOLVED')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('GT-MISSING')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Do not infer this task')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('stage:architect')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('artifact:missing')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('not-a-timestamp')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('None')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('—')).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('heading', { name: '任务属性' })).not.toBeInTheDocument();
+  });
+
+  test('passes the board task catalog to dependency resolution', () => {
+    render(
+      <MemoryRouter>
+        <PlanView
+          board={sampleBoard}
+          language="zh-CN"
+          reviews={sampleReviews}
+          projectKey="CAT-MBTI-APP"
+          onDecide={vi.fn()}
+          t={t}
+        />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Design and approve RFC/ }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Draft and approve PRD')).toBeVisible();
+    expect(within(dialog).queryByText('GT-1')).not.toBeInTheDocument();
   });
 
   test('previews artifact with rendered markdown and raw source toggle', () => {

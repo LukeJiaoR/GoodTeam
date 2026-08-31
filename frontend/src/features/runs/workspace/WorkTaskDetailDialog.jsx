@@ -12,7 +12,6 @@ import {
   Eye,
   FileCode,
   FileText,
-  Layers,
   Link as LinkIcon,
   Loader2,
   ShieldAlert,
@@ -44,6 +43,77 @@ const TEAM_STATUS_ALIASES = {
   review: 'reviewing',
 };
 
+const NON_INFORMATIVE_VALUES = new Set([
+  '', '-', '–', '—', 'n/a', 'na', 'none', 'not set', 'null', 'undefined',
+]);
+const SCAFFOLD_DESCRIPTION = /^workflow\s+stage\s+task\s+for\s+[^.]+\.?$/i;
+
+function meaningfulText(value) {
+  if (value === null || value === undefined) return '';
+  const text = String(value).trim();
+  return NON_INFORMATIVE_VALUES.has(text.toLowerCase()) ? '' : text;
+}
+
+function taskTitle(task) {
+  const taskId = meaningfulText(task?.id);
+  return [task?.title, task?.objective, task?.name]
+    .map(meaningfulText)
+    .find((title) => title && title !== taskId) || '';
+}
+
+function projectFacingDescription(value) {
+  const description = meaningfulText(value);
+  return description && !SCAFFOLD_DESCRIPTION.test(description) ? description : '';
+}
+
+function translatedValue(t, key) {
+  const value = meaningfulText(t(key));
+  return value && value !== key ? value : '';
+}
+
+function localizedTimestamp(value, language) {
+  const timestamp = Date.parse(meaningfulText(value));
+  if (!Number.isFinite(timestamp)) return '';
+  try {
+    return new Intl.DateTimeFormat(language, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(timestamp));
+  } catch {
+    return '';
+  }
+}
+
+export function resolveTaskDependencies(task, tasks) {
+  if (!Array.isArray(task?.dependencies) || !Array.isArray(tasks)) return [];
+
+  const tasksById = new Map();
+  for (const candidate of tasks) {
+    const candidateId = meaningfulText(candidate?.id);
+    if (!candidateId) continue;
+    const matches = tasksById.get(candidateId) || [];
+    matches.push(candidate);
+    tasksById.set(candidateId, matches);
+  }
+
+  const seen = new Set();
+  const resolved = [];
+  for (const dependency of task.dependencies) {
+    const dependencyId = meaningfulText(
+      dependency && typeof dependency === 'object' ? dependency.id : dependency,
+    );
+    if (!dependencyId || seen.has(dependencyId)) continue;
+    seen.add(dependencyId);
+
+    const matches = tasksById.get(dependencyId) || [];
+    if (matches.length !== 1) continue;
+    const title = taskTitle(matches[0]);
+    if (!title || title === dependencyId) continue;
+    resolved.push({ id: dependencyId, title });
+  }
+  return resolved;
+}
+
 function statusTone(status) {
   if (['done', 'complete', 'completed', 'approved'].includes(status)) return 'success';
   if (['blocked', 'failed', 'rejected', 'canceled', 'stopped'].includes(status)) return 'danger';
@@ -63,7 +133,7 @@ function taskStatusLabel(status, t) {
   const teamStatus = TEAM_STATUS_ALIASES[status] || status;
   const teamKey = `work.team.status.${teamStatus}`;
   const teamLabel = t(teamKey);
-  return teamLabel === teamKey ? status : teamLabel;
+  return teamLabel === teamKey ? '' : teamLabel;
 }
 
 function reviewTone(review) {
@@ -152,7 +222,9 @@ export function findMatchingReview(task, reviews) {
 }
 
 export default function WorkTaskDetailDialog({
+  language,
   task,
+  tasks = [],
   reviews = [],
   projectKey = '',
   onDecide,
@@ -207,15 +279,30 @@ export default function WorkTaskDetailDialog({
 
   if (!task) return null;
 
-  const roleLabel = task.role
-    ? t(`work.plan.role.${task.role}`, {}, task.role)
-    : '—';
-  const statusLabel = task.status
-    ? taskStatusLabel(task.status, t)
-    : '—';
-  const priorityLabel = task.priority
-    ? t(`work.plan.priority.${task.priority}`, {}, task.priority)
-    : '—';
+  const title = taskTitle(task) || t('work.plan.taskDetails');
+  const description = projectFacingDescription(task.description);
+  const role = meaningfulText(task.role);
+  const status = meaningfulText(task.status);
+  const priority = meaningfulText(task.priority);
+  const roleLabel = role ? translatedValue(t, `work.plan.role.${role}`) : '';
+  const statusLabel = status ? taskStatusLabel(status, t) : '';
+  const priorityLabel = priority
+    ? translatedValue(t, `work.plan.priority.${priority}`)
+    : '';
+  const dependencies = resolveTaskDependencies(task, tasks);
+  const acceptanceCriteria = Array.isArray(task.acceptance_criteria)
+    ? task.acceptance_criteria.map(meaningfulText).filter(Boolean)
+    : [];
+  const createdAt = localizedTimestamp(task.created_at, language);
+  const updatedAt = localizedTimestamp(task.updated_at, language);
+  const hasBadges = Boolean(statusLabel || priorityLabel || roleLabel);
+  const hasAttributes = Boolean(
+    (review && (roleLabel || statusLabel || priorityLabel))
+    || dependencies.length
+    || createdAt
+    || updatedAt,
+  );
+  const primaryOutcomeLabel = meaningfulText(task.primary_outcome?.label);
 
   const handleCopyArtifact = async () => {
     if (!review?.content) return;
@@ -260,13 +347,12 @@ export default function WorkTaskDetailDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={descId}
+        aria-describedby={activeTab === 'details' && description ? descId : undefined}
       >
         <header className="task-detail-header">
           <div className="task-detail-header-lead">
-            {task.id ? <span className="task-detail-id-chip">{task.id}</span> : null}
             <h2 id={titleId} className="task-detail-title">
-              {task.title || task.name || task.id}
+              {title}
             </h2>
           </div>
           <div className="task-detail-header-actions">
@@ -327,114 +413,92 @@ export default function WorkTaskDetailDialog({
               {isActionable ? <span className="task-detail-tab-dot-action" title="Awaiting approval" /> : null}
             </button>
           </nav>
-        ) : (
+        ) : hasBadges ? (
           <div className="task-detail-badges">
-            {task.status ? (
-              <StatusBadge tone={statusTone(task.status)}>
+            {statusLabel ? (
+              <StatusBadge tone={statusTone(status)}>
                 {statusLabel}
               </StatusBadge>
             ) : null}
-            {task.priority ? (
-              <span className={`task-detail-priority-tag priority-${task.priority}`}>
+            {priorityLabel ? (
+              <span className={`task-detail-priority-tag priority-${priority}`}>
                 {priorityLabel}
               </span>
             ) : null}
-            {task.role ? (
+            {roleLabel ? (
               <span className="task-detail-role-tag">
                 <User size={13} />
                 {roleLabel}
               </span>
             ) : null}
           </div>
-        )}
+        ) : null}
 
         <div className="task-detail-body">
           {activeTab === 'details' && (
             <>
-              <section className="task-detail-section">
-                <h3>{t('work.plan.description')}</h3>
-                <p id={descId} className="task-detail-description">
-                  {task.description || t('work.plan.noDescription')}
-                </p>
-              </section>
+              {description ? (
+                <section className="task-detail-section">
+                  <h3>{t('work.plan.description')}</h3>
+                  <p id={descId} className="task-detail-description">{description}</p>
+                </section>
+              ) : null}
 
-              <section className="task-detail-section">
-                <h3>{t('work.plan.attributes')}</h3>
-                <dl className="task-detail-dl">
-                  <div>
-                    <dt><User size={14} /> {t('work.plan.role')}</dt>
-                    <dd>{roleLabel}</dd>
-                  </div>
-                  <div>
-                    <dt><Tag size={14} /> {t('work.plan.status')}</dt>
-                    <dd>{statusLabel}</dd>
-                  </div>
-                  <div>
-                    <dt><AlertCircle size={14} /> {t('work.plan.priority')}</dt>
-                    <dd>{priorityLabel}</dd>
-                  </div>
-                  <div>
-                    <dt><Layers size={14} /> {t('work.plan.externalRefs')}</dt>
-                    <dd>
-                      {task.external_refs?.length ? (
-                        <div className="task-detail-tag-list">
-                          {task.external_refs.map((ref, idx) => (
-                            <span key={idx} className="task-detail-code-tag">{ref}</span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span>{t('work.plan.noExternalRefs')}</span>
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt><LinkIcon size={14} /> {t('work.plan.dependencies')}</dt>
-                    <dd>
-                      {task.dependencies?.length ? (
-                        <div className="task-detail-tag-list">
-                          {task.dependencies.map((dep, idx) => (
-                            <span key={idx} className="task-detail-code-tag">{dep}</span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span>{t('work.plan.noDependencies')}</span>
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt><FileText size={14} /> {t('work.plan.artifactRefs')}</dt>
-                    <dd>
-                      {task.artifact_refs?.length ? (
-                        <div className="task-detail-tag-list">
-                          {task.artifact_refs.map((art, idx) => (
-                            <span key={idx} className="task-detail-code-tag">{art}</span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span>{t('work.plan.noArtifactRefs')}</span>
-                      )}
-                    </dd>
-                  </div>
-                  {task.created_at ? (
-                    <div>
-                      <dt><Clock size={14} /> {t('work.plan.created')}</dt>
-                      <dd><time dateTime={task.created_at}>{task.created_at}</time></dd>
-                    </div>
-                  ) : null}
-                  {task.updated_at ? (
-                    <div>
-                      <dt><Clock size={14} /> {t('work.plan.updated')}</dt>
-                      <dd><time dateTime={task.updated_at}>{task.updated_at}</time></dd>
-                    </div>
-                  ) : null}
-                </dl>
-              </section>
+              {hasAttributes ? (
+                <section className="task-detail-section">
+                  <h3>{t('work.plan.attributes')}</h3>
+                  <dl className="task-detail-dl">
+                    {review && roleLabel ? (
+                      <div>
+                        <dt><User size={14} /> {t('work.plan.role')}</dt>
+                        <dd>{roleLabel}</dd>
+                      </div>
+                    ) : null}
+                    {review && statusLabel ? (
+                      <div>
+                        <dt><Tag size={14} /> {t('work.plan.status')}</dt>
+                        <dd>{statusLabel}</dd>
+                      </div>
+                    ) : null}
+                    {review && priorityLabel ? (
+                      <div>
+                        <dt><AlertCircle size={14} /> {t('work.plan.priority')}</dt>
+                        <dd>{priorityLabel}</dd>
+                      </div>
+                    ) : null}
+                    {dependencies.length ? (
+                      <div>
+                        <dt><LinkIcon size={14} /> {t('work.plan.dependencies')}</dt>
+                        <dd>
+                          <ul className="task-detail-value-list">
+                            {dependencies.map((dependency) => (
+                              <li key={dependency.id}>{dependency.title}</li>
+                            ))}
+                          </ul>
+                        </dd>
+                      </div>
+                    ) : null}
+                    {createdAt ? (
+                      <div>
+                        <dt><Clock size={14} /> {t('work.plan.created')}</dt>
+                        <dd><time dateTime={task.created_at}>{createdAt}</time></dd>
+                      </div>
+                    ) : null}
+                    {updatedAt ? (
+                      <div>
+                        <dt><Clock size={14} /> {t('work.plan.updated')}</dt>
+                        <dd><time dateTime={task.updated_at}>{updatedAt}</time></dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                </section>
+              ) : null}
 
-              {task.acceptance_criteria?.length ? (
+              {acceptanceCriteria.length ? (
                 <section className="task-detail-section">
                   <h3>{t('work.plan.acceptanceCriteria')}</h3>
                   <ul className="task-detail-criteria-list">
-                    {task.acceptance_criteria.map((item, idx) => (
+                    {acceptanceCriteria.map((item, idx) => (
                       <li key={idx}>
                         <CheckCircle2 size={14} className="task-detail-criteria-icon" />
                         <span>{item}</span>
@@ -444,10 +508,10 @@ export default function WorkTaskDetailDialog({
                 </section>
               ) : null}
 
-              {task.primary_outcome ? (
+              {primaryOutcomeLabel ? (
                 <section className="task-detail-section">
                   <h3>{t('work.team.primaryOutcome')}</h3>
-                  {task.primary_outcome.href ? (
+                  {meaningfulText(task.primary_outcome?.href) ? (
                     <a
                       className="task-detail-workbench-link"
                       href={task.primary_outcome.href}
@@ -455,12 +519,9 @@ export default function WorkTaskDetailDialog({
                       target="_blank"
                     >
                       <ExternalLink size={13} />
-                      {task.primary_outcome.label}
+                      {primaryOutcomeLabel}
                     </a>
-                  ) : <p>{task.primary_outcome.label}</p>}
-                  {task.primary_outcome.path ? (
-                    <p className="task-detail-preview-path">{task.primary_outcome.path}</p>
-                  ) : null}
+                  ) : <p>{primaryOutcomeLabel}</p>}
                 </section>
               ) : null}
             </>
