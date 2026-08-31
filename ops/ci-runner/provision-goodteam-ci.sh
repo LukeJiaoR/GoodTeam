@@ -72,7 +72,7 @@ if [[ "$(python3.12 -c 'import sys; print(f"{sys.version_info.major}.{sys.versio
 fi
 
 if systemctl list-unit-files --type=service --no-legend | awk '{print $1}' | grep -Fxq "$GOODTEAM_SERVICE"; then
-  printf '%s\n' '/usr/local/bin' '/usr/bin' '/bin' > "${RUNNER_DIR}/.path"
+  printf '%s\n' '/usr/local/bin:/usr/bin:/bin' > "${RUNNER_DIR}/.path"
   chown "$RUNNER_USER:$RUNNER_USER" "${RUNNER_DIR}/.path"
   systemctl restart "$GOODTEAM_SERVICE"
   echo "Python runtime and service PATH verified; ${GOODTEAM_SERVICE} is already installed."
@@ -131,7 +131,7 @@ runuser -u "$RUNNER_USER" -- env \
   --unattended \
   --replace
 unset RUNNER_REGISTRATION_TOKEN
-printf '%s\n' '/usr/local/bin' '/usr/bin' '/bin' > "${RUNNER_DIR}/.path"
+printf '%s\n' '/usr/local/bin:/usr/bin:/bin' > "${RUNNER_DIR}/.path"
 chown "$RUNNER_USER:$RUNNER_USER" "${RUNNER_DIR}/.path"
 
 cd "$RUNNER_DIR"
