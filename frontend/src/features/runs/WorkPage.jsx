@@ -428,6 +428,7 @@ export function PlanView({
   approvalReviews = [],
   board,
   busyDecision = '',
+  language,
   onDecide,
   onRetry,
   onTerminate,
@@ -454,6 +455,9 @@ export function PlanView({
   }, [approvalParam, taskParam, board, resolvedReviews]);
 
   const selectedTask = manuallySelectedTask || deepLinkedTask;
+  const boardTasks = useMemo(() => (
+    ['backlog', 'doing', 'blocked', 'done'].flatMap((column) => board?.columns?.[column] || [])
+  ), [board]);
 
   const handleClose = () => {
     setManuallySelectedTask(null);
@@ -527,7 +531,9 @@ export function PlanView({
         ))}
         {selectedTask ? (
           <WorkTaskDetailDialog
+            language={language}
             task={selectedTask}
+            tasks={boardTasks}
             reviews={resolvedReviews}
             projectKey={projectKey}
             onDecide={onDecide}
@@ -873,6 +879,7 @@ export default function WorkPage() {
             approvalReviews={data?.approval_reviews || []}
             board={data.agile_board}
             busyDecision={busy === 'decision' ? 'approved' : ''}
+            language={language}
             onDecide={handleDecide}
             onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
             onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
@@ -1018,6 +1025,7 @@ export default function WorkPage() {
               approvalReviews={data?.approval_reviews || []}
               board={data.agile_board}
               busyDecision={busy === 'decision' ? 'approved' : ''}
+              language={language}
               onDecide={handleDecide}
               onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
               onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}

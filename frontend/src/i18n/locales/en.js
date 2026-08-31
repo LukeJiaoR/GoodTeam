@@ -805,6 +805,7 @@ export const en = {
   'work.plan.role.research': 'Research',
   'work.plan.role.ui': 'UI Design',
   'work.plan.role.orchestrator': 'Orchestrator',
+  'work.plan.role.reviewer': 'Reviewer',
   'work.plan.priority.low': 'Low',
   'work.plan.priority.medium': 'Medium',
   'work.plan.priority.high': 'High',
