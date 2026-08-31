@@ -575,6 +575,56 @@ def test_project_state_exposes_versioned_team_workspace_projection(tmp_path: Pat
     assert payload["agile_board"]["counts"]["backlog"] == 5
 
 
+def test_project_state_restores_persisted_intent_commit_discussion(tmp_path: Path) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    artifact = tmp_path / "prd.md"
+    artifact.write_text("# PRD\n\nShip Google sign-in first.\n", encoding="utf-8")
+    state = create_initial_state("run-intent", "TEAM", "Add provider-based authentication")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    state.artifacts["prd"] = str(artifact)
+    StateStore(tmp_path).write_project_current(state)
+    version = web.artifact_version_for_path(str(artifact))
+
+    opened = web.start_request_changes_intent(
+        workspace=tmp_path,
+        project_key="TEAM",
+        approval="prd",
+        expected_run_id="run-intent",
+        expected_target_type="review",
+        expected_target_id="prd",
+        expected_artifact_key="prd",
+        expected_artifact_version=version,
+    )["intent_commit"]
+    web.discuss_request_changes_intent(
+        workspace=tmp_path,
+        project_key="TEAM",
+        intent_id=opened["id"],
+        text="Ship Google only and preserve a generic provider interface.",
+    )
+
+    workspace = web.build_project_work_state(tmp_path, "TEAM")["team_workspace"]
+
+    intent = workspace["attention_request"]["intent_commit"]
+    assert intent["id"] == opened["id"]
+    assert intent["status"] == "ready_to_confirm"
+    assert intent["interpretation"]["summary"] == (
+        "Ship Google only and preserve a generic provider interface."
+    )
+    assert [
+        item["event"]
+        for item in workspace["manager_timeline"]
+        if item.get("details", {}).get("intent_id") == opened["id"]
+    ] == [
+        "change_request_started",
+        "change_discussion_started",
+        "change_request_shared",
+        "change_intent_summarized",
+    ]
+
+
 def test_project_state_attention_targets_synced_outcome_by_task_id(tmp_path: Path) -> None:
     project_root = tmp_path / "target"
     project_root.mkdir()

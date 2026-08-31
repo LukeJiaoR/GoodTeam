@@ -1583,6 +1583,66 @@ def test_api_approve_accepts_optional_note_without_response_shape_change(tmp_pat
     }
 
 
+def test_api_intent_commit_routes_keep_discussion_separate_from_approval(tmp_path, monkeypatch):
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def record(name):
+        def action(**kwargs):
+            calls.append((name, kwargs))
+            return {"intent_commit": {"id": "intent-1", "status": name}}
+
+        return action
+
+    monkeypatch.setattr("goodteam_os.web.start_request_changes_intent", record("discussing"))
+    monkeypatch.setattr("goodteam_os.web.discuss_request_changes_intent", record("ready_to_confirm"))
+    monkeypatch.setattr("goodteam_os.web.keep_discussing_request_changes_intent", record("discussing_again"))
+    monkeypatch.setattr("goodteam_os.web.confirm_request_changes_intent", record("committed"))
+    decide_calls: list[dict[str, object]] = []
+    monkeypatch.setattr("goodteam_os.web.decide_approval", lambda **kwargs: decide_calls.append(kwargs))
+    simulate_post = capture_post_handler(tmp_path, monkeypatch)
+
+    requests = [
+        (
+            "/api/intent-commit/start",
+            {
+                "project_key": "DEMO",
+                "approval": "prd",
+                "expected_run_id": "run-1",
+                "expected_target_type": "review",
+                "expected_target_id": "prd",
+                "expected_task_id": "DEMO-PRD",
+                "expected_artifact_key": "prd",
+                "expected_artifact_version": "sha256:v1",
+            },
+        ),
+        (
+            "/api/intent-commit/discuss",
+            {"project_key": "DEMO", "intent_id": "intent-1", "text": "Keep it generic."},
+        ),
+        (
+            "/api/intent-commit/keep-discussing",
+            {"project_key": "DEMO", "intent_id": "intent-1"},
+        ),
+        (
+            "/api/intent-commit/confirm",
+            {"project_key": "DEMO", "intent_id": "intent-1"},
+        ),
+    ]
+    for path, body in requests:
+        handler = simulate_post(path, body, headers={"Host": "127.0.0.1:8788"})
+        assert 200 in handler.responses
+
+    assert [name for name, _ in calls] == [
+        "discussing",
+        "ready_to_confirm",
+        "discussing_again",
+        "committed",
+    ]
+    assert calls[0][1]["expected_artifact_version"] == "sha256:v1"
+    assert calls[1][1]["text"] == "Keep it generic."
+    assert decide_calls == []
+
+
 def test_api_approve_forwards_rejected_note(tmp_path, monkeypatch):
     captured = {}
 

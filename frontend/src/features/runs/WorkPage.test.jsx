@@ -31,14 +31,18 @@ import { translate } from '../../i18n';
 import WorkPage from './WorkPage';
 
 const mocks = vi.hoisted(() => ({
+  confirmChangeIntent: vi.fn(),
   decideReview: vi.fn(),
+  discussChangeIntent: vi.fn(),
   dispatchTrack: vi.fn(),
   getDevLoop: vi.fn(),
   getMessages: vi.fn(),
   getProjectRuns: vi.fn(),
   getProjectState: vi.fn(),
+  keepDiscussingChangeIntent: vi.fn(),
   startSmoke: vi.fn(),
   startRun: vi.fn(),
+  startChangeIntent: vi.fn(),
   retryRun: vi.fn(),
   terminateRun: vi.fn(),
   useProjectState: vi.fn(),
@@ -51,13 +55,17 @@ vi.mock('../reviews/reviewApi', () => ({
 vi.mock('./runApi', () => ({
   getProjectState: mocks.getProjectState,
   runApi: {
+    confirmChangeIntent: mocks.confirmChangeIntent,
+    discussChangeIntent: mocks.discussChangeIntent,
     dispatchTrack: mocks.dispatchTrack,
     getDevLoop: mocks.getDevLoop,
     getMessages: mocks.getMessages,
     getProjectRuns: mocks.getProjectRuns,
     getProjectState: mocks.getProjectState,
+    keepDiscussingChangeIntent: mocks.keepDiscussingChangeIntent,
     retryRun: mocks.retryRun,
     startSmoke: mocks.startSmoke,
+    startChangeIntent: mocks.startChangeIntent,
     startRun: mocks.startRun,
     terminateRun: mocks.terminateRun,
   },
@@ -75,7 +83,7 @@ function TranslationOutlet() {
 }
 
 function renderWorkPage(initialEntry = '/projects/DEMO/work/runs/run-active') {
-  render(
+  return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route element={<TranslationOutlet />}>
@@ -323,6 +331,27 @@ function managerReviewData() {
       supporting_refs: [],
     },
   ];
+  return data;
+}
+
+function managerIntentData(status = 'discussing', draftText = '') {
+  const data = managerReviewData();
+  const target = data.team_workspace.attention_request.approval_brief.approval_target;
+  data.team_workspace.attention_request.intent_commit = {
+    schema_version: 'intent_commit.v1',
+    id: 'intent-change-1',
+    kind: 'request_changes',
+    status,
+    draft_text: draftText,
+    interpretation: draftText ? {
+      schema_version: 'intent_interpretation.v1',
+      source: 'deterministic_explicit_request',
+      summary: draftText,
+      items: [{ kind: 'explicit_request', text: draftText }],
+    } : null,
+    target: { approval: 'security', ...target },
+    stale: status === 'stale',
+  };
   return data;
 }
 
@@ -666,29 +695,112 @@ test('falls back to the legacy run views for an unsupported workspace contract v
   expect(screen.queryByRole('region', { name: 'Manager' })).not.toBeInTheDocument();
 });
 
-test('keeps approval and change-request decisions inside the Manager pane', async () => {
+test('opens Request changes as a durable Manager discussion without review mutation', async () => {
   const refresh = vi.fn().mockResolvedValue({});
-  const data = projectedWorkData();
-  data.approval_reviews = [{ approval: 'takeover', is_actionable: true }];
-  data.team_workspace.attention_request = {
-    id: 'approval:takeover', kind: 'approval', target_id: 'takeover', reason: 'approval_required',
-    actions: ['approve', 'request_changes', 'review'], refs: ['takeover'],
-  };
+  const data = managerReviewData();
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-  mocks.decideReview.mockResolvedValue({ decision: 'changes_requested' });
+  mocks.startChangeIntent.mockResolvedValue({
+    intent_commit: { id: 'intent-change-1', status: 'discussing' },
+  });
 
   renderWorkPage();
 
   expect(screen.getByText('A decision is ready')).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Inspect details →' })).toHaveAttribute('href', '/projects/DEMO/review/takeover');
   await userEvent.click(screen.getByRole('button', { name: 'Request changes' }));
-  await userEvent.type(screen.getByLabelText('What should change?'), 'Keep the provider boundary extensible.');
-  await userEvent.click(screen.getByRole('button', { name: 'Send changes' }));
 
-  expect(mocks.decideReview).toHaveBeenCalledWith(
-    'DEMO', 'takeover', 'changes_requested', 'Keep the provider boundary extensible.',
+  expect(mocks.startChangeIntent).toHaveBeenCalledWith(
+    'DEMO',
+    'security',
+    data.team_workspace.attention_request.approval_brief.approval_target,
   );
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+  expect(refresh).toHaveBeenCalledTimes(1);
+});
+
+test('durably summarizes change text, supports Keep discussing, and commits only on confirm', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  const draft = 'Implement Google only while preserving a generic provider interface.';
+  const data = managerIntentData('discussing');
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.discussChangeIntent.mockResolvedValue({
+    intent_commit: { id: 'intent-change-1', status: 'ready_to_confirm' },
+  });
+
+  const view = renderWorkPage();
+  expect(screen.getByText('What would you like changed?')).toBeVisible();
+  expect(screen.getByText('Discussing · not committed')).toBeVisible();
+  await userEvent.type(screen.getByLabelText('What should change?'), draft);
+  await userEvent.click(screen.getByRole('button', { name: 'Review Manager interpretation' }));
+
+  expect(mocks.discussChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1', draft);
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+  expect(mocks.confirmChangeIntent).not.toHaveBeenCalled();
+
+  const confirmData = managerIntentData('ready_to_confirm', draft);
+  mocks.useProjectState.mockReturnValue({ data: confirmData, error: null, refresh, status: 'ready' });
+  view.rerender(
+    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active']}>
+      <Routes>
+        <Route element={<TranslationOutlet />}>
+          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText('My understanding is:')).toBeVisible();
+  expect(screen.getByText('Draft · not committed')).toBeVisible();
+  expect(screen.getByText(draft, { selector: 'li' })).toBeVisible();
+  mocks.confirmChangeIntent.mockResolvedValue({ committed: true, idempotent: false });
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm changes' }));
+  expect(mocks.confirmChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1');
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+});
+
+test('Keep discussing returns the confirmed interpretation to discussion without commit', async () => {
+  const draft = 'Preserve a generic provider boundary.';
+  const data = managerIntentData('ready_to_confirm', draft);
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.keepDiscussingChangeIntent.mockResolvedValue({
+    intent_commit: { id: 'intent-change-1', status: 'discussing' },
+  });
+
+  renderWorkPage();
+  await userEvent.click(screen.getByRole('button', { name: 'Keep discussing' }));
+
+  expect(mocks.keepDiscussingChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1');
+  expect(mocks.confirmChangeIntent).not.toHaveBeenCalled();
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+});
+
+test('restores a persisted discussion on re-entry and fails closed when it is stale', () => {
+  const data = managerIntentData(
+    'discussing',
+    'Keep this persisted draft after navigation.',
+  );
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+
+  const view = renderWorkPage();
+  expect(screen.getByLabelText('What should change?'))
+    .toHaveValue('Keep this persisted draft after navigation.');
+
+  const stale = managerIntentData('stale', 'Old request.');
+  mocks.useProjectState.mockReturnValue({ data: stale, error: null, refresh: vi.fn(), status: 'ready' });
+  view.rerender(
+    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active']}>
+      <Routes>
+        <Route element={<TranslationOutlet />}>
+          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+  expect(screen.getByText('This discussion belongs to an older approval target.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Confirm changes' })).not.toBeInTheDocument();
 });
 
 test('keeps Manager attention in the conversation after recorded mission history', async () => {
@@ -864,6 +976,34 @@ test('opens the exact attention Outcome in-place and restores Manager focus on c
   expect(screen.getByTestId('location-search')).toHaveTextContent('?context=manager');
 });
 
+test('routes Request changes from exact Outcome details back into the Manager discussion', async () => {
+  const data = managerReviewData();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.startChangeIntent.mockResolvedValue({
+    intent_commit: { id: 'intent-from-outcome', status: 'discussing' },
+  });
+  const user = userEvent.setup();
+
+  renderWorkPage();
+  await user.click(screen.getByRole('button', { name: 'Inspect details →' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
+  await user.click(within(dialog).getByRole('button', { name: 'Request changes' }));
+
+  expect(mocks.startChangeIntent).toHaveBeenCalledWith(
+    'DEMO',
+    'security',
+    data.team_workspace.attention_request.approval_brief.approval_target,
+  );
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Manager' })).toBeVisible();
+});
+
 test('uses only the modal Full Review action for dedicated review navigation', async () => {
   const data = managerReviewData();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -933,7 +1073,7 @@ test('keeps Outcome task details project-facing and resolves dependencies exactl
 });
 
 test('uses a Manager-default mobile tab workspace with keyboard navigation and mounted pane state', async () => {
-  const data = managerReviewData();
+  const data = managerIntentData('discussing');
   stubMediaPreferences({ mobile: true });
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
@@ -964,7 +1104,6 @@ test('uses a Manager-default mobile tab workspace with keyboard navigation and m
   expect(outcomesPanel).not.toBeVisible();
   expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
 
-  await user.click(within(managerPanel).getByRole('button', { name: 'Request changes' }));
   const draft = within(managerPanel).getByLabelText('What should change?');
   await user.type(draft, 'Keep this draft while switching panes.');
 

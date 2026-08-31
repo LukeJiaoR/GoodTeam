@@ -47,6 +47,7 @@ from goodteam_os.graph import (
     sync_project_stage_tasks,
 )
 from goodteam_os.artifacts import ArtifactStore
+from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.native_picker import choose_native_path
@@ -2305,6 +2306,9 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
         if isinstance(task, dict)
     ]
     active_run = is_active_run(state)
+    intent_commits = IntentCommitStore(workspace, project_key).list_intents(
+        mission_id=state.run_id if state is not None else "",
+    )
     return {
         "type": "project",
         "state": asdict(state) if state is not None else None,
@@ -2328,6 +2332,7 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
             worker_jobs=worker_job_records,
             approval_reviews=approval_reviews,
             action_items=action_items,
+            intent_commits=intent_commits,
         ),
     }
 
@@ -3778,6 +3783,329 @@ def _validate_approval_target(
             recovery=["refresh_approval_brief"],
         )
     return current
+
+
+def start_request_changes_intent(
+    *,
+    workspace: Path,
+    project_key: str,
+    approval: str,
+    expected_run_id: str,
+    expected_target_type: str,
+    expected_target_id: str,
+    expected_artifact_key: str,
+    expected_artifact_version: str,
+    expected_task_id: str = "",
+    expected_head_sha: str = "",
+) -> dict[str, object]:
+    """Open a durable Manager discussion without deciding the approval."""
+
+    key = normalize_project_key(project_key)
+    state = StateStore(workspace).read_project_current(key)
+    if state is None:
+        raise ProjectApiError(
+            "intent_mission_not_found",
+            "This Manager mission is no longer active.",
+            409,
+            recovery=["refresh_approval_brief"],
+        )
+    target = _validate_intent_binding(
+        state=state,
+        workspace=workspace,
+        approval=approval,
+        expected_run_id=expected_run_id,
+        expected_target_type=expected_target_type,
+        expected_target_id=expected_target_id,
+        expected_artifact_key=expected_artifact_key,
+        expected_artifact_version=expected_artifact_version,
+        expected_task_id=expected_task_id,
+        expected_head_sha=expected_head_sha,
+    )
+    try:
+        intent, created = IntentCommitStore(workspace, key).open_request_changes(
+            mission={
+                "id": state.run_id,
+                "run_id": state.run_id,
+                "execution_id": "",
+                "source": "workflow",
+            },
+            target=target,
+        )
+    except IntentCommitError as exc:
+        raise ProjectApiError("intent_commit_invalid", str(exc), 409) from exc
+    return {"intent_commit": intent, "created": created}
+
+
+def discuss_request_changes_intent(
+    *,
+    workspace: Path,
+    project_key: str,
+    intent_id: str,
+    text: str,
+) -> dict[str, object]:
+    store, intent = _load_current_request_changes_intent(
+        workspace=workspace,
+        project_key=project_key,
+        intent_id=intent_id,
+    )
+    _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
+    try:
+        updated = store.discuss(intent_id, text)
+    except IntentCommitError as exc:
+        raise ProjectApiError("intent_discussion_invalid", str(exc), 400) from exc
+    return {"intent_commit": updated}
+
+
+def keep_discussing_request_changes_intent(
+    *,
+    workspace: Path,
+    project_key: str,
+    intent_id: str,
+) -> dict[str, object]:
+    store, intent = _load_current_request_changes_intent(
+        workspace=workspace,
+        project_key=project_key,
+        intent_id=intent_id,
+    )
+    _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
+    try:
+        updated = store.keep_discussing(intent_id)
+    except IntentCommitError as exc:
+        raise ProjectApiError("intent_transition_invalid", str(exc), 409) from exc
+    return {"intent_commit": updated}
+
+
+def confirm_request_changes_intent(
+    *,
+    workspace: Path,
+    project_key: str,
+    intent_id: str,
+) -> dict[str, object]:
+    """Commit the confirmed interpretation through the existing authority."""
+
+    store, intent = _load_current_request_changes_intent(
+        workspace=workspace,
+        project_key=project_key,
+        intent_id=intent_id,
+    )
+    if intent.get("status") == "committed":
+        commit_result = dict(intent.get("commit_result") or {})
+        return {
+            "intent_commit": intent,
+            "decision": "changes_requested",
+            "committed": True,
+            "idempotent": True,
+            **commit_result,
+        }
+    _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
+    try:
+        confirming, already_committed = store.begin_confirm(intent_id)
+    except IntentCommitError as exc:
+        if "already being committed" in str(exc):
+            raise ProjectApiError(
+                "intent_confirmation_in_progress",
+                str(exc),
+                409,
+                recovery=["refresh_change_discussion"],
+            ) from exc
+        raise ProjectApiError("intent_confirmation_invalid", str(exc), 409) from exc
+    if already_committed:
+        commit_result = dict(confirming.get("commit_result") or {})
+        return {
+            "intent_commit": confirming,
+            "decision": "changes_requested",
+            "committed": True,
+            "idempotent": True,
+            **commit_result,
+        }
+
+    interpretation = dict(confirming.get("confirmed_interpretation") or {})
+    instruction = str(interpretation.get("summary", "") or "").strip()
+    target = dict(confirming.get("target") or {})
+    try:
+        decision_result = decide_approval(
+            workspace=workspace,
+            project_key=normalize_project_key(project_key),
+            approval=str(target.get("approval", "")),
+            decision="changes_requested",
+            note=instruction,
+            decision_origin="manager_intent_commit",
+            review_mode="intent_commit",
+            review_session_id=intent_id,
+            client_context={
+                "intent_commit_id": intent_id,
+                "interpretation_schema_version": str(interpretation.get("schema_version", "")),
+            },
+            expected_run_id=str(target.get("run_id", "") or confirming.get("mission", {}).get("run_id", "")),
+            expected_target_type=str(target.get("target_type", "")),
+            expected_target_id=str(target.get("target_id", "")),
+            expected_artifact_key=str(target.get("artifact_key", "")),
+            expected_artifact_version=str(target.get("artifact_version", "")),
+        )
+    except (ProjectApiError, ValueError) as exc:
+        if _intent_decision_action(workspace, normalize_project_key(project_key), intent_id):
+            raise _ambiguous_intent_commit_error() from exc
+        is_stale = isinstance(exc, ProjectApiError) and exc.code == "stale_approval"
+        store.fail_confirm(intent_id, stale=is_stale or isinstance(exc, ValueError))
+        if is_stale:
+            raise _stale_intent_error(exc.details) from exc
+        raise
+    except Exception as exc:
+        if _intent_decision_action(workspace, normalize_project_key(project_key), intent_id):
+            raise _ambiguous_intent_commit_error() from exc
+        store.fail_confirm(intent_id)
+        raise
+
+    committed = store.complete_commit(
+        intent_id,
+        decision="changes_requested",
+        result={
+            "run_id": str(decision_result.get("run_id", "")),
+            "approval": str(target.get("approval", "")),
+            "next_node": str(decision_result.get("next_node", "")),
+        },
+    )
+    return {
+        "intent_commit": committed,
+        "decision": "changes_requested",
+        "committed": True,
+        "idempotent": False,
+        **dict(committed.get("commit_result") or {}),
+    }
+
+
+def _validate_intent_binding(
+    *,
+    state: AgileDevState,
+    workspace: Path,
+    approval: str,
+    expected_run_id: str,
+    expected_target_type: str,
+    expected_target_id: str,
+    expected_artifact_key: str,
+    expected_artifact_version: str,
+    expected_task_id: str = "",
+    expected_head_sha: str = "",
+) -> dict[str, str]:
+    expected = {
+        "run_id": expected_run_id.strip(),
+        "target_type": expected_target_type.strip(),
+        "target_id": expected_target_id.strip(),
+        "artifact_key": expected_artifact_key.strip(),
+        "artifact_version": expected_artifact_version.strip(),
+    }
+    missing = [field for field, value in expected.items() if not value]
+    if missing:
+        raise ProjectApiError(
+            "intent_binding_required",
+            "Request changes requires the exact run, review target, artifact key, and artifact version from the current brief.",
+            409,
+            details={"missing": missing},
+            recovery=["refresh_approval_brief"],
+        )
+    try:
+        current = _validate_approval_target(
+            state=state,
+            workspace=workspace,
+            approval=approval,
+            expected_run_id=expected["run_id"],
+            expected_target_type=expected["target_type"],
+            expected_target_id=expected["target_id"],
+            expected_artifact_key=expected["artifact_key"],
+            expected_artifact_version=expected["artifact_version"],
+        )
+    except ProjectApiError as exc:
+        if exc.code == "stale_approval":
+            raise _stale_intent_error(exc.details) from exc
+        raise
+    return {
+        "approval": approval.strip(),
+        **current,
+        "task_id": expected_task_id.strip(),
+        "head_sha": expected_head_sha.strip(),
+    }
+
+
+def _load_current_request_changes_intent(
+    *,
+    workspace: Path,
+    project_key: str,
+    intent_id: str,
+) -> tuple[IntentCommitStore, dict[str, object]]:
+    key = normalize_project_key(project_key)
+    store = IntentCommitStore(workspace, key)
+    try:
+        intent = store.get(intent_id)
+    except IntentCommitError as exc:
+        raise ProjectApiError("intent_commit_invalid", str(exc), 409) from exc
+    if intent is None or intent.get("kind") != "request_changes":
+        raise ProjectApiError("intent_commit_not_found", "This change discussion no longer exists.", 404)
+    return store, intent
+
+
+def _validate_stored_intent_target(
+    *,
+    workspace: Path,
+    store: IntentCommitStore,
+    intent: Mapping[str, object],
+) -> None:
+    mission = dict(intent.get("mission") or {})
+    target = dict(intent.get("target") or {})
+    state = StateStore(workspace).read_project_current(store.project_key)
+    if state is None or state.run_id != str(mission.get("run_id", "")):
+        store.mark_stale(str(intent.get("id", "")))
+        raise _stale_intent_error({"reason": "mission_changed"})
+    try:
+        _validate_approval_target(
+            state=state,
+            workspace=workspace,
+            approval=str(target.get("approval", "")),
+            expected_run_id=str(mission.get("run_id", "")),
+            expected_target_type=str(target.get("target_type", "")),
+            expected_target_id=str(target.get("target_id", "")),
+            expected_artifact_key=str(target.get("artifact_key", "")),
+            expected_artifact_version=str(target.get("artifact_version", "")),
+        )
+    except (ProjectApiError, ValueError) as exc:
+        store.mark_stale(str(intent.get("id", "")))
+        details = exc.details if isinstance(exc, ProjectApiError) else {"reason": str(exc)}
+        raise _stale_intent_error(details) from exc
+
+
+def _stale_intent_error(details: Mapping[str, object] | None = None) -> ProjectApiError:
+    return ProjectApiError(
+        "stale_intent_target",
+        "The approval target changed during this discussion. Review the current brief and restart the change discussion.",
+        409,
+        details=dict(details or {}),
+        recovery=["refresh_approval_brief", "restart_change_discussion"],
+    )
+
+
+def _intent_decision_action(
+    workspace: Path,
+    project_key: str,
+    intent_id: str,
+) -> dict[str, object] | None:
+    return next(
+        (
+            item
+            for item in build_action_items(workspace, project_key=project_key)
+            if item.get("action") == "approval_decided"
+            and item.get("review_mode") == "intent_commit"
+            and item.get("review_session_id") == intent_id
+        ),
+        None,
+    )
+
+
+def _ambiguous_intent_commit_error() -> ProjectApiError:
+    return ProjectApiError(
+        "intent_commit_ambiguous",
+        "The approval authority recorded this Intent Commit, but its completion could not be reconciled safely. GoodTeam will not replay it.",
+        409,
+        recovery=["refresh_change_discussion"],
+    )
 
 
 def recover_legacy_takeover_review(
@@ -6923,7 +7251,17 @@ def serve(
                 re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision)", normalized_path)
             )
 
-            if not is_project_path and not is_execution_path and normalized_path not in {"/start", "/report-bug", "/context-estimate", "/context-generate", "/approve", "/recover-takeover-brief", "/artifact", "/project-config", "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc", "/refine-artifact", "/answer-open-questions", "/accept-refinement", "/discard-refinement", "/open-path", "/debate", "/dispatch-track", "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose", "/fs/mkdir", "/server-actions/run", "/git-init"}:
+            if not is_project_path and not is_execution_path and normalized_path not in {
+                "/start", "/report-bug", "/context-estimate", "/context-generate",
+                "/intent-commit/start", "/intent-commit/discuss",
+                "/intent-commit/keep-discussing", "/intent-commit/confirm",
+                "/approve", "/recover-takeover-brief", "/artifact", "/project-config",
+                "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc",
+                "/refine-artifact", "/answer-open-questions", "/accept-refinement",
+                "/discard-refinement", "/open-path", "/debate", "/dispatch-track",
+                "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose",
+                "/fs/mkdir", "/server-actions/run", "/git-init",
+            }:
                 self.send_error(404)
                 return
             if not _request_origin_is_same_origin(
@@ -7041,6 +7379,38 @@ def serve(
                     result = context_estimate_for_request(workspace, request)
                 elif normalized_path == "/context-generate":
                     result = context_generate_for_request(workspace, request)
+                elif normalized_path == "/intent-commit/start":
+                    result = start_request_changes_intent(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        approval=str(request.get("approval", "")),
+                        expected_run_id=str(request.get("expected_run_id", "") or ""),
+                        expected_target_type=str(request.get("expected_target_type", "") or ""),
+                        expected_target_id=str(request.get("expected_target_id", "") or ""),
+                        expected_artifact_key=str(request.get("expected_artifact_key", "") or ""),
+                        expected_artifact_version=str(request.get("expected_artifact_version", "") or ""),
+                        expected_task_id=str(request.get("expected_task_id", "") or ""),
+                        expected_head_sha=str(request.get("expected_head_sha", "") or ""),
+                    )
+                elif normalized_path == "/intent-commit/discuss":
+                    result = discuss_request_changes_intent(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        intent_id=str(request.get("intent_id", "")),
+                        text=str(request.get("text", "")),
+                    )
+                elif normalized_path == "/intent-commit/keep-discussing":
+                    result = keep_discussing_request_changes_intent(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        intent_id=str(request.get("intent_id", "")),
+                    )
+                elif normalized_path == "/intent-commit/confirm":
+                    result = confirm_request_changes_intent(
+                        workspace=workspace,
+                        project_key=str(request.get("project_key", "")),
+                        intent_id=str(request.get("intent_id", "")),
+                    )
                 elif normalized_path == "/approve":
                     approval_binding = {
                         "expected_run_id": str(request.get("expected_run_id", "") or "").strip(),
