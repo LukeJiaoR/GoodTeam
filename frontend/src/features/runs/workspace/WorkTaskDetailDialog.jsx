@@ -331,11 +331,12 @@ export default function WorkTaskDetailDialog({
   };
 
   const handleRequestChanges = async () => {
-    if (!onRequestChanges) return;
+    if (!onRequestChanges || !review?.approval) return;
     setBusy('changes_requested');
     setMutationError(null);
     try {
-      await onRequestChanges();
+      await onRequestChanges(review.approval);
+      onClose();
     } catch (err) {
       setMutationError(err);
     } finally {

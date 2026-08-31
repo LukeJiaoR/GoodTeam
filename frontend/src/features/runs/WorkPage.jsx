@@ -430,6 +430,7 @@ export function PlanView({
   busyDecision = '',
   language,
   onDecide,
+  onRequestChanges,
   onRetry,
   onTerminate,
   projectKey,
@@ -537,6 +538,7 @@ export function PlanView({
             reviews={resolvedReviews}
             projectKey={projectKey}
             onDecide={onDecide}
+            onRequestChanges={onRequestChanges}
             onClose={handleClose}
             t={t}
           />
@@ -871,6 +873,12 @@ export default function WorkPage() {
     }
   };
 
+  const handleRequestChanges = async (approval, approvalTarget = null) => {
+    const result = await handleStartChangeIntent(approval, approvalTarget);
+    closeInspector();
+    return result;
+  };
+
   const handleDiscussChangeIntent = async (intentId, text) => {
     try {
       return await mutate('intent-discuss', () => (
@@ -924,6 +932,7 @@ export default function WorkPage() {
           <WorkflowCanvas
             fallback={reducedMotion}
             onDecided={undefined}
+            onRequestChanges={handleRequestChanges}
             projectKey={projectKey}
             reviews={data.approval_reviews || []}
             runId={data?.state?.run_id || ''}
@@ -936,6 +945,7 @@ export default function WorkPage() {
             busyDecision={busy === 'decision' ? 'approved' : ''}
             language={language}
             onDecide={handleDecide}
+            onRequestChanges={handleRequestChanges}
             onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
             onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
             projectKey={projectKey}
@@ -1069,6 +1079,7 @@ export default function WorkPage() {
           <WorkflowCanvas
             fallback={reducedMotion}
             onDecided={refresh}
+            onRequestChanges={handleRequestChanges}
             projectKey={projectKey}
             reviews={data.approval_reviews || []}
             runId={data?.state?.run_id || ''}
@@ -1086,6 +1097,7 @@ export default function WorkPage() {
               busyDecision={busy === 'decision' ? 'approved' : ''}
               language={language}
               onDecide={handleDecide}
+              onRequestChanges={handleRequestChanges}
               onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
               onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
               projectKey={projectKey}

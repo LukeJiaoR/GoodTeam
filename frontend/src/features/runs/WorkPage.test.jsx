@@ -718,6 +718,92 @@ test('opens Request changes as a durable Manager discussion without review mutat
   expect(refresh).toHaveBeenCalledTimes(1);
 });
 
+test('routes Run details canvas Request changes into Manager Intent Commit', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  const data = managerReviewData();
+  data.workflow_steps = [
+    {
+      key: 'security',
+      title: 'Architecture security review',
+      status: 'review-needed',
+      approval: 'security',
+      feedback: 'Human review required.',
+    },
+  ];
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.startChangeIntent.mockResolvedValue({
+    intent_commit: { id: 'intent-canvas-1', status: 'discussing' },
+  });
+
+  renderWorkPage();
+  await userEvent.click(screen.getByRole('button', { name: 'Run details' }));
+
+  const inspector = document.querySelector('.team-inspector');
+  await userEvent.click(within(inspector).getByRole('button', { name: /Security/ }));
+  const stageDialog = within(inspector).getByRole('dialog', { name: 'Stage details' });
+  await userEvent.click(within(stageDialog).getByRole('button', { name: 'Request changes' }));
+
+  expect(mocks.startChangeIntent).toHaveBeenCalledWith('DEMO', 'security', {
+    run_id: 'run-active',
+    target_type: 'review',
+    target_id: 'security',
+    artifact_key: 'rfc',
+    artifact_version: 'sha256:1234567890abcdef1234567890abcdef',
+  });
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+  });
+});
+
+test('routes Run details plan task Request changes into Manager Intent Commit', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  const data = managerReviewData();
+  data.agile_board = {
+    counts: { backlog: 1, doing: 0, blocked: 0, done: 0 },
+    columns: {
+      backlog: [{
+        id: 'DEMO-ARCH',
+        title: 'Review RFC security boundaries',
+        role: 'architect',
+        status: 'reviewing',
+        review_target_id: 'security',
+      }],
+      doing: [],
+      blocked: [],
+      done: [],
+    },
+  };
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.startChangeIntent.mockResolvedValue({
+    intent_commit: { id: 'intent-plan-1', status: 'discussing' },
+  });
+
+  renderWorkPage();
+  await userEvent.click(screen.getByRole('button', { name: 'Run details' }));
+
+  const inspector = document.querySelector('.team-inspector');
+  await userEvent.click(within(inspector).getByRole('button', { name: /Review RFC security boundaries/ }));
+  const taskDialog = within(inspector).getByRole('dialog', {
+    name: 'Review RFC security boundaries',
+  });
+  await userEvent.click(within(taskDialog).getByRole('button', { name: 'Request changes' }));
+
+  expect(mocks.startChangeIntent).toHaveBeenCalledWith('DEMO', 'security', {
+    run_id: 'run-active',
+    target_type: 'review',
+    target_id: 'security',
+    artifact_key: 'rfc',
+    artifact_version: 'sha256:1234567890abcdef1234567890abcdef',
+  });
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+  });
+});
+
 test('durably summarizes change text, supports Keep discussing, and commits only on confirm', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const draft = 'Implement Google only while preserving a generic provider interface.';

@@ -76,7 +76,7 @@ function StageNode({ data }) {
   );
 }
 
-function CanvasInner({ fallback, onDecided, projectKey, reviews, runId = '', steps, t }) {
+function CanvasInner({ fallback, onDecided, onRequestChanges, projectKey, reviews, runId = '', steps, t }) {
   const { fitView, zoomIn, zoomOut } = useReactFlow();
   const [level, setLevel] = useState(0);
   const [expanded, setExpanded] = useState(null);
@@ -186,6 +186,26 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, runId = '', ste
     }
   };
 
+  const requestChanges = async () => {
+    if (!actionableReview || !onRequestChanges) return;
+    setBusy('changes_requested');
+    setError(null);
+    try {
+      await onRequestChanges(actionableReview.approval, {
+        run_id: runId,
+        target_type: 'review',
+        target_id: actionableReview.approval || '',
+        artifact_key: actionableReview.artifact || '',
+        artifact_version: actionableReview.artifact_version || '',
+      });
+      setExpanded(null);
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setBusy('');
+    }
+  };
+
   const doneCount = steps.filter((s) => s.status === 'done').length;
   const activeCount = steps.filter((s) => s.status === 'active').length;
   const reviewCount = steps.filter((s) => s.status === 'review-needed').length;
@@ -263,7 +283,13 @@ function CanvasInner({ fallback, onDecided, projectKey, reviews, runId = '', ste
           {actionableReview ? (
             <>
               <EvidenceSummary evidence={evidence} t={t} />
-              <DecisionActions busy={busy} error={error} onDecision={decide} t={t} />
+              <DecisionActions
+                busy={busy}
+                error={error}
+                onDecision={decide}
+                onRequestChanges={onRequestChanges ? requestChanges : undefined}
+                t={t}
+              />
             </>
           ) : null}
           <Button variant="secondary" onClick={() => setExpanded(null)}>{t('work.canvas.close')}</Button>

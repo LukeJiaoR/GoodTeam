@@ -874,7 +874,6 @@ function TeamWorkspace({
               attention.approval_brief.approval_target,
             );
             setMobileTab('manager');
-            closeTaskModal();
           } : undefined}
           t={t}
         />
