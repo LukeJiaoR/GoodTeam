@@ -400,6 +400,14 @@ function ManagerMissionControls({ busy, canCancel, onTerminate, t }) {
   );
 }
 
+const NEAR_BOTTOM_THRESHOLD = 64;
+
+function isNearBottom(element) {
+  if (!element) return true;
+  const { scrollTop, scrollHeight, clientHeight } = element;
+  return scrollHeight - scrollTop - clientHeight <= NEAR_BOTTOM_THRESHOLD;
+}
+
 function ManagerPane({
   attention,
   busy,
@@ -436,12 +444,34 @@ function ManagerPane({
       : t('work.manager.ready');
   const timelineHasMissionRequest = (timeline || []).some((item) => item.event === 'mission_requested');
   const conversationRef = useRef(null);
+  const wasNearBottomRef = useRef(true);
+  const prevAttentionKeyRef = useRef(null);
+  const prevTimelineLengthRef = useRef(0);
+
+  const attentionKey = `${attention?.id || ''}:${attention?.intent_commit?.status || ''}`;
 
   useEffect(() => {
-    if (conversationRef.current) {
-      conversationRef.current.scrollTop = conversationRef.current.scrollHeight;
+    const node = conversationRef.current;
+    if (!node) return;
+
+    const attentionChanged = prevAttentionKeyRef.current !== attentionKey;
+    const timelineChanged = prevTimelineLengthRef.current !== (timeline?.length || 0);
+
+    prevAttentionKeyRef.current = attentionKey;
+    prevTimelineLengthRef.current = timeline?.length || 0;
+
+    if (attention && attentionChanged) {
+      node.scrollTop = node.scrollHeight;
+      wasNearBottomRef.current = true;
+    } else if (timelineChanged && wasNearBottomRef.current) {
+      node.scrollTop = node.scrollHeight;
     }
-  }, [attention?.id, attention?.intent_commit?.status, timeline?.length]);
+  }, [attention, attentionKey, timeline?.length]);
+
+  const handleConversationScroll = (event) => {
+    const node = event.currentTarget;
+    wasNearBottomRef.current = isNearBottom(node);
+  };
 
   return (
     <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
@@ -457,7 +487,7 @@ function ManagerPane({
           </div>
         </div>
       </header>
-      <div className="team-manager-conversation" ref={conversationRef}>
+      <div className="team-manager-conversation" onScroll={handleConversationScroll} ref={conversationRef}>
         {mission ? (
           <>
             {!timelineHasMissionRequest ? (
