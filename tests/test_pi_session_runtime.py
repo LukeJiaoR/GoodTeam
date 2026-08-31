@@ -166,6 +166,7 @@ def test_pi_resume_rejects_cross_project_reference(monkeypatch, tmp_path):
 
 def test_pi_lost_prompt_response_recovers_only_from_bound_settled_marker(monkeypatch, tmp_path):
     sessions = configure_fake_pi(monkeypatch, tmp_path)
+    monkeypatch.setenv("FAKE_PI_STARTUP_DELAY", "0.1")
     monkeypatch.setenv("FAKE_PI_DROP_PROMPT_RESPONSE", "1")
     project = tmp_path / "project"
     project.mkdir()

@@ -39,6 +39,10 @@ aborted = False
 entries: list[dict[str, object]] = []
 write_lock = threading.Lock()
 
+startup_delay = float(os.getenv("FAKE_PI_STARTUP_DELAY", "0"))
+if startup_delay:
+    time.sleep(startup_delay)
+
 
 def emit(payload: dict[str, object]) -> None:
     with write_lock:

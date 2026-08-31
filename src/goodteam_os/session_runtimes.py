@@ -28,6 +28,7 @@ PI_CAPABILITIES = (
     "event_stream",
     "entry_replay",
 )
+PI_STARTUP_TIMEOUT_FLOOR_SECONDS = 1.0
 MEANINGFUL_EVENTS = {
     "agent_start": "turn_started",
     "agent_end": "turn_ended",
@@ -317,6 +318,7 @@ class PiSessionRuntime:
             command.extend(["--model", self.config.model])
         self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path, on_record=self._on_record)
         self.rpc.start()
+        startup_timeout = max(self.config.request_timeout, PI_STARTUP_TIMEOUT_FLOOR_SECONDS)
         now = _now()
         self.metadata = {
             "schema_version": "pi_session.v1",
@@ -358,7 +360,7 @@ class PiSessionRuntime:
             except (ValueError, FileNotFoundError) as exc:
                 raise PiSessionMissing(str(exc)) from exc
             try:
-                response = self.rpc.request({"type": "switch_session", "sessionPath": str(session_file)}, timeout=self.config.request_timeout)
+                response = self.rpc.request({"type": "switch_session", "sessionPath": str(session_file)}, timeout=startup_timeout)
             except PiRpcError as exc:
                 raise PiResumeFailed(str(exc)) from exc
             if bool(response.get("data", {}).get("cancelled")):
@@ -366,9 +368,9 @@ class PiSessionRuntime:
             self.store.append_event("session_resumed", {"source_job_id": str(source.get("job_id", ""))})
         if self.config.thinking_level:
             self.rpc.request(
-                {"type": "set_thinking_level", "level": self.config.thinking_level}, timeout=self.config.request_timeout
+                {"type": "set_thinking_level", "level": self.config.thinking_level}, timeout=startup_timeout
             )
-        state = self.get_state()
+        state = self.get_state(timeout=startup_timeout)
         if recovering_current_job and source and (source.get("initial_prompt_sent") or source.get("active_operation")):
             operation = source.get("active_operation")
             operation_state = str(operation.get("state") or "") if isinstance(operation, dict) else ""
@@ -416,8 +418,10 @@ class PiSessionRuntime:
         self.store.append_event("abort")
         return response
 
-    def get_state(self) -> dict[str, Any]:
-        response = self._rpc().request({"type": "get_state"}, timeout=self.config.request_timeout)
+    def get_state(self, *, timeout: float | None = None) -> dict[str, Any]:
+        response = self._rpc().request(
+            {"type": "get_state"}, timeout=self.config.request_timeout if timeout is None else timeout
+        )
         data = response.get("data") if isinstance(response.get("data"), dict) else {}
         session_file = str(data.get("sessionFile") or "")
         if session_file:
