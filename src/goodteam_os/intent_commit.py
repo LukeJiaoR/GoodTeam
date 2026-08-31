@@ -19,7 +19,9 @@ INTENT_COMMIT_STORE_SCHEMA_VERSION = "intent_commit_store.v1"
 INTENT_INTERPRETATION_SCHEMA_VERSION = "intent_interpretation.v1"
 MAX_CHANGE_REQUEST_LENGTH = 8_000
 
-_ACTIVE_STATUSES = frozenset({"discussing", "ready_to_confirm", "committing", "stale"})
+_ACTIVE_STATUSES = frozenset(
+    {"discussing", "ready_to_confirm", "committing", "ambiguous", "stale"}
+)
 _ALL_STATUSES = frozenset({*_ACTIVE_STATUSES, "committed", "cancelled"})
 _TARGET_IDENTITY_FIELDS = (
     "approval",
@@ -76,6 +78,11 @@ class IntentCommitStore:
             record = self._read_payload()["intents"].get(identifier)
         return deepcopy(record) if isinstance(record, dict) else None
 
+    def confirmation_guard(self) -> threading.RLock:
+        """Serialize confirmation and recovery for this project's intent store."""
+
+        return self._lock
+
     def open_request_changes(
         self,
         *,
@@ -93,7 +100,8 @@ class IntentCommitStore:
             for record in reversed(list(records.values())):
                 if (
                     _text(record.get("kind")) == "request_changes"
-                    and _text(record.get("status")) in {"discussing", "ready_to_confirm", "committing"}
+                    and _text(record.get("status"))
+                    in {"discussing", "ready_to_confirm", "committing", "ambiguous"}
                     and _same_mission(_mapping(record.get("mission")), normalized_mission)
                     and _same_target(_mapping(record.get("target")), normalized_target)
                 ):
@@ -108,6 +116,11 @@ class IntentCommitStore:
                     and _same_mission(_mapping(record.get("mission")), normalized_mission)
                     and _text(stored_target.get("approval")) == normalized_target["approval"]
                 ):
+                    if _text(record.get("status")) in {"committing", "ambiguous"}:
+                        raise IntentCommitError(
+                            "A previous confirmed change request requires recovery before "
+                            "another discussion can start."
+                        )
                     record["status"] = "cancelled"
                     record["cancel_reason"] = "target_replaced"
                     record["cancelled_at"] = timestamp
@@ -238,6 +251,44 @@ class IntentCommitStore:
 
         return self._update(intent_id, update)
 
+    def recover_unrecorded_confirmation(self, intent_id: str) -> dict[str, object]:
+        """Return a crash-interrupted confirmation to its last safe state."""
+
+        def update(record: dict[str, object]) -> None:
+            _require_status(record, "committing")
+            timestamp = _now()
+            record["status"] = "ready_to_confirm"
+            record["confirmation_recovered_at"] = timestamp
+            record["updated_at"] = timestamp
+
+        return self._update(intent_id, update)
+
+    def mark_ambiguous(self, intent_id: str, *, reason: str) -> dict[str, object]:
+        """Record an unreplayable authority/evidence mismatch explicitly."""
+
+        def update(record: dict[str, object]) -> None:
+            if _text(record.get("status")) == "committed":
+                return
+            current = _text(record.get("status"))
+            if current not in {"committing", "ambiguous"}:
+                raise IntentCommitError(
+                    "Only an interrupted confirmation can become ambiguous."
+                )
+            timestamp = _now()
+            record["status"] = "ambiguous"
+            record["ambiguity_reason"] = _text(reason) or "authority_state_unresolved"
+            record["ambiguous_at"] = timestamp
+            record["updated_at"] = timestamp
+            if current != "ambiguous":
+                _append_event(
+                    record,
+                    actor="manager",
+                    event="change_intent_ambiguous",
+                    timestamp=timestamp,
+                )
+
+        return self._update(intent_id, update)
+
     def complete_commit(
         self,
         intent_id: str,
@@ -248,7 +299,10 @@ class IntentCommitStore:
         def update(record: dict[str, object]) -> None:
             if _text(record.get("status")) == "committed":
                 return
-            _require_status(record, "committing")
+            if _text(record.get("status")) not in {"committing", "ambiguous"}:
+                raise IntentCommitError(
+                    "Intent Commit must be committing or ambiguous to record a reconciled commit."
+                )
             interpretation = _mapping(record.get("confirmed_interpretation"))
             summary = _text(interpretation.get("summary"))
             if not summary:

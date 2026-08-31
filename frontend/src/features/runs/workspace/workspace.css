@@ -1753,6 +1753,7 @@
   box-shadow: var(--work-shadow-inset);
 }
 
+.work-workspace-shell .team-intent-commit[data-status="ambiguous"],
 .work-workspace-shell .team-intent-commit[data-status="stale"] {
   border-color: color-mix(in srgb, var(--work-danger) 30%, transparent);
 }

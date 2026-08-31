@@ -186,6 +186,10 @@ function ManagerAttention({
 }) {
   const intent = attention?.intent_commit || null;
   const [note, setNote] = useState(intent?.draft_text || '');
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- durable intent state replaces any draft from the prior authoritative projection.
+    setNote(intent?.draft_text || '');
+  }, [intent?.draft_text, intent?.id]);
   if (!attention) return null;
   const actions = new Set(attention.actions || []);
   const gate = attention.target_id || '';
@@ -323,6 +327,18 @@ function ManagerAttention({
         <div className="team-intent-commit" data-status="committing" role="status">
           <strong>{t('work.manager.intent.committing')}</strong>
           <p>{t('work.manager.intent.commitBoundary')}</p>
+          <Button busy={busy === 'intent-confirm'} onClick={confirmChangeDiscussion}>
+            {t('work.manager.intent.resumeConfirmation')}
+          </Button>
+        </div>
+      ) : null}
+      {intent?.status === 'ambiguous' ? (
+        <div className="team-intent-commit" data-status="ambiguous" role="alert">
+          <div className="team-intent-commit__heading">
+            <strong>{t('work.manager.intent.ambiguousTitle')}</strong>
+            <StatusBadge tone="danger">{t('work.manager.intent.ambiguous')}</StatusBadge>
+          </div>
+          <p>{t('work.manager.intent.ambiguousDescription')}</p>
         </div>
       ) : null}
       {intent?.status === 'stale' ? (

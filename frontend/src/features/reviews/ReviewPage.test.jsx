@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getReviewState: vi.fn(),
   refresh: vi.fn(),
   saveArtifact: vi.fn(),
+  startChangeIntent: vi.fn(),
 }));
 
 vi.mock('./reviewApi', () => ({
@@ -28,6 +29,12 @@ vi.mock('./reviewApi', () => ({
     recoverTakeoverBrief: vi.fn(),
     refineArtifact: vi.fn(),
     saveArtifact: mocks.saveArtifact,
+  },
+}));
+
+vi.mock('../runs/runApi', () => ({
+  runApi: {
+    startChangeIntent: mocks.startChangeIntent,
   },
 }));
 
@@ -75,6 +82,10 @@ function routerFor(path) {
       element: <TranslationLayout />,
       children: [
         { path: '/projects/:projectKey/review/:reviewId', element: <ReviewPage /> },
+        {
+          path: '/projects/:projectKey/work/runs/:runId',
+          element: <div>Manager Intent Commit</div>,
+        },
       ],
     },
   ], { initialEntries: [path] });
@@ -144,6 +155,31 @@ describe('ReviewPage workflow and navigation', () => {
         },
       },
     );
+  });
+
+  test('routes Request changes into Manager Intent Commit without a direct decision', async () => {
+    const user = userEvent.setup();
+    mocks.startChangeIntent.mockResolvedValue({
+      intent_commit: { id: 'intent-prd-1', status: 'discussing' },
+    });
+    const router = renderReview();
+
+    await user.click(await screen.findByRole('button', { name: t('review.decision.changes') }));
+
+    expect(mocks.startChangeIntent).toHaveBeenCalledWith(
+      'DEMO',
+      'prd',
+      {
+        run_id: 'run-1',
+        target_type: 'review',
+        target_id: 'prd',
+        artifact_key: 'prd',
+        artifact_version: 'sha256:prd-v1',
+      },
+    );
+    expect(mocks.decideReview).not.toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe('/projects/DEMO/work/runs/run-1');
+    expect(await screen.findByText('Manager Intent Commit')).toBeVisible();
   });
 
   test('renders the evidence summary badges from the snapshot', async () => {

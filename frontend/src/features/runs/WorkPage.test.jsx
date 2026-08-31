@@ -776,6 +776,38 @@ test('Keep discussing returns the confirmed interpretation to discussion without
   expect(mocks.decideReview).not.toHaveBeenCalled();
 });
 
+test('offers restart recovery for a durable committing intent', async () => {
+  const draft = 'Preserve the provider boundary.';
+  const data = managerIntentData('committing', draft);
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.confirmChangeIntent.mockResolvedValue({
+    committed: true,
+    idempotent: true,
+    reconciled: true,
+  });
+
+  renderWorkPage();
+  expect(screen.getByText('Committing the confirmed change request…')).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: 'Resume confirmation' }));
+
+  expect(mocks.confirmChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1');
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+});
+
+test('shows ambiguous confirmation as unreplayed without another commit action', () => {
+  const data = managerIntentData('ambiguous', 'Preserve the provider boundary.');
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+
+  renderWorkPage();
+
+  expect(screen.getByText('This confirmation needs recovery.')).toBeVisible();
+  expect(screen.getByText('Unresolved · not replayed')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Confirm changes' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Resume confirmation' })).not.toBeInTheDocument();
+});
+
 test('restores a persisted discussion on re-entry and fails closed when it is stale', () => {
   const data = managerIntentData(
     'discussing',
@@ -787,6 +819,19 @@ test('restores a persisted discussion on re-entry and fails closed when it is st
   const view = renderWorkPage();
   expect(screen.getByLabelText('What should change?'))
     .toHaveValue('Keep this persisted draft after navigation.');
+
+  const updated = managerIntentData('discussing', 'Use the newer durable draft.');
+  mocks.useProjectState.mockReturnValue({ data: updated, error: null, refresh: vi.fn(), status: 'ready' });
+  view.rerender(
+    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active']}>
+      <Routes>
+        <Route element={<TranslationOutlet />}>
+          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+  expect(screen.getByLabelText('What should change?')).toHaveValue('Use the newer durable draft.');
 
   const stale = managerIntentData('stale', 'Old request.');
   mocks.useProjectState.mockReturnValue({ data: stale, error: null, refresh: vi.fn(), status: 'ready' });

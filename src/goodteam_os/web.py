@@ -3883,95 +3883,137 @@ def confirm_request_changes_intent(
 ) -> dict[str, object]:
     """Commit the confirmed interpretation through the existing authority."""
 
-    store, intent = _load_current_request_changes_intent(
+    store, _ = _load_current_request_changes_intent(
         workspace=workspace,
         project_key=project_key,
         intent_id=intent_id,
     )
-    if intent.get("status") == "committed":
-        commit_result = dict(intent.get("commit_result") or {})
-        return {
-            "intent_commit": intent,
-            "decision": "changes_requested",
-            "committed": True,
-            "idempotent": True,
-            **commit_result,
-        }
-    _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
-    try:
-        confirming, already_committed = store.begin_confirm(intent_id)
-    except IntentCommitError as exc:
-        if "already being committed" in str(exc):
+    key = normalize_project_key(project_key)
+    # Holding the shared per-path lock across authority mutation prevents a
+    # concurrent request from mistaking live work for a restart. After a real
+    # process restart no holder remains, so the persisted state can reconcile.
+    with store.confirmation_guard():
+        intent = store.get(intent_id)
+        if intent is None:
             raise ProjectApiError(
-                "intent_confirmation_in_progress",
-                str(exc),
-                409,
-                recovery=["refresh_change_discussion"],
-            ) from exc
-        raise ProjectApiError("intent_confirmation_invalid", str(exc), 409) from exc
-    if already_committed:
-        commit_result = dict(confirming.get("commit_result") or {})
-        return {
-            "intent_commit": confirming,
-            "decision": "changes_requested",
-            "committed": True,
-            "idempotent": True,
-            **commit_result,
-        }
+                "intent_commit_not_found",
+                "This change discussion no longer exists.",
+                404,
+            )
+        if intent.get("status") == "committed":
+            return _committed_intent_response(intent, idempotent=True)
 
-    interpretation = dict(confirming.get("confirmed_interpretation") or {})
-    instruction = str(interpretation.get("summary", "") or "").strip()
-    target = dict(confirming.get("target") or {})
-    try:
-        decision_result = decide_approval(
-            workspace=workspace,
-            project_key=normalize_project_key(project_key),
-            approval=str(target.get("approval", "")),
+        if intent.get("status") in {"committing", "ambiguous"}:
+            evidence_state, decision_action, evidence_details = _intent_decision_evidence(
+                workspace,
+                key,
+                intent,
+            )
+            if evidence_state == "matched" and decision_action is not None:
+                return _complete_intent_from_decision_action(
+                    store,
+                    intent_id,
+                    decision_action,
+                    idempotent=True,
+                )
+            if evidence_state == "ambiguous":
+                store.mark_ambiguous(intent_id, reason="decision_evidence_mismatch")
+                raise _ambiguous_intent_commit_error(evidence_details)
+            if intent.get("status") == "ambiguous":
+                raise _ambiguous_intent_commit_error(
+                    {"reason": str(intent.get("ambiguity_reason", "authority_state_unresolved"))}
+                )
+            try:
+                _assert_stored_intent_target(
+                    workspace=workspace,
+                    store=store,
+                    intent=intent,
+                )
+            except ProjectApiError as exc:
+                store.mark_ambiguous(intent_id, reason="authority_state_unresolved")
+                raise _ambiguous_intent_commit_error(
+                    {
+                        "reason": "target_changed_without_decision_evidence",
+                        "target_error": exc.code,
+                    }
+                ) from exc
+            # No decision evidence exists and the exact authority target is
+            # still pending. The previous process stopped before mutation, so
+            # it is safe to restore the confirmed draft and try once now.
+            intent = store.recover_unrecorded_confirmation(intent_id)
+
+        _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
+        try:
+            confirming, already_committed = store.begin_confirm(intent_id)
+        except IntentCommitError as exc:
+            raise ProjectApiError("intent_confirmation_invalid", str(exc), 409) from exc
+        if already_committed:
+            return _committed_intent_response(confirming, idempotent=True)
+
+        interpretation = dict(confirming.get("confirmed_interpretation") or {})
+        instruction = str(interpretation.get("summary", "") or "").strip()
+        target = dict(confirming.get("target") or {})
+        try:
+            decision_result = decide_approval(
+                workspace=workspace,
+                project_key=key,
+                approval=str(target.get("approval", "")),
+                decision="changes_requested",
+                note=instruction,
+                decision_origin="manager_intent_commit",
+                review_mode="intent_commit",
+                review_session_id=intent_id,
+                client_context={
+                    "intent_commit_id": intent_id,
+                    "interpretation_schema_version": str(
+                        interpretation.get("schema_version", "")
+                    ),
+                },
+                expected_run_id=str(
+                    target.get("run_id", "")
+                    or dict(confirming.get("mission") or {}).get("run_id", "")
+                ),
+                expected_target_type=str(target.get("target_type", "")),
+                expected_target_id=str(target.get("target_id", "")),
+                expected_artifact_key=str(target.get("artifact_key", "")),
+                expected_artifact_version=str(target.get("artifact_version", "")),
+            )
+        except (ProjectApiError, ValueError) as exc:
+            recovered = _reconcile_intent_decision_after_error(
+                workspace=workspace,
+                project_key=key,
+                store=store,
+                intent=confirming,
+            )
+            if recovered is not None:
+                return recovered
+            is_stale = isinstance(exc, ProjectApiError) and exc.code == "stale_approval"
+            store.fail_confirm(intent_id, stale=is_stale or isinstance(exc, ValueError))
+            if is_stale:
+                raise _stale_intent_error(exc.details) from exc
+            raise
+        except Exception:
+            recovered = _reconcile_intent_decision_after_error(
+                workspace=workspace,
+                project_key=key,
+                store=store,
+                intent=confirming,
+            )
+            if recovered is not None:
+                return recovered
+            store.fail_confirm(intent_id)
+            raise
+
+        committed = store.complete_commit(
+            intent_id,
             decision="changes_requested",
-            note=instruction,
-            decision_origin="manager_intent_commit",
-            review_mode="intent_commit",
-            review_session_id=intent_id,
-            client_context={
-                "intent_commit_id": intent_id,
-                "interpretation_schema_version": str(interpretation.get("schema_version", "")),
+            result={
+                "run_id": str(decision_result.get("run_id", "")),
+                "approval": str(target.get("approval", "")),
+                "next_node": str(decision_result.get("next_node", "")),
             },
-            expected_run_id=str(target.get("run_id", "") or confirming.get("mission", {}).get("run_id", "")),
-            expected_target_type=str(target.get("target_type", "")),
-            expected_target_id=str(target.get("target_id", "")),
-            expected_artifact_key=str(target.get("artifact_key", "")),
-            expected_artifact_version=str(target.get("artifact_version", "")),
         )
-    except (ProjectApiError, ValueError) as exc:
-        if _intent_decision_action(workspace, normalize_project_key(project_key), intent_id):
-            raise _ambiguous_intent_commit_error() from exc
-        is_stale = isinstance(exc, ProjectApiError) and exc.code == "stale_approval"
-        store.fail_confirm(intent_id, stale=is_stale or isinstance(exc, ValueError))
-        if is_stale:
-            raise _stale_intent_error(exc.details) from exc
-        raise
-    except Exception as exc:
-        if _intent_decision_action(workspace, normalize_project_key(project_key), intent_id):
-            raise _ambiguous_intent_commit_error() from exc
-        store.fail_confirm(intent_id)
-        raise
-
-    committed = store.complete_commit(
-        intent_id,
-        decision="changes_requested",
-        result={
-            "run_id": str(decision_result.get("run_id", "")),
-            "approval": str(target.get("approval", "")),
-            "next_node": str(decision_result.get("next_node", "")),
-        },
-    )
-    return {
-        "intent_commit": committed,
-        "decision": "changes_requested",
-        "committed": True,
-        "idempotent": False,
-        **dict(committed.get("commit_result") or {}),
-    }
+        return _committed_intent_response(committed, idempotent=False)
 
 
 def _validate_intent_binding(
@@ -4049,11 +4091,29 @@ def _validate_stored_intent_target(
     store: IntentCommitStore,
     intent: Mapping[str, object],
 ) -> None:
+    try:
+        _assert_stored_intent_target(
+            workspace=workspace,
+            store=store,
+            intent=intent,
+        )
+    except ProjectApiError:
+        store.mark_stale(str(intent.get("id", "")))
+        raise
+
+
+def _assert_stored_intent_target(
+    *,
+    workspace: Path,
+    store: IntentCommitStore,
+    intent: Mapping[str, object],
+) -> None:
+    """Check the stored binding without changing the Intent Commit status."""
+
     mission = dict(intent.get("mission") or {})
     target = dict(intent.get("target") or {})
     state = StateStore(workspace).read_project_current(store.project_key)
     if state is None or state.run_id != str(mission.get("run_id", "")):
-        store.mark_stale(str(intent.get("id", "")))
         raise _stale_intent_error({"reason": "mission_changed"})
     try:
         _validate_approval_target(
@@ -4067,7 +4127,6 @@ def _validate_stored_intent_target(
             expected_artifact_version=str(target.get("artifact_version", "")),
         )
     except (ProjectApiError, ValueError) as exc:
-        store.mark_stale(str(intent.get("id", "")))
         details = exc.details if isinstance(exc, ProjectApiError) else {"reason": str(exc)}
         raise _stale_intent_error(details) from exc
 
@@ -4082,28 +4141,136 @@ def _stale_intent_error(details: Mapping[str, object] | None = None) -> ProjectA
     )
 
 
-def _intent_decision_action(
-    workspace: Path,
-    project_key: str,
+def _committed_intent_response(
+    intent: Mapping[str, object],
+    *,
+    idempotent: bool,
+    reconciled: bool = False,
+) -> dict[str, object]:
+    response = {
+        "intent_commit": dict(intent),
+        "decision": "changes_requested",
+        "committed": True,
+        "idempotent": idempotent,
+        **dict(intent.get("commit_result") or {}),
+    }
+    if reconciled:
+        response["reconciled"] = True
+    return response
+
+
+def _complete_intent_from_decision_action(
+    store: IntentCommitStore,
     intent_id: str,
-) -> dict[str, object] | None:
-    return next(
-        (
-            item
-            for item in build_action_items(workspace, project_key=project_key)
-            if item.get("action") == "approval_decided"
-            and item.get("review_mode") == "intent_commit"
-            and item.get("review_session_id") == intent_id
-        ),
-        None,
+    action: Mapping[str, object],
+    *,
+    idempotent: bool,
+) -> dict[str, object]:
+    committed = store.complete_commit(
+        intent_id,
+        decision="changes_requested",
+        result={
+            "run_id": str(action.get("run_id", "")),
+            "approval": str(action.get("gate", "")),
+            "next_node": str(action.get("after_node", "")),
+        },
+    )
+    return _committed_intent_response(
+        committed,
+        idempotent=idempotent,
+        reconciled=True,
     )
 
 
-def _ambiguous_intent_commit_error() -> ProjectApiError:
+def _reconcile_intent_decision_after_error(
+    *,
+    workspace: Path,
+    project_key: str,
+    store: IntentCommitStore,
+    intent: Mapping[str, object],
+) -> dict[str, object] | None:
+    evidence_state, action, details = _intent_decision_evidence(
+        workspace,
+        project_key,
+        intent,
+    )
+    intent_id = str(intent.get("id", ""))
+    if evidence_state == "matched" and action is not None:
+        return _complete_intent_from_decision_action(
+            store,
+            intent_id,
+            action,
+            idempotent=False,
+        )
+    if evidence_state == "ambiguous":
+        store.mark_ambiguous(intent_id, reason="decision_evidence_mismatch")
+        raise _ambiguous_intent_commit_error(details)
+    return None
+
+
+def _intent_decision_evidence(
+    workspace: Path,
+    project_key: str,
+    intent: Mapping[str, object],
+) -> tuple[str, dict[str, object] | None, dict[str, object]]:
+    """Classify durable authority evidence for one interrupted confirmation."""
+
+    intent_id = str(intent.get("id", ""))
+    candidates = [
+        item
+        for item in build_action_items(workspace, project_key=project_key)
+        if item.get("action") == "approval_decided"
+        and item.get("review_mode") == "intent_commit"
+        and item.get("review_session_id") == intent_id
+    ]
+    if not candidates:
+        return "none", None, {"reason": "decision_evidence_missing"}
+
+    mission = dict(intent.get("mission") or {})
+    target = dict(intent.get("target") or {})
+    interpretation = dict(intent.get("confirmed_interpretation") or {})
+    summary = str(interpretation.get("summary", "") or "").strip()
+
+    def matches(action: Mapping[str, object]) -> bool:
+        client_context = action.get("client_context")
+        client_context = client_context if isinstance(client_context, Mapping) else {}
+        return all(
+            (
+                action.get("decision") == "changes_requested",
+                action.get("decision_origin") == "manager_intent_commit",
+                action.get("run_id") == str(target.get("run_id", "") or mission.get("run_id", "")),
+                action.get("gate") == str(target.get("approval", "")),
+                action.get("artifact") == str(target.get("artifact_key", "")),
+                action.get("artifact_version") == str(target.get("artifact_version", "")),
+                action.get("note") == summary,
+                client_context.get("intent_commit_id") == intent_id,
+                client_context.get("interpretation_schema_version")
+                == str(interpretation.get("schema_version", "")),
+            )
+        )
+
+    matched = [item for item in candidates if matches(item)]
+    if len(candidates) == 1 and len(matched) == 1:
+        return "matched", matched[0], {"reason": "decision_evidence_matched"}
+    return (
+        "ambiguous",
+        None,
+        {
+            "reason": "decision_evidence_mismatch",
+            "evidence_count": len(candidates),
+            "matching_evidence_count": len(matched),
+        },
+    )
+
+
+def _ambiguous_intent_commit_error(
+    details: Mapping[str, object] | None = None,
+) -> ProjectApiError:
     return ProjectApiError(
         "intent_commit_ambiguous",
-        "The approval authority recorded this Intent Commit, but its completion could not be reconciled safely. GoodTeam will not replay it.",
+        "GoodTeam could not prove whether this Intent Commit reached the approval authority. It will not replay the decision.",
         409,
+        details=dict(details or {}),
         recovery=["refresh_change_discussion"],
     )
 

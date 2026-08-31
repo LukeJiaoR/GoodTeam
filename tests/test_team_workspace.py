@@ -708,6 +708,62 @@ def test_intent_commit_projection_fails_closed_when_artifact_binding_changes() -
     assert projected_intent["stale"] is True
 
 
+def test_interrupted_confirmation_projects_recovery_attention_after_authority_moves() -> None:
+    state = create_initial_state("run-intent", "DEMO", "Add provider-based authentication")
+    state.current_node = "security_review_gate"
+    state.next_node = "revise_security"
+    intent = {
+        "schema_version": "intent_commit.v1",
+        "id": "intent-recover",
+        "kind": "request_changes",
+        "mission": {"id": "run-intent", "run_id": "run-intent", "source": "workflow"},
+        "target": {
+            "approval": "security",
+            "run_id": "run-intent",
+            "target_type": "review",
+            "target_id": "security",
+            "task_id": "DEMO-SECURITY",
+            "artifact_key": "rfc",
+            "artifact_version": "sha256:rfc-v1",
+        },
+        "status": "committing",
+        "draft_text": "Keep the provider boundary generic.",
+        "interpretation": {
+            "schema_version": "intent_interpretation.v1",
+            "source": "deterministic_explicit_request",
+            "summary": "Keep the provider boundary generic.",
+            "items": [
+                {"kind": "explicit_request", "text": "Keep the provider boundary generic."}
+            ],
+        },
+        "confirmed_interpretation": {
+            "schema_version": "intent_interpretation.v1",
+            "source": "deterministic_explicit_request",
+            "summary": "Keep the provider boundary generic.",
+            "items": [
+                {"kind": "explicit_request", "text": "Keep the provider boundary generic."}
+            ],
+        },
+        "events": [],
+        "created_at": "2026-08-31T10:00:00Z",
+        "updated_at": "2026-08-31T10:01:00Z",
+    }
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        intent_commits=[intent],
+    )
+
+    attention = projection["attention_request"]
+    assert attention["id"] == "intent-recovery:intent-recover"
+    assert attention["kind"] == "blocker"
+    assert attention["reason"] == "intent_confirmation_recovery"
+    assert attention["intent_commit"]["status"] == "committing"
+    assert attention["intent_commit"]["stale"] is False
+
+
 def test_committed_intent_remains_in_timeline_without_blocking_the_revised_review() -> None:
     state = create_initial_state("run-intent", "DEMO", "Add provider-based authentication")
     state.current_node = "prd_review_gate"

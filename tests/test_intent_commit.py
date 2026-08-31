@@ -278,6 +278,102 @@ def test_confirm_uses_existing_approval_authority_and_duplicate_is_idempotent(tm
     assert decisions[0]["client_context"]["intent_commit_id"] == intent["id"]
 
 
+def test_restart_after_begin_confirm_without_decision_evidence_retries_safely(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    intent = _start(tmp_path)["intent_commit"]
+    instruction = "Ship Google only and preserve a generic provider interface."
+    web.discuss_request_changes_intent(
+        workspace=tmp_path,
+        project_key="DEMO",
+        intent_id=intent["id"],
+        text=instruction,
+    )
+    first_store = IntentCommitStore(tmp_path, "DEMO")
+    interrupted, already_committed = first_store.begin_confirm(intent["id"])
+    assert already_committed is False
+    assert interrupted["status"] == "committing"
+
+    restarted_store = IntentCommitStore(tmp_path, "DEMO")
+    assert restarted_store.get(intent["id"])["status"] == "committing"
+    decide_calls: list[dict[str, object]] = []
+
+    def fake_decide_approval(**kwargs):
+        decide_calls.append(kwargs)
+        return {"run_id": "run-intent", "next_node": "revise_prd"}
+
+    monkeypatch.setattr(web, "decide_approval", fake_decide_approval)
+
+    recovered = web.confirm_request_changes_intent(
+        workspace=tmp_path,
+        project_key="DEMO",
+        intent_id=intent["id"],
+    )
+
+    assert recovered["committed"] is True
+    assert recovered["idempotent"] is False
+    assert len(decide_calls) == 1
+    assert decide_calls[0]["note"] == instruction
+    assert IntentCommitStore(tmp_path, "DEMO").get(intent["id"])["status"] == "committed"
+
+
+def test_restart_after_authority_decision_reconciles_without_replay(tmp_path: Path) -> None:
+    intent = _start(tmp_path)["intent_commit"]
+    instruction = "Ship Google only and preserve a generic provider interface."
+    web.discuss_request_changes_intent(
+        workspace=tmp_path,
+        project_key="DEMO",
+        intent_id=intent["id"],
+        text=instruction,
+    )
+    first_store = IntentCommitStore(tmp_path, "DEMO")
+    confirming, already_committed = first_store.begin_confirm(intent["id"])
+    assert already_committed is False
+    interpretation = dict(confirming["confirmed_interpretation"])
+    target = dict(confirming["target"])
+
+    web.decide_approval(
+        workspace=tmp_path,
+        project_key="DEMO",
+        approval=str(target["approval"]),
+        decision="changes_requested",
+        note=instruction,
+        decision_origin="manager_intent_commit",
+        review_mode="intent_commit",
+        review_session_id=intent["id"],
+        client_context={
+            "intent_commit_id": intent["id"],
+            "interpretation_schema_version": interpretation["schema_version"],
+        },
+        expected_run_id=str(target["run_id"]),
+        expected_target_type=str(target["target_type"]),
+        expected_target_id=str(target["target_id"]),
+        expected_artifact_key=str(target["artifact_key"]),
+        expected_artifact_version=str(target["artifact_version"]),
+    )
+    restarted_store = IntentCommitStore(tmp_path, "DEMO")
+    assert restarted_store.get(intent["id"])["status"] == "committing"
+
+    recovered = web.confirm_request_changes_intent(
+        workspace=tmp_path,
+        project_key="DEMO",
+        intent_id=intent["id"],
+    )
+
+    decisions = [
+        item
+        for item in web.build_action_items(tmp_path, project_key="DEMO")
+        if item["action"] == "approval_decided"
+        and item.get("review_session_id") == intent["id"]
+    ]
+    assert len(decisions) == 1
+    assert recovered["committed"] is True
+    assert recovered["idempotent"] is True
+    assert recovered["reconciled"] is True
+    assert recovered["intent_commit"]["status"] == "committed"
+
+
 def test_stale_artifact_version_prevents_confirm_and_marks_intent_stale(
     tmp_path: Path,
     monkeypatch,
@@ -351,6 +447,6 @@ def test_ambiguous_partial_commit_fails_closed_without_replaying_decision(
         )
 
     assert first.value.code == "intent_commit_ambiguous"
-    assert duplicate.value.code == "intent_confirmation_in_progress"
+    assert duplicate.value.code == "intent_commit_ambiguous"
     assert len(decide_calls) == 1
-    assert IntentCommitStore(tmp_path, "DEMO").get(intent["id"])["status"] == "committing"
+    assert IntentCommitStore(tmp_path, "DEMO").get(intent["id"])["status"] == "ambiguous"

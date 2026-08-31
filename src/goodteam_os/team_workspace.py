@@ -327,6 +327,12 @@ def _build_workflow_workspace(
     updated_at = _latest_timestamp(ordered_actions, run_jobs, outcomes, run_intents)
     actors = _workflow_actors(outcomes, jobs_by_task, unbound_jobs_by_role)
     attention = _workflow_attention(state, tasks, outcomes, actors, approval_reviews)
+    unresolved_intent = _unresolved_confirmation_intent(state.run_id, run_intents)
+    if unresolved_intent is not None and not _attention_matches_intent(
+        attention,
+        unresolved_intent,
+    ):
+        attention = _intent_recovery_attention(unresolved_intent)
     if attention:
         active_intent = _intent_for_attention(state.run_id, attention, run_intents)
         if active_intent is not None:
@@ -1445,7 +1451,16 @@ def _intent_for_attention(
         for field in exact_fields
     )
     status = _text(intent.get("status"))
-    projected_status = status if exact else "stale"
+    projected_status = status if exact or status in {"committing", "ambiguous"} else "stale"
+    return _project_intent_commit(intent, projected_status=projected_status)
+
+
+def _project_intent_commit(
+    intent: Mapping[str, object],
+    *,
+    projected_status: str,
+) -> dict[str, Any]:
+    target = _mapping(intent.get("target"))
     interpretation = intent.get("interpretation")
     return {
         "schema_version": _text(intent.get("schema_version")),
@@ -1458,6 +1473,51 @@ def _intent_for_attention(
         "created_at": _text(intent.get("created_at")),
         "updated_at": _text(intent.get("updated_at")),
         "stale": projected_status == "stale",
+    }
+
+
+def _unresolved_confirmation_intent(
+    run_id: str,
+    intent_commits: Sequence[Mapping[str, object]],
+) -> Mapping[str, object] | None:
+    candidates = [
+        item
+        for item in intent_commits
+        if _text(item.get("kind")) == "request_changes"
+        and _text(item.get("status")) in {"committing", "ambiguous"}
+        and _text(_mapping(item.get("mission")).get("id")) == run_id
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (_updated_at(item), _text(item.get("id"))))
+
+
+def _attention_matches_intent(
+    attention: Mapping[str, object] | None,
+    intent: Mapping[str, object],
+) -> bool:
+    if attention is None:
+        return False
+    target = _mapping(intent.get("target"))
+    return bool(
+        _text(attention.get("target_type")) == _text(target.get("target_type"))
+        and _text(attention.get("target_id")) == _text(target.get("target_id"))
+    )
+
+
+def _intent_recovery_attention(intent: Mapping[str, object]) -> dict[str, Any]:
+    target = _mapping(intent.get("target"))
+    intent_id = _text(intent.get("id"))
+    target_id = _text(target.get("target_id"))
+    return {
+        "id": f"intent-recovery:{intent_id}",
+        "kind": "blocker",
+        "target_type": _text(target.get("target_type")),
+        "target_id": target_id,
+        "task_id": _text(target.get("task_id")),
+        "reason": "intent_confirmation_recovery",
+        "refs": [value for value in (intent_id, target_id) if value],
+        "actions": [],
     }
 
 
