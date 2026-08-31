@@ -952,6 +952,24 @@ test('keeps Manager attention in the conversation after recorded mission history
     .toBeTruthy();
 });
 
+test('renders compact system event chips for machine state and deliverable updates', async () => {
+  const data = managerReviewData();
+  data.team_workspace.manager_timeline = [
+    { id: 'intent', actor: 'user', kind: 'intent', event: 'mission_requested', timestamp: '2026-08-30T10:00:00Z', content: 'Make OAuth production ready', details: {} },
+    { id: 'organized', actor: 'manager', kind: 'progress', event: 'mission_organized', timestamp: '2026-08-30T10:00:01Z', content: '', details: { task_count: 2 } },
+    { id: 'artifact-ready', actor: 'manager', kind: 'outcome', event: 'deliverable_ready', timestamp: '2026-08-30T10:00:02Z', content: '', details: { artifact: 'prd.md' } },
+  ];
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+
+  renderWorkPage();
+
+  const manager = screen.getByRole('region', { name: 'Manager' });
+  const systemChip = manager.querySelector('.team-manager-event--system .team-manager-system-chip');
+  expect(systemChip).toBeInTheDocument();
+  expect(within(systemChip).getByText('prd.md is ready.')).toBeVisible();
+});
+
 test('renders a decision-ready Manager approval brief and keeps exact approval direct', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
