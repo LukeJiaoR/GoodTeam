@@ -142,6 +142,7 @@ function timelineCopy(item, t) {
       artifact: details.artifact || t('work.manager.deliverable'),
       decision: details.decision ? statusText(details.decision, t) : '',
       gate: details.gate ? reviewGateName(details.gate, t) : '',
+      attemptCount: details.attempt_count || 0,
       taskCount: details.task_count || 0,
     },
   );
@@ -475,6 +476,26 @@ function ManagerPane({
         </footer>
       ) : null}
     </section>
+  );
+}
+
+function ManagerHistoryPane({ language, projectKey, t, workspace }) {
+  return (
+    <div className="team-workspace team-workspace--history">
+      <ManagerPane
+        attention={null}
+        busy=""
+        capabilities={[]}
+        data={{ team_workspace: workspace }}
+        error={null}
+        language={language}
+        mission={workspace?.mission || null}
+        projectKey={projectKey}
+        sectionProps={{ 'data-read-only': 'true' }}
+        timeline={workspace?.manager_timeline || []}
+        t={t}
+      />
+    </div>
   );
 }
 
@@ -892,5 +913,5 @@ function TeamWorkspace({
 }
 
 
-export { ManagerMissionEntry };
+export { ManagerHistoryPane, ManagerMissionEntry };
 export default TeamWorkspace;

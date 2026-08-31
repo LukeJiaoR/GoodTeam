@@ -11,7 +11,7 @@ import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
-import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
+import TeamWorkspace, { ManagerHistoryPane, ManagerMissionEntry } from './workspace/TeamWorkspace';
 import {
   recommendationReasonText,
   reviewGateName,
@@ -355,22 +355,31 @@ export function ActivityView({ data, language, projectKey, t }) {
   );
 }
 
-function HistoricalRunView({ detail, projectKey, summary, t }) {
+function HistoricalRunView({ detail, language, projectKey, summary, t }) {
   const state = detail?.state || {};
   const title = runTitle({ ...state, ...summary }, t);
+  const workspace = detail?.team_workspace?.schema_version === 'team_workspace.v1'
+    ? detail.team_workspace
+    : null;
   return (
     <section className="work-historical-view">
       <p className="product-eyebrow">{t('work.history.title')}</p>
       <h2>{title}</h2>
       <p>{t('work.history.readOnly')}</p>
-      <dl className="settings-data-list">
-        <div><dt>{t('work.history.goal')}</dt><dd>{summary.idea || state.idea || '—'}</dd></div>
-        <div><dt>{t('work.history.source')}</dt><dd>{summary.source_type || state.source_type || '—'}</dd></div>
-        <div><dt>{t('work.history.status')}</dt><dd>{summary.status || '—'}</dd></div>
-        <div><dt>{t('work.history.currentNode')}</dt><dd>{state.current_node || summary.current_node || '—'}</dd></div>
-        <div><dt>{t('work.history.nextNode')}</dt><dd>{state.next_node || summary.next_node || '—'}</dd></div>
-        <div><dt>{t('work.history.updated')}</dt><dd><time dateTime={summary.updated_at}>{summary.updated_at || '—'}</time></dd></div>
-      </dl>
+      {workspace ? (
+        <ManagerHistoryPane language={language} projectKey={projectKey} t={t} workspace={workspace} />
+      ) : null}
+      <details className="work-historical-view__details">
+        <summary>{t('work.history.details')}</summary>
+        <dl className="settings-data-list">
+          <div><dt>{t('work.history.goal')}</dt><dd>{summary.idea || state.idea || '—'}</dd></div>
+          <div><dt>{t('work.history.source')}</dt><dd>{summary.source_type || state.source_type || '—'}</dd></div>
+          <div><dt>{t('work.history.status')}</dt><dd>{summary.status || '—'}</dd></div>
+          <div><dt>{t('work.history.currentNode')}</dt><dd>{state.current_node || summary.current_node || '—'}</dd></div>
+          <div><dt>{t('work.history.nextNode')}</dt><dd>{state.next_node || summary.next_node || '—'}</dd></div>
+          <div><dt>{t('work.history.updated')}</dt><dd><time dateTime={summary.updated_at}>{summary.updated_at || '—'}</time></dd></div>
+        </dl>
+      </details>
       <Link to={routes.projectWork(projectKey)}>{t('work.history.current')}</Link>
     </section>
   );
@@ -1041,7 +1050,7 @@ export default function WorkPage() {
       </header>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
-      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
+      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} language={language} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
         <>
           <TeamWorkspace
             busy={busy}

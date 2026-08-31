@@ -3252,13 +3252,43 @@ def build_project_run_detail(
             updated_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
             reason=path.stem.removeprefix(f"{state.run_id}-"),
         )
+    project_config = _project_config_for_key(workspace, key)
+    project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
+    agile_board = build_agile_board(state)
+    task_rows = [
+        task
+        for column in dict(agile_board.get("columns", {})).values()
+        for task in (column if isinstance(column, list) else [])
+        if isinstance(task, dict)
+    ]
+    worker_jobs = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
+    approval_reviews = build_approval_reviews(state, workspace=workspace)
+    team_workspace = build_team_workspace(
+        state=state,
+        workflow_active=False,
+        project_root=project_root,
+        project_key=key,
+        # The local task ledger is shared and stage rows are reused by later
+        # missions. Only a future explicitly run-bound task can enter an
+        # archived mission projection; durable worker identity still supplies
+        # retry lineage without leaking the current board into history.
+        tasks=[task for task in task_rows if str(task.get("run_id", "")) == state.run_id],
+        worker_jobs=worker_jobs,
+        approval_reviews=approval_reviews,
+        action_items=build_action_items(workspace, project_key=key),
+        intent_commits=IntentCommitStore(workspace, key).list_intents(mission_id=state.run_id),
+        read_only=True,
+        historical_reason=str(summary.get("reason", "")),
+    )
     return {
         "project_key": key,
         "run": summary,
         "state": asdict(state),
         "resources": build_resource_items(state),
         "workflow_steps": build_workflow_steps(state),
-        "agile_board": build_agile_board(state),
+        "agile_board": agile_board,
+        "approval_reviews": approval_reviews,
+        "team_workspace": team_workspace,
     }
 
 
