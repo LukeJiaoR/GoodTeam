@@ -174,14 +174,22 @@ function TimelineItem({ item, language, t }) {
 function ManagerAttention({
   attention,
   busy,
+  onConfirmChangeIntent,
   onDecide,
+  onDiscussChangeIntent,
+  onKeepDiscussingChangeIntent,
   onReview,
   onRetry,
+  onStartChangeIntent,
   projectKey,
   t,
 }) {
-  const [requestingChanges, setRequestingChanges] = useState(false);
-  const [note, setNote] = useState('');
+  const intent = attention?.intent_commit || null;
+  const [note, setNote] = useState(intent?.draft_text || '');
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- durable intent state replaces any draft from the prior authoritative projection.
+    setNote(intent?.draft_text || '');
+  }, [intent?.draft_text, intent?.id]);
   if (!attention) return null;
   const actions = new Set(attention.actions || []);
   const gate = attention.target_id || '';
@@ -200,9 +208,23 @@ function ManagerAttention({
   };
   const submitChanges = (event) => {
     event.preventDefault();
-    if (!note.trim()) return;
-    decide('changes_requested', note.trim());
+    if (!intent?.id || !note.trim()) return;
+    Promise.resolve()
+      .then(() => onDiscussChangeIntent?.(intent.id, note.trim()))
+      .catch(() => {});
   };
+  const startChangeDiscussion = () => Promise.resolve()
+    .then(() => onStartChangeIntent?.(gate, approvalBrief?.approval_target || null))
+    .catch(() => {});
+  const confirmChangeDiscussion = () => Promise.resolve()
+    .then(() => onConfirmChangeIntent?.(intent?.id))
+    .catch(() => {});
+  const keepDiscussing = () => Promise.resolve()
+    .then(() => onKeepDiscussingChangeIntent?.(intent?.id))
+    .catch(() => {});
+  const interpretationItems = Array.isArray(intent?.interpretation?.items)
+    ? intent.interpretation.items.filter((item) => item?.text)
+    : [];
   return (
     <section className="team-attention" data-kind={attention.kind} aria-label={t('work.manager.attention')}>
       <p className="team-attention__label">
@@ -218,15 +240,15 @@ function ManagerAttention({
         <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason)}</p>
       )}
       <div className="team-attention__actions">
-        {actions.has('approve') ? (
+        {!intent && actions.has('approve') ? (
           <Button busy={busy === 'decision'} onClick={() => decide('approved')}>
             {approvalBrief
               ? t('work.manager.approvalBrief.approve')
               : t('work.review.quickApprove')}
           </Button>
         ) : null}
-        {actions.has('request_changes') ? (
-          <Button variant="secondary" onClick={() => setRequestingChanges((value) => !value)}>
+        {!intent && actions.has('request_changes') ? (
+          <Button busy={busy === 'intent-start'} variant="secondary" onClick={startChangeDiscussion}>
             {t('work.manager.requestChanges')}
           </Button>
         ) : null}
@@ -243,17 +265,93 @@ function ManagerAttention({
           <Button busy={busy === 'retry'} onClick={onRetry}>{t('work.actions.retryBlocked')}</Button>
         ) : null}
       </div>
-      {requestingChanges ? (
-        <form className="team-attention__form" onSubmit={submitChanges}>
-          <label>
-            <span>{t('work.manager.changeReason')}</span>
-            <textarea required rows="3" value={note} onChange={(event) => setNote(event.target.value)} />
-          </label>
-          <div>
-            <Button busy={busy === 'decision'} disabled={!note.trim()} type="submit">{t('work.manager.sendChanges')}</Button>
-            <Button variant="secondary" onClick={() => setRequestingChanges(false)}>{t('work.manager.keepWorking')}</Button>
+      {intent?.status === 'discussing' ? (
+        <div className="team-intent-commit" data-status="discussing">
+          <div className="team-intent-commit__heading">
+            <strong>{t('work.manager.intent.question')}</strong>
+            <StatusBadge tone="pending">{t('work.manager.intent.discussing')}</StatusBadge>
           </div>
-        </form>
+          <p>{t('work.manager.intent.restate')}</p>
+          <form className="team-attention__form" onSubmit={submitChanges}>
+            <label>
+              <span>{t('work.manager.changeReason')}</span>
+              <textarea required rows="4" value={note} onChange={(event) => setNote(event.target.value)} />
+            </label>
+            <div>
+              <Button
+                busy={busy === 'intent-discuss'}
+                disabled={!note.trim()}
+                type="submit"
+              >
+                {t('work.manager.intent.reviewInterpretation')}
+              </Button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {intent?.status === 'ready_to_confirm' ? (
+        <div className="team-intent-commit" data-status="ready_to_confirm">
+          <div className="team-intent-commit__heading">
+            <strong>{t('work.manager.intent.understanding')}</strong>
+            <StatusBadge tone="warning">{t('work.manager.intent.notCommitted')}</StatusBadge>
+          </div>
+          {interpretationItems.length ? (
+            <ol className="team-intent-commit__interpretation">
+              {interpretationItems.map((item, index) => (
+                <li key={`${item.kind || 'request'}:${index}`}>{item.text}</li>
+              ))}
+            </ol>
+          ) : (
+            <p>{t('work.manager.intent.unsafeInterpretation')}</p>
+          )}
+          <p className="team-intent-commit__boundary">{t('work.manager.intent.confirmBoundary')}</p>
+          <div className="team-intent-commit__actions">
+            <Button
+              busy={busy === 'intent-confirm'}
+              disabled={!interpretationItems.length}
+              onClick={confirmChangeDiscussion}
+            >
+              {t('work.manager.intent.confirm')}
+            </Button>
+            <Button
+              busy={busy === 'intent-discuss'}
+              variant="secondary"
+              onClick={keepDiscussing}
+            >
+              {t('work.manager.intent.keepDiscussing')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {intent?.status === 'committing' ? (
+        <div className="team-intent-commit" data-status="committing" role="status">
+          <strong>{t('work.manager.intent.committing')}</strong>
+          <p>{t('work.manager.intent.commitBoundary')}</p>
+          <Button busy={busy === 'intent-confirm'} onClick={confirmChangeDiscussion}>
+            {t('work.manager.intent.resumeConfirmation')}
+          </Button>
+        </div>
+      ) : null}
+      {intent?.status === 'ambiguous' ? (
+        <div className="team-intent-commit" data-status="ambiguous" role="alert">
+          <div className="team-intent-commit__heading">
+            <strong>{t('work.manager.intent.ambiguousTitle')}</strong>
+            <StatusBadge tone="danger">{t('work.manager.intent.ambiguous')}</StatusBadge>
+          </div>
+          <p>{t('work.manager.intent.ambiguousDescription')}</p>
+        </div>
+      ) : null}
+      {intent?.status === 'stale' ? (
+        <div className="team-intent-commit" data-status="stale" role="alert">
+          <div className="team-intent-commit__heading">
+            <strong>{t('work.manager.intent.staleTitle')}</strong>
+            <StatusBadge tone="danger">{t('work.manager.intent.stale')}</StatusBadge>
+          </div>
+          <p>{t('work.manager.intent.staleDescription')}</p>
+          <Button busy={busy === 'intent-start'} onClick={startChangeDiscussion}>
+            {t('work.manager.intent.restart')}
+          </Button>
+        </div>
       ) : null}
     </section>
   );
@@ -287,10 +385,14 @@ function ManagerPane({
   error,
   language,
   mission,
+  onConfirmChangeIntent,
   onDecide,
+  onDiscussChangeIntent,
+  onKeepDiscussingChangeIntent,
   onReview,
   onRetry,
   onStart,
+  onStartChangeIntent,
   onTerminate,
   projectKey,
   sectionProps,
@@ -340,9 +442,14 @@ function ManagerPane({
             <ManagerAttention
               attention={attention}
               busy={busy}
+              key={`${attention?.id || 'none'}:${attention?.intent_commit?.id || 'direct'}:${attention?.intent_commit?.status || 'idle'}`}
+              onConfirmChangeIntent={onConfirmChangeIntent}
               onDecide={onDecide}
+              onDiscussChangeIntent={onDiscussChangeIntent}
+              onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
               onReview={onReview}
               onRetry={onRetry}
+              onStartChangeIntent={onStartChangeIntent}
               projectKey={projectKey}
               t={t}
             />
@@ -560,10 +667,14 @@ function TeamWorkspace({
   inspectorContent,
   language,
   onCloseInspector,
+  onConfirmChangeIntent,
   onDecide,
+  onDiscussChangeIntent,
   onInspect,
+  onKeepDiscussingChangeIntent,
   onRetry,
   onStart,
+  onStartChangeIntent,
   onTerminate,
   projectKey,
   reducedMotion,
@@ -718,10 +829,14 @@ function TeamWorkspace({
           error={error}
           language={language}
           mission={mission}
+          onConfirmChangeIntent={onConfirmChangeIntent}
           onDecide={onDecide}
+          onDiscussChangeIntent={onDiscussChangeIntent}
+          onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
           onReview={attentionReviewTask ? reviewAttentionOutcome : undefined}
           onRetry={onRetry}
           onStart={onStart}
+          onStartChangeIntent={onStartChangeIntent}
           onTerminate={onTerminate}
           projectKey={projectKey}
           sectionProps={sectionProps('manager')}
@@ -753,6 +868,13 @@ function TeamWorkspace({
           projectKey={projectKey}
           onDecide={onDecide}
           onClose={closeTaskModal}
+          onRequestChanges={activeReviewTargetId && attention?.approval_brief ? async () => {
+            await onStartChangeIntent?.(
+              attention.target_id,
+              attention.approval_brief.approval_target,
+            );
+            setMobileTab('manager');
+          } : undefined}
           t={t}
         />
       ) : null}

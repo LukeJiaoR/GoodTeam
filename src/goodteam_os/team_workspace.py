@@ -265,6 +265,7 @@ def build_team_workspace(
     worker_jobs: Sequence[Mapping[str, object]] = (),
     approval_reviews: Sequence[Mapping[str, object]] = (),
     action_items: Sequence[Mapping[str, object]] = (),
+    intent_commits: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, Any]:
     """Project durable records into the Manager-centered Work contract.
 
@@ -280,6 +281,7 @@ def build_team_workspace(
             worker_jobs=worker_jobs,
             approval_reviews=approval_reviews,
             action_items=action_items,
+            intent_commits=intent_commits,
         )
     if operator_state_dir is not None and project_key:
         queue_item = _active_operator_item(operator_state_dir, project_key)
@@ -304,6 +306,7 @@ def _build_workflow_workspace(
     worker_jobs: Sequence[Mapping[str, object]],
     approval_reviews: Sequence[Mapping[str, object]],
     action_items: Sequence[Mapping[str, object]],
+    intent_commits: Sequence[Mapping[str, object]],
 ) -> dict[str, Any]:
     run_actions = [item for item in action_items if _text(item.get("run_id")) in {"", state.run_id}]
     # Worker jobs always persist a run id. Blank or foreign ids belong in the
@@ -316,9 +319,24 @@ def _build_workflow_workspace(
     )
     jobs_by_task, unbound_jobs_by_role = _associate_workflow_jobs(tasks, run_jobs)
     outcomes = _workflow_outcomes(tasks, jobs_by_task, approval_reviews)
-    updated_at = _latest_timestamp(ordered_actions, run_jobs, outcomes)
+    run_intents = [
+        item
+        for item in intent_commits
+        if _text(_mapping(item.get("mission")).get("id")) == state.run_id
+    ]
+    updated_at = _latest_timestamp(ordered_actions, run_jobs, outcomes, run_intents)
     actors = _workflow_actors(outcomes, jobs_by_task, unbound_jobs_by_role)
     attention = _workflow_attention(state, tasks, outcomes, actors, approval_reviews)
+    unresolved_intent = _unresolved_confirmation_intent(state.run_id, run_intents)
+    if unresolved_intent is not None and not _attention_matches_intent(
+        attention,
+        unresolved_intent,
+    ):
+        attention = _intent_recovery_attention(unresolved_intent)
+    if attention:
+        active_intent = _intent_for_attention(state.run_id, attention, run_intents)
+        if active_intent is not None:
+            attention = {**attention, "intent_commit": active_intent}
     actors = _apply_workflow_attention_reason(actors, attention)
     mission_status = "waiting" if attention else "working"
 
@@ -345,6 +363,7 @@ def _build_workflow_workspace(
         },
     ]
     timeline.extend(_workflow_timeline_items(state.run_id, ordered_actions))
+    timeline.extend(_intent_commit_timeline_items(state.run_id, run_intents))
 
     if attention:
         mission_status = "blocked" if attention["kind"] == "blocker" else "waiting"
@@ -1405,11 +1424,152 @@ def _workflow_capabilities(
     return capabilities
 
 
+def _intent_for_attention(
+    run_id: str,
+    attention: Mapping[str, object],
+    intent_commits: Sequence[Mapping[str, object]],
+) -> dict[str, Any] | None:
+    target_id = _text(attention.get("target_id"))
+    target_type = _text(attention.get("target_type"))
+    candidates = [
+        item
+        for item in intent_commits
+        if _text(item.get("kind")) == "request_changes"
+        and _text(item.get("status")) not in {"committed", "cancelled"}
+        and _text(_mapping(item.get("mission")).get("id")) == run_id
+        and _text(_mapping(item.get("target")).get("target_id")) == target_id
+        and _text(_mapping(item.get("target")).get("target_type")) == target_type
+    ]
+    if not candidates:
+        return None
+    intent = max(candidates, key=lambda item: (_updated_at(item), _text(item.get("id"))))
+    target = _mapping(intent.get("target"))
+    current = _mapping(_mapping(attention.get("approval_brief")).get("approval_target"))
+    exact_fields = ("run_id", "target_type", "target_id", "artifact_key", "artifact_version")
+    exact = bool(current) and all(
+        _text(target.get(field)) == _text(current.get(field))
+        for field in exact_fields
+    )
+    status = _text(intent.get("status"))
+    projected_status = status if exact or status in {"committing", "ambiguous"} else "stale"
+    return _project_intent_commit(intent, projected_status=projected_status)
+
+
+def _project_intent_commit(
+    intent: Mapping[str, object],
+    *,
+    projected_status: str,
+) -> dict[str, Any]:
+    target = _mapping(intent.get("target"))
+    interpretation = intent.get("interpretation")
+    return {
+        "schema_version": _text(intent.get("schema_version")),
+        "id": _text(intent.get("id")),
+        "kind": "request_changes",
+        "status": projected_status,
+        "draft_text": _text(intent.get("draft_text")),
+        "interpretation": dict(interpretation) if isinstance(interpretation, Mapping) else None,
+        "target": dict(target),
+        "created_at": _text(intent.get("created_at")),
+        "updated_at": _text(intent.get("updated_at")),
+        "stale": projected_status == "stale",
+    }
+
+
+def _unresolved_confirmation_intent(
+    run_id: str,
+    intent_commits: Sequence[Mapping[str, object]],
+) -> Mapping[str, object] | None:
+    candidates = [
+        item
+        for item in intent_commits
+        if _text(item.get("kind")) == "request_changes"
+        and _text(item.get("status")) in {"committing", "ambiguous"}
+        and _text(_mapping(item.get("mission")).get("id")) == run_id
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (_updated_at(item), _text(item.get("id"))))
+
+
+def _attention_matches_intent(
+    attention: Mapping[str, object] | None,
+    intent: Mapping[str, object],
+) -> bool:
+    if attention is None:
+        return False
+    target = _mapping(intent.get("target"))
+    return bool(
+        _text(attention.get("target_type")) == _text(target.get("target_type"))
+        and _text(attention.get("target_id")) == _text(target.get("target_id"))
+    )
+
+
+def _intent_recovery_attention(intent: Mapping[str, object]) -> dict[str, Any]:
+    target = _mapping(intent.get("target"))
+    intent_id = _text(intent.get("id"))
+    target_id = _text(target.get("target_id"))
+    return {
+        "id": f"intent-recovery:{intent_id}",
+        "kind": "blocker",
+        "target_type": _text(target.get("target_type")),
+        "target_id": target_id,
+        "task_id": _text(target.get("task_id")),
+        "reason": "intent_confirmation_recovery",
+        "refs": [value for value in (intent_id, target_id) if value],
+        "actions": [],
+    }
+
+
+def _intent_commit_timeline_items(
+    run_id: str,
+    intent_commits: Sequence[Mapping[str, object]],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for intent in intent_commits:
+        mission = _mapping(intent.get("mission"))
+        target = _mapping(intent.get("target"))
+        if _text(mission.get("id")) != run_id or _text(intent.get("kind")) != "request_changes":
+            continue
+        intent_id = _text(intent.get("id"))
+        for event in _list(intent.get("events")):
+            if not isinstance(event, Mapping):
+                continue
+            event_name = _text(event.get("event"))
+            actor = _text(event.get("actor"))
+            if not event_name or actor not in {"user", "manager"}:
+                continue
+            items.append(
+                {
+                    "id": _text(event.get("id")) or f"{intent_id}:{event_name}:{len(items)}",
+                    "actor": actor,
+                    "kind": "intent",
+                    "event": event_name,
+                    "timestamp": _text(event.get("timestamp")),
+                    "content": _text(event.get("content")),
+                    "details": {
+                        "intent_id": intent_id,
+                        "intent_status": _text(intent.get("status")),
+                        "gate": _text(target.get("target_id")),
+                        "target_id": _text(target.get("target_id")),
+                    },
+                    "refs": [value for value in (intent_id, _text(target.get("target_id"))) if value],
+                }
+            )
+    return items
+
+
 def _workflow_timeline_items(run_id: str, actions: Sequence[Mapping[str, object]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for index, action in enumerate(actions):
         action_name = _text(action.get("action"))
         if action_name == "workflow_started":
+            continue
+        # Intent Commit owns the human-readable semantic chain for its
+        # confirmation. The lower-level approval action is still durable audit
+        # evidence, but projecting it here would place the mutation before the
+        # subsequent confirmed/committed conversation events.
+        if action_name == "approval_decided" and _text(action.get("review_mode")) == "intent_commit":
             continue
         event = _workflow_event_name(action_name)
         if not event:

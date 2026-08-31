@@ -190,6 +190,15 @@
     margin: 0.25rem auto 1rem;
   }
 
+  .work-workspace-shell .team-intent-commit__heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .work-workspace-shell .team-intent-commit__actions > .product-button {
+    width: 100%;
+  }
+
   .work-workspace-shell .team-manager-objective {
     max-width: calc(100% - 1.7rem);
     margin-left: auto;

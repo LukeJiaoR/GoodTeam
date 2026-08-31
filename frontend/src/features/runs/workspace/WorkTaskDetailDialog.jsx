@@ -229,6 +229,7 @@ export default function WorkTaskDetailDialog({
   projectKey = '',
   onDecide,
   onClose,
+  onRequestChanges,
   t,
 }) {
   const dialogRef = useRef(null);
@@ -321,6 +322,20 @@ export default function WorkTaskDetailDialog({
     setMutationError(null);
     try {
       await onDecide(review.approval, decision, note);
+      onClose();
+    } catch (err) {
+      setMutationError(err);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const handleRequestChanges = async () => {
+    if (!onRequestChanges || !review?.approval) return;
+    setBusy('changes_requested');
+    setMutationError(null);
+    try {
+      await onRequestChanges(review.approval);
       onClose();
     } catch (err) {
       setMutationError(err);
@@ -671,8 +686,10 @@ export default function WorkTaskDetailDialog({
                     <Button
                       variant="secondary"
                       busy={busy === 'changes_requested'}
-                      disabled={Boolean(busy) || !note.trim()}
-                      onClick={() => handleDecision('changes_requested')}
+                      disabled={Boolean(busy) || (!onRequestChanges && !note.trim())}
+                      onClick={onRequestChanges
+                        ? handleRequestChanges
+                        : () => handleDecision('changes_requested')}
                     >
                       {busy === 'changes_requested' ? t('work.plan.approval.requestingChanges') : t('work.plan.approval.changes')}
                     </Button>

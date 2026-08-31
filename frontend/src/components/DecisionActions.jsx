@@ -7,7 +7,7 @@ const SNIPPET_KEYS = [
   'review.snippet.refine',
 ];
 
-export default function DecisionActions({ busy = '', error, onDecision, t }) {
+export default function DecisionActions({ busy = '', error, onDecision, onRequestChanges, t }) {
   const [note, setNote] = useState('');
 
   const handleKeyDown = (event) => {
@@ -59,8 +59,10 @@ export default function DecisionActions({ busy = '', error, onDecision, t }) {
       <Button
         variant="secondary"
         busy={busy === 'changes_requested'}
-        disabled={!note.trim()}
-        onClick={() => onDecision('changes_requested', note)}
+        disabled={!onRequestChanges && !note.trim()}
+        onClick={() => (
+          onRequestChanges ? onRequestChanges() : onDecision('changes_requested', note)
+        )}
       >
         {t('review.decision.changes')}
       </Button>

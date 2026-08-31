@@ -568,6 +568,336 @@ def test_approval_attention_outranks_existing_blockers() -> None:
     }
 
 
+def test_intent_commit_reentry_projects_discussion_and_semantic_timeline() -> None:
+    state = create_initial_state("run-intent", "DEMO", "Add provider-based authentication")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    intent = {
+        "schema_version": "intent_commit.v1",
+        "id": "intent-1",
+        "kind": "request_changes",
+        "mission": {"id": "run-intent", "run_id": "run-intent", "source": "workflow"},
+        "target": {
+            "approval": "prd",
+            "run_id": "run-intent",
+            "target_type": "review",
+            "target_id": "prd",
+            "task_id": "DEMO-PRD",
+            "artifact_key": "prd",
+            "artifact_version": "sha256:prd-v1",
+            "head_sha": "",
+        },
+        "status": "ready_to_confirm",
+        "draft_text": "Ship Google only and preserve a generic provider interface.",
+        "interpretation": {
+            "schema_version": "intent_interpretation.v1",
+            "source": "deterministic_explicit_request",
+            "summary": "Ship Google only and preserve a generic provider interface.",
+            "items": [
+                {
+                    "kind": "explicit_request",
+                    "text": "Ship Google only and preserve a generic provider interface.",
+                }
+            ],
+        },
+        "events": [
+            {
+                "id": "intent-1:event:001",
+                "actor": "manager",
+                "event": "change_discussion_started",
+                "timestamp": "2026-08-31T10:00:00Z",
+                "content": "",
+            },
+            {
+                "id": "intent-1:event:002",
+                "actor": "user",
+                "event": "change_request_shared",
+                "timestamp": "2026-08-31T10:01:00Z",
+                "content": "Ship Google only and preserve a generic provider interface.",
+            },
+            {
+                "id": "intent-1:event:003",
+                "actor": "manager",
+                "event": "change_intent_summarized",
+                "timestamp": "2026-08-31T10:01:00Z",
+                "content": "Ship Google only and preserve a generic provider interface.",
+            },
+        ],
+        "created_at": "2026-08-31T10:00:00Z",
+        "updated_at": "2026-08-31T10:01:00Z",
+    }
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        approval_reviews=[
+            {
+                "approval": "prd",
+                "artifact": "prd",
+                "artifact_version": "sha256:prd-v1",
+                "is_actionable": True,
+            }
+        ],
+        intent_commits=[intent],
+    )
+
+    projected_intent = projection["attention_request"]["intent_commit"]
+    assert projected_intent["id"] == "intent-1"
+    assert projected_intent["status"] == "ready_to_confirm"
+    assert projected_intent["stale"] is False
+    assert [
+        item["event"]
+        for item in projection["manager_timeline"]
+        if item.get("details", {}).get("intent_id") == "intent-1"
+    ] == [
+        "change_discussion_started",
+        "change_request_shared",
+        "change_intent_summarized",
+    ]
+    intent_timeline = [
+        item
+        for item in projection["manager_timeline"]
+        if item.get("details", {}).get("intent_id") == "intent-1"
+    ]
+    assert all(item["details"]["gate"] == "prd" for item in intent_timeline)
+
+
+def test_intent_commit_projection_fails_closed_when_artifact_binding_changes() -> None:
+    state = create_initial_state("run-intent", "DEMO", "Add provider-based authentication")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    intent = {
+        "schema_version": "intent_commit.v1",
+        "id": "intent-stale",
+        "kind": "request_changes",
+        "mission": {"id": "run-intent", "run_id": "run-intent"},
+        "target": {
+            "approval": "prd",
+            "run_id": "run-intent",
+            "target_type": "review",
+            "target_id": "prd",
+            "artifact_key": "prd",
+            "artifact_version": "sha256:old",
+        },
+        "status": "ready_to_confirm",
+        "draft_text": "Keep the provider interface generic.",
+        "interpretation": None,
+        "events": [],
+        "created_at": "2026-08-31T10:00:00Z",
+        "updated_at": "2026-08-31T10:01:00Z",
+    }
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        approval_reviews=[
+            {
+                "approval": "prd",
+                "artifact": "prd",
+                "artifact_version": "sha256:new",
+                "is_actionable": True,
+            }
+        ],
+        intent_commits=[intent],
+    )
+
+    projected_intent = projection["attention_request"]["intent_commit"]
+    assert projected_intent["status"] == "stale"
+    assert projected_intent["stale"] is True
+
+
+def test_interrupted_confirmation_projects_recovery_attention_after_authority_moves() -> None:
+    state = create_initial_state("run-intent", "DEMO", "Add provider-based authentication")
+    state.current_node = "security_review_gate"
+    state.next_node = "revise_security"
+    intent = {
+        "schema_version": "intent_commit.v1",
+        "id": "intent-recover",
+        "kind": "request_changes",
+        "mission": {"id": "run-intent", "run_id": "run-intent", "source": "workflow"},
+        "target": {
+            "approval": "security",
+            "run_id": "run-intent",
+            "target_type": "review",
+            "target_id": "security",
+            "task_id": "DEMO-SECURITY",
+            "artifact_key": "rfc",
+            "artifact_version": "sha256:rfc-v1",
+        },
+        "status": "committing",
+        "draft_text": "Keep the provider boundary generic.",
+        "interpretation": {
+            "schema_version": "intent_interpretation.v1",
+            "source": "deterministic_explicit_request",
+            "summary": "Keep the provider boundary generic.",
+            "items": [
+                {"kind": "explicit_request", "text": "Keep the provider boundary generic."}
+            ],
+        },
+        "confirmed_interpretation": {
+            "schema_version": "intent_interpretation.v1",
+            "source": "deterministic_explicit_request",
+            "summary": "Keep the provider boundary generic.",
+            "items": [
+                {"kind": "explicit_request", "text": "Keep the provider boundary generic."}
+            ],
+        },
+        "events": [],
+        "created_at": "2026-08-31T10:00:00Z",
+        "updated_at": "2026-08-31T10:01:00Z",
+    }
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        intent_commits=[intent],
+    )
+
+    attention = projection["attention_request"]
+    assert attention["id"] == "intent-recovery:intent-recover"
+    assert attention["kind"] == "blocker"
+    assert attention["reason"] == "intent_confirmation_recovery"
+    assert attention["intent_commit"]["status"] == "committing"
+    assert attention["intent_commit"]["stale"] is False
+
+
+def test_committed_intent_remains_in_timeline_without_blocking_the_revised_review() -> None:
+    state = create_initial_state("run-intent", "DEMO", "Add provider-based authentication")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    intent = {
+        "schema_version": "intent_commit.v1",
+        "id": "intent-committed",
+        "kind": "request_changes",
+        "mission": {"id": "run-intent", "run_id": "run-intent", "source": "workflow"},
+        "target": {
+            "approval": "prd",
+            "run_id": "run-intent",
+            "target_type": "review",
+            "target_id": "prd",
+            "artifact_key": "prd",
+            "artifact_version": "sha256:old",
+        },
+        "status": "committed",
+        "draft_text": "Keep the provider interface generic.",
+        "interpretation": None,
+        "events": [
+            {
+                "id": "intent-committed:event:1",
+                "actor": "user",
+                "event": "change_intent_confirmed",
+                "timestamp": "2026-08-31T10:02:00Z",
+                "content": "Keep the provider interface generic.",
+            },
+            {
+                "id": "intent-committed:event:2",
+                "actor": "manager",
+                "event": "change_request_committed",
+                "timestamp": "2026-08-31T10:02:01Z",
+                "content": "Keep the provider interface generic.",
+            },
+        ],
+        "created_at": "2026-08-31T10:00:00Z",
+        "updated_at": "2026-08-31T10:02:01Z",
+    }
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        approval_reviews=[
+            {
+                "approval": "prd",
+                "artifact": "prd",
+                "artifact_version": "sha256:revised",
+                "is_actionable": True,
+            }
+        ],
+        intent_commits=[intent],
+    )
+
+    assert "intent_commit" not in projection["attention_request"]
+    assert [
+        item["event"]
+        for item in projection["manager_timeline"]
+        if item.get("details", {}).get("intent_id") == "intent-committed"
+    ] == ["change_intent_confirmed", "change_request_committed"]
+    assert projection["attention_request"]["actions"] == ["approve", "request_changes", "review"]
+
+
+def test_committed_intent_timeline_uses_semantic_chain_not_raw_approval_event() -> None:
+    state = create_initial_state("run-intent", "DEMO", "Add provider-based authentication")
+    state.current_node = "implementation"
+    state.next_node = "planner"
+    intent = {
+        "schema_version": "intent_commit.v1",
+        "id": "intent-committed",
+        "kind": "request_changes",
+        "mission": {"id": "run-intent", "run_id": "run-intent"},
+        "target": {"target_type": "review", "target_id": "prd"},
+        "status": "committed",
+        "draft_text": "Keep the provider interface generic.",
+        "interpretation": None,
+        "events": [
+            {
+                "id": f"intent-committed:event:{index}",
+                "actor": actor,
+                "event": event,
+                "timestamp": f"2026-08-31T10:0{index}:00Z",
+                "content": "Keep the provider interface generic." if index in {2, 3, 4, 5} else "",
+            }
+            for index, (actor, event) in enumerate(
+                [
+                    ("manager", "change_discussion_started"),
+                    ("user", "change_request_shared"),
+                    ("manager", "change_intent_summarized"),
+                    ("user", "change_intent_confirmed"),
+                    ("manager", "change_request_committed"),
+                ],
+                start=1,
+            )
+        ],
+        "created_at": "2026-08-31T10:01:00Z",
+        "updated_at": "2026-08-31T10:05:00Z",
+    }
+    approval_action = {
+        "run_id": "run-intent",
+        "action": "approval_decided",
+        "actor": "human",
+        "gate": "prd",
+        "decision": "changes_requested",
+        "review_mode": "intent_commit",
+        "timestamp": "2026-08-31T10:03:30Z",
+    }
+
+    projection = build_team_workspace(
+        state=state,
+        workflow_active=True,
+        project_root=None,
+        action_items=[approval_action],
+        intent_commits=[intent],
+    )
+
+    semantic_events = [
+        item["event"]
+        for item in projection["manager_timeline"]
+        if item.get("details", {}).get("intent_id") == "intent-committed"
+    ]
+    assert semantic_events == [
+        "change_discussion_started",
+        "change_request_shared",
+        "change_intent_summarized",
+        "change_intent_confirmed",
+        "change_request_committed",
+    ]
+    assert not any(
+        item["event"] == "approval_decided"
+        for item in projection["manager_timeline"]
+    )
+
+
 def test_approval_attention_targets_one_outcome_by_durable_stage_identity() -> None:
     state = create_initial_state("run-review", "DEMO", "Review the architecture")
     state.next_node = "await_security_approval"

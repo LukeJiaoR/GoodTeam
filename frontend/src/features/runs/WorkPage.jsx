@@ -430,6 +430,7 @@ export function PlanView({
   busyDecision = '',
   language,
   onDecide,
+  onRequestChanges,
   onRetry,
   onTerminate,
   projectKey,
@@ -537,6 +538,7 @@ export function PlanView({
             reviews={resolvedReviews}
             projectKey={projectKey}
             onDecide={onDecide}
+            onRequestChanges={onRequestChanges}
             onClose={handleClose}
             t={t}
           />
@@ -848,6 +850,67 @@ export default function WorkPage() {
     }
   };
 
+  const refreshStaleIntent = async (caught) => {
+    if (caught?.code === 'stale_intent_target') {
+      await Promise.allSettled([refresh(), loadRuns()]);
+    }
+    toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
+    throw caught;
+  };
+
+  const handleStartChangeIntent = async (approval, approvalTarget = null) => {
+    const currentReview = (data?.approval_reviews || []).find(
+      (review) => review.approval === approval && review.is_actionable,
+    );
+    const expectedTarget = approvalTarget
+      || approvalTargetForReview(currentReview, data?.state?.run_id || '');
+    try {
+      return await mutate('intent-start', () => (
+        runApi.startChangeIntent(projectKey, approval, expectedTarget)
+      ));
+    } catch (caught) {
+      return refreshStaleIntent(caught);
+    }
+  };
+
+  const handleRequestChanges = async (approval, approvalTarget = null) => {
+    const result = await handleStartChangeIntent(approval, approvalTarget);
+    closeInspector();
+    return result;
+  };
+
+  const handleDiscussChangeIntent = async (intentId, text) => {
+    try {
+      return await mutate('intent-discuss', () => (
+        runApi.discussChangeIntent(projectKey, intentId, text)
+      ));
+    } catch (caught) {
+      return refreshStaleIntent(caught);
+    }
+  };
+
+  const handleKeepDiscussingChangeIntent = async (intentId) => {
+    try {
+      return await mutate('intent-discuss', () => (
+        runApi.keepDiscussingChangeIntent(projectKey, intentId)
+      ));
+    } catch (caught) {
+      return refreshStaleIntent(caught);
+    }
+  };
+
+  const handleConfirmChangeIntent = async (intentId) => {
+    try {
+      const result = await mutate('intent-confirm', () => (
+        runApi.confirmChangeIntent(projectKey, intentId)
+      ));
+      toast.success(t('toast.decisionSubmitted'));
+      return result;
+    } catch (caught) {
+      return refreshStaleIntent(caught);
+    }
+  };
+
   const start = (goal) => mutate('start', () => runApi.startRun({
     idea: goal,
     project_key: projectKey,
@@ -869,6 +932,7 @@ export default function WorkPage() {
           <WorkflowCanvas
             fallback={reducedMotion}
             onDecided={undefined}
+            onRequestChanges={handleRequestChanges}
             projectKey={projectKey}
             reviews={data.approval_reviews || []}
             runId={data?.state?.run_id || ''}
@@ -881,6 +945,7 @@ export default function WorkPage() {
             busyDecision={busy === 'decision' ? 'approved' : ''}
             language={language}
             onDecide={handleDecide}
+            onRequestChanges={handleRequestChanges}
             onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
             onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
             projectKey={projectKey}
@@ -985,10 +1050,14 @@ export default function WorkPage() {
             inspectorContent={inspectorContent}
             language={language}
             onCloseInspector={closeInspector}
+            onConfirmChangeIntent={handleConfirmChangeIntent}
             onDecide={handleDecide}
+            onDiscussChangeIntent={handleDiscussChangeIntent}
             onInspect={openInspector}
+            onKeepDiscussingChangeIntent={handleKeepDiscussingChangeIntent}
             onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
             onStart={start}
+            onStartChangeIntent={handleStartChangeIntent}
             onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
             projectKey={projectKey}
             reducedMotion={reducedMotion}
@@ -1010,6 +1079,7 @@ export default function WorkPage() {
           <WorkflowCanvas
             fallback={reducedMotion}
             onDecided={refresh}
+            onRequestChanges={handleRequestChanges}
             projectKey={projectKey}
             reviews={data.approval_reviews || []}
             runId={data?.state?.run_id || ''}
@@ -1027,6 +1097,7 @@ export default function WorkPage() {
               busyDecision={busy === 'decision' ? 'approved' : ''}
               language={language}
               onDecide={handleDecide}
+              onRequestChanges={handleRequestChanges}
               onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
               onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
               projectKey={projectKey}

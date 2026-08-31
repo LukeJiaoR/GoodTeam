@@ -9,6 +9,7 @@ import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { useToast } from '../../components/ui/ToastProvider';
 import { routes } from '../../lib/routing/routes';
+import { runApi } from '../runs/runApi';
 import useProjectState from '../runs/useProjectState';
 import { reviewApi } from './reviewApi';
 
@@ -207,7 +208,7 @@ function DecisionResult({ decisionNote, projectKey, t }) {
   );
 }
 
-function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
+function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onRequestChanges, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
   const evidence = asObject(review.evidence_snapshot);
   const provenance = asObject(review.reviewer_provenance);
   const recommendation = asObject(review.recommendation);
@@ -232,7 +233,12 @@ function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onD
       {error ? <ProductError error={error} t={t} /> : null}
       <DecisionResult decisionNote={decisionNote} projectKey={projectKey} t={t} />
       {review.is_actionable ? (
-        <DecisionActions busy={busy} onDecision={onDecision} t={t} />
+        <DecisionActions
+          busy={busy}
+          onDecision={onDecision}
+          onRequestChanges={onRequestChanges}
+          t={t}
+        />
       ) : <p className="product-boundary-note">{t('review.decision.notActionable')}</p>}
       {decisionNote ? <button type="button" className="review-decision-dismiss" onClick={onDismissDecision}>{t('review.decision.dismiss')}</button> : null}
     </aside>
@@ -346,7 +352,9 @@ export default function ReviewPage() {
       return result;
     } catch (caught) {
       setMutationError(caught);
-      if (caught?.code === 'stale_approval') await refresh().catch(() => {});
+      if (['stale_approval', 'stale_intent_target'].includes(caught?.code)) {
+        await refresh().catch(() => {});
+      }
       toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
       return null;
     } finally {
@@ -410,6 +418,21 @@ export default function ReviewPage() {
       nextLabel: decisionNodeLabel(latest?.after_node || latest?.node_transition || '', t),
     });
   };
+  const requestChanges = async () => {
+    const runId = data?.state?.run_id || '';
+    const expectedTarget = {
+      run_id: runId,
+      target_type: 'review',
+      target_id: selected.approval || '',
+      artifact_key: selected.artifact || '',
+      artifact_version: selected.artifact_version || '',
+    };
+    const result = await mutate('changes_requested', () => (
+      runApi.startChangeIntent(projectKey, selected.approval, expectedTarget)
+    ));
+    if (!result) return;
+    navigate(runId ? routes.projectRun(projectKey, runId) : routes.projectWork(projectKey));
+  };
 
   if (status === 'loading') return <main id="main-content" className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></main>;
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
@@ -442,6 +465,7 @@ export default function ReviewPage() {
               onDiscard={discard}
               onDismissDecision={() => setDecisionNote(null)}
               onDecision={decide}
+              onRequestChanges={requestChanges}
             />
           </>}
         </div>
