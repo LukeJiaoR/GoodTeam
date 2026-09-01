@@ -1655,10 +1655,45 @@
 
 .work-workspace-shell .team-manager-event[data-actor="user"] .team-manager-event__bubble {
   color: var(--work-accent-strong);
-  background: color-mix(in srgb, var(--work-material) 90%, var(--work-accent-soft));
+  background: color-mix(in srgb, var(--work-material) 88%, var(--work-accent-soft));
   box-shadow:
-    -5px -5px 12px color-mix(in srgb, var(--work-highlight) 72%, transparent),
-    5px 6px 14px color-mix(in srgb, var(--work-accent) 13%, var(--work-shadow));
+    -3px -3px 8px color-mix(in srgb, var(--work-highlight) 60%, transparent),
+    3px 4px 10px color-mix(in srgb, var(--work-accent) 8%, var(--work-shadow));
+}
+
+.work-workspace-shell .team-manager-event--system {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0.1rem 0;
+}
+
+.work-workspace-shell .team-manager-system-chip {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  max-width: min(92%, 32rem);
+  padding: 0.26rem 0.8rem;
+  color: var(--work-text-muted);
+  font-size: 0.72rem;
+  background: color-mix(in srgb, var(--work-material-deep) 60%, transparent);
+  border-radius: 999px;
+  box-shadow: var(--work-shadow-inset);
+  line-height: 1.4;
+}
+
+.work-workspace-shell .team-manager-system-chip__dot {
+  width: 0.38rem;
+  height: 0.38rem;
+  background: var(--work-accent);
+  border-radius: 50%;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.work-workspace-shell .team-manager-system-chip time {
+  color: color-mix(in srgb, var(--work-text-muted) 80%, transparent);
+  font-size: 0.65rem;
 }
 
 .work-workspace-shell .team-manager-event__meta {
@@ -1699,13 +1734,20 @@
 }
 
 .work-workspace-shell .team-attention {
-  max-width: min(82%, 30rem);
-  margin: 0.2rem 1rem 1.15rem 3.5rem;
-  padding: 1rem 1.05rem 1.1rem;
+  max-width: min(88%, 34rem);
+  margin: 0.35rem 1rem 1.15rem 3.5rem;
+  padding: 1.05rem 1.15rem 1.15rem;
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--work-accent) 10%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--work-accent) 20%, transparent),
     var(--work-shadow-raised);
-  scroll-margin-top: 8rem;
+  scroll-margin-top: 4rem;
+  scroll-margin-bottom: 2rem;
+}
+
+.work-workspace-shell .team-attention[data-kind="blocker"] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--work-danger) 24%, transparent),
+    var(--work-shadow-raised);
 }
 
 .work-workspace-shell .team-attention__label svg {
