@@ -22,6 +22,7 @@ index to find the right document for the job.
 | Understand execution identity | [`execution-identity.md`](execution-identity.md) |
 | Understand memory and provenance | [`memory-model.md`](memory-model.md), [`provenance-ledger.md`](provenance-ledger.md) |
 | Choose the right PR verification | [`testing-strategy.md`](testing-strategy.md) |
+| Operate the repository CI runner | [`self-hosted-ci-runner.md`](self-hosted-ci-runner.md) |
 | Work as an automated agent | [`../AGENTS.md`](../AGENTS.md), [`../CLAUDE.md`](../CLAUDE.md) |
 | Clean up branches and PR worktrees | [`development-branch-hygiene.md`](development-branch-hygiene.md) |
 | Inspect current project history | [`current-progress.md`](current-progress.md), [`backlog.md`](backlog.md) |
@@ -106,6 +107,8 @@ flowchart TD
   for PRs.
 - [`development-branch-hygiene.md`](development-branch-hygiene.md): branch, PR,
   and worktree cleanup rules.
+- [`self-hosted-ci-runner.md`](self-hosted-ci-runner.md): persistent CI runner
+  security boundary, shared-host resource limits, provisioning, and operations.
 - [`../AGENTS.md`](../AGENTS.md) and [`../CLAUDE.md`](../CLAUDE.md): agent and
   project operating rules.
 
