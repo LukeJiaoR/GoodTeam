@@ -300,25 +300,13 @@
 
 .work-workspace-shell .work-run-selector select { max-width: 22rem; font-family: inherit; font-size: 0.875rem; }
 
-.work-workspace-shell .work-historical-view { max-width: 48rem; padding: 1.4rem; background: var(--work-surface); border: 1px solid var(--work-border); border-radius: var(--work-radius); }
+.work-workspace-shell .work-historical-view { width: 100%; padding: 1.4rem; background: var(--work-surface); border: 1px solid var(--work-border); border-radius: var(--work-radius); }
 
 .work-workspace-shell .work-historical-view > h2 { margin: 0; font-size: 1.35rem; }
 
 .work-workspace-shell .work-historical-view > p:not(.product-eyebrow) { color: var(--work-text-muted); }
 
 .work-workspace-shell .work-historical-view > a { color: var(--work-accent-strong); font-weight: 620; }
-
-.work-workspace-shell .team-workspace.team-workspace--history {
-  grid-template-areas: "manager";
-  grid-template-columns: minmax(0, 1fr);
-  height: auto;
-  min-height: 0;
-  margin-block: 1rem;
-}
-
-.work-workspace-shell .team-workspace--history .team-pane--manager {
-  min-height: min(36rem, 70dvh);
-}
 
 .work-workspace-shell .work-stage-rail { margin: 0; padding: 0; border-top: 1px solid var(--work-border); list-style: none; }
 

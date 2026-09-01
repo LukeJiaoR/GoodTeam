@@ -540,26 +540,6 @@ function ManagerPane({
   );
 }
 
-function ManagerHistoryPane({ language, projectKey, t, workspace }) {
-  return (
-    <div className="team-workspace team-workspace--history">
-      <ManagerPane
-        attention={null}
-        busy=""
-        capabilities={[]}
-        data={{ team_workspace: workspace }}
-        error={null}
-        language={language}
-        mission={workspace?.mission || null}
-        projectKey={projectKey}
-        sectionProps={{ 'data-read-only': 'true' }}
-        timeline={workspace?.manager_timeline || []}
-        t={t}
-      />
-    </div>
-  );
-}
-
 function ExecutionPane({ actors, reducedMotion, sectionProps, t }) {
   return (
     <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')} {...sectionProps}>
@@ -792,6 +772,7 @@ function TeamWorkspace({
   const returnFocusRef = useRef(null);
   const workspace = data.team_workspace;
   const mission = workspace.mission;
+  const readOnly = Boolean(mission?.read_only);
   const outcomes = workspace.outcome_tasks || [];
   const selectedTask = outcomes.find((task) => task.id === selectedTaskId) || null;
   const attention = workspace.attention_request;
@@ -866,6 +847,7 @@ function TeamWorkspace({
   const sectionProps = (tab) => ({
     id: `team-panel-${tab}`,
     'data-mobile-active': mobileTab === tab ? 'true' : 'false',
+    'data-read-only': readOnly ? 'true' : undefined,
     ...(mobileWorkspace ? {
       'aria-labelledby': `team-tab-${tab}`,
       hidden: mobileTab !== tab,
@@ -924,7 +906,11 @@ function TeamWorkspace({
           );
         })}
       </div>
-      <div className="team-workspace" aria-label={t('work.team.workspace')}>
+      <div
+        className="team-workspace"
+        aria-label={t('work.team.workspace')}
+        data-read-only={readOnly ? 'true' : undefined}
+      >
         <ManagerPane
           attention={workspace.attention_request}
           busy={busy}
@@ -998,5 +984,5 @@ function TeamWorkspace({
 }
 
 
-export { ManagerHistoryPane, ManagerMissionEntry };
+export { ManagerMissionEntry };
 export default TeamWorkspace;

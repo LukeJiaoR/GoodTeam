@@ -178,3 +178,14 @@ test('Outcomes cards progressively disclose owner and full details', () => {
     '.work-workspace-shell .team-outcome-card__details[hidden]',
   )).toMatchObject({ display: 'none' });
 });
+
+test('historical runs retain the full-width three-pane workspace', () => {
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-historical-view',
+  )).toMatchObject({ width: '100%' });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-historical-view',
+  )).not.toHaveProperty('max-width');
+});

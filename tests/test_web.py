@@ -536,7 +536,28 @@ def test_project_run_history_and_detail_are_server_authoritative(tmp_path):
     assert detail["team_workspace"]["mission"]["read_only"] is True
     assert detail["team_workspace"]["attention_request"] is None
     assert detail["team_workspace"]["capabilities"] == []
-    assert detail["team_workspace"]["outcome_tasks"] == []
+    assert [task["objective"] for task in detail["team_workspace"]["outcome_tasks"]] == [
+        "Draft and approve PRD",
+        "Design RFC & Security Review",
+        "Implement approved design",
+        "Verify implementation",
+        "Approve and complete release",
+    ]
+    assert all(
+        task["updated_at"] == detail["run"]["updated_at"]
+        for task in detail["team_workspace"]["outcome_tasks"]
+    )
+    assert [actor["responsibility"] for actor in detail["team_workspace"]["execution_actors"]] == [
+        "Draft and approve PRD",
+        "Design RFC & Security Review",
+        "Implement approved design",
+        "Verify implementation",
+        "Approve and complete release",
+    ]
+    assert all(
+        task["objective"] != "Current mission stage"
+        for task in detail["team_workspace"]["outcome_tasks"]
+    )
 
     # A fresh request rebuilds the same semantic story from durable stores;
     # there is no process-local or browser conversation dependency.

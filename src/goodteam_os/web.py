@@ -98,7 +98,12 @@ from goodteam_os.staging import (
     run_staging_backend,
 )
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
-from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
+from goodteam_os.tasks import (
+    LocalTaskStore,
+    build_stage_task_snapshot,
+    build_task_board,
+    serialize_task_board,
+)
 from goodteam_os.team_workspace import build_team_workspace
 from goodteam_os.telegram import send_approval_notification
 from goodteam_os.workflow_table import (
@@ -3263,16 +3268,21 @@ def build_project_run_detail(
     ]
     worker_jobs = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
     approval_reviews = build_approval_reviews(state, workspace=workspace)
+    run_tasks = [task for task in task_rows if str(task.get("run_id", "")) == state.run_id]
+    if not run_tasks:
+        run_tasks = build_stage_task_snapshot(
+            state,
+            updated_at=str(summary.get("updated_at", "")),
+        )
     team_workspace = build_team_workspace(
         state=state,
         workflow_active=False,
         project_root=project_root,
         project_key=key,
-        # The local task ledger is shared and stage rows are reused by later
-        # missions. Only a future explicitly run-bound task can enter an
-        # archived mission projection; durable worker identity still supplies
-        # retry lineage without leaking the current board into history.
-        tasks=[task for task in task_rows if str(task.get("run_id", "")) == state.run_id],
+        # Prefer explicitly run-bound rows. Older runs predate that identity,
+        # so their canonical stage rows are reconstructed from the archived
+        # state rather than leaking the current shared board into history.
+        tasks=run_tasks,
         worker_jobs=worker_jobs,
         approval_reviews=approval_reviews,
         action_items=build_action_items(workspace, project_key=key),

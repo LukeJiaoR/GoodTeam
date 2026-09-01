@@ -11,7 +11,7 @@ import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
-import TeamWorkspace, { ManagerHistoryPane, ManagerMissionEntry } from './workspace/TeamWorkspace';
+import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
 import {
   recommendationReasonText,
   reviewGateName,
@@ -355,7 +355,7 @@ export function ActivityView({ data, language, projectKey, t }) {
   );
 }
 
-function HistoricalRunView({ detail, language, projectKey, summary, t }) {
+function HistoricalRunView({ detail, language, projectKey, reducedMotion, summary, t }) {
   const state = detail?.state || {};
   const title = runTitle({ ...state, ...summary }, t);
   const workspace = detail?.team_workspace?.schema_version === 'team_workspace.v1'
@@ -367,7 +367,17 @@ function HistoricalRunView({ detail, language, projectKey, summary, t }) {
       <h2>{title}</h2>
       <p>{t('work.history.readOnly')}</p>
       {workspace ? (
-        <ManagerHistoryPane language={language} projectKey={projectKey} t={t} workspace={workspace} />
+        <TeamWorkspace
+          busy=""
+          data={{ ...detail, team_workspace: workspace }}
+          error={null}
+          inspectorContent={null}
+          language={language}
+          projectKey={projectKey}
+          reducedMotion={reducedMotion}
+          t={t}
+          view=""
+        />
       ) : null}
       <details className="work-historical-view__details">
         <summary>{t('work.history.details')}</summary>
@@ -1053,7 +1063,7 @@ export default function WorkPage() {
       </header>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
-      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} language={language} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
+      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} language={language} projectKey={projectKey} reducedMotion={reducedMotion} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
         <>
           <TeamWorkspace
             busy={busy}

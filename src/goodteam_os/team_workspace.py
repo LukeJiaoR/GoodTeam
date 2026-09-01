@@ -347,7 +347,12 @@ def _build_workflow_workspace(
         if _text(_mapping(item.get("mission")).get("id")) == state.run_id
     ]
     updated_at = _latest_timestamp(ordered_actions, run_jobs, outcomes, run_intents)
-    actors = [] if read_only else _workflow_actors(outcomes, jobs_by_task, unbound_jobs_by_role)
+    actors = _workflow_actors(
+        outcomes,
+        jobs_by_task,
+        unbound_jobs_by_role,
+        include_terminal=read_only,
+    )
     attention = None if read_only else _workflow_attention(state, tasks, outcomes, actors, approval_reviews)
     unresolved_intent = None if read_only else _unresolved_confirmation_intent(state.run_id, run_intents)
     if unresolved_intent is not None and not _attention_matches_intent(
@@ -523,6 +528,8 @@ def _workflow_actors(
     outcomes: Sequence[Mapping[str, object]],
     worker_jobs_by_task: Mapping[str, Sequence[Mapping[str, object]]],
     unbound_jobs_by_role: Mapping[str, Sequence[Mapping[str, object]]],
+    *,
+    include_terminal: bool = False,
 ) -> list[dict[str, Any]]:
     """Project one current actor per logical task assignment.
 
@@ -548,7 +555,7 @@ def _workflow_actors(
         if not role:
             continue
         state = _text(task.get("status")) or "up_next"
-        if state in _TERMINAL_EXECUTION_STATES:
+        if state in _TERMINAL_EXECUTION_STATES and not include_terminal:
             continue
         actor_id = f"task-assignment:{task_id}"
         stable_order[actor_id] = task_order
@@ -591,7 +598,7 @@ def _workflow_actors(
         if current_attempt is None:
             continue
         state = _worker_attempt_state(current_attempt, fallback="waiting")
-        if state in _TERMINAL_EXECUTION_STATES:
+        if state in _TERMINAL_EXECUTION_STATES and not include_terminal:
             continue
         actor_id = f"unbound-role:{role}"
         stable_order[actor_id] = len(outcomes) + role_order

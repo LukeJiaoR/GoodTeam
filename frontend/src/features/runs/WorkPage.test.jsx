@@ -1548,8 +1548,17 @@ test.each([false, true])('renders historical Manager history read-only in semant
         { id: 'history-complete', actor: 'manager', event: 'mission_completed', timestamp: '2026-08-30T10:02:00Z', content: '', details: {} },
       ],
       attention_request: null,
-      execution_actors: [],
-      outcome_tasks: [],
+      execution_actors: [{
+        id: 'history-implementation', role: 'implementation', state: 'completed',
+        responsibility: 'Implement the earlier OAuth revision', task_id: 'DEMO-HISTORY-1',
+        status_reason: 'task_completed',
+      }],
+      outcome_tasks: [{
+        id: 'DEMO-HISTORY-1', objective: 'Implement the earlier OAuth revision',
+        owner: 'implementation', status: 'completed', status_reason: 'task_completed',
+        dependencies: [], acceptance_criteria: ['Historical release passed'],
+        primary_outcome: { label: 'PR #40' }, supporting_refs: [],
+      }],
       capabilities: [],
     },
   });
@@ -1557,7 +1566,15 @@ test.each([false, true])('renders historical Manager history read-only in semant
   renderWorkPage('/projects/DEMO/work/runs/run-history');
 
   expect(await screen.findByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
-  const manager = screen.getByRole('region', { name: 'Manager' });
+  const historicalWorkspace = document.querySelector('.team-workspace[data-read-only="true"]');
+  expect(historicalWorkspace).toBeInTheDocument();
+  const manager = historicalWorkspace.querySelector('.team-pane--manager');
+  expect(historicalWorkspace.querySelector('.team-pane--execution')).toBeInTheDocument();
+  expect(historicalWorkspace.querySelector('.team-pane--outcomes')).toBeInTheDocument();
+  expect(within(historicalWorkspace).getAllByText('Implement the earlier OAuth revision').length)
+    .toBeGreaterThan(0);
+  expect(within(historicalWorkspace).getByRole('button', { name: 'Implement the earlier OAuth revision', hidden: true }))
+    .toHaveAttribute('aria-expanded', 'false');
   const request = within(manager).getByText('Ship the earlier OAuth revision');
   const retry = within(manager).getByText('The work needed 2 attempts and then completed.');
   const complete = within(manager).getByText('The mission reached its recorded completion state.');
