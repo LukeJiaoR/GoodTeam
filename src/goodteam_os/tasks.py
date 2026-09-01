@@ -185,6 +185,42 @@ def sync_stage_tasks(state: Any, store: LocalTaskStore) -> list[dict[str, Any]]:
     return tasks
 
 
+def build_stage_task_snapshot(state: Any, *, updated_at: str = "") -> list[dict[str, Any]]:
+    """Reconstruct the canonical stage rows from one run's durable state.
+
+    The project task ledger is shared and older stage rows may already have
+    been reused by a later mission. Historical Work views therefore derive a
+    read-only snapshot from the archived run itself instead of reading current
+    board state.
+    """
+
+    statuses = _stage_statuses(state)
+    prefix = str(getattr(state, "project_key", "") or "GT").strip().upper()
+    run_id = str(getattr(state, "run_id", "") or "").strip()
+    tasks: list[dict[str, Any]] = []
+    for index, stage in enumerate(STAGE_TASKS, start=1):
+        node = str(stage["node"])
+        artifact_ref = _stage_artifact_ref(state, node)
+        tasks.append(
+            {
+                "id": f"{prefix}-{index}",
+                "run_id": run_id,
+                "title": str(stage["title"]),
+                "description": f"Workflow stage task for {node}.",
+                "role": str(stage["role"]),
+                "status": statuses[node],
+                "priority": "medium",
+                "dependencies": [],
+                "acceptance_criteria": [],
+                "artifact_refs": [artifact_ref] if artifact_ref else [],
+                "external_refs": [f"stage:{node}", f"run:{run_id}"],
+                "created_at": "",
+                "updated_at": updated_at,
+            }
+        )
+    return tasks
+
+
 def _stage_statuses(state: Any) -> dict[str, str]:
     approvals = {
         str(key): str(value)

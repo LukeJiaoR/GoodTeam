@@ -540,26 +540,6 @@ function ManagerPane({
   );
 }
 
-function ManagerHistoryPane({ language, projectKey, t, workspace }) {
-  return (
-    <div className="team-workspace team-workspace--history">
-      <ManagerPane
-        attention={null}
-        busy=""
-        capabilities={[]}
-        data={{ team_workspace: workspace }}
-        error={null}
-        language={language}
-        mission={workspace?.mission || null}
-        projectKey={projectKey}
-        sectionProps={{ 'data-read-only': 'true' }}
-        timeline={workspace?.manager_timeline || []}
-        t={t}
-      />
-    </div>
-  );
-}
-
 function ExecutionPane({ actors, reducedMotion, sectionProps, t }) {
   return (
     <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')} {...sectionProps}>
@@ -603,8 +583,10 @@ function ExecutionPane({ actors, reducedMotion, sectionProps, t }) {
 function OutcomesPane({
   activeReviewTaskId,
   attentionTaskId,
+  expandedTaskId,
+  onOpenTask,
   onRegisterOutcome,
-  onSelectTask,
+  onToggleTask,
   outcomes,
   sectionProps,
   t,
@@ -623,20 +605,27 @@ function OutcomesPane({
           {outcomes.map((task, index) => {
             const isAttentionTarget = task.id === attentionTaskId;
             const isActiveReviewTarget = task.id === activeReviewTaskId;
+            const isExpanded = task.id === expandedTaskId;
             const owner = translated(t, `work.plan.role.${task.owner}`, task.owner);
+            const detailsId = `team-outcome-details-${index}`;
             return (
               <li
                 key={task.id}
                 ref={(node) => onRegisterOutcome(task.id, node)}
                 data-active-review={isActiveReviewTarget ? 'true' : undefined}
                 data-attention={isAttentionTarget ? 'true' : undefined}
+                data-expanded={isExpanded ? 'true' : 'false'}
                 data-state={task.status}
                 data-task-id={task.id}
               >
                 <button
+                  aria-controls={detailsId}
+                  aria-expanded={isExpanded}
+                  aria-label={task.objective}
+                  className="team-outcome-card__toggle"
                   type="button"
                   aria-pressed={isActiveReviewTarget}
-                  onClick={(event) => onSelectTask(task, event.currentTarget)}
+                  onClick={() => onToggleTask(task)}
                 >
                   <span className="team-outcome-card__heading">
                     <span className="team-outcome-card__index">{index + 1}</span>
@@ -653,6 +642,9 @@ function OutcomesPane({
                       <strong>{owner}</strong>
                     </span>
                   </span>
+                  <ChevronRight aria-hidden="true" className="team-outcome-card__chevron" size={16} />
+                </button>
+                <div className="team-outcome-card__details" id={detailsId} hidden={!isExpanded}>
                   {isAttentionTarget ? (
                     <span className="team-outcome-list__attention">{t('work.team.needsReview')}</span>
                   ) : null}
@@ -671,9 +663,15 @@ function OutcomesPane({
                       <span>{t('work.team.primaryOutcome')}: {task.primary_outcome.label}</span>
                     </span>
                   ) : null}
-                  <ChevronRight aria-hidden="true" className="team-outcome-card__chevron" size={16} />
-                </button>
-                {task.primary_outcome?.href ? (
+                  <button
+                    className="team-outcome-card__details-button"
+                    onClick={(event) => onOpenTask(task, event.currentTarget)}
+                    type="button"
+                  >
+                    {t('work.plan.taskDetails')}
+                  </button>
+                </div>
+                {isExpanded && task.primary_outcome?.href ? (
                   <a
                     className="team-outcome-list__link"
                     href={task.primary_outcome.href}
@@ -765,6 +763,7 @@ function TeamWorkspace({
 }) {
   const mobileWorkspace = useMobileTeamWorkspace();
   const [mobileTab, setMobileTab] = useState('manager');
+  const [expandedTaskId, setExpandedTaskId] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [selectedReviewTargetId, setSelectedReviewTargetId] = useState('');
   const [activeReviewTaskId, setActiveReviewTaskId] = useState('');
@@ -773,6 +772,7 @@ function TeamWorkspace({
   const returnFocusRef = useRef(null);
   const workspace = data.team_workspace;
   const mission = workspace.mission;
+  const readOnly = Boolean(mission?.read_only);
   const outcomes = workspace.outcome_tasks || [];
   const selectedTask = outcomes.find((task) => task.id === selectedTaskId) || null;
   const attention = workspace.attention_request;
@@ -807,6 +807,9 @@ function TeamWorkspace({
     setSelectedReviewTargetId(task.review_target_id || '');
     setSelectedTaskId(task.id);
   }, [attentionReviewTask]);
+  const toggleOutcome = useCallback((task) => {
+    setExpandedTaskId((current) => (current === task.id ? '' : task.id));
+  }, []);
   const reviewAttentionOutcome = useCallback((trigger) => {
     if (!attentionReviewTask) return;
     returnFocusRef.current = trigger || document.activeElement;
@@ -844,6 +847,7 @@ function TeamWorkspace({
   const sectionProps = (tab) => ({
     id: `team-panel-${tab}`,
     'data-mobile-active': mobileTab === tab ? 'true' : 'false',
+    'data-read-only': readOnly ? 'true' : undefined,
     ...(mobileWorkspace ? {
       'aria-labelledby': `team-tab-${tab}`,
       hidden: mobileTab !== tab,
@@ -902,7 +906,11 @@ function TeamWorkspace({
           );
         })}
       </div>
-      <div className="team-workspace" aria-label={t('work.team.workspace')}>
+      <div
+        className="team-workspace"
+        aria-label={t('work.team.workspace')}
+        data-read-only={readOnly ? 'true' : undefined}
+      >
         <ManagerPane
           attention={workspace.attention_request}
           busy={busy}
@@ -934,8 +942,10 @@ function TeamWorkspace({
         <OutcomesPane
           activeReviewTaskId={activeReviewTargetId}
           attentionTaskId={attentionReviewTask?.id || ''}
+          expandedTaskId={expandedTaskId}
+          onOpenTask={openOutcome}
           onRegisterOutcome={registerOutcome}
-          onSelectTask={openOutcome}
+          onToggleTask={toggleOutcome}
           outcomes={outcomes}
           sectionProps={sectionProps('outcomes')}
           t={t}
@@ -974,5 +984,5 @@ function TeamWorkspace({
 }
 
 
-export { ManagerHistoryPane, ManagerMissionEntry };
+export { ManagerMissionEntry };
 export default TeamWorkspace;

@@ -127,3 +127,112 @@ test('Manager workspace keeps one raised and inset material system', () => {
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .work-run-title')['white-space'])
     .toBe('normal');
 });
+
+test('desktop Work header keeps mission context and actions on one compact row', () => {
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .product-page-header')).toMatchObject({
+    'margin-bottom': '1rem',
+    'border-bottom': '1px solid var(--work-border)',
+  });
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .product-page-header__meta')).toMatchObject({
+    display: 'grid',
+    'grid-template-columns': 'minmax(24rem, 1fr) auto',
+    'align-items': 'center',
+  });
+  const selectableContext = declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-run-context--selectable',
+  );
+  expect(selectableContext['grid-template-columns'])
+    .toBe('minmax(0, 1fr) minmax(14rem, 22rem)');
+  expect(selectableContext['grid-template-areas']).toContain('"mission selector"');
+  expect(selectableContext['grid-template-areas']).toContain('"facts selector"');
+});
+
+test('Work context behaves as a top drawer without reserving closed space', () => {
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer',
+  )).toMatchObject({
+    'max-height': '15rem',
+    overflow: 'clip',
+    'transform-origin': 'top',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer[data-open="false"]',
+  )).toMatchObject({
+    'max-height': '0',
+    'margin-bottom': '0',
+    visibility: 'hidden',
+    opacity: '0',
+    'pointer-events': 'none',
+  });
+});
+
+test('Work context aligns mission, status, progress, and update metadata', () => {
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-run-context__mission',
+  )).toMatchObject({
+    display: 'grid',
+    'grid-template-columns': '7.5rem minmax(0, 1fr)',
+    'align-items': 'start',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-run-context__facts',
+  )).toMatchObject({
+    display: 'grid',
+    'grid-template-columns': '7.5rem repeat(2, max-content) minmax(0, 1fr)',
+    'align-items': 'center',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-run-context__updated',
+  )).toMatchObject({
+    'grid-column': '4',
+    'justify-self': 'end',
+  });
+});
+
+test('Outcomes cards keep their natural height inside the scrolling pane', () => {
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-outcome-list')).toMatchObject({
+    display: 'flex',
+    'flex-direction': 'column',
+    'overflow-y': 'auto',
+  });
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-outcome-list > li').flex)
+    .toBe('0 0 auto');
+});
+
+test('Outcomes cards progressively disclose owner and full details', () => {
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .team-outcome-card__owner',
+  )).toMatchObject({
+    'max-height': '0',
+    opacity: '0',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .team-outcome-list > li:hover .team-outcome-card__owner',
+  )).toMatchObject({
+    'max-height': '3rem',
+    opacity: '1',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .team-outcome-card__details[hidden]',
+  )).toMatchObject({ display: 'none' });
+});
+
+test('historical runs retain the full-width three-pane workspace', () => {
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-historical-view',
+  )).toMatchObject({ width: '100%' });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-historical-view',
+  )).not.toHaveProperty('max-width');
+});

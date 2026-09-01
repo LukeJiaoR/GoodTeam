@@ -161,7 +161,12 @@ function repeatedArchitectAttemptData() {
     { id: 'job-architect-3', role: 'architect', status: 'blocked' },
     { id: 'job-architect-4', role: 'architect', status: 'completed' },
   ];
-  data.team_workspace.execution_actors = [];
+  data.team_workspace.execution_actors = [{
+    id: 'task-assignment:DEMO-1', role: 'architect', state: 'completed',
+    responsibility: 'Design RFC & Security Review', task_id: 'DEMO-1',
+    source: 'worker_job', status_reason: 'delivered', attempt_count: 4,
+    current_attempt_id: 'job-architect-4',
+  }];
   data.team_workspace.outcome_tasks = [
     {
       id: 'DEMO-1',
@@ -191,6 +196,8 @@ function orderedExecutionData() {
       dependency_task_id: 'DEMO-IMPL', dependency_task_title: 'Implement approved design',
     },
     { id: 'up-next', role: 'release', state: 'up_next', responsibility: 'Prepare release', status_reason: 'not_started' },
+    { id: 'completed', role: 'product_requirement', state: 'completed', responsibility: 'Approve requirements', status_reason: 'task_completed' },
+    { id: 'stopped', role: 'ui', state: 'stopped', responsibility: 'Retired visual draft', status_reason: 'task_stopped' },
   ];
   return data;
 }
@@ -400,9 +407,10 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(document.querySelector('[data-task-id="DEMO-2"] .product-status-badge'))
     .toHaveAttribute('data-tone', 'neutral');
   expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
-  expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
+  expect(screen.queryByRole('link', { name: 'Open PR #42 ↗' })).not.toBeInTheDocument();
   expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('button', { name: 'Run details' })).not.toBeInTheDocument();
+  expect(document.querySelector('.work-context-drawer')).toHaveAttribute('data-open', 'true');
   expect(screen.queryByRole('button', { name: 'Mission history' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Open the Manager conversation…' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
@@ -411,7 +419,26 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(document.querySelector('.product-work-page__identity')).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Back to Home' })).not.toBeInTheDocument();
 
-  await userEvent.click(screen.getByRole('button', { name: /Implement OAuth/ }));
+  const outcomeToggle = screen.getByRole('button', { name: 'Implement OAuth' });
+  const outcomeCard = outcomeToggle.closest('li');
+  const outcomeDetails = document.querySelector(`#${outcomeToggle.getAttribute('aria-controls')}`);
+  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'false');
+  expect(outcomeCard).toHaveAttribute('data-expanded', 'false');
+  expect(outcomeDetails).toHaveAttribute('hidden');
+
+  await userEvent.click(outcomeToggle);
+  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'true');
+  expect(outcomeCard).toHaveAttribute('data-expanded', 'true');
+  expect(outcomeDetails).not.toHaveAttribute('hidden');
+  expect(screen.queryByRole('dialog', { name: 'Implement OAuth' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
+
+  await userEvent.click(outcomeToggle);
+  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'false');
+  expect(outcomeDetails).toHaveAttribute('hidden');
+
+  await userEvent.click(outcomeToggle);
+  await userEvent.click(within(outcomeCard).getByRole('button', { name: 'Task details' }));
   expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
 });
 
@@ -452,7 +479,7 @@ test('does not infer outcome data from a shared role when task identity is absen
   expect(within(execution).queryByText(/RFC [AB]/)).not.toBeInTheDocument();
 });
 
-test('keeps terminal Architect attempts out of Execution and in Outcomes/history', async () => {
+test('keeps terminal Architect attempts visible after active workers', async () => {
   const scrollIntoView = vi.fn();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
@@ -465,21 +492,19 @@ test('keeps terminal Architect attempts out of Execution and in Outcomes/history
     runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
   });
 
-  renderWorkPage();
+  renderWorkPage('/projects/DEMO/work/runs/run-active?view=plan');
 
   const executionPane = screen.getByRole('region', { name: 'Execution' });
-  expect(within(executionPane).queryAllByRole('listitem')).toHaveLength(0);
-  expect(within(executionPane).getByText('No active workers yet.')).toBeVisible();
+  expect(within(executionPane).queryAllByRole('listitem')).toHaveLength(1);
+  expect(within(executionPane).getByText('Design RFC & Security Review')).toBeVisible();
+  expect(within(executionPane).getByRole('img', { name: /Completed/ })).toBeVisible();
   const outcomesPane = screen.getByRole('region', { name: 'Outcomes' });
   expect(within(outcomesPane).getByRole('button', {
-    name: /Design RFC & Security Review.*Completed/,
+    name: 'Design RFC & Security Review',
   })).toBeVisible();
 
-  const runDetails = screen.getByRole('button', { name: 'Run details' });
-  await userEvent.click(runDetails);
   const inspector = document.querySelector('.team-inspector');
   expect(inspector).not.toBeNull();
-  expect(runDetails).toHaveAttribute('aria-expanded', 'true');
   expect(inspector).toHaveFocus();
   expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
   const detailTabs = within(inspector).getByRole('navigation', { name: 'Run detail views' });
@@ -520,9 +545,11 @@ test('renders the projection order stably with LED-only Execution states', async
     'Implement approved design',
     'Verify implementation',
     'Prepare release',
+    'Approve requirements',
+    'Retired visual draft',
   ];
   expect(actorOrder()).toEqual(expected);
-  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(5);
+  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(7);
   expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();
 
   await user.hover(within(execution).getByRole('img', { name: /Reviewing/ }));
@@ -618,7 +645,7 @@ test('starts empty Work from the Manager inside the three-pane workspace', async
   expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Manager' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
-  expect(screen.getByText('No active workers yet.')).toBeVisible();
+  expect(screen.getByText('No worker records yet.')).toBeVisible();
   expect(screen.getByText('No tasks yet.')).toBeVisible();
   expect(screen.getByRole('heading', { name: 'What should the team work on?' })).toBeVisible();
   expect(document.querySelector('.work-start-panel')).not.toBeInTheDocument();
@@ -678,6 +705,8 @@ test('keeps an active Operator mission on Work when workflow history has a stale
   expect(screen.getByText('Keep the current Operator mission visible through review.')).toBeVisible();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work');
   const selector = await screen.findByRole('combobox', { name: 'Select run' });
+  expect(selector.closest('.work-run-context')).toBeInTheDocument();
+  expect(selector.closest('.work-run-context__actions')).toBeNull();
   expect(Array.from(selector.options, (option) => option.textContent)).toEqual([
     'Current · Current Operator mission',
     'Archived · Old workflow mission',
@@ -720,7 +749,7 @@ test('opens Request changes as a durable Manager discussion without review mutat
   expect(refresh).toHaveBeenCalledTimes(1);
 });
 
-test('routes Run details canvas Request changes into Manager Intent Commit', async () => {
+test('routes the detail canvas Request changes into Manager Intent Commit', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   data.workflow_steps = [
@@ -738,8 +767,7 @@ test('routes Run details canvas Request changes into Manager Intent Commit', asy
     intent_commit: { id: 'intent-canvas-1', status: 'discussing' },
   });
 
-  renderWorkPage();
-  await userEvent.click(screen.getByRole('button', { name: 'Run details' }));
+  renderWorkPage('/projects/DEMO/work/runs/run-active?view=plan');
 
   const inspector = document.querySelector('.team-inspector');
   await userEvent.click(within(inspector).getByRole('button', { name: /Security/ }));
@@ -755,11 +783,11 @@ test('routes Run details canvas Request changes into Manager Intent Commit', asy
   });
   expect(mocks.decideReview).not.toHaveBeenCalled();
   await waitFor(() => {
-    expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('location-search')).toHaveTextContent('');
   });
 });
 
-test('routes Run details plan task Request changes into Manager Intent Commit', async () => {
+test('routes the detail plan task Request changes into Manager Intent Commit', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   data.agile_board = {
@@ -783,8 +811,7 @@ test('routes Run details plan task Request changes into Manager Intent Commit', 
     intent_commit: { id: 'intent-plan-1', status: 'discussing' },
   });
 
-  renderWorkPage();
-  await userEvent.click(screen.getByRole('button', { name: 'Run details' }));
+  renderWorkPage('/projects/DEMO/work/runs/run-active?view=plan');
 
   const inspector = document.querySelector('.team-inspector');
   await userEvent.click(within(inspector).getByRole('button', { name: /Review RFC security boundaries/ }));
@@ -802,7 +829,7 @@ test('routes Run details plan task Request changes into Manager Intent Commit', 
   });
   expect(mocks.decideReview).not.toHaveBeenCalled();
   await waitFor(() => {
-    expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('location-search')).toHaveTextContent('');
   });
 });
 
@@ -1206,7 +1233,7 @@ test('opens the exact attention Outcome in-place and restores Manager focus on c
   const implementation = document.querySelector('[data-task-id="DEMO-IMPL"]');
   const security = document.querySelector('[data-task-id="DEMO-SEC"]');
   expect(architecture).toHaveAttribute('data-attention', 'true');
-  expect(within(architecture).getByText('Needs review')).toBeVisible();
+  expect(within(architecture).getByText('Needs review')).not.toBeVisible();
   expect(implementation).not.toHaveAttribute('data-attention');
   expect(security).not.toHaveAttribute('data-attention');
 
@@ -1296,7 +1323,10 @@ test('does not lend an actionable review to another same-role Outcome', async ()
 
   renderWorkPage();
   const outcomes = screen.getByRole('region', { name: 'Outcomes' });
-  await user.click(within(outcomes).getByRole('button', { name: /Security review.*DEMO-SEC/ }));
+  const securityToggle = within(outcomes).getByRole('button', { name: 'Security review' });
+  const securityCard = securityToggle.closest('li');
+  await user.click(securityToggle);
+  await user.click(within(securityCard).getByRole('button', { name: 'Task details' }));
 
   const dialog = await screen.findByRole('dialog', { name: 'Security review' });
   expect(within(dialog).queryByText('Architecture security review')).not.toBeInTheDocument();
@@ -1322,7 +1352,10 @@ test('keeps Outcome task details project-facing and resolves dependencies exactl
 
   renderWorkPage();
   const outcomes = screen.getByRole('region', { name: 'Outcomes' });
-  await user.click(within(outcomes).getByRole('button', { name: /Review OAuth.*DEMO-2/ }));
+  const reviewToggle = within(outcomes).getByRole('button', { name: 'Review OAuth' });
+  const reviewCard = reviewToggle.closest('li');
+  await user.click(reviewToggle);
+  await user.click(within(reviewCard).getByRole('button', { name: 'Task details' }));
 
   const dialog = await screen.findByRole('dialog', { name: 'Review OAuth' });
   const localizedUpdate = new Intl.DateTimeFormat('en', {
@@ -1521,8 +1554,17 @@ test.each([false, true])('renders historical Manager history read-only in semant
         { id: 'history-complete', actor: 'manager', event: 'mission_completed', timestamp: '2026-08-30T10:02:00Z', content: '', details: {} },
       ],
       attention_request: null,
-      execution_actors: [],
-      outcome_tasks: [],
+      execution_actors: [{
+        id: 'history-implementation', role: 'implementation', state: 'completed',
+        responsibility: 'Implement the earlier OAuth revision', task_id: 'DEMO-HISTORY-1',
+        status_reason: 'task_completed',
+      }],
+      outcome_tasks: [{
+        id: 'DEMO-HISTORY-1', objective: 'Implement the earlier OAuth revision',
+        owner: 'implementation', status: 'completed', status_reason: 'task_completed',
+        dependencies: [], acceptance_criteria: ['Historical release passed'],
+        primary_outcome: { label: 'PR #40' }, supporting_refs: [],
+      }],
       capabilities: [],
     },
   });
@@ -1530,7 +1572,15 @@ test.each([false, true])('renders historical Manager history read-only in semant
   renderWorkPage('/projects/DEMO/work/runs/run-history');
 
   expect(await screen.findByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
-  const manager = screen.getByRole('region', { name: 'Manager' });
+  const historicalWorkspace = document.querySelector('.team-workspace[data-read-only="true"]');
+  expect(historicalWorkspace).toBeInTheDocument();
+  const manager = historicalWorkspace.querySelector('.team-pane--manager');
+  expect(historicalWorkspace.querySelector('.team-pane--execution')).toBeInTheDocument();
+  expect(historicalWorkspace.querySelector('.team-pane--outcomes')).toBeInTheDocument();
+  expect(within(historicalWorkspace).getAllByText('Implement the earlier OAuth revision').length)
+    .toBeGreaterThan(0);
+  expect(within(historicalWorkspace).getByRole('button', { name: 'Implement the earlier OAuth revision', hidden: true }))
+    .toHaveAttribute('aria-expanded', 'false');
   const request = within(manager).getByText('Ship the earlier OAuth revision');
   const retry = within(manager).getByText('The work needed 2 attempts and then completed.');
   const complete = within(manager).getByText('The mission reached its recorded completion state.');

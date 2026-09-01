@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, Link, RouterProvider } from 'react-router-dom';
 import { expect, test } from 'vitest';
@@ -78,7 +78,7 @@ test('browser back returns from project Home to Projects', async () => {
   expect(await screen.findByRole('heading', { name: 'Projects' })).toBeVisible();
 });
 
-test('Work keeps the global app chrome and adds a Work-owned presentation boundary', async () => {
+test('Work uses one project-level header without duplicate navigation or breadcrumbs', async () => {
   const router = createMemoryRouter(
     createProductRoutes({ WorkComponent: WorkStub }),
     { initialEntries: ['/projects/DEMO/work/runs/run-active'] },
@@ -86,16 +86,37 @@ test('Work keeps the global app chrome and adds a Work-owned presentation bounda
   const { container } = render(<RouterProvider router={router} />);
 
   expect(await screen.findByRole('heading', { name: 'Project work' })).toBeVisible();
-  expect(container.querySelector('.product-shell')).not.toHaveClass('product-shell--work');
-  expect(container.querySelector('.product-navigation')).toBeInTheDocument();
-  expect(container.querySelector('.product-project-navigation')).toBeInTheDocument();
-  expect(container.querySelector('.product-breadcrumb')).toBeInTheDocument();
+  expect(container.querySelector('.product-shell')).toHaveClass('product-shell--work');
   expect(container.querySelector('.work-workspace-shell')).toContainElement(
     screen.getByRole('heading', { name: 'Project work' }),
   );
-  expect(container.querySelector('.product-work-chrome')).not.toBeInTheDocument();
-  expect(container.querySelector('.product-work-navigation')).not.toBeInTheDocument();
-  expect(container.querySelector('.product-work-tool')).not.toBeInTheDocument();
+  expect(container.querySelector('.product-work-chrome')).toBeInTheDocument();
+  expect(container.querySelector('.product-work-navigation')).toHaveAttribute('aria-label', 'Project navigation');
+  expect(container.querySelectorAll('.product-work-navigation a')).toHaveLength(5);
+  expect(container.querySelector('.product-work-navigation a.is-active')).toHaveAttribute('href', '/projects/DEMO/work');
+  expect(container.querySelector('.product-work-tool--inbox')).toHaveAttribute('href', '/inbox');
+  expect(container.querySelector('.product-navigation')).not.toBeInTheDocument();
+  expect(container.querySelector('.product-project-navigation')).not.toBeInTheDocument();
+  expect(container.querySelector('.product-breadcrumb')).not.toBeInTheDocument();
+});
+
+test('the active Workbench navigation item controls the Work context drawer', async () => {
+  const user = userEvent.setup();
+  const router = createMemoryRouter(
+    createProductRoutes({ WorkComponent: WorkStub }),
+    { initialEntries: ['/projects/DEMO/work'] },
+  );
+  render(<RouterProvider router={router} />);
+
+  const workbench = await screen.findByRole('link', { name: 'Workbench' });
+  expect(workbench).toHaveAttribute('aria-controls', 'work-context-drawer');
+  expect(workbench).toHaveAttribute('aria-expanded', 'false');
+
+  await user.hover(workbench);
+  expect(workbench).toHaveAttribute('aria-expanded', 'true');
+
+  await user.unhover(workbench);
+  await waitFor(() => expect(workbench).toHaveAttribute('aria-expanded', 'false'));
 });
 
 test('project Home receives the decoded project key and active language', async () => {

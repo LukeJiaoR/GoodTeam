@@ -11,7 +11,7 @@ import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
-import TeamWorkspace, { ManagerHistoryPane, ManagerMissionEntry } from './workspace/TeamWorkspace';
+import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
 import {
   recommendationReasonText,
   reviewGateName,
@@ -355,7 +355,7 @@ export function ActivityView({ data, language, projectKey, t }) {
   );
 }
 
-function HistoricalRunView({ detail, language, projectKey, summary, t }) {
+function HistoricalRunView({ detail, language, projectKey, reducedMotion, summary, t }) {
   const state = detail?.state || {};
   const title = runTitle({ ...state, ...summary }, t);
   const workspace = detail?.team_workspace?.schema_version === 'team_workspace.v1'
@@ -367,7 +367,17 @@ function HistoricalRunView({ detail, language, projectKey, summary, t }) {
       <h2>{title}</h2>
       <p>{t('work.history.readOnly')}</p>
       {workspace ? (
-        <ManagerHistoryPane language={language} projectKey={projectKey} t={t} workspace={workspace} />
+        <TeamWorkspace
+          busy=""
+          data={{ ...detail, team_workspace: workspace }}
+          error={null}
+          inspectorContent={null}
+          language={language}
+          projectKey={projectKey}
+          reducedMotion={reducedMotion}
+          t={t}
+          view=""
+        />
       ) : null}
       <details className="work-historical-view__details">
         <summary>{t('work.history.details')}</summary>
@@ -722,7 +732,7 @@ function DeliveryView({ data, projectKey, t }) {
 
 export default function WorkPage() {
   const { projectKey = '', runId = '' } = useParams();
-  const { language, t } = useOutletContext();
+  const { language, t, workDrawer = null } = useOutletContext();
   const reducedMotion = usePrefersReducedMotion();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
@@ -981,13 +991,38 @@ export default function WorkPage() {
     </>
   ) : null;
 
+  const runSelector = showRunSelector ? (
+    <label className="work-run-selector"><span>{t('work.history.selector')}</span>
+      <select value={runId || currentRunId || ''} onChange={(event) => { if (!event.target.value) return; const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
+        {!currentRunId && !runId ? (
+          <option disabled value="">
+            {hasProjectedMission
+              ? t('work.history.currentMissionOption', { title: currentRunTitle })
+              : t('work.history.selectPrevious')}
+          </option>
+        ) : null}
+        {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
+      </select>
+    </label>
+  ) : null;
+
   return (
     <main id="main-content" className="product-page product-work-page">
-      <header className="product-page-header">
+      <header
+        aria-hidden={workDrawer ? !workDrawer.open : undefined}
+        className="product-page-header work-context-drawer"
+        data-open={workDrawer ? String(workDrawer.open) : 'true'}
+        id="work-context-drawer"
+        inert={workDrawer && !workDrawer.open ? '' : undefined}
+        onBlurCapture={workDrawer?.onLeave}
+        onFocusCapture={workDrawer?.onEnter}
+        onPointerEnter={workDrawer?.onEnter}
+        onPointerLeave={workDrawer?.onLeave}
+      >
         <div className="product-work-page__identity"><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
           {hasRunContext ? (
-            <section className="work-run-context" aria-label={t('work.manager.currentMission')}>
+            <section className={`work-run-context${showRunSelector ? ' work-run-context--selectable' : ''}`} aria-label={t('work.manager.currentMission')}>
               <div className="work-run-context__mission">
                 <span>{t('work.manager.currentMission')}</span>
                 <strong className="work-run-title" title={currentRunTitle}>{currentRunTitle}</strong>
@@ -1018,39 +1053,17 @@ export default function WorkPage() {
                   </time>
                 ) : null}
               </div>
+              {runSelector}
             </section>
           ) : <StatusBadge>{t('work.noRun')}</StatusBadge>}
           <div className="work-run-context__actions">
-            {showRunSelector ? (
-              <label className="work-run-selector"><span>{t('work.history.selector')}</span>
-                <select value={runId || currentRunId || ''} onChange={(event) => { if (!event.target.value) return; const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
-                  {!currentRunId && !runId ? (
-                    <option disabled value="">
-                      {hasProjectedMission
-                        ? t('work.history.currentMissionOption', { title: currentRunTitle })
-                        : t('work.history.selectPrevious')}
-                    </option>
-                  ) : null}
-                  {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
-                </select>
-              </label>
-            ) : null}
-            {hasProjectedMission && !isHistorical ? (
-              <Button
-                aria-controls="team-inspector"
-                aria-expanded={Boolean(inspectorView)}
-                onClick={() => openInspector(inspectorView || 'plan')}
-                variant="secondary"
-              >
-                {t('work.team.runDetails')}
-              </Button>
-            ) : null}
+            {!hasRunContext ? runSelector : null}
           </div>
         </div>
       </header>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
-      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} language={language} projectKey={projectKey} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
+      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} language={language} projectKey={projectKey} reducedMotion={reducedMotion} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
         <>
           <TeamWorkspace
             busy={busy}
