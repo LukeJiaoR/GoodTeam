@@ -623,11 +623,17 @@
 .work-workspace-shell .product-page-header {
   gap: 0.8rem;
   align-items: stretch;
+  margin-bottom: 1rem;
   padding: 0.35rem 0.9rem 0.8rem;
-  border: 0;
+  border-bottom: 1px solid var(--work-border);
 }
 
 .work-workspace-shell .product-page-header__meta {
+  display: grid;
+  grid-template-columns: minmax(24rem, 1fr) auto;
+  flex: 1 1 auto;
+  gap: 0.65rem;
+  align-items: center;
   width: 100%;
   min-width: 0;
 }

@@ -127,3 +127,15 @@ test('Manager workspace keeps one raised and inset material system', () => {
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .work-run-title')['white-space'])
     .toBe('normal');
 });
+
+test('desktop Work header keeps mission context and actions on one compact row', () => {
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .product-page-header')).toMatchObject({
+    'margin-bottom': '1rem',
+    'border-bottom': '1px solid var(--work-border)',
+  });
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .product-page-header__meta')).toMatchObject({
+    display: 'grid',
+    'grid-template-columns': 'minmax(24rem, 1fr) auto',
+    'align-items': 'center',
+  });
+});
