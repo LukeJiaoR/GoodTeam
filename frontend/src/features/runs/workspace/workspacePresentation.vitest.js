@@ -148,6 +148,53 @@ test('desktop Work header keeps mission context and actions on one compact row',
   expect(selectableContext['grid-template-areas']).toContain('"facts selector"');
 });
 
+test('Work context behaves as a top drawer without reserving closed space', () => {
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer',
+  )).toMatchObject({
+    'max-height': '15rem',
+    overflow: 'clip',
+    'transform-origin': 'top',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer[data-open="false"]',
+  )).toMatchObject({
+    'max-height': '0',
+    'margin-bottom': '0',
+    visibility: 'hidden',
+    opacity: '0',
+    'pointer-events': 'none',
+  });
+});
+
+test('Work context aligns mission, status, progress, and update metadata', () => {
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-run-context__mission',
+  )).toMatchObject({
+    display: 'grid',
+    'grid-template-columns': '7.5rem minmax(0, 1fr)',
+    'align-items': 'start',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-run-context__facts',
+  )).toMatchObject({
+    display: 'grid',
+    'grid-template-columns': '7.5rem repeat(2, max-content) minmax(0, 1fr)',
+    'align-items': 'center',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-run-context__updated',
+  )).toMatchObject({
+    'grid-column': '4',
+    'justify-self': 'end',
+  });
+});
+
 test('Outcomes cards keep their natural height inside the scrolling pane', () => {
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-outcome-list')).toMatchObject({
     display: 'flex',

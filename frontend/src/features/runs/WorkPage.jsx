@@ -732,7 +732,7 @@ function DeliveryView({ data, projectKey, t }) {
 
 export default function WorkPage() {
   const { projectKey = '', runId = '' } = useParams();
-  const { language, t } = useOutletContext();
+  const { language, t, workDrawer = null } = useOutletContext();
   const reducedMotion = usePrefersReducedMotion();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
@@ -1008,7 +1008,17 @@ export default function WorkPage() {
 
   return (
     <main id="main-content" className="product-page product-work-page">
-      <header className="product-page-header">
+      <header
+        aria-hidden={workDrawer ? !workDrawer.open : undefined}
+        className="product-page-header work-context-drawer"
+        data-open={workDrawer ? String(workDrawer.open) : 'true'}
+        id="work-context-drawer"
+        inert={workDrawer && !workDrawer.open ? '' : undefined}
+        onBlurCapture={workDrawer?.onLeave}
+        onFocusCapture={workDrawer?.onEnter}
+        onPointerEnter={workDrawer?.onEnter}
+        onPointerLeave={workDrawer?.onLeave}
+      >
         <div className="product-work-page__identity"><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
           {hasRunContext ? (
@@ -1048,16 +1058,6 @@ export default function WorkPage() {
           ) : <StatusBadge>{t('work.noRun')}</StatusBadge>}
           <div className="work-run-context__actions">
             {!hasRunContext ? runSelector : null}
-            {hasProjectedMission && !isHistorical ? (
-              <Button
-                aria-controls="team-inspector"
-                aria-expanded={Boolean(inspectorView)}
-                onClick={() => openInspector(inspectorView || 'plan')}
-                variant="secondary"
-              >
-                {t('work.team.runDetails')}
-              </Button>
-            ) : null}
           </div>
         </div>
       </header>

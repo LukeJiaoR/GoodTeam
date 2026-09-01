@@ -41,7 +41,7 @@
 @media (max-width: 767px) {
   .work-workspace-shell .product-work-page {
     width: min(100% - 0.7rem, 46rem);
-    padding-top: 0.65rem;
+    padding-top: 0;
   }
 }
 
@@ -150,6 +150,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .work-workspace-shell .product-button,
+  .work-workspace-shell .work-context-drawer,
   .work-workspace-shell .team-mobile-nav button {
     transition: none !important;
   }
@@ -254,7 +255,7 @@
 @media (max-width: 767px) {
   .work-workspace-shell .product-work-page {
     width: min(100% - 2rem, 42rem);
-    padding: 1.25rem 0 3rem;
+    padding: 0 0 3rem;
   }
 
   .work-workspace-shell .team-mobile-nav {
@@ -402,6 +403,29 @@
     padding: 0.72rem 0.78rem;
   }
 
+  .work-workspace-shell .product-work-page .work-run-context__mission {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.2rem;
+  }
+
+  .work-workspace-shell .product-work-page .work-run-context__facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem 0.8rem;
+    align-items: start;
+  }
+
+  .work-workspace-shell .product-work-page .work-run-context__fact {
+    min-width: 0;
+    padding: 0;
+    border-left: 0;
+  }
+
+  .work-workspace-shell .product-work-page .work-run-context__updated {
+    grid-column: 1 / -1;
+    justify-self: start;
+    text-align: left;
+  }
+
   .work-workspace-shell .product-work-page .work-run-selector,
   .work-workspace-shell .product-work-page .work-run-selector select {
     width: 100%;
@@ -432,7 +456,7 @@
   }
 
   .work-workspace-shell .product-work-page .work-run-context__fact {
-    width: calc(50% - 0.25rem);
+    width: auto;
     padding-left: 0;
     border-left: 0;
   }

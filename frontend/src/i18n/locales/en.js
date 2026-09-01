@@ -533,7 +533,7 @@ export const en = {
   'work.team.closeInspection': 'Close details',
   'work.team.inspectWorkers': 'Inspect workers',
   'work.team.inspectWorkflow': 'Inspect workflow',
-  'work.team.executionEmpty': 'No active workers yet.',
+  'work.team.executionEmpty': 'No worker records yet.',
   'work.team.outcomesEmpty': 'No tasks yet.',
   'work.team.noResponsibility': 'Waiting for a scoped responsibility.',
   'work.team.primaryOutcome': 'Outcome',

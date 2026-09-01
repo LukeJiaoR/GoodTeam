@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, Link, RouterProvider } from 'react-router-dom';
 import { expect, test } from 'vitest';
@@ -98,6 +98,25 @@ test('Work uses one project-level header without duplicate navigation or breadcr
   expect(container.querySelector('.product-navigation')).not.toBeInTheDocument();
   expect(container.querySelector('.product-project-navigation')).not.toBeInTheDocument();
   expect(container.querySelector('.product-breadcrumb')).not.toBeInTheDocument();
+});
+
+test('the active Workbench navigation item controls the Work context drawer', async () => {
+  const user = userEvent.setup();
+  const router = createMemoryRouter(
+    createProductRoutes({ WorkComponent: WorkStub }),
+    { initialEntries: ['/projects/DEMO/work'] },
+  );
+  render(<RouterProvider router={router} />);
+
+  const workbench = await screen.findByRole('link', { name: 'Workbench' });
+  expect(workbench).toHaveAttribute('aria-controls', 'work-context-drawer');
+  expect(workbench).toHaveAttribute('aria-expanded', 'false');
+
+  await user.hover(workbench);
+  expect(workbench).toHaveAttribute('aria-expanded', 'true');
+
+  await user.unhover(workbench);
+  await waitFor(() => expect(workbench).toHaveAttribute('aria-expanded', 'false'));
 });
 
 test('project Home receives the decoded project key and active language', async () => {

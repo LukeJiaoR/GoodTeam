@@ -161,7 +161,12 @@ function repeatedArchitectAttemptData() {
     { id: 'job-architect-3', role: 'architect', status: 'blocked' },
     { id: 'job-architect-4', role: 'architect', status: 'completed' },
   ];
-  data.team_workspace.execution_actors = [];
+  data.team_workspace.execution_actors = [{
+    id: 'task-assignment:DEMO-1', role: 'architect', state: 'completed',
+    responsibility: 'Design RFC & Security Review', task_id: 'DEMO-1',
+    source: 'worker_job', status_reason: 'delivered', attempt_count: 4,
+    current_attempt_id: 'job-architect-4',
+  }];
   data.team_workspace.outcome_tasks = [
     {
       id: 'DEMO-1',
@@ -191,6 +196,8 @@ function orderedExecutionData() {
       dependency_task_id: 'DEMO-IMPL', dependency_task_title: 'Implement approved design',
     },
     { id: 'up-next', role: 'release', state: 'up_next', responsibility: 'Prepare release', status_reason: 'not_started' },
+    { id: 'completed', role: 'product_requirement', state: 'completed', responsibility: 'Approve requirements', status_reason: 'task_completed' },
+    { id: 'stopped', role: 'ui', state: 'stopped', responsibility: 'Retired visual draft', status_reason: 'task_stopped' },
   ];
   return data;
 }
@@ -402,7 +409,8 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
   expect(screen.queryByRole('link', { name: 'Open PR #42 ↗' })).not.toBeInTheDocument();
   expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('button', { name: 'Run details' })).not.toBeInTheDocument();
+  expect(document.querySelector('.work-context-drawer')).toHaveAttribute('data-open', 'true');
   expect(screen.queryByRole('button', { name: 'Mission history' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Open the Manager conversation…' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
@@ -471,7 +479,7 @@ test('does not infer outcome data from a shared role when task identity is absen
   expect(within(execution).queryByText(/RFC [AB]/)).not.toBeInTheDocument();
 });
 
-test('keeps terminal Architect attempts out of Execution and in Outcomes/history', async () => {
+test('keeps terminal Architect attempts visible after active workers', async () => {
   const scrollIntoView = vi.fn();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
@@ -484,21 +492,19 @@ test('keeps terminal Architect attempts out of Execution and in Outcomes/history
     runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
   });
 
-  renderWorkPage();
+  renderWorkPage('/projects/DEMO/work/runs/run-active?view=plan');
 
   const executionPane = screen.getByRole('region', { name: 'Execution' });
-  expect(within(executionPane).queryAllByRole('listitem')).toHaveLength(0);
-  expect(within(executionPane).getByText('No active workers yet.')).toBeVisible();
+  expect(within(executionPane).queryAllByRole('listitem')).toHaveLength(1);
+  expect(within(executionPane).getByText('Design RFC & Security Review')).toBeVisible();
+  expect(within(executionPane).getByRole('img', { name: /Completed/ })).toBeVisible();
   const outcomesPane = screen.getByRole('region', { name: 'Outcomes' });
   expect(within(outcomesPane).getByRole('button', {
     name: 'Design RFC & Security Review',
   })).toBeVisible();
 
-  const runDetails = screen.getByRole('button', { name: 'Run details' });
-  await userEvent.click(runDetails);
   const inspector = document.querySelector('.team-inspector');
   expect(inspector).not.toBeNull();
-  expect(runDetails).toHaveAttribute('aria-expanded', 'true');
   expect(inspector).toHaveFocus();
   expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
   const detailTabs = within(inspector).getByRole('navigation', { name: 'Run detail views' });
@@ -539,9 +545,11 @@ test('renders the projection order stably with LED-only Execution states', async
     'Implement approved design',
     'Verify implementation',
     'Prepare release',
+    'Approve requirements',
+    'Retired visual draft',
   ];
   expect(actorOrder()).toEqual(expected);
-  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(5);
+  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(7);
   expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();
 
   await user.hover(within(execution).getByRole('img', { name: /Reviewing/ }));
@@ -637,7 +645,7 @@ test('starts empty Work from the Manager inside the three-pane workspace', async
   expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Manager' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
-  expect(screen.getByText('No active workers yet.')).toBeVisible();
+  expect(screen.getByText('No worker records yet.')).toBeVisible();
   expect(screen.getByText('No tasks yet.')).toBeVisible();
   expect(screen.getByRole('heading', { name: 'What should the team work on?' })).toBeVisible();
   expect(document.querySelector('.work-start-panel')).not.toBeInTheDocument();
@@ -741,7 +749,7 @@ test('opens Request changes as a durable Manager discussion without review mutat
   expect(refresh).toHaveBeenCalledTimes(1);
 });
 
-test('routes Run details canvas Request changes into Manager Intent Commit', async () => {
+test('routes the detail canvas Request changes into Manager Intent Commit', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   data.workflow_steps = [
@@ -759,8 +767,7 @@ test('routes Run details canvas Request changes into Manager Intent Commit', asy
     intent_commit: { id: 'intent-canvas-1', status: 'discussing' },
   });
 
-  renderWorkPage();
-  await userEvent.click(screen.getByRole('button', { name: 'Run details' }));
+  renderWorkPage('/projects/DEMO/work/runs/run-active?view=plan');
 
   const inspector = document.querySelector('.team-inspector');
   await userEvent.click(within(inspector).getByRole('button', { name: /Security/ }));
@@ -776,11 +783,11 @@ test('routes Run details canvas Request changes into Manager Intent Commit', asy
   });
   expect(mocks.decideReview).not.toHaveBeenCalled();
   await waitFor(() => {
-    expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('location-search')).toHaveTextContent('');
   });
 });
 
-test('routes Run details plan task Request changes into Manager Intent Commit', async () => {
+test('routes the detail plan task Request changes into Manager Intent Commit', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   data.agile_board = {
@@ -804,8 +811,7 @@ test('routes Run details plan task Request changes into Manager Intent Commit', 
     intent_commit: { id: 'intent-plan-1', status: 'discussing' },
   });
 
-  renderWorkPage();
-  await userEvent.click(screen.getByRole('button', { name: 'Run details' }));
+  renderWorkPage('/projects/DEMO/work/runs/run-active?view=plan');
 
   const inspector = document.querySelector('.team-inspector');
   await userEvent.click(within(inspector).getByRole('button', { name: /Review RFC security boundaries/ }));
@@ -823,7 +829,7 @@ test('routes Run details plan task Request changes into Manager Intent Commit', 
   });
   expect(mocks.decideReview).not.toHaveBeenCalled();
   await waitFor(() => {
-    expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('location-search')).toHaveTextContent('');
   });
 });
 

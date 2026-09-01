@@ -592,7 +592,7 @@
 .work-workspace-shell .product-work-page {
   width: min(100% - 1rem, 1680px);
   margin-inline: auto;
-  padding: 1rem 0 1.5rem;
+  padding: 0 0 1.5rem;
   color: var(--work-text);
   background: transparent;
 }
@@ -614,6 +614,33 @@
   margin-bottom: 1rem;
   padding: 0.35rem 0.9rem 0.8rem;
   border-bottom: 1px solid var(--work-border);
+}
+
+.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer {
+  max-height: 15rem;
+  overflow: clip;
+  transform-origin: top;
+  transition:
+    max-height 220ms ease,
+    margin 220ms ease,
+    padding 220ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease,
+    transform 220ms ease,
+    visibility 0s linear 0s;
+}
+
+.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer[data-open="false"] {
+  max-height: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  visibility: hidden;
+  border-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-0.75rem);
+  transition-delay: 0s, 0s, 0s, 0s, 0s, 0s, 220ms;
 }
 
 .work-workspace-shell .product-page-header__meta {
@@ -657,15 +684,16 @@
 .work-workspace-shell .work-run-context__mission,
 .work-workspace-shell .work-run-context__facts,
 .work-workspace-shell .work-run-context__actions {
-  display: flex;
   min-width: 0;
   gap: 0.65rem;
   align-items: center;
-  flex-wrap: wrap;
 }
 
 .work-workspace-shell .work-run-context__mission {
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: start;
 }
 
 .work-workspace-shell .work-run-context__mission > span,
@@ -677,19 +705,42 @@
 
 .work-workspace-shell .work-run-title {
   min-width: 0;
+  max-width: 58rem;
   color: var(--work-text);
-  font-size: 0.98rem;
+  font-size: 1.05rem;
+  line-height: 1.4;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
 .work-workspace-shell .work-run-context__facts {
-  gap: 0.8rem;
+  display: grid;
+  grid-template-columns: 7.5rem repeat(2, max-content) minmax(0, 1fr);
+  gap: 0;
+  align-items: center;
+}
+
+.work-workspace-shell .work-run-context__facts > .product-status-badge {
+  justify-self: start;
 }
 
 .work-workspace-shell .work-run-context__fact {
   display: grid;
   gap: 0.08rem;
+  min-width: 8.5rem;
+  padding: 0 1.15rem;
+  border-left: 1px solid color-mix(in srgb, var(--work-border-strong) 48%, transparent);
+}
+
+.work-workspace-shell .work-run-context__updated {
+  grid-column: 4;
+  justify-self: end;
+  text-align: right;
+}
+
+.work-workspace-shell .work-run-context__actions {
+  display: flex;
+  flex-wrap: wrap;
 }
 
 .work-workspace-shell .work-run-selector {

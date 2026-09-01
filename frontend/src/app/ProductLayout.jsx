@@ -9,6 +9,7 @@ import {
   Sun,
   Workflow,
 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import Breadcrumb from '../components/ui/Breadcrumb';
 import { ToastProvider } from '../components/ui/ToastProvider';
@@ -23,6 +24,8 @@ const LANGUAGE_OPTIONS = [
 
 export default function ProductLayout() {
   const { pathname } = useLocation();
+  const [workDrawerOpen, setWorkDrawerOpen] = useState(false);
+  const workDrawerCloseTimer = useRef(null);
   const {
     darkMode,
     setDarkMode,
@@ -38,6 +41,16 @@ export default function ProductLayout() {
   const isWorkRoute = Boolean(projectKey && /^\/projects\/[^/]+\/work(?:\/|$)/.test(pathname));
   const navClass = ({ isActive }) => `product-navigation__link${isActive ? ' is-active' : ''}`;
   const workNavClass = ({ isActive }) => `product-work-navigation__link${isActive ? ' is-active' : ''}`;
+  const openWorkDrawer = useCallback(() => {
+    globalThis.clearTimeout(workDrawerCloseTimer.current);
+    setWorkDrawerOpen(true);
+  }, []);
+  const closeWorkDrawerSoon = useCallback(() => {
+    globalThis.clearTimeout(workDrawerCloseTimer.current);
+    workDrawerCloseTimer.current = globalThis.setTimeout(() => setWorkDrawerOpen(false), 140);
+  }, []);
+
+  useEffect(() => () => globalThis.clearTimeout(workDrawerCloseTimer.current), []);
 
   return (
     <ToastProvider>
@@ -58,7 +71,16 @@ export default function ProductLayout() {
                   <LayoutDashboard aria-hidden="true" size={17} />
                   <span>{t('product.workNavigation.overview')}</span>
                 </NavLink>
-                <NavLink className={workNavClass} to={routes.projectWork(projectKey)}>
+                <NavLink
+                  aria-controls="work-context-drawer"
+                  aria-expanded={workDrawerOpen}
+                  className={workNavClass}
+                  onBlur={closeWorkDrawerSoon}
+                  onFocus={openWorkDrawer}
+                  onPointerEnter={openWorkDrawer}
+                  onPointerLeave={closeWorkDrawerSoon}
+                  to={routes.projectWork(projectKey)}
+                >
                   <Workflow aria-hidden="true" size={17} />
                   <span>{t('product.workNavigation.workbench')}</span>
                 </NavLink>
@@ -137,7 +159,15 @@ export default function ProductLayout() {
 
         {isWorkRoute ? null : <Breadcrumb projectKey={projectKey} t={t} />}
 
-        <Outlet context={{ language, t }} />
+        <Outlet context={{
+          language,
+          t,
+          workDrawer: isWorkRoute ? {
+            open: workDrawerOpen,
+            onEnter: openWorkDrawer,
+            onLeave: closeWorkDrawerSoon,
+          } : null,
+        }} />
       </div>
     </ToastProvider>
   );

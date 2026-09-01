@@ -533,7 +533,7 @@ export const zhCN = {
   'work.team.closeInspection': '关闭详情',
   'work.team.inspectWorkers': '检查 Worker',
   'work.team.inspectWorkflow': '检查工作流',
-  'work.team.executionEmpty': '当前没有活跃 Worker。',
+  'work.team.executionEmpty': '当前还没有 Worker 记录。',
   'work.team.outcomesEmpty': '当前还没有任务。',
   'work.team.noResponsibility': '正在等待明确的职责范围。',
   'work.team.primaryOutcome': '交付结果',
