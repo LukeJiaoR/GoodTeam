@@ -131,6 +131,15 @@ function ManagerMissionEntry({ busy, data, embedded = true, error, onStart, t })
 }
 
 
+const SYSTEM_TIMELINE_EVENTS = new Set([
+  'deliverable_ready',
+  'verification_updated',
+  'review_updated',
+  'work_progressed',
+  'work_dispatched',
+  'progress',
+]);
+
 function timelineCopy(item, t) {
   if (item.actor === 'user' && item.event === 'mission_requested') return item.content;
   const details = item.details || {};
@@ -155,6 +164,20 @@ function TimelineItem({ item, language, t }) {
     : '';
   const actorLabel = item.actor === 'user' ? t('work.manager.you') : t('work.manager.name');
   const copy = timelineCopy(item, t);
+  const isSystem = item.actor !== 'user' && SYSTEM_TIMELINE_EVENTS.has(item.event);
+
+  if (isSystem) {
+    return (
+      <li className="team-manager-event team-manager-event--system" data-actor={item.actor} data-kind={item.kind} data-system="true">
+        <div className="team-manager-system-chip">
+          <span className="team-manager-system-chip__dot" aria-hidden="true" />
+          <span className="team-manager-system-chip__text">{copy}</span>
+          {formatted ? <time dateTime={item.timestamp}>{formatted}</time> : null}
+        </div>
+      </li>
+    );
+  }
+
   return (
     <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind}>
       <TeamAvatar label={actorLabel} manager={item.actor !== 'user'} />
@@ -378,6 +401,14 @@ function ManagerMissionControls({ busy, canCancel, onTerminate, t }) {
   );
 }
 
+const NEAR_BOTTOM_THRESHOLD = 64;
+
+function isNearBottom(element) {
+  if (!element) return true;
+  const { scrollTop, scrollHeight, clientHeight } = element;
+  return scrollHeight - scrollTop - clientHeight <= NEAR_BOTTOM_THRESHOLD;
+}
+
 function ManagerPane({
   attention,
   busy,
@@ -413,6 +444,36 @@ function ManagerPane({
       ? statusText(mission.status, t)
       : t('work.manager.ready');
   const timelineHasMissionRequest = (timeline || []).some((item) => item.event === 'mission_requested');
+  const conversationRef = useRef(null);
+  const wasNearBottomRef = useRef(true);
+  const prevAttentionKeyRef = useRef(null);
+  const prevTimelineLengthRef = useRef(0);
+
+  const attentionKey = `${attention?.id || ''}:${attention?.intent_commit?.status || ''}`;
+
+  useEffect(() => {
+    const node = conversationRef.current;
+    if (!node) return;
+
+    const attentionChanged = prevAttentionKeyRef.current !== attentionKey;
+    const timelineChanged = prevTimelineLengthRef.current !== (timeline?.length || 0);
+
+    prevAttentionKeyRef.current = attentionKey;
+    prevTimelineLengthRef.current = timeline?.length || 0;
+
+    if (attention && attentionChanged) {
+      node.scrollTop = node.scrollHeight;
+      wasNearBottomRef.current = true;
+    } else if (timelineChanged && wasNearBottomRef.current) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }, [attention, attentionKey, timeline?.length]);
+
+  const handleConversationScroll = (event) => {
+    const node = event.currentTarget;
+    wasNearBottomRef.current = isNearBottom(node);
+  };
+
   return (
     <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
       <header className="team-pane__header">
@@ -427,7 +488,7 @@ function ManagerPane({
           </div>
         </div>
       </header>
-      <div className="team-manager-conversation">
+      <div className="team-manager-conversation" onScroll={handleConversationScroll} ref={conversationRef}>
         {mission ? (
           <>
             {!timelineHasMissionRequest ? (
