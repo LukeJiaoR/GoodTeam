@@ -400,7 +400,7 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(document.querySelector('[data-task-id="DEMO-2"] .product-status-badge'))
     .toHaveAttribute('data-tone', 'neutral');
   expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
-  expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
+  expect(screen.queryByRole('link', { name: 'Open PR #42 ↗' })).not.toBeInTheDocument();
   expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Run details' })).toHaveAttribute('aria-expanded', 'false');
   expect(screen.queryByRole('button', { name: 'Mission history' })).not.toBeInTheDocument();
@@ -411,7 +411,26 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(document.querySelector('.product-work-page__identity')).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Back to Home' })).not.toBeInTheDocument();
 
-  await userEvent.click(screen.getByRole('button', { name: /Implement OAuth/ }));
+  const outcomeToggle = screen.getByRole('button', { name: 'Implement OAuth' });
+  const outcomeCard = outcomeToggle.closest('li');
+  const outcomeDetails = document.querySelector(`#${outcomeToggle.getAttribute('aria-controls')}`);
+  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'false');
+  expect(outcomeCard).toHaveAttribute('data-expanded', 'false');
+  expect(outcomeDetails).toHaveAttribute('hidden');
+
+  await userEvent.click(outcomeToggle);
+  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'true');
+  expect(outcomeCard).toHaveAttribute('data-expanded', 'true');
+  expect(outcomeDetails).not.toHaveAttribute('hidden');
+  expect(screen.queryByRole('dialog', { name: 'Implement OAuth' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
+
+  await userEvent.click(outcomeToggle);
+  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'false');
+  expect(outcomeDetails).toHaveAttribute('hidden');
+
+  await userEvent.click(outcomeToggle);
+  await userEvent.click(within(outcomeCard).getByRole('button', { name: 'Task details' }));
   expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
 });
 
@@ -472,7 +491,7 @@ test('keeps terminal Architect attempts out of Execution and in Outcomes/history
   expect(within(executionPane).getByText('No active workers yet.')).toBeVisible();
   const outcomesPane = screen.getByRole('region', { name: 'Outcomes' });
   expect(within(outcomesPane).getByRole('button', {
-    name: /Design RFC & Security Review.*Completed/,
+    name: 'Design RFC & Security Review',
   })).toBeVisible();
 
   const runDetails = screen.getByRole('button', { name: 'Run details' });
@@ -1208,7 +1227,7 @@ test('opens the exact attention Outcome in-place and restores Manager focus on c
   const implementation = document.querySelector('[data-task-id="DEMO-IMPL"]');
   const security = document.querySelector('[data-task-id="DEMO-SEC"]');
   expect(architecture).toHaveAttribute('data-attention', 'true');
-  expect(within(architecture).getByText('Needs review')).toBeVisible();
+  expect(within(architecture).getByText('Needs review')).not.toBeVisible();
   expect(implementation).not.toHaveAttribute('data-attention');
   expect(security).not.toHaveAttribute('data-attention');
 
@@ -1298,7 +1317,10 @@ test('does not lend an actionable review to another same-role Outcome', async ()
 
   renderWorkPage();
   const outcomes = screen.getByRole('region', { name: 'Outcomes' });
-  await user.click(within(outcomes).getByRole('button', { name: /Security review.*DEMO-SEC/ }));
+  const securityToggle = within(outcomes).getByRole('button', { name: 'Security review' });
+  const securityCard = securityToggle.closest('li');
+  await user.click(securityToggle);
+  await user.click(within(securityCard).getByRole('button', { name: 'Task details' }));
 
   const dialog = await screen.findByRole('dialog', { name: 'Security review' });
   expect(within(dialog).queryByText('Architecture security review')).not.toBeInTheDocument();
@@ -1324,7 +1346,10 @@ test('keeps Outcome task details project-facing and resolves dependencies exactl
 
   renderWorkPage();
   const outcomes = screen.getByRole('region', { name: 'Outcomes' });
-  await user.click(within(outcomes).getByRole('button', { name: /Review OAuth.*DEMO-2/ }));
+  const reviewToggle = within(outcomes).getByRole('button', { name: 'Review OAuth' });
+  const reviewCard = reviewToggle.closest('li');
+  await user.click(reviewToggle);
+  await user.click(within(reviewCard).getByRole('button', { name: 'Task details' }));
 
   const dialog = await screen.findByRole('dialog', { name: 'Review OAuth' });
   const localizedUpdate = new Intl.DateTimeFormat('en', {

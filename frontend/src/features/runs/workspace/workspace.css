@@ -1085,7 +1085,7 @@
   background: var(--work-accent);
 }
 
-.work-workspace-shell .team-outcome-list button {
+.work-workspace-shell .team-outcome-list .team-outcome-card__toggle {
   display: grid;
   width: 100%;
   gap: 0.65rem;
@@ -1155,6 +1155,7 @@
   right: 0.8rem;
   bottom: 0.8rem;
   color: var(--work-text-muted);
+  transition: transform 180ms ease;
 }
 
 .work-workspace-shell .team-outcome-list__link {
@@ -2058,7 +2059,7 @@
   box-shadow: var(--work-shadow-inset);
 }
 
-.work-workspace-shell .team-outcome-list button {
+.work-workspace-shell .team-outcome-list .team-outcome-card__toggle {
   display: flex;
   position: relative;
   gap: 0.58rem;
@@ -2069,11 +2070,11 @@
   transition: background-color 160ms ease, transform 160ms ease;
 }
 
-.work-workspace-shell .team-outcome-list button:hover {
+.work-workspace-shell .team-outcome-list .team-outcome-card__toggle:hover {
   background: color-mix(in srgb, var(--work-accent-soft) 22%, transparent);
 }
 
-.work-workspace-shell .team-outcome-list button:active {
+.work-workspace-shell .team-outcome-list .team-outcome-card__toggle:active {
   transform: translateY(1px);
 }
 
@@ -2086,4 +2087,46 @@
   box-shadow: var(--work-shadow-inset);
   font-family: "Geist Mono Variable", ui-monospace, monospace;
   font-size: 0.65rem;
+}
+
+.work-workspace-shell .team-outcome-card__owner {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-0.25rem);
+  transition: max-height 180ms ease, opacity 150ms ease, transform 180ms ease;
+}
+
+.work-workspace-shell .team-outcome-list > li:hover .team-outcome-card__owner,
+.work-workspace-shell .team-outcome-list > li:focus-within .team-outcome-card__owner,
+.work-workspace-shell .team-outcome-list > li[data-expanded="true"] .team-outcome-card__owner {
+  max-height: 3rem;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.work-workspace-shell .team-outcome-card__details {
+  display: grid;
+  gap: 0.58rem;
+  padding: 0 1.95rem 0.82rem 0.82rem;
+}
+
+.work-workspace-shell .team-outcome-card__details[hidden] { display: none; }
+
+.work-workspace-shell .team-outcome-card__details-button {
+  width: max-content;
+  padding: 0.35rem 0.58rem;
+  color: var(--work-accent-strong);
+  background: var(--work-material-deep);
+  border: 0;
+  border-radius: 9px;
+  box-shadow: var(--work-shadow-compact);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.work-workspace-shell .team-outcome-list > li[data-expanded="true"] .team-outcome-card__chevron {
+  transform: rotate(90deg);
 }

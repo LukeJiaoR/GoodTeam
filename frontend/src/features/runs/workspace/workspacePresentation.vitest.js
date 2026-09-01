@@ -157,3 +157,24 @@ test('Outcomes cards keep their natural height inside the scrolling pane', () =>
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-outcome-list > li').flex)
     .toBe('0 0 auto');
 });
+
+test('Outcomes cards progressively disclose owner and full details', () => {
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .team-outcome-card__owner',
+  )).toMatchObject({
+    'max-height': '0',
+    opacity: '0',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .team-outcome-list > li:hover .team-outcome-card__owner',
+  )).toMatchObject({
+    'max-height': '3rem',
+    opacity: '1',
+  });
+  expect(declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .team-outcome-card__details[hidden]',
+  )).toMatchObject({ display: 'none' });
+});
