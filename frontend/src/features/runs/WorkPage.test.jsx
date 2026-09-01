@@ -678,6 +678,8 @@ test('keeps an active Operator mission on Work when workflow history has a stale
   expect(screen.getByText('Keep the current Operator mission visible through review.')).toBeVisible();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work');
   const selector = await screen.findByRole('combobox', { name: 'Select run' });
+  expect(selector.closest('.work-run-context')).toBeInTheDocument();
+  expect(selector.closest('.work-run-context__actions')).toBeNull();
   expect(Array.from(selector.options, (option) => option.textContent)).toEqual([
     'Current · Current Operator mission',
     'Archived · Old workflow mission',

@@ -981,13 +981,28 @@ export default function WorkPage() {
     </>
   ) : null;
 
+  const runSelector = showRunSelector ? (
+    <label className="work-run-selector"><span>{t('work.history.selector')}</span>
+      <select value={runId || currentRunId || ''} onChange={(event) => { if (!event.target.value) return; const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
+        {!currentRunId && !runId ? (
+          <option disabled value="">
+            {hasProjectedMission
+              ? t('work.history.currentMissionOption', { title: currentRunTitle })
+              : t('work.history.selectPrevious')}
+          </option>
+        ) : null}
+        {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
+      </select>
+    </label>
+  ) : null;
+
   return (
     <main id="main-content" className="product-page product-work-page">
       <header className="product-page-header">
         <div className="product-work-page__identity"><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
         <div className="product-page-header__meta">
           {hasRunContext ? (
-            <section className="work-run-context" aria-label={t('work.manager.currentMission')}>
+            <section className={`work-run-context${showRunSelector ? ' work-run-context--selectable' : ''}`} aria-label={t('work.manager.currentMission')}>
               <div className="work-run-context__mission">
                 <span>{t('work.manager.currentMission')}</span>
                 <strong className="work-run-title" title={currentRunTitle}>{currentRunTitle}</strong>
@@ -1018,23 +1033,11 @@ export default function WorkPage() {
                   </time>
                 ) : null}
               </div>
+              {runSelector}
             </section>
           ) : <StatusBadge>{t('work.noRun')}</StatusBadge>}
           <div className="work-run-context__actions">
-            {showRunSelector ? (
-              <label className="work-run-selector"><span>{t('work.history.selector')}</span>
-                <select value={runId || currentRunId || ''} onChange={(event) => { if (!event.target.value) return; const next = new URLSearchParams(search); navigate(`${routes.projectRun(projectKey, event.target.value)}${next.toString() ? `?${next.toString()}` : ''}`); }}>
-                  {!currentRunId && !runId ? (
-                    <option disabled value="">
-                      {hasProjectedMission
-                        ? t('work.history.currentMissionOption', { title: currentRunTitle })
-                        : t('work.history.selectPrevious')}
-                    </option>
-                  ) : null}
-                  {runHistory.map((item) => <option key={item.run_id} value={item.run_id}>{runOptionLabel(item, t)}</option>)}
-                </select>
-              </label>
-            ) : null}
+            {!hasRunContext ? runSelector : null}
             {hasProjectedMission && !isHistorical ? (
               <Button
                 aria-controls="team-inspector"

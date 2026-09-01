@@ -651,6 +651,21 @@
   box-shadow: var(--work-shadow-soft);
 }
 
+.work-workspace-shell .work-run-context--selectable {
+  grid-template-areas:
+    "mission selector"
+    "facts selector";
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 22rem);
+  column-gap: 1rem;
+}
+
+.work-workspace-shell .work-run-context--selectable .work-run-context__mission { grid-area: mission; }
+.work-workspace-shell .work-run-context--selectable .work-run-context__facts { grid-area: facts; }
+.work-workspace-shell .work-run-context--selectable .work-run-selector {
+  grid-area: selector;
+  align-self: center;
+}
+
 .work-workspace-shell .work-run-context__mission,
 .work-workspace-shell .work-run-context__facts,
 .work-workspace-shell .work-run-context__actions {
@@ -694,6 +709,11 @@
   gap: 0.28rem;
   color: var(--work-text-muted);
   font-size: 0.72rem;
+}
+
+.work-workspace-shell .work-run-context .work-run-selector select {
+  width: 100%;
+  max-width: none;
 }
 
 .work-workspace-shell .work-run-selector select,
@@ -2011,6 +2031,8 @@
 }
 
 .work-workspace-shell .team-outcome-list {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   flex: 1 1 auto;
   padding-top: 0.62rem !important;
@@ -2018,6 +2040,7 @@
 }
 
 .work-workspace-shell .team-outcome-list > li {
+  flex: 0 0 auto;
   margin: 0 0.9rem 1rem;
   scroll-margin-block: 8rem 1.5rem;
   transition: background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;

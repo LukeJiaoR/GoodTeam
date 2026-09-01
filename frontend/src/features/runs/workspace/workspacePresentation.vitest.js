@@ -138,4 +138,22 @@ test('desktop Work header keeps mission context and actions on one compact row',
     'grid-template-columns': 'minmax(24rem, 1fr) auto',
     'align-items': 'center',
   });
+  const selectableContext = declarationsFor(
+    workspaceRoot,
+    '.work-workspace-shell .work-run-context--selectable',
+  );
+  expect(selectableContext['grid-template-columns'])
+    .toBe('minmax(0, 1fr) minmax(14rem, 22rem)');
+  expect(selectableContext['grid-template-areas']).toContain('"mission selector"');
+  expect(selectableContext['grid-template-areas']).toContain('"facts selector"');
+});
+
+test('Outcomes cards keep their natural height inside the scrolling pane', () => {
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-outcome-list')).toMatchObject({
+    display: 'flex',
+    'flex-direction': 'column',
+    'overflow-y': 'auto',
+  });
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-outcome-list > li').flex)
+    .toBe('0 0 auto');
 });
