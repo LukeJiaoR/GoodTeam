@@ -11,9 +11,9 @@ function buildItems(projections, t) {
     const key = item?.project?.project_key || state?.start_context?.project_key;
     if (!key) return [];
     const result = [];
-    if (error) result.push({ id: `${key}-error`, key, tone: 'danger', title: t('inbox.items.loadFailed'), detail: error.message, href: routes.projectHome(key) });
+    if (error) result.push({ id: `${key}-error`, key, tone: 'danger', title: t('inbox.items.loadFailed'), detail: error.message, href: routes.projectWork(key) });
     if (item?.readiness?.lifecycle === 'attention_required' || Number(item?.attention_count) > 0) {
-      result.push({ id: `${key}-readiness`, key, tone: 'warning', title: t('inbox.items.readiness'), detail: t('inbox.items.readinessDetail'), href: routes.projectHome(key) });
+      result.push({ id: `${key}-readiness`, key, tone: 'warning', title: t('inbox.items.readiness'), detail: t('inbox.items.readinessDetail'), href: routes.projectWork(key) });
     }
     (state?.approval_reviews || []).filter((review) => review.is_actionable).forEach((review) => result.push({
       id: `${key}-review-${review.approval}`, key, tone: 'warning', title: t('inbox.items.review', { review: review.approval.toUpperCase() }), detail: review.recommendation?.reasons?.[0]?.text || t('inbox.items.reviewDetail'), href: routes.projectReviewItem(key, review.approval),

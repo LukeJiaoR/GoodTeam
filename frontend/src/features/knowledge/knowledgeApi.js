@@ -1,11 +1,16 @@
 import { requestJson } from '../../lib/api/client';
 import { getProjects } from '../../lib/api/globalApi';
-import { getProjectHome, getReadinessStepArtifact } from '../projects/projectApi';
 import { getProjectState } from '../runs/runApi';
 
 export const getKnowledgeState = getProjectState;
-export const getKnowledgeHome = getProjectHome;
-export const getRepositoryUnderstanding = (projectKey, options) => getReadinessStepArtifact(projectKey, 'repository_understanding', options);
+export const getKnowledgeHome = (projectKey, { signal } = {}) => requestJson(
+  `/api/projects/${encodeURIComponent(projectKey)}/home`,
+  { signal },
+);
+export const getRepositoryUnderstanding = (projectKey, { signal } = {}) => requestJson(
+  `/api/projects/${encodeURIComponent(projectKey)}/readiness/steps/repository_understanding/artifact`,
+  { signal },
+);
 export const getKnowledgeArtifact = (projectKey, key, { signal } = {}) => requestJson(
   `/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(key)}`,
   { signal },

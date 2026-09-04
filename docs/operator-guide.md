@@ -98,32 +98,30 @@ Project-loading URLs:
 
 ```text
 http://localhost:8788/projects
-http://localhost:8788/projects/MYAPP/home
+http://localhost:8788/projects/MYAPP/work
 ```
 
 Use `/projects` to register a readable absolute project directory and enter its
-Home in one flow. Registration changes only the GoodTeam data workspace; it
+Work space in one flow. Registration changes only the GoodTeam data workspace; it
 does not initialize Git, create documentation, or otherwise write into the
 selected project root. Repeating an import is idempotent and returns the same
 project. Readiness facts, detected or confirmed project mode, and pending steps
-are persisted in the workspace and restored after a browser reload or GoodTeam
-server restart.
+are persisted in the workspace and handled through Task Assistant after a browser
+reload or GoodTeam server restart.
 
-The product interface distinguishes a successfully loaded project from a project that is
-ready to start work. If the project type is ambiguous, choose new project,
-existing codebase, or decide later. Mode-specific Init and repository-
-understanding execution are persisted and recoverable. GoodTeam displays their
-real state and keeps workflow start disabled with a reason until readiness is
-complete. Old `/legacy?project=MYAPP` bookmarks redirect into the product Work
-space, where workflow operations are available.
+Task Assistant distinguishes a successfully loaded project from one that is
+ready to start work, asks for preparation input when needed, and surfaces the
+persisted result in the conversation. Mode-specific initialization and
+repository-understanding execution remain recoverable, and the backend keeps
+workflow start gated until readiness is complete. Old `/legacy?project=MYAPP`
+and `/projects/MYAPP/home` bookmarks redirect into the product Work space.
 
 Operator checks:
 
 - Confirm the project key shown in the dashboard matches the intended project.
-- Confirm the absolute root shown on project Home matches the directory you
-  selected.
+- Confirm the registered absolute root matches the directory you selected.
 - Treat `Loaded` and `Ready` as separate states; do not infer that Init or code
-  understanding has run merely because Home is available.
+  understanding has run merely because Work is available.
 - Confirm the current run and gate are the ones you intend to operate on.
 - If multiple projects are active, avoid approving a gate from the wrong project
   context.

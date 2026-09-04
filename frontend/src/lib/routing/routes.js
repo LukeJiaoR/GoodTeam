@@ -5,7 +5,6 @@ export const routes = Object.freeze({
   inbox: () => '/inbox',
   activity: () => '/activity',
   settings: () => '/settings',
-  projectHome: (projectKey) => `/projects/${segment(projectKey)}/home`,
   projectTeam: (projectKey) => `/projects/${segment(projectKey)}/team`,
   projectWork: (projectKey) => `/projects/${segment(projectKey)}/work`,
   projectRun: (projectKey, runId) => (

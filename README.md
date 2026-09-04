@@ -122,22 +122,22 @@ The default project-loading experience is available at:
 
 ```text
 http://localhost:8788/projects
-http://localhost:8788/projects/<PROJECT_KEY>/home
+http://localhost:8788/projects/<PROJECT_KEY>/work
 ```
 
 `/projects` accepts an absolute local directory, records it once, and opens a
-recoverable project Home. Import is read-only with respect to the selected
-directory: registration and readiness state are stored in the GoodTeam
-workspace, and importing the same root again returns the same project instead
+project's Work space with Task Assistant as the primary interaction. Import is
+read-only with respect to the selected directory: registration and readiness
+state are stored in the GoodTeam workspace, and importing the same root again returns the same project instead
 of creating a duplicate. New-project, existing-codebase, and unconfirmed modes
-share the same persisted readiness model, so the Home state and a manual mode
-decision survive browser reloads and server restarts.
+share the same persisted readiness model, which Task Assistant uses behind the
+conversation and restores across browser reloads and server restarts.
 
 The root route redirects to `/projects`. Workflow operations are available at
-`/projects/<PROJECT_KEY>/work`; old `/legacy` bookmarks redirect to the
-corresponding product route. Project Home shows real readiness execution and
-blocks workflow start with an explicit reason until the backend reports that the
-project is ready.
+`/projects/<PROJECT_KEY>/work`; old `/legacy` and `/projects/<PROJECT_KEY>/home`
+bookmarks redirect to the corresponding Work route. The backend readiness engine
+still gates workflow start and projects its preparation state through Task
+Assistant.
 
 ### Frontend-Backend Separation & Local Development
 

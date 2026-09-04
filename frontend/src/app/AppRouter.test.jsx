@@ -155,13 +155,21 @@ test.each([
   expect(router.state.location.pathname).toBe(destination);
 });
 
-test.each([
-  '/projects/DEMO/home',
-  '/projects/DEMO/settings/general',
-])('old project route %s enters Team', async (initialPath) => {
+test('old project Home bookmarks enter Work', async () => {
+  const router = createMemoryRouter(
+    createProductRoutes({ WorkComponent: WorkStub }),
+    { initialEntries: ['/projects/DEMO/home'] },
+  );
+  render(<RouterProvider router={router} />);
+
+  expect(await screen.findByRole('heading', { name: 'Project work' })).toBeVisible();
+  expect(router.state.location.pathname).toBe('/projects/DEMO/work');
+});
+
+test('old project settings bookmarks enter Team', async () => {
   const router = createMemoryRouter(
     createProductRoutes({ TeamComponent: TeamStub }),
-    { initialEntries: [initialPath] },
+    { initialEntries: ['/projects/DEMO/settings/general'] },
   );
   render(<RouterProvider router={router} />);
 

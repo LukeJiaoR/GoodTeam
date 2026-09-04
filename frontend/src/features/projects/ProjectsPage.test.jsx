@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ApiError, requestJson } from '../../lib/api/client';
 import ProjectsPage from './ProjectsPage';
-import { confirmProjectMode, getProjectHome, importProject } from './projectApi';
+import { importProject } from './projectApi';
 import { normalizeProjectsPayload } from './projectList';
 import {
   projectErrorMessageKey,
@@ -220,38 +220,6 @@ test('project import posts only the selected root', async () => {
   });
 });
 
-test('project home API reads the encoded project home endpoint', async () => {
-  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-    project: { project_key: 'DEMO SPACE' },
-  }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  }));
-  vi.stubGlobal('fetch', fetchMock);
-
-  await getProjectHome('DEMO SPACE');
-
-  expect(fetchMock).toHaveBeenCalledWith('/api/projects/DEMO%20SPACE/home', { signal: undefined });
-});
-
-test('project mode API posts the confirmed mode', async () => {
-  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-    readiness: { project_mode: 'existing_project' },
-  }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  }));
-  vi.stubGlobal('fetch', fetchMock);
-
-  await confirmProjectMode('DEMO', 'existing_project');
-
-  expect(fetchMock).toHaveBeenCalledWith('/api/projects/DEMO/mode', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode: 'existing_project' }),
-  });
-});
-
 test('shows a shape-matching skeleton, then renders one workspace row per project', async () => {
   const list = deferred();
   const api = {
@@ -309,7 +277,7 @@ test('renders a localized empty launcher after the project list resolves', async
   renderProjects({ api, language: 'zh-CN' });
 
   expect(await screen.findByRole('heading', { name: '添加第一个项目' })).toBeVisible();
-  expect(screen.getByText('选择一个本地代码仓库并创建团队工作区。')).toBeVisible();
+  expect(screen.getByText('选择一个本地代码仓库并在工作区中打开。')).toBeVisible();
 });
 
 test('opens project import on demand, traps focus, closes, and restores the launcher action', async () => {
@@ -399,7 +367,7 @@ test('uses the directory picker and writes its selection into the absolute path 
   expect(screen.getByText('Directory selected and ready to load.')).toBeVisible();
 });
 
-test('duplicate imports enter the existing Team workspace', async () => {
+test('duplicate imports enter the existing Work space', async () => {
   const user = userEvent.setup();
   const navigate = vi.fn();
   const api = {
