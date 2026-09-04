@@ -651,6 +651,7 @@ export const zhCN = {
   'work.taskAssistant.proposal': '建议任务',
   'work.taskAssistant.startTask': '开始执行这项任务',
   'work.taskAssistant.preparing': '正在准备项目…',
+  'work.taskAssistant.available': '随时响应',
   'work.taskAssistant.preparationTitle': '确认一项项目信息',
   'work.taskAssistant.preparation.command_confirmation': '团队后续应该使用哪些命令进行验证？',
   'work.taskAssistant.preparation.constraint_confirmation': '我找到了项目规则和约束，请确认团队应遵循这些要求。',

@@ -108,7 +108,9 @@ function ManagerMissionEntry({ busy, embedded = true, error, onStart, suggestion
   const [goal, setGoal] = useState('');
   const submit = (event) => {
     event.preventDefault();
-    if (goal.trim()) onStart(goal.trim());
+    if (!goal.trim()) return;
+    onStart(goal.trim());
+    setGoal('');
   };
   return (
     <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
@@ -500,7 +502,11 @@ function ManagerPane({
       : mission
         ? tone(mission.status)
         : 'neutral';
-  const managerStatus = attention
+  const managerStatus = mission?.source === 'task_assistant'
+    ? mission.status === 'preparing_to_start'
+      ? t('work.taskAssistant.preparing')
+      : t('work.taskAssistant.available')
+    : attention
     ? t('work.manager.needsYou')
     : mission
       ? statusText(mission.status, t)

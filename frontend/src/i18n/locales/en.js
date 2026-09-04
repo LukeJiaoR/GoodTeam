@@ -651,6 +651,7 @@ export const en = {
   'work.taskAssistant.proposal': 'Proposed task',
   'work.taskAssistant.startTask': 'Start this task',
   'work.taskAssistant.preparing': 'Preparing project…',
+  'work.taskAssistant.available': 'Available',
   'work.taskAssistant.preparationTitle': 'One quick project check',
   'work.taskAssistant.preparation.command_confirmation': 'Which project commands should the team use for verification?',
   'work.taskAssistant.preparation.constraint_confirmation': 'I found project instructions and constraints. Confirm that the team should follow them.',
