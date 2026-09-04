@@ -27,8 +27,8 @@ def test_all_roles_have_unique_stable_prompts():
     assert all(prompt.strip() for prompt in prompts)
     assert len(set(prompts)) == len(prompts)
     manager = next(role for role in roles if role["key"] == "orchestrator")
-    assert manager["name"] == "Manager"
-    assert "Manager role" in manager["stable_prompt"]
+    assert manager["name"] == "Task Assistant"
+    assert "Task Assistant role" in manager["stable_prompt"]
 
 
 def test_role_artifacts_have_configured_contracts():

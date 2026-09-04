@@ -63,3 +63,20 @@ def test_proposed_task_revisions_bind_exact_human_request_to_one_run(tmp_path):
 
     with pytest.raises(ValueError, match="already bound"):
         store.bind_workflow(proposal_id, "run-2")
+
+
+def test_task_confirmation_is_idempotent_and_keeps_proposal_editable_before_confirmation(tmp_path):
+    store = session_store(tmp_path)
+    store.append_message("message-1", "user", "修复登录问题")
+    proposed = store.propose_task(["message-1"], "修复登录问题")
+    proposal_id = proposed["proposed_task"]["id"]
+
+    confirmed = store.confirm_task(proposal_id)
+    repeated = store.confirm_task(proposal_id)
+
+    assert confirmed["proposed_task"]["confirmed"] is True
+    assert confirmed["status"] == "preparing_to_start"
+    assert repeated == confirmed
+
+    with pytest.raises(ValueError, match="unavailable"):
+        store.revise_task(proposal_id, "换一个要求")

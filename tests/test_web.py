@@ -669,6 +669,115 @@ def test_http_router_recognizes_task_assistant_message_path() -> None:
     assert web._is_project_api_post_path("/api/projects/DEMO/task-assistant/messages") is True
 
 
+def test_task_assistant_confirm_action_starts_exact_proposal_once_ready(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
+    store = web.TaskAssistantSessionStore(tmp_path, "TEAM")
+    store.append_message("message-1", "user", "修复登录问题")
+    proposal = store.propose_task(["message-1"], "修复登录问题")["proposed_task"]
+    calls = []
+
+    class ReadyExecutor:
+        def __init__(self, workspace):
+            pass
+
+        def status(self, key, root):
+            return {"lifecycle": "ready"}
+
+    def fake_start_workflow(**values):
+        calls.append(values)
+        return {"run_id": "run-1"}
+
+    monkeypatch.setattr(web, "ProjectReadinessExecutor", ReadyExecutor)
+    monkeypatch.setattr(web, "build_capabilities", lambda state: {"start_workflow": True})
+    monkeypatch.setattr(web, "start_workflow", fake_start_workflow)
+
+    status, payload = web.handle_project_api_post(
+        tmp_path,
+        "/api/projects/TEAM/task-assistant/actions",
+        {"action": "confirm_task", "proposal_id": proposal["id"]},
+    )
+
+    assert status == 200
+    assert payload["workflow_started"] is True
+    assert payload["task_assistant_session"]["proposed_task"]["run_id"] == "run-1"
+    assert calls[0]["idea"] == "修复登录问题"
+    assert calls[0]["project_config"] == config.resolve()
+
+
+def test_task_assistant_confirm_action_keeps_preparing_without_exposing_readiness_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    store = web.TaskAssistantSessionStore(tmp_path, "TEAM")
+    store.append_message("message-1", "user", "修复登录问题")
+    proposal = store.propose_task(["message-1"], "修复登录问题")["proposed_task"]
+
+    class PreparingExecutor:
+        def __init__(self, workspace):
+            pass
+
+        def status(self, key, root):
+            return {"lifecycle": "preparing"}
+
+    monkeypatch.setattr(web, "ProjectReadinessExecutor", PreparingExecutor)
+    monkeypatch.setattr(web, "build_capabilities", lambda state: {"start_workflow": False})
+
+    status, payload = web.handle_project_api_post(
+        tmp_path,
+        "/api/projects/TEAM/task-assistant/actions",
+        {"action": "confirm_task", "proposal_id": proposal["id"]},
+    )
+
+    assert status == 202
+    assert payload["workflow_started"] is False
+    assert payload["status"] == "preparing_project"
+    assert payload["task_assistant_session"]["proposed_task"]["confirmed"] is True
+
+
+def test_http_router_recognizes_task_assistant_action_path() -> None:
+    assert web._is_project_api_post_path("/api/projects/DEMO/task-assistant/actions") is True
+
+
+def test_task_assistant_preparation_action_submits_chat_card_input(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    calls = []
+
+    class InputExecutor:
+        def __init__(self, workspace):
+            pass
+
+        def submit_input(self, key, root, step_id, values, *, background):
+            calls.append((key, root, step_id, values, background))
+            return {"lifecycle": "attention_required"}
+
+        def status(self, key, root):
+            return {"lifecycle": "attention_required"}
+
+    monkeypatch.setattr(web, "ProjectReadinessExecutor", InputExecutor)
+    monkeypatch.setattr(web, "build_capabilities", lambda state: {"start_workflow": False})
+
+    status, payload = web.handle_project_api_post(
+        tmp_path,
+        "/api/projects/TEAM/task-assistant/actions",
+        {
+            "action": "continue_preparation",
+            "step_id": "command_verification",
+            "values": {"confirmed_command_ids": ["test"]},
+        },
+    )
+
+    assert status == 202
+    assert payload["status"] == "preparing_project"
+    assert calls == [("TEAM", project_root.resolve(), "command_verification", {"confirmed_command_ids": ["test"]}, False)]
+
+
 def test_project_state_restores_persisted_intent_commit_discussion(tmp_path: Path) -> None:
     project_root = tmp_path / "target"
     project_root.mkdir()
@@ -2329,7 +2438,7 @@ def test_build_role_observations_maps_artifacts_to_role_statuses():
     observations = build_role_observations(state)
     product = next(role for role in observations if role["name"] == "Product / Requirement")
     architect = next(role for role in observations if role["name"] == "Architect")
-    orchestrator = next(role for role in observations if role["name"] == "Manager")
+    orchestrator = next(role for role in observations if role["name"] == "Task Assistant")
     implementation = next(role for role in observations if role["name"] == "Implementation")
 
     assert orchestrator["model"] == "codex:gpt-5.5"
@@ -5650,7 +5759,7 @@ def test_api_project_config_rejects_invalid_worker_type_settings(tmp_path, setti
 
 
 def test_manager_worker_type_rejects_multiple_instances() -> None:
-    with pytest.raises(ValueError, match="Manager desired_instances must be 1"):
+    with pytest.raises(ValueError, match="Task Assistant desired_instances must be 1"):
         web.normalize_worker_type_settings(
             {"orchestrator": {"desired_instances": 2}}
         )

@@ -50,6 +50,7 @@ from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
 from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
 from goodteam_os.task_assistant import TaskAssistantService
+from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.native_picker import choose_native_path
@@ -3873,7 +3874,7 @@ def start_request_changes_intent(
     if state is None:
         raise ProjectApiError(
             "intent_mission_not_found",
-            "This Manager mission is no longer active.",
+            "This Task Assistant mission is no longer active.",
             409,
             recovery=["refresh_approval_brief"],
         )
@@ -5689,6 +5690,80 @@ def handle_project_api_post(
             message_id=str(request.get("message_id", "")),
             text=str(request.get("text", "")),
         )
+    task_assistant_action_match = re.fullmatch(
+        r"/api/projects/([^/]+)/task-assistant/actions",
+        path,
+    )
+    if task_assistant_action_match:
+        key = _decode_project_api_key(task_assistant_action_match.group(1))
+        key, target, root = _project_target_and_root(workspace, key)
+        action = str(request.get("action", ""))
+        if action not in {"confirm_task", "continue_preparation"}:
+            raise ProjectApiError(
+                "invalid_request",
+                "Unknown Task Assistant action.",
+                400,
+                recovery=["retry_request"],
+            )
+        store = TaskAssistantSessionStore(workspace, key)
+        executor = ProjectReadinessExecutor(workspace)
+        proposal_id = str(request.get("proposal_id", ""))
+        if action == "confirm_task":
+            session = store.confirm_task(proposal_id)
+            readiness = executor.status(key, root)
+        else:
+            raw_values = request.get("values", {})
+            if not isinstance(raw_values, dict):
+                raise ProjectApiError(
+                    "invalid_request",
+                    "Project preparation values must be a JSON object.",
+                    400,
+                    recovery=["retry_request"],
+                )
+            readiness = executor.submit_input(
+                key,
+                root,
+                str(request.get("step_id", "")),
+                raw_values,
+                background=False,
+            )
+            session = TaskAssistantService(
+                workspace,
+                readiness_executor=executor,
+            ).session(key, root)
+        if not build_capabilities(readiness)["start_workflow"]:
+            return 202, {
+                "task_assistant_session": session,
+                "workflow_started": False,
+                "status": "preparing_project",
+            }
+        proposal = dict(session.get("proposed_task") or {})
+        if not proposal.get("confirmed"):
+            return 200, {
+                "task_assistant_session": session,
+                "workflow_started": False,
+                "status": "ready_for_request",
+            }
+        proposal_id = str(proposal.get("id", ""))
+        project_config = _project_config_for_key(workspace, key)
+        result = start_workflow(
+            workspace=workspace,
+            idea=str(proposal.get("exact_request", "")),
+            project_key=key,
+            model_config=Path("models.yaml"),
+            model_profile=str(target.get("model_profile", "") or "balanced"),
+            delivery_mode=str(target.get("delivery_mode", "") or "init_project"),
+            source_type=str(readiness.get("project_mode", "") or "existing_project"),
+            project_config=project_config,
+            load_profile="greenfield",
+        )
+        session = store.bind_workflow(proposal_id, str(result.get("run_id", "")))
+        return 200, {
+            "task_assistant_session": session,
+            "workflow_started": True,
+            "status": "workflow_started",
+            "run_id": str(result.get("run_id", "")),
+        }
     mode_match = re.fullmatch(r"/api/projects/([^/]+)/mode", path)
     if mode_match:
         key = _decode_project_api_key(mode_match.group(1))
@@ -5857,7 +5932,7 @@ def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/messages)",
+            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions))",
             path,
         )
     )
@@ -6535,7 +6610,7 @@ def normalize_worker_type_settings(value: object, *, strict: bool = True) -> dic
             desired_instances = 1
         if role == "orchestrator" and desired_instances != 1:
             if strict:
-                raise ValueError("Manager desired_instances must be 1")
+                raise ValueError("Task Assistant desired_instances must be 1")
             desired_instances = 1
         if reasoning_depth not in WORKER_REASONING_DEPTHS:
             if strict:

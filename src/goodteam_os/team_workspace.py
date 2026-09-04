@@ -318,7 +318,7 @@ def build_team_workspace(
 
 
 def _build_task_assistant_workspace(session: Mapping[str, object]) -> dict[str, Any]:
-    timeline = [dict(item) for item in session.get("timeline", []) if isinstance(item, Mapping)]
+    timeline = _task_assistant_timeline(session)
     return {
         "schema_version": TEAM_WORKSPACE_SCHEMA_VERSION,
         "mission": {
@@ -331,7 +331,7 @@ def _build_task_assistant_workspace(session: Mapping[str, object]) -> dict[str, 
             "objective": "",
             "status": _text(session.get("status")) or "onboarding",
             "read_only": False,
-            "started_at": _text(timeline[0].get("created_at")) if timeline else "",
+            "started_at": _text(timeline[0].get("timestamp")) if timeline else "",
             "updated_at": _latest_timestamp(timeline),
         },
         "manager_timeline": timeline,
@@ -350,13 +350,34 @@ def _merge_task_assistant_session(
 ) -> dict[str, Any]:
     if not session:
         return projection
-    prior = [dict(item) for item in session.get("timeline", []) if isinstance(item, Mapping)]
+    prior = _task_assistant_timeline(session)
+    if (
+        len(prior) == 1
+        and _text(prior[0].get("event")).startswith("welcome_")
+        and not _text(prior[0].get("timestamp"))
+    ):
+        prior = []
     return {
         **projection,
         "manager_timeline": _dedupe_timeline([*prior, *projection["manager_timeline"]]),
         "suggestions": [],
         "proposed_task": session.get("proposed_task"),
     }
+
+
+def _task_assistant_timeline(session: Mapping[str, object]) -> list[dict[str, Any]]:
+    return [
+        {
+            **dict(item),
+            "id": _text(item.get("message_id")) or _text(item.get("id")),
+            "timestamp": _text(item.get("created_at")) or _text(item.get("timestamp")),
+            "kind": _text(item.get("kind")) or "conversation",
+            "details": dict(item.get("details", {}) or {}),
+            "refs": list(item.get("refs", []) or []),
+        }
+        for item in session.get("timeline", [])
+        if isinstance(item, Mapping)
+    ]
 
 
 def _build_workflow_workspace(

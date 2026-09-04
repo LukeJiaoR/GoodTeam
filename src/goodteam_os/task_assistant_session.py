@@ -128,6 +128,7 @@ class TaskAssistantSessionStore:
                     "source_message_ids": [str(item) for item in source_message_ids],
                     "exact_request": request,
                     "revision": 1,
+                    "confirmed": False,
                     "run_id": "",
                 },
                 "status": "waiting_for_human",
@@ -142,11 +143,23 @@ class TaskAssistantSessionStore:
 
         def mutate(session: dict[str, object]) -> dict[str, object]:
             proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or proposal.get("run_id"):
+            if proposal.get("id") != proposal_id or proposal.get("run_id") or proposal.get("confirmed"):
                 raise ValueError("Task proposal is unavailable")
             proposal["exact_request"] = request
             proposal["revision"] = int(proposal.get("revision", 0)) + 1
             session["proposed_task"] = proposal
+            return session
+
+        return self._mutate(mutate)
+
+    def confirm_task(self, proposal_id: str) -> dict[str, object]:
+        def mutate(session: dict[str, object]) -> dict[str, object]:
+            proposal = dict(session.get("proposed_task") or {})
+            if proposal.get("id") != proposal_id or proposal.get("run_id"):
+                raise ValueError("Task proposal is unavailable")
+            proposal["confirmed"] = True
+            session["proposed_task"] = proposal
+            session["status"] = "preparing_to_start"
             return session
 
         return self._mutate(mutate)
