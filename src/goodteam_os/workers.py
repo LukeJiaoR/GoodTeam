@@ -2373,7 +2373,17 @@ Keep each bullet short, factual, and free of secrets.""",
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()

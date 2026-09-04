@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -664,6 +665,32 @@ def test_worker_job_store_creates_protocol_files(tmp_path):
     assert "summaries" in pickup_packet
     assert "Do not change code." in (job_root / "constraints.md").read_text(encoding="utf-8")
     assert json.loads((job_root / "job.json").read_text(encoding="utf-8"))["adapter"] == "human"
+
+
+def test_worker_job_store_replaces_json_only_after_complete_temp_write(tmp_path, monkeypatch):
+    store = WorkerJobStore(tmp_path)
+    target = tmp_path / "state" / "job.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps({"status": "queued"}), encoding="utf-8")
+    replacement = {"status": "running", "summary": "Worker started."}
+    observed_sources: list[Path] = []
+    original_replace = os.replace
+
+    def observe_replace(source, destination):
+        source_path = Path(source)
+        assert Path(destination) == target
+        assert json.loads(source_path.read_text(encoding="utf-8")) == replacement
+        assert json.loads(target.read_text(encoding="utf-8")) == {"status": "queued"}
+        observed_sources.append(source_path)
+        original_replace(source, destination)
+
+    monkeypatch.setattr("goodteam_os.workers.os.replace", observe_replace)
+
+    store._write_json(target, replacement)
+
+    assert len(observed_sources) == 1
+    assert not observed_sources[0].exists()
+    assert json.loads(target.read_text(encoding="utf-8")) == replacement
 
 
 def test_worker_role_prompt_is_stable_and_task_is_separate(tmp_path):
