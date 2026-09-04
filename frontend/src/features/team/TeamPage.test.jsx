@@ -94,7 +94,7 @@ test('groups multiple runtime instances under their Worker Type', () => {
   expect(architect.model).toBe('claude-opus-4-5');
 });
 
-test('presents orchestrator as the singleton Manager', async () => {
+test('presents orchestrator as the singleton Task Assistant', async () => {
   const data = stateFixture();
   data.start_context.worker_roles = ['orchestrator', ...data.start_context.worker_roles];
   data.start_context.worker_type_settings.orchestrator = {
@@ -105,17 +105,17 @@ test('presents orchestrator as the singleton Manager', async () => {
   mocks.projectState.mockReturnValue(data);
 
   const manager = buildWorkerTypes(data, []).find((row) => row.role === 'orchestrator');
-  expect(manager.label).toBe('Manager');
+  expect(manager.label).toBe('Task Assistant');
   expect(manager.desiredInstances).toBe(1);
 
   const user = userEvent.setup();
   renderTeam();
-  expect(screen.getByRole('heading', { name: 'Manager' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Task Assistant' })).toBeVisible();
   expect(screen.queryByRole('heading', { name: 'Orchestrator' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Configure team' }));
   const managerRow = screen.getByTestId('team-configuration-orchestrator');
   expect(within(managerRow).getByLabelText('Desired instances')).toBeDisabled();
-  expect(within(managerRow).getByText('Manager is a single logical owner.')).toBeVisible();
+  expect(within(managerRow).getByText('Task Assistant is a single logical owner.')).toBeVisible();
 });
 
 test('renders one unified Team surface with Worker Types and real instances', async () => {

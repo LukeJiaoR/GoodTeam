@@ -1,7 +1,7 @@
 const ACTIVE_STATES = new Set(['working', 'reviewing', 'fixing']);
 const UNAVAILABLE_STATES = new Set(['blocked', 'failed', 'stopped']);
 const ROLE_LABELS = {
-  orchestrator: 'Manager',
+  orchestrator: 'Task Assistant',
   research: 'Research',
   product_requirement: 'Product / Requirement',
   architect: 'Architect',
