@@ -148,6 +148,9 @@ WORKER_ROLES = [
     "release",
     "retro_memory",
 ]
+WORKER_REASONING_DEPTHS = ("default", "low", "medium", "high")
+WORKER_ADDITIONAL_PROMPT_MAX_CHARS = 4000
+WORKER_DESIRED_INSTANCES_MAX = 8
 PRE_REVIEW_REPORT_DIR = Path("/tmp")
 DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS = 10
 SERVER_ACTION_TIMEOUT_SECONDS = 600
@@ -2750,6 +2753,7 @@ def create_local_project_config(
     delivery_mode: str = "init_project",
     delivery_standards: str = "",
     role_model_overrides: dict[str, str] | None = None,
+    worker_type_settings: dict[str, dict[str, object]] | None = None,
     deployment_backend_mode: str = "",
     staging_ssh_target: str = "",
     staging_remote_dir: str = "",
@@ -2862,7 +2866,13 @@ def create_local_project_config(
         for role, backend in (workers or {}).items()
         if str(role).strip() and str(backend).strip()
     }
-    _validate_worker_backend_config(mode=worker_mode, workers=worker_overrides, role_models=overrides)
+    normalized_type_settings = normalize_worker_type_settings(worker_type_settings or {})
+    _validate_worker_backend_config(
+        mode=worker_mode,
+        workers=worker_overrides,
+        role_models=overrides,
+        worker_type_settings=normalized_type_settings,
+    )
     lines.extend(["worker_backend:", f"  mode: {_config_scalar('Worker backend mode', worker_mode)}"])
     if worker_overrides:
         lines.append("workers:")
@@ -2870,6 +2880,14 @@ def create_local_project_config(
             f"  {role}: {_config_scalar('Worker backend', backend)}"
             for role, backend in _ordered_worker_overrides(worker_overrides).items()
         )
+    if normalized_type_settings:
+        lines.append("worker_type_settings:")
+        for role, settings in _ordered_worker_type_settings(normalized_type_settings).items():
+            lines.append(f"  {role}:")
+            lines.append(f"    reasoning_depth: {_config_scalar('Worker reasoning depth', str(settings['reasoning_depth']))}")
+            if settings["additional_prompt"]:
+                lines.append(f"    additional_prompt: {json.dumps(str(settings['additional_prompt']), ensure_ascii=False)}")
+            lines.append(f"    desired_instances: {int(settings['desired_instances'])}")
     deployment_backend = {
         "mode": _single_line_config_value("Deployment backend mode", deployment_backend_mode),
         "staging_ssh_target": _single_line_config_value("Staging SSH target", staging_ssh_target),
@@ -2922,6 +2940,7 @@ def create_local_project_config(
         "delivery_mode": mode,
         "delivery_standards": custom_standards if mode == "custom" else [],
         "role_model_overrides": overrides,
+        "worker_type_settings": normalized_type_settings,
         "git": git_result,
     }
 
@@ -5084,6 +5103,7 @@ def build_start_console_context(
         "model_profile": str(target.get("model_profile", "balanced") or "balanced"),
         "delivery_mode": normalize_delivery_mode(str(target.get("delivery_mode", "init_project") or "init_project")),
         "role_model_overrides": dict(target.get("role_model_overrides", {})) if isinstance(target.get("role_model_overrides", {}), dict) else {},
+        "worker_type_settings": normalize_worker_type_settings(target.get("worker_type_settings", {}), strict=False),
         "task_backend": normalize_task_backend(target.get("task_backend", {"mode": "local", "sync": []})),
         "worker_backend": normalize_worker_backend(target.get("worker_backend", {"mode": "codex"})),
         "worker_backend_options": WORKER_BACKEND_OPTIONS,
@@ -6167,6 +6187,7 @@ def build_dashboard_handler(workspace: Path):
                         delivery_mode=str(request.get("delivery_mode", "init_project")),
                         delivery_standards=str(request.get("delivery_standards", "")),
                         role_model_overrides=dict(request.get("role_model_overrides", {})),
+                        worker_type_settings=dict(request.get("worker_type_settings", {})),
                         init_git=_request_bool(request.get("init_git"), True),
                         create_remote=_request_bool(request.get("create_remote"), False),
                         remote_private=_request_bool(request.get("remote_private"), True),
@@ -6358,11 +6379,19 @@ def update_project_worker_backend_settings(workspace: Path, request: dict[str, o
     if not isinstance(role_models_value, dict):
         raise ValueError("role_models must be an object")
     role_models = {str(role).strip(): str(model).strip() for role, model in role_models_value.items()}
-    _validate_worker_backend_config(mode=mode, workers=workers, role_models=role_models)
+    worker_type_settings_present = "worker_type_settings" in request
+    worker_type_settings = normalize_worker_type_settings(request.get("worker_type_settings", {}))
+    _validate_worker_backend_config(
+        mode=mode,
+        workers=workers,
+        role_models=role_models,
+        worker_type_settings=worker_type_settings,
+    )
 
     config_path = _project_config_for_key(workspace, project_key)
     target = load_project_target(config_path)
     existing_role_models = target.get("role_model_overrides", {})
+    existing_worker_type_settings = normalize_worker_type_settings(target.get("worker_type_settings", {}), strict=False)
     role_model_overrides = (
         {str(role): str(model) for role, model in existing_role_models.items()}
         if not role_models_present and isinstance(existing_role_models, dict)
@@ -6378,6 +6407,9 @@ def update_project_worker_backend_settings(workspace: Path, request: dict[str, o
         mode=mode,
         workers=_ordered_worker_overrides(workers),
         role_model_overrides=_ordered_role_model_overrides(role_model_overrides),
+        worker_type_settings=_ordered_worker_type_settings(
+            worker_type_settings if worker_type_settings_present else existing_worker_type_settings
+        ),
     )
     report = check_project_target(load_project_target(config_path))
     return {
@@ -6385,10 +6417,19 @@ def update_project_worker_backend_settings(workspace: Path, request: dict[str, o
         "role_worker_backends": report["role_worker_backends"],
         "worker_backends_preflight": report["worker_backends_preflight"],
         "role_model_overrides": _ordered_role_model_overrides(role_model_overrides),
+        "worker_type_settings": _ordered_worker_type_settings(
+            worker_type_settings if worker_type_settings_present else existing_worker_type_settings
+        ),
     }
 
 
-def _validate_worker_backend_config(*, mode: str, workers: dict[str, str], role_models: dict[str, str] | None = None) -> None:
+def _validate_worker_backend_config(
+    *,
+    mode: str,
+    workers: dict[str, str],
+    role_models: dict[str, str] | None = None,
+    worker_type_settings: dict[str, dict[str, object]] | None = None,
+) -> None:
     valid_backends = set(WORKER_BACKEND_ACCEPTED_OPTIONS)
     if mode not in valid_backends:
         raise ValueError(f"Unknown worker backend: {mode}. Use one of: {', '.join(WORKER_BACKEND_ACCEPTED_OPTIONS)}")
@@ -6405,6 +6446,59 @@ def _validate_worker_backend_config(*, mode: str, workers: dict[str, str], role_
             raise ValueError("worker role cannot be empty")
         if role not in valid_roles:
             raise ValueError(f"Unknown worker role: {role}. Use one of: {', '.join(WORKER_ROLES)}")
+    for role in (worker_type_settings or {}):
+        if role not in valid_roles:
+            raise ValueError(f"Unknown worker role: {role}. Use one of: {', '.join(WORKER_ROLES)}")
+
+
+def normalize_worker_type_settings(value: object, *, strict: bool = True) -> dict[str, dict[str, object]]:
+    if not isinstance(value, dict):
+        if strict:
+            raise ValueError("worker_type_settings must be an object")
+        return {}
+    normalized: dict[str, dict[str, object]] = {}
+    for raw_role, raw_settings in value.items():
+        role = str(raw_role).strip()
+        if not isinstance(raw_settings, dict):
+            if strict:
+                raise ValueError(f"worker_type_settings.{role} must be an object")
+            continue
+        reasoning_depth = str(raw_settings.get("reasoning_depth", "default") or "default").strip().lower()
+        additional_prompt = str(raw_settings.get("additional_prompt", "") or "").strip()
+        desired_raw = raw_settings.get("desired_instances", 1)
+        try:
+            if isinstance(desired_raw, bool):
+                raise ValueError
+            desired_instances = int(desired_raw)
+        except (TypeError, ValueError):
+            if strict:
+                raise ValueError(f"worker_type_settings.{role}.desired_instances must be an integer") from None
+            desired_instances = 1
+        if reasoning_depth not in WORKER_REASONING_DEPTHS:
+            if strict:
+                raise ValueError(
+                    f"worker_type_settings.{role}.reasoning_depth must be one of: {', '.join(WORKER_REASONING_DEPTHS)}"
+                )
+            reasoning_depth = "default"
+        if len(additional_prompt) > WORKER_ADDITIONAL_PROMPT_MAX_CHARS:
+            if strict:
+                raise ValueError(
+                    f"worker_type_settings.{role}.additional_prompt must be at most {WORKER_ADDITIONAL_PROMPT_MAX_CHARS} characters"
+                )
+            additional_prompt = additional_prompt[:WORKER_ADDITIONAL_PROMPT_MAX_CHARS].rstrip()
+        if not 1 <= desired_instances <= WORKER_DESIRED_INSTANCES_MAX:
+            if strict:
+                raise ValueError(
+                    f"worker_type_settings.{role}.desired_instances must be between 1 and {WORKER_DESIRED_INSTANCES_MAX}"
+                )
+            desired_instances = 1
+        if reasoning_depth != "default" or additional_prompt or desired_instances != 1:
+            normalized[role] = {
+                "reasoning_depth": reasoning_depth,
+                "additional_prompt": additional_prompt,
+                "desired_instances": desired_instances,
+            }
+    return normalized
 
 
 def _ordered_worker_overrides(workers: dict[str, str]) -> dict[str, str]:
@@ -6429,6 +6523,12 @@ def _ordered_role_model_overrides(role_models: dict[str, str]) -> dict[str, str]
         if model:
             ordered[role] = model
     return ordered
+
+
+def _ordered_worker_type_settings(
+    settings: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    return {role: settings[role] for role in WORKER_ROLES if role in settings}
 
 
 def normalize_delivery_mode(value: str) -> str:
@@ -7822,6 +7922,7 @@ def serve(
                         delivery_mode=str(request.get("delivery_mode", "init_project")),
                         delivery_standards=str(request.get("delivery_standards", "")),
                         role_model_overrides=dict(request.get("role_model_overrides", {})),
+                        worker_type_settings=dict(request.get("worker_type_settings", {})),
                         init_git=_request_bool(request.get("init_git"), True),
                         create_remote=_request_bool(request.get("create_remote"), False),
                         remote_private=_request_bool(request.get("remote_private"), True),

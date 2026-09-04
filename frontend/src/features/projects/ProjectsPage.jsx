@@ -1,32 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowRight, FolderGit2, FolderPlus, Play, Plus } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
+import Button from '../../components/ui/Button';
 import PageState from '../../components/ui/PageState';
-import StatusBadge from '../../components/ui/StatusBadge';
 import { translate } from '../../i18n';
+import { routes } from '../../lib/routing/routes';
 import LoadProjectPanel from './LoadProjectPanel';
 import { projectApi } from './projectApi';
 import { normalizeProjectsPayload } from './projectList';
-
-const GROUP_ORDER = ['attentionRequired', 'activeRun', 'preparing', 'ready', 'legacy'];
-
-function groupForProject(item) {
-  const lifecycle = item?.readiness?.lifecycle;
-  if (Number(item?.attention_count) > 0 || lifecycle === 'attention_required') {
-    return 'attentionRequired';
-  }
-  if (item?.active_run) return 'activeRun';
-  if (lifecycle === 'preparing') return 'preparing';
-  if (lifecycle === 'ready') return 'ready';
-  return 'legacy';
-}
-
-function lifecycleTone(lifecycle, activeRun) {
-  if (lifecycle === 'attention_required') return 'warning';
-  if (activeRun) return 'active';
-  if (lifecycle === 'ready') return 'success';
-  if (lifecycle === 'preparing') return 'pending';
-  return 'neutral';
-}
 
 function isAbortError(error, signal) {
   return signal.aborted || error?.name === 'AbortError';
@@ -34,15 +15,10 @@ function isAbortError(error, signal) {
 
 function ProjectsSkeleton({ title }) {
   return (
-    <section
-      className="projects-list-state projects-list-skeleton"
-      role="status"
-      aria-label={title}
-      aria-busy="true"
-    >
+    <section className="projects-launcher-list projects-list-skeleton" role="status" aria-label={title} aria-busy="true">
       <span className="sr-only">{title}</span>
       {[0, 1, 2].map((item) => (
-        <div className="project-row project-row--skeleton" data-testid="project-skeleton" key={item} aria-hidden="true">
+        <div className="project-launcher-row project-row--skeleton" data-testid="project-skeleton" key={item} aria-hidden="true">
           <span className="project-skeleton-line project-skeleton-line--title" />
           <span className="project-skeleton-line project-skeleton-line--path" />
           <span className="project-skeleton-line project-skeleton-line--action" />
@@ -52,12 +28,7 @@ function ProjectsSkeleton({ title }) {
   );
 }
 
-export default function ProjectsPage({
-  api: apiOverride,
-  navigate: navigateOverride,
-  language: languageOverride,
-  reloadPage,
-}) {
+export default function ProjectsPage({ api: apiOverride, navigate: navigateOverride, language: languageOverride, reloadPage }) {
   const routerNavigate = useNavigate();
   const outletContext = useOutletContext();
   const api = apiOverride || outletContext?.api || projectApi;
@@ -67,6 +38,7 @@ export default function ProjectsPage({
   const [projects, setProjects] = useState([]);
   const [status, setStatus] = useState('loading');
   const [listRequest, setListRequest] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -85,126 +57,114 @@ export default function ProjectsPage({
     return () => controller.abort();
   }, [api, listRequest]);
 
-  const groups = useMemo(() => {
-    const grouped = Object.fromEntries(GROUP_ORDER.map((key) => [key, []]));
-    projects.forEach((item) => grouped[groupForProject(item)].push(item));
-    return GROUP_ORDER.map((key) => ({ key, projects: grouped[key] }))
-      .filter((group) => group.projects.length > 0);
-  }, [projects]);
+  const closeImport = () => {
+    setImportOpen(false);
+    requestAnimationFrame(() => document.getElementById('projects-add-project')?.focus());
+  };
 
-  const openProject = (projectKey) => {
-    navigate(`/projects/${encodeURIComponent(projectKey)}/home`);
+  const enterProject = (projectKey) => navigate(routes.projectTeam(projectKey));
+
+  const handleImported = (payload) => {
+    const projectKey = payload?.project?.project_key;
+    if (!projectKey) return;
+    navigate(routes.projectTeam(projectKey));
   };
 
   return (
     <main id="main-content" className="projects-page">
-      <header className="projects-page-header">
-        <h1>{t('projects.title')}</h1>
-        <p>{t('projects.description')}</p>
+      <header className="projects-launcher-header">
+        <div>
+          <p className="projects-page-eyebrow">{t('projects.eyebrow')}</p>
+          <h1>{t('projects.launcher.title')}</h1>
+          <p>{t('projects.launcher.description')}</p>
+        </div>
+        <Button id="projects-add-project" className="projects-add-button" onClick={() => setImportOpen(true)}>
+          <Plus aria-hidden="true" size={17} />
+          <span>{t('projects.launcher.add')}</span>
+        </Button>
       </header>
 
-      <div className="projects-page-grid">
+      <section className="projects-launcher" aria-labelledby="projects-list-title">
+        <header className="projects-launcher__heading">
+          <div>
+            <h2 id="projects-list-title">{t('projects.launcher.workspaces')}</h2>
+            <p>{t('projects.launcher.workspacesDescription')}</p>
+          </div>
+          {status === 'ready' && projects.length > 0 ? (
+            <span>{t('projects.launcher.count', { count: projects.length })}</span>
+          ) : null}
+        </header>
+
+        {status === 'loading' ? <ProjectsSkeleton title={t('projects.list.loading')} /> : null}
+        {status === 'error' ? (
+          <PageState
+            kind="error"
+            title={t('product.errors.generic')}
+            action={(
+              <Button variant="secondary" onClick={() => {
+                setStatus('loading');
+                setListRequest((value) => value + 1);
+              }}>
+                {t('projects.recovery.retry')}
+              </Button>
+            )}
+          />
+        ) : null}
+        {status === 'ready' && projects.length === 0 ? (
+          <div className="projects-launcher-empty">
+            <span aria-hidden="true"><FolderPlus size={24} /></span>
+            <h3>{t('projects.launcher.emptyTitle')}</h3>
+            <p>{t('projects.launcher.emptyDescription')}</p>
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+              <Plus aria-hidden="true" size={16} />
+              {t('projects.launcher.add')}
+            </Button>
+          </div>
+        ) : null}
+        {status === 'ready' && projects.length > 0 ? (
+          <div className="projects-launcher-list">
+            {projects.map((item) => {
+              const project = item.project;
+              return (
+                <button
+                  type="button"
+                  className="project-launcher-row"
+                  key={project.project_key}
+                  onClick={() => enterProject(project.project_key)}
+                  aria-label={`${t('projects.launcher.enter')}: ${project.display_name || project.project_key}`}
+                >
+                  <span className="project-launcher-row__icon" aria-hidden="true">
+                    <FolderGit2 size={19} />
+                  </span>
+                  <span className="project-launcher-row__copy">
+                    <strong>{project.display_name || project.project_key}</strong>
+                    <code>{project.root}</code>
+                  </span>
+                  <span className="project-launcher-row__activity">
+                    {item.active_run ? (
+                      <><Play aria-hidden="true" size={13} />{t('projects.launcher.active')}</>
+                    ) : t('projects.launcher.ready')}
+                  </span>
+                  <span className="project-launcher-row__action">
+                    {t('projects.launcher.enter')}
+                    <ArrowRight aria-hidden="true" size={16} />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </section>
+
+      {importOpen ? (
         <LoadProjectPanel
           api={api}
           language={language}
           reloadPage={reloadPage}
-          onImported={(payload) => navigate(payload.home_url)}
+          onClose={closeImport}
+          onImported={handleImported}
         />
-
-        <section className="projects-portfolio" aria-labelledby="projects-list-title">
-          <div className="projects-section-heading">
-            <h2 id="projects-list-title">{t('projects.list.title')}</h2>
-          </div>
-
-          {status === 'loading' ? <ProjectsSkeleton title={t('projects.list.loading')} /> : null}
-          {status === 'error' ? (
-            <PageState
-              kind="error"
-              title={t('product.errors.generic')}
-              action={(
-                <button
-                  type="button"
-                  className="projects-inline-action"
-                  onClick={() => {
-                    setStatus('loading');
-                    setListRequest((value) => value + 1);
-                  }}
-                >
-                  {t('projects.recovery.retry')}
-                </button>
-              )}
-            />
-          ) : null}
-          {status === 'ready' && projects.length === 0 ? (
-            <PageState
-              kind="empty"
-              title={t('projects.list.empty.title')}
-              description={t('projects.list.empty.description')}
-            />
-          ) : null}
-          {status === 'ready' && projects.length > 0 ? (
-            <div className="project-groups">
-              {groups.map((group) => (
-                <section
-                  className="project-group"
-                  data-testid="project-group"
-                  aria-labelledby={`project-group-${group.key}`}
-                  key={group.key}
-                >
-                  <h3 id={`project-group-${group.key}`}>
-                    {t(`projects.group.${group.key}`)}
-                  </h3>
-                  <div className="project-group-rows">
-                    {group.projects.map((item) => {
-                      const project = item.project || {};
-                      const lifecycle = item.readiness?.lifecycle || 'legacy';
-                      const statusLabel = lifecycle === 'attention_required'
-                        ? t('projects.lifecycle.attention_required')
-                        : item.active_run
-                          ? t('projects.lifecycle.active')
-                          : t(`projects.lifecycle.${lifecycle}`);
-                      const attentionCount = Number(item.attention_count) || 0;
-                      return (
-                        <article className="project-row" key={project.project_key}>
-                          <div className="project-row-copy">
-                            <div className="project-row-title">
-                              <h4>{project.display_name || project.project_key}</h4>
-                              <StatusBadge tone={lifecycleTone(lifecycle, item.active_run)}>
-                                {statusLabel}
-                              </StatusBadge>
-                            </div>
-                            <code className="project-row-path">{project.root}</code>
-                            {attentionCount > 0 ? (
-                              <p className="project-row-context">
-                                {t('projects.card.attentionCount', {
-                                  count: attentionCount,
-                                  plural: attentionCount === 1 ? '' : 's',
-                                })}
-                              </p>
-                            ) : item.active_run ? (
-                              <p className="project-row-context">
-                                {t('projects.card.activeRun')}: {item.active_run.run_id}
-                              </p>
-                            ) : null}
-                          </div>
-                          <button
-                            type="button"
-                            className="projects-open-project"
-                            onClick={() => openProject(project.project_key)}
-                            aria-label={`${t('projects.openHome')}: ${project.display_name || project.project_key}`}
-                          >
-                            {t('projects.openHome')}
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
-            </div>
-          ) : null}
-        </section>
-      </div>
+      ) : null}
     </main>
   );
 }

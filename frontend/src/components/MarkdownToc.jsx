@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useMemo, useState } from 'react';
+import { ChevronDown, ListTree } from 'lucide-react';
 
 export function extractHeadings(markdown) {
   if (typeof markdown !== 'string' || !markdown.trim()) return [];
@@ -34,8 +35,12 @@ export default function MarkdownToc({ content, t }) {
         onClick={() => setOpen(!open)}
         aria-expanded={open}
       >
-        <span>📑 {t ? t('review.toc.title') : 'Table of Contents'} ({headings.length})</span>
-        <span className="markdown-toc__arrow">{open ? '▲' : '▼'}</span>
+        <span className="markdown-toc__label">
+          <ListTree aria-hidden="true" size={15} />
+          <span>{t ? t('review.toc.title') : 'Table of Contents'}</span>
+          <small>{headings.length}</small>
+        </span>
+        <ChevronDown aria-hidden="true" className="markdown-toc__arrow" size={15} />
       </button>
       {open ? (
         <ol className="markdown-toc__list">

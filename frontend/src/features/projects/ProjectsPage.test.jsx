@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -252,7 +252,7 @@ test('project mode API posts the confirmed mode', async () => {
   });
 });
 
-test('shows a shape-matching skeleton, then groups projects in product priority order', async () => {
+test('shows a shape-matching skeleton, then renders one workspace row per project', async () => {
   const list = deferred();
   const api = {
     listProjects: vi.fn(() => list.promise),
@@ -268,33 +268,39 @@ test('shows a shape-matching skeleton, then groups projects in product priority 
     projects: [
       project({ key: 'LEGACY', name: 'Legacy', lifecycle: 'legacy' }),
       project({ key: 'READY', name: 'Ready', lifecycle: 'ready' }),
-      project({ key: 'PREP', name: 'Preparing', lifecycle: 'preparing' }),
       project({
         key: 'RUNNING',
         name: 'Running',
         lifecycle: 'ready',
         activeRun: { run_id: 'run-7', next_node: 'implementation' },
       }),
-      project({
-        key: 'ATTENTION',
-        name: 'Attention',
-        lifecycle: 'attention_required',
-        attentionCount: 2,
-        activeRun: { run_id: 'run-8', next_node: 'approval' },
-      }),
     ],
   });
 
-  const groups = await screen.findAllByTestId('project-group');
-  expect(groups.map((group) => within(group).getByRole('heading', { level: 3 }).textContent))
-    .toEqual(['Needs attention', 'Active runs', 'Preparing', 'Ready', 'Legacy projects']);
-  expect(screen.getAllByRole('article')).toHaveLength(5);
-  const attentionArticle = screen.getByRole('heading', { level: 4, name: 'Attention' }).closest('article');
-  expect(within(attentionArticle).getByText('Needs attention')).toBeVisible();
-  expect(within(attentionArticle).queryByText('Active run')).not.toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Choose a project' })).toBeVisible();
+  expect(screen.queryByTestId('project-group')).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: /Enter workspace:/ })).toHaveLength(3);
+  expect(screen.getByRole('button', { name: 'Enter workspace: Running' })).toHaveTextContent('Active work');
+  expect(screen.getByRole('button', { name: 'Enter workspace: Ready' })).toHaveTextContent('Ready');
 });
 
-test('renders a localized empty portfolio after the project list resolves', async () => {
+test('enters the new Team workspace directly from a project row', async () => {
+  const user = userEvent.setup();
+  const navigate = vi.fn();
+  const api = {
+    listProjects: vi.fn().mockResolvedValue({
+      projects: [project({ key: 'DEMO SPACE', name: 'Demo', lifecycle: 'ready' })],
+    }),
+    importProject: vi.fn(),
+  };
+  renderProjects({ api, navigate });
+
+  await user.click(await screen.findByRole('button', { name: 'Enter workspace: Demo' }));
+
+  expect(navigate).toHaveBeenCalledWith('/projects/DEMO%20SPACE/team');
+});
+
+test('renders a localized empty launcher after the project list resolves', async () => {
   const api = {
     listProjects: vi.fn().mockResolvedValue({ projects: [] }),
     importProject: vi.fn(),
@@ -302,11 +308,35 @@ test('renders a localized empty portfolio after the project list resolves', asyn
 
   renderProjects({ api, language: 'zh-CN' });
 
-  expect(await screen.findByRole('heading', { name: '尚未加载项目' })).toBeVisible();
-  expect(screen.getByText('选择一个本地目录以添加首个项目。')).toBeVisible();
+  expect(await screen.findByRole('heading', { name: '添加第一个项目' })).toBeVisible();
+  expect(screen.getByText('选择一个本地代码仓库并创建团队工作区。')).toBeVisible();
 });
 
-test('loads a selected project once and navigates to its server home URL', async () => {
+test('opens project import on demand, traps focus, closes, and restores the launcher action', async () => {
+  const user = userEvent.setup();
+  const api = {
+    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
+    importProject: vi.fn(),
+  };
+  renderProjects({ api });
+  const addButton = (await screen.findAllByRole('button', { name: 'Add project' }))[0];
+
+  await user.click(addButton);
+
+  const dialog = screen.getByRole('dialog', { name: 'Load a local project' });
+  expect(dialog).toHaveAccessibleDescription('GoodTeam records the project without changing files in the selected directory.');
+  expect(screen.getByLabelText('Project directory')).toHaveFocus();
+  const closeButton = screen.getByRole('button', { name: 'Close project import' });
+  closeButton.focus();
+  await user.tab({ shift: true });
+  expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog', { name: 'Load a local project' })).not.toBeInTheDocument();
+  await waitFor(() => expect(addButton).toHaveFocus());
+});
+
+test('loads a selected project once and enters its Team workspace', async () => {
   const user = userEvent.setup();
   const navigate = vi.fn();
   const api = {
@@ -319,12 +349,13 @@ test('loads a selected project once and navigates to its server home URL', async
   };
   renderProjects({ api, navigate });
 
-  await user.type(await screen.findByLabelText('Project directory'), '/tmp/demo');
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  await user.type(screen.getByLabelText('Project directory'), '/tmp/demo');
   await user.click(screen.getByRole('button', { name: 'Load project' }));
 
   expect(api.importProject).toHaveBeenCalledTimes(1);
   expect(api.importProject).toHaveBeenCalledWith({ root: '/tmp/demo' });
-  expect(navigate).toHaveBeenCalledWith('/projects/DEMO/home');
+  expect(navigate).toHaveBeenCalledWith('/projects/DEMO/team');
 });
 
 test('rejects a relative project path inline without posting and returns focus to the field', async () => {
@@ -334,7 +365,8 @@ test('rejects a relative project path inline without posting and returns focus t
     importProject: vi.fn(),
   };
   renderProjects({ api });
-  const input = await screen.findByLabelText('Project directory');
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  const input = screen.getByLabelText('Project directory');
   await user.type(input, 'relative/project');
 
   await user.click(screen.getByRole('button', { name: 'Load project' }));
@@ -352,7 +384,9 @@ test('uses the directory picker and writes its selection into the absolute path 
     importProject: vi.fn(),
   };
   renderProjects({ api });
-  const input = await screen.findByLabelText('Project directory');
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  const input = screen.getByLabelText('Project directory');
+  expect(screen.getByText('The directory stays unchanged during import.')).toBeVisible();
   await user.type(input, '/work/current');
 
   await user.click(screen.getByRole('button', { name: 'Browse' }));
@@ -362,9 +396,10 @@ test('uses the directory picker and writes its selection into the absolute path 
   expect(options).toMatchObject({ mode: 'directory', initialPath: '/work/current' });
   act(() => options.onSelected('/work/selected'));
   expect(input).toHaveValue('/work/selected');
+  expect(screen.getByText('Directory selected and ready to load.')).toBeVisible();
 });
 
-test('navigates duplicate imports to the returned Home URL', async () => {
+test('duplicate imports enter the existing Team workspace', async () => {
   const user = userEvent.setup();
   const navigate = vi.fn();
   const api = {
@@ -377,10 +412,28 @@ test('navigates duplicate imports to the returned Home URL', async () => {
   };
   renderProjects({ api, navigate });
 
-  await user.type(await screen.findByLabelText('Project directory'), '/work/known');
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  await user.type(screen.getByLabelText('Project directory'), '/work/known');
   await user.click(screen.getByRole('button', { name: 'Load project' }));
 
-  expect(navigate).toHaveBeenCalledWith('/projects/KNOWN/home');
+  expect(navigate).toHaveBeenCalledWith('/projects/KNOWN/team');
+});
+
+test('rejects an import response without a project key and stays in the dialog', async () => {
+  const user = userEvent.setup();
+  const navigate = vi.fn();
+  const api = {
+    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
+    importProject: vi.fn().mockResolvedValue({ home_url: '/projects/LEGACY/home' }),
+  };
+  renderProjects({ api, navigate });
+
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  await user.type(screen.getByLabelText('Project directory'), '/work/broken');
+  await user.click(screen.getByRole('button', { name: 'Load project' }));
+
+  expect(await screen.findByText('GoodTeam received an invalid server response.')).toBeVisible();
+  expect(navigate).not.toHaveBeenCalled();
 });
 
 test('aborts the project list request on unmount without surfacing an error', () => {
@@ -423,7 +476,8 @@ test('shows localized server recovery inline and preserves the entered path', as
     })),
   };
   renderProjects({ api });
-  const input = await screen.findByLabelText('Project directory');
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  const input = screen.getByLabelText('Project directory');
   await user.type(input, '/private/repo');
   await user.click(screen.getByRole('button', { name: 'Load project' }));
 
@@ -445,7 +499,8 @@ test('localizes unknown errors, ignores unknown recovery, and exposes the reques
     })),
   };
   renderProjects({ api, language: 'zh-CN' });
-  await user.type(await screen.findByLabelText('项目目录'), '/private/repo');
+  await user.click((await screen.findAllByRole('button', { name: '添加项目' }))[0]);
+  await user.type(screen.getByLabelText('项目目录'), '/private/repo');
   await user.click(screen.getByRole('button', { name: '加载项目' }));
 
   expect(await screen.findByText('GoodTeam 无法完成此请求。')).toBeVisible();
@@ -465,7 +520,8 @@ test('runs origin recovery through the injected reload action', async () => {
     })),
   };
   renderProjects({ api, reloadPage });
-  await user.type(await screen.findByLabelText('Project directory'), '/work/demo');
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  await user.type(screen.getByLabelText('Project directory'), '/work/demo');
   await user.click(screen.getByRole('button', { name: 'Load project' }));
 
   await user.click(await screen.findByRole('button', { name: 'Retry from the GoodTeam application' }));
@@ -486,17 +542,18 @@ test.each([
         code: 'internal_error',
         recovery: [recovery],
       }))
-      .mockResolvedValueOnce({ home_url: '/projects/RETRIED/home' }),
+      .mockResolvedValueOnce({ project: { project_key: 'RETRIED' } }),
   };
   renderProjects({ api, navigate });
-  await user.type(await screen.findByLabelText('Project directory'), '/work/retry');
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  await user.type(screen.getByLabelText('Project directory'), '/work/retry');
   await user.click(screen.getByRole('button', { name: 'Load project' }));
 
   await user.click(await screen.findByRole('button', { name: label }));
 
   expect(api.importProject).toHaveBeenCalledTimes(2);
   expect(api.importProject).toHaveBeenLastCalledWith({ root: '/work/retry' });
-  expect(navigate).toHaveBeenCalledWith('/projects/RETRIED/home');
+  expect(navigate).toHaveBeenCalledWith('/projects/RETRIED/team');
 });
 
 test('return-to-projects recovery clears the inline error and focuses the preserved field', async () => {
@@ -509,7 +566,8 @@ test('return-to-projects recovery clears the inline error and focuses the preser
     })),
   };
   renderProjects({ api });
-  const input = await screen.findByLabelText('Project directory');
+  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
+  const input = screen.getByLabelText('Project directory');
   await user.type(input, '/work/return');
   await user.click(screen.getByRole('button', { name: 'Load project' }));
 
@@ -562,7 +620,7 @@ test.each([
   renderProjects({ api });
 
   expect(await screen.findByRole('alert')).toHaveTextContent('GoodTeam could not complete this request.');
-  expect(screen.queryByRole('article')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Enter workspace:/ })).not.toBeInTheDocument();
 });
 
 test('normalizes unknown lifecycle to legacy and keeps the first duplicate key', () => {
@@ -601,7 +659,7 @@ test('survives StrictMode list cancellation and renders only the current request
     </StrictMode>,
   );
 
-  expect(await screen.findByRole('article')).toHaveTextContent('Current');
+  expect(await screen.findByRole('button', { name: 'Enter workspace: Current' })).toBeVisible();
   expect(api.listProjects).toHaveBeenCalledTimes(2);
   expect(signals[0].aborted).toBe(true);
   expect(signals[1].aborted).toBe(false);
@@ -622,7 +680,7 @@ test('retry replaces the list error with only the fresh normalized response', as
 
   await user.click(screen.getByRole('button', { name: 'Try again' }));
 
-  expect(await screen.findByRole('article')).toHaveTextContent('Fresh');
+  expect(await screen.findByRole('button', { name: 'Enter workspace: Fresh' })).toBeVisible();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 
@@ -632,7 +690,7 @@ test('renders no first-slice dead navigation', async () => {
     importProject: vi.fn(),
   };
   renderProjects({ api });
-  await screen.findByRole('heading', { name: 'No projects loaded' });
+  await screen.findByRole('heading', { name: 'Add your first project' });
 
   expect(screen.queryByRole('link', { name: /inbox/i })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: /activity/i })).not.toBeInTheDocument();

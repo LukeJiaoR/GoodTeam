@@ -6,6 +6,7 @@ export const routes = Object.freeze({
   activity: () => '/activity',
   settings: () => '/settings',
   projectHome: (projectKey) => `/projects/${segment(projectKey)}/home`,
+  projectTeam: (projectKey) => `/projects/${segment(projectKey)}/team`,
   projectWork: (projectKey) => `/projects/${segment(projectKey)}/work`,
   projectRun: (projectKey, runId) => (
     `/projects/${segment(projectKey)}/work/runs/${segment(runId)}`
@@ -29,7 +30,6 @@ export function legacyDestination(search = '') {
   if (['artifacts', 'docs', 'memory', 'agents_memory'].includes(tab)) {
     return routes.projectKnowledge(projectKey);
   }
-  if (['system', 'agents'].includes(tab)) return routes.projectSettings(projectKey, 'general');
-  if (tab === 'overview') return routes.projectHome(projectKey);
+  if (['system', 'agents', 'overview'].includes(tab)) return routes.projectTeam(projectKey);
   return routes.projectWork(projectKey);
 }

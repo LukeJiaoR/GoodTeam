@@ -321,6 +321,55 @@ task_backend:
     assert "workers" not in target
 
 
+def test_update_worker_backend_config_writes_worker_type_settings_safely(tmp_path):
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        "name: Real Product\nkey: REAL\nworker_backend:\n  mode: codex\nproviders:\n  local:\n    type: builtin\n",
+        encoding="utf-8",
+    )
+
+    update_worker_backend_config(
+        config,
+        mode="codex",
+        workers={},
+        worker_type_settings={
+            "implementation": {
+                "reasoning_depth": "high",
+                "additional_prompt": "Keep APIs stable.\nDo not rewrite: auth.",
+                "desired_instances": 2,
+            }
+        },
+    )
+
+    target = load_project_target(config)
+    assert target["worker_type_settings"]["implementation"] == {
+        "reasoning_depth": "high",
+        "additional_prompt": "Keep APIs stable.\nDo not rewrite: auth.",
+        "desired_instances": "2",
+    }
+    content = config.read_text(encoding="utf-8")
+    assert '    additional_prompt: "Keep APIs stable.\\nDo not rewrite: auth."' in content
+    assert "providers:\n  local:\n    type: builtin\n" in content
+
+
+def test_update_worker_backend_config_removes_empty_worker_type_settings(tmp_path):
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        "name: Real Product\nkey: REAL\nworker_backend:\n  mode: codex\nworker_type_settings:\n  qa:\n    reasoning_depth: high\n",
+        encoding="utf-8",
+    )
+
+    update_worker_backend_config(
+        config,
+        mode="codex",
+        workers={},
+        worker_type_settings={},
+    )
+
+    assert "worker_type_settings:" not in config.read_text(encoding="utf-8")
+    assert "worker_type_settings" not in load_project_target(config)
+
+
 def test_check_project_target_reports_deepseek_provider_from_env(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
     target = {

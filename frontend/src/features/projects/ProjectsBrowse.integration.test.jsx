@@ -38,7 +38,8 @@ test('real Browse fallback localizes the dialog, traps focus, closes on Escape, 
     throw new Error(`Unexpected fetch: ${url}`);
   });
   renderWithRealPicker(fetchMock);
-  const browse = await screen.findByRole('button', { name: '浏览' });
+  await user.click((await screen.findAllByRole('button', { name: '添加项目' }))[0]);
+  const browse = screen.getByRole('button', { name: '浏览' });
 
   await user.click(browse);
 
@@ -51,7 +52,8 @@ test('real Browse fallback localizes the dialog, traps focus, closes on Escape, 
   expect(screen.getByRole('button', { name: '选择此文件夹' })).toHaveFocus();
   await user.keyboard('{Escape}');
 
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: '选择项目根目录' })).not.toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: '加载本地项目' })).toBeVisible();
   expect(browse).toHaveFocus();
 });
 
@@ -65,12 +67,14 @@ test('real localized picker selection updates only the project path callback', a
     throw new Error(`Unexpected fetch: ${url}`);
   });
   renderWithRealPicker(fetchMock);
-  const browse = await screen.findByRole('button', { name: '浏览' });
+  await user.click((await screen.findAllByRole('button', { name: '添加项目' }))[0]);
+  const browse = screen.getByRole('button', { name: '浏览' });
 
   await user.click(browse);
   await user.click(await screen.findByRole('button', { name: '选择此文件夹' }));
 
   expect(screen.getByLabelText('项目目录')).toHaveValue('/workspace/chosen');
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: '选择项目根目录' })).not.toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: '加载本地项目' })).toBeVisible();
   expect(browse).toHaveFocus();
 });

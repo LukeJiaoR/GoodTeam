@@ -224,6 +224,30 @@ def test_implementation_worker_job_specs_include_qa_role_messages_only(tmp_path)
     assert "Should the API be versioned?" not in contexts["implementation"]
 
 
+def test_implementation_worker_job_specs_apply_type_settings_without_duplicating_jobs(tmp_path):
+    state = create_initial_state("run-1", "CONTENTOPS", "Ship billing")
+    target = {
+        "worker_backend": {"mode": "codex"},
+        "workers": {"implementation": "pi"},
+        "worker_type_settings": {
+            "implementation": {
+                "reasoning_depth": "high",
+                "additional_prompt": "Keep public APIs stable.",
+                "desired_instances": "4",
+            }
+        },
+    }
+
+    specs = implementation_worker_job_specs(state, target, workspace=tmp_path)
+    implementation = next(spec for spec in specs if spec["role"] == "implementation")
+
+    assert len(specs) == 3
+    assert implementation["reasoning_depth"] == "high"
+    assert implementation["additional_prompt"] == "Keep public APIs stable."
+    assert implementation["desired_instances"] == 4
+    assert implementation["pi_thinking_level"] == "high"
+
+
 def test_graph_reaches_prd_gate(tmp_path):
     state = create_initial_state("run-1", "GTO", "Build AI Team OS")
 

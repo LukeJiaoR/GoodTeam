@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
+import { BookOpenCheck, BrainCircuit, Files, Search, ShieldCheck, TerminalSquare } from 'lucide-react';
+import { useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import MarkdownView from '../../components/ui/MarkdownView';
 import ProductError from '../../components/ui/ProductError';
-import { routes } from '../../lib/routing/routes';
 import RepositoryOverview from '../projects/RepositoryOverview';
 import useProjectState from '../runs/useProjectState';
 import { knowledgeApi } from './knowledgeApi';
 
-const VIEWS = ['overview', 'artifacts', 'memory'];
+const VIEWS = [
+  ['overview', BookOpenCheck],
+  ['artifacts', Files],
+  ['memory', BrainCircuit],
+];
 
 function artifactEntries(data) {
   const artifacts = data?.state?.artifacts || {};
@@ -20,13 +24,14 @@ function OverviewView({ home, language, overview, t }) {
   const facts = home?.facts || {};
   return (
     <div className="knowledge-overview">
-      <section className="knowledge-intro"><h2>{t('knowledge.overview.title')}</h2><p>{t('knowledge.overview.description')}</p>
+      <section className="knowledge-intro">
+        <header><div><p className="product-eyebrow">{t('knowledge.workspace.context')}</p><h2>{t('knowledge.overview.title')}</h2><p>{t('knowledge.overview.description')}</p></div><span aria-hidden="true"><BookOpenCheck size={21} /></span></header>
         <dl><div><dt>{t('knowledge.overview.mode')}</dt><dd>{readiness.project_mode || '—'}</dd></div><div><dt>{t('knowledge.overview.updated')}</dt><dd>{readiness.updated_at || '—'}</dd></div><div><dt>{t('knowledge.overview.provenance')}</dt><dd>{overview ? t('knowledge.overview.persisted') : t('knowledge.overview.missing')}</dd></div></dl>
       </section>
       <section className="knowledge-confirmed-facts">
-        <div><h2>{t('knowledge.overview.confirmedTitle')}</h2><p>{t('knowledge.overview.confirmedDescription')}</p></div>
+        <header><span aria-hidden="true"><ShieldCheck size={19} /></span><div><h2>{t('knowledge.overview.confirmedTitle')}</h2><p>{t('knowledge.overview.confirmedDescription')}</p></div></header>
         <div className="knowledge-confirmed-grid">
-          <section><h3>{t('knowledge.overview.confirmedCommands')}</h3>{facts.confirmed_commands?.length ? <ul>{facts.confirmed_commands.map((command) => <li key={command}><code>{command}</code></li>)}</ul> : <p className="product-empty-copy">{t('knowledge.overview.noConfirmedCommands')}</p>}</section>
+          <section><h3><TerminalSquare aria-hidden="true" size={16} />{t('knowledge.overview.confirmedCommands')}</h3>{facts.confirmed_commands?.length ? <ul>{facts.confirmed_commands.map((command) => <li key={command}><code>{command}</code></li>)}</ul> : <p className="product-empty-copy">{t('knowledge.overview.noConfirmedCommands')}</p>}</section>
           <section><h3>{t('knowledge.overview.confirmedConstraints')}</h3>{facts.constraints?.length ? <ul>{facts.constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}</ul> : <p className="product-empty-copy">{t('knowledge.overview.noConfirmedConstraints')}</p>}{facts.prohibited_operations ? <p><strong>{t('knowledge.overview.prohibited')}</strong> {facts.prohibited_operations}</p> : null}</section>
         </div>
       </section>
@@ -51,9 +56,9 @@ function ArtifactsView({ data, projectKey, search, setSearch, t }) {
   if (!entries.length) return <p className="product-empty-copy">{t('knowledge.artifacts.empty')}</p>;
   return (
     <div className="knowledge-artifacts">
-      <aside><h2>{t('knowledge.artifacts.title')}</h2><ol>{entries.map(([key, path]) => <li key={key}><button aria-pressed={key === selectedKey} className={key === selectedKey ? 'is-active' : ''} onClick={() => setSearch({ view: 'artifacts', artifact: key })}><strong>{key}</strong><small>{path}</small></button></li>)}</ol></aside>
-      <article>
-        <h2>{selectedKey}</h2>
+      <aside><header><span aria-hidden="true"><Files size={17} /></span><div><h2>{t('knowledge.artifacts.title')}</h2><small>{entries.length}</small></div></header><ol>{entries.map(([key, path]) => <li key={key}><button aria-pressed={key === selectedKey} className={key === selectedKey ? 'is-active' : ''} onClick={() => setSearch({ view: 'artifacts', artifact: key })}><strong>{key}</strong><small>{path}</small></button></li>)}</ol></aside>
+      <article className="knowledge-document">
+        <header><p className="product-eyebrow">{t('knowledge.workspace.document')}</p><h2>{selectedKey}</h2></header>
         {error ? (
           <ProductError error={error} t={t} />
         ) : (
@@ -133,8 +138,8 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   if (!memory?.roles?.length) return <p className="product-empty-copy">{t('knowledge.memory.empty')}</p>;
   return (
     <div className="knowledge-memory">
-      <aside><h2>{t('knowledge.memory.roles')}</h2>{memory.roles.map((role) => <button aria-pressed={selected === role.role} className={selected === role.role ? 'is-active' : ''} key={role.role} onClick={() => updateSearch({ role: role.role, event: '' })}><strong>{role.role}</strong><small>{t('knowledge.memory.events', { count: role.event_count })}</small></button>)}</aside>
-      <section><label><span>{t('knowledge.memory.search')}</span><input type="search" value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} /></label>
+      <aside><header><span aria-hidden="true"><BrainCircuit size={17} /></span><h2>{t('knowledge.memory.roles')}</h2></header>{memory.roles.map((role) => <button aria-pressed={selected === role.role} className={selected === role.role ? 'is-active' : ''} key={role.role} onClick={() => updateSearch({ role: role.role, event: '' })}><strong>{role.role}</strong><small>{t('knowledge.memory.events', { count: role.event_count })}</small></button>)}</aside>
+      <section className="knowledge-memory-workspace"><label className="knowledge-memory-search"><span>{t('knowledge.memory.search')}</span><div><Search aria-hidden="true" size={16} /><input type="search" value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} /></div></label>
         {eventsReady && !events.length ? <p className="product-empty-copy">{t('knowledge.memory.emptyResults')}</p> : null}
         <ol>{events.map((memoryEvent, index) => <li key={memoryEvent.id || index}><button aria-pressed={eventId === memoryEvent.id} className={eventId === memoryEvent.id ? 'is-active' : ''} onClick={() => updateSearch({ event: memoryEvent.id })}><strong>{memoryEvent.action || memoryEvent.horizon || selected}</strong><span>{memoryEvent.text || memoryEvent.summary}</span><code>{memoryEvent.id}</code></button></li>)}</ol>
         {eventDetail ? <aside className="knowledge-memory-inspector"><h3>{t('knowledge.memory.inspector')}</h3><pre>{JSON.stringify(eventDetail, null, 2)}</pre></aside> : null}
@@ -148,11 +153,12 @@ export default function KnowledgePage() {
   const { projectKey = '' } = useParams();
   const { language, t } = useOutletContext();
   const [search, setSearch] = useSearchParams();
-  const view = VIEWS.includes(search.get('view')) ? search.get('view') : 'overview';
+  const view = VIEWS.some(([key]) => key === search.get('view')) ? search.get('view') : 'overview';
   const api = useMemo(() => ({ getProjectState: knowledgeApi.getKnowledgeState }), []);
   const { data, error, refresh, status } = useProjectState(projectKey, { api, poll: false });
   const [home, setHome] = useState(null);
   const [overview, setOverview] = useState(null);
+  const artifactCount = artifactEntries(data).length;
   useEffect(() => {
     const controller = new AbortController();
     knowledgeApi.getKnowledgeHome(projectKey, { signal: controller.signal }).then((payload) => {
@@ -169,8 +175,8 @@ export default function KnowledgePage() {
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
   return (
     <main id="main-content" className="product-page product-knowledge-page">
-      <header className="product-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('knowledge.title')}</h1><p>{t('knowledge.description')}</p></div><Link to={routes.projectHome(projectKey)}>{t('knowledge.backHome')}</Link></header>
-      <nav className="product-subnav" aria-label={t('knowledge.views.label')}>{VIEWS.map((item) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}>{t(`knowledge.views.${item}`)}</button>)}</nav>
+      <header className="knowledge-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('knowledge.title')}</h1><p>{t('knowledge.description')}</p></div><div className="knowledge-page-count"><strong>{artifactCount}</strong><span>{t('knowledge.workspace.artifacts')}</span></div></header>
+      <nav className="knowledge-view-switcher" aria-label={t('knowledge.views.label')}>{VIEWS.map(([item, Icon]) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}><Icon aria-hidden="true" size={17} /><span>{t(`knowledge.views.${item}`)}</span></button>)}</nav>
       {view === 'overview' ? <OverviewView home={home} language={language} overview={overview} t={t} /> : null}
       {view === 'artifacts' ? <ArtifactsView data={data} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
       {view === 'memory' ? <MemoryView projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, FileDiff, FileText, ListChecks, PencilLine } from 'lucide-react';
 import { Link, useBlocker, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import MarkdownToc from '../../components/MarkdownToc';
 import Button from '../../components/ui/Button';
@@ -128,7 +129,10 @@ function decisionNodeLabel(node, t) {
 function ReviewList({ projectKey, reviews, selected, t }) {
   return (
     <aside className="review-queue" aria-label={t('review.queue.label')}>
-      <h2>{t('review.queue.title')}</h2>
+      <header className="review-queue__header">
+        <span aria-hidden="true"><ListChecks size={17} /></span>
+        <div><h2>{t('review.queue.title')}</h2><small>{reviews.length}</small></div>
+      </header>
       {reviews.length ? <ol>{reviews.map((review) => (
         <li key={review.approval}>
           <Link aria-current={selected === review.approval ? 'true' : undefined} className={selected === review.approval ? 'is-active' : ''} to={routes.projectReviewItem(projectKey, review.approval)}>
@@ -158,19 +162,19 @@ function TakeoverRecovery({ busy, error, onRecover, review, t }) {
 
 function ArtifactPanel({ onChange, review, t, value }) {
   const isBrief = review.approval === 'takeover';
-  const [view, setView] = useState(isBrief ? 'preview' : 'edit');
+  const [view, setView] = useState(isBrief || !review.is_actionable ? 'preview' : 'edit');
   const baseline = typeof review.content === 'string' ? review.content : '';
   return (
     <article className="review-artifact">
-      <header>
+      <header className="review-artifact__header">
         <div>
           <p className="product-eyebrow">{t('review.artifact.eyebrow')}</p>
           <h2>{reviewTitle(review, t)}</h2>
         </div>
-        <div className="review-view-switcher">
-          <button className={view === 'preview' ? 'is-active' : ''} onClick={() => setView('preview')}>{t(isBrief ? 'review.artifact.read' : 'review.artifact.preview')}</button>
-          <button className={view === 'edit' ? 'is-active' : ''} onClick={() => setView('edit')}>{t('review.artifact.edit')}</button>
-          <button className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}>{t('review.artifact.diff')}</button>
+        <div className="review-view-switcher" aria-label={t('review.artifact.view')}>
+          <button type="button" aria-pressed={view === 'preview'} className={view === 'preview' ? 'is-active' : ''} onClick={() => setView('preview')}><FileText aria-hidden="true" size={15} />{t(isBrief ? 'review.artifact.read' : 'review.artifact.preview')}</button>
+          <button type="button" aria-pressed={view === 'edit'} className={view === 'edit' ? 'is-active' : ''} onClick={() => setView('edit')}><PencilLine aria-hidden="true" size={15} />{t('review.artifact.edit')}</button>
+          <button type="button" aria-pressed={view === 'diff'} className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}><FileDiff aria-hidden="true" size={15} />{t('review.artifact.diff')}</button>
         </div>
       </header>
       <MarkdownToc content={value} t={t} />
@@ -215,7 +219,8 @@ function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onD
   const dissent = recommendation.reasons?.filter?.((reason) => ['open_objection', 'dissent'].includes(reason.kind)) || [];
   return (
     <aside className="review-inspector">
-      <section><h2>{t('review.recommendation.title')}</h2>
+      <header className="review-inspector__header"><span aria-hidden="true"><CheckCircle2 size={17} /></span><div><p>{t('review.workspace.decision')}</p><h2>{reviewStatus(review, t)}</h2></div></header>
+      <section className="review-inspector__recommendation"><h2>{t('review.recommendation.title')}</h2>
         <p className="review-verdict">{recommendation.verdict ? recommendationVerdict(recommendation.verdict, t) : t('review.recommendation.none')}</p>
         {recommendation.reasons?.map?.((reason, index) => <p key={index}>{recommendationReason(reason, t)}</p>)}
       </section>
@@ -438,16 +443,20 @@ export default function ReviewPage() {
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
   const steps = data?.workflow_steps || [];
   const stepIndex = steps.findIndex((step) => step.approval === selected?.approval);
+  const actionableCount = reviews.filter((review) => review.is_actionable || review.recovery?.available).length;
   return (
     <main id="main-content" className="product-page product-review-page">
-      <header className="product-page-header">
+      <header className="review-page-header">
         <div>
           <p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p>
           <h1>{t('review.title')}</h1>
           <p>{t('review.description')}</p>
-          {stepIndex >= 0 ? <p className="review-pipeline-position">{t('work.pipeline.stepOf', { number: stepIndex + 1, total: steps.length })}</p> : null}
         </div>
-        <Link to={`${routes.projectWork(projectKey)}?view=plan`}>{t('review.backWork')}</Link>
+        <dl className="review-page-summary" aria-label={t('review.workspace.summary')}>
+          <div><dt>{t('review.workspace.actionable')}</dt><dd>{actionableCount}</dd></div>
+          <div><dt>{t('review.workspace.total')}</dt><dd>{reviews.length}</dd></div>
+          <div><dt>{t('review.workspace.stage')}</dt><dd>{stepIndex >= 0 ? `${stepIndex + 1}/${steps.length}` : '—'}</dd></div>
+        </dl>
       </header>
       {!selected ? <p className="product-empty-copy">{t('review.empty')}</p> : (
         <div className="review-workspace">

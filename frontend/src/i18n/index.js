@@ -8,7 +8,7 @@ export const LANGUAGE_ZH_CN = 'zh-CN';
 export const SUPPORTED_LANGUAGE_PREFERENCES = ['auto', 'en', 'zh-CN'];
 export const PRODUCT_I18N_PREFIXES = [
   'product.', 'projects.', 'readiness.', 'work.', 'review.', 'knowledge.',
-  'inbox.', 'activity.', 'settings.',
+  'inbox.', 'activity.', 'settings.', 'team.',
 ];
 
 const LOCALES = {

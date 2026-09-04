@@ -215,10 +215,19 @@ describe('ReviewPage workflow and navigation', () => {
     expect(screen.getByRole('textbox', { name: 'Should the CLI be the only surface?' })).toHaveValue('');
   });
 
-  test('renders the pipeline position indicator for the selected gate', async () => {
+  test('renders the selected workflow stage in the workspace summary', async () => {
     renderReview('/projects/DEMO/review/prd');
 
-    expect(await screen.findByText(`Step 2 of 3`)).toBeVisible();
+    expect(await screen.findByText(t('review.workspace.stage'))).toBeVisible();
+    expect(screen.getByText('2/3')).toBeVisible();
+  });
+
+  test('opens non-actionable review artifacts in preview mode', async () => {
+    renderReview('/projects/DEMO/review/rfc');
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'RFC' })).toBeVisible();
+    expect(screen.getByRole('button', { name: t('review.artifact.preview') })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('textbox', { name: t('review.artifact.content') })).not.toBeInTheDocument();
   });
 });
 

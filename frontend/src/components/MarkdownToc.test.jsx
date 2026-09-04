@@ -28,6 +28,9 @@ More details
     render(<MarkdownToc content={md} t={(k) => k} />);
     const toggle = screen.getByRole('button');
     expect(toggle).toBeTruthy();
+    expect(toggle).toHaveTextContent('review.toc.title');
+    expect(toggle).not.toHaveTextContent('📑');
+    expect(toggle).not.toHaveTextContent('▼');
 
     expect(screen.queryByText('Section 1')).toBeNull();
     fireEvent.click(toggle);

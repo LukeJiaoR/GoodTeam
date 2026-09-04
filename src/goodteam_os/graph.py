@@ -38,7 +38,7 @@ from goodteam_os.workflow_table import (
     workflow_execution_plan_v2,
     workflow_node,
 )
-from goodteam_os.workers import BUILTIN_WORKER_MODES, WorkerJobStore
+from goodteam_os.workers import BUILTIN_WORKER_MODES, SESSION_BACKENDS, WorkerJobStore
 
 
 # Bounds for single-root `docs/` context gathering. The cap is generous so
@@ -1656,6 +1656,31 @@ def resolve_role_adapter(target: dict[str, object], role: str) -> str:
     return adapter
 
 
+def worker_type_settings_for_role(target: dict[object, object], role: str) -> dict[str, object]:
+    all_settings = target.get("worker_type_settings", {})
+    if not isinstance(all_settings, dict):
+        all_settings = {}
+    raw_settings = all_settings.get(role, {})
+    if not isinstance(raw_settings, dict):
+        raw_settings = {}
+    reasoning_depth = str(raw_settings.get("reasoning_depth", "default") or "default").strip().lower()
+    if reasoning_depth not in {"default", "low", "medium", "high"}:
+        reasoning_depth = "default"
+    additional_prompt = str(raw_settings.get("additional_prompt", "") or "").strip()
+    try:
+        desired_instances = int(raw_settings.get("desired_instances", 1) or 1)
+    except (TypeError, ValueError):
+        desired_instances = 1
+    desired_instances = min(max(desired_instances, 1), 8)
+    adapter = resolve_role_adapter(target, role)
+    return {
+        "reasoning_depth": reasoning_depth,
+        "additional_prompt": additional_prompt,
+        "desired_instances": desired_instances,
+        "pi_thinking_level": reasoning_depth if adapter in SESSION_BACKENDS and reasoning_depth != "default" else "",
+    }
+
+
 def run_implementation_workers(
     state: AgileDevState,
     project_config: Path | None = None,
@@ -1732,6 +1757,7 @@ def implementation_worker_job_specs(
                 "Capture browser screenshot evidence when a local frontend can run.",
             ],
             "expected_artifacts": ui_delivery_expected_artifacts(delivery_mode),
+            **worker_type_settings_for_role(target, "ui"),
         },
         {
             "run_id": state.run_id,
@@ -1746,6 +1772,7 @@ def implementation_worker_job_specs(
                 "Do not store secrets.",
             ],
             "expected_artifacts": implementation_expected_artifacts(delivery_mode),
+            **worker_type_settings_for_role(target, "implementation"),
         },
         {
             "run_id": state.run_id,
@@ -1760,6 +1787,7 @@ def implementation_worker_job_specs(
                 "Do not leave long-running dev servers in the foreground; use bounded smoke checks and clean up background processes.",
             ],
             "expected_artifacts": qa_expected_artifacts(delivery_mode),
+            **worker_type_settings_for_role(target, "qa"),
         },
     ]
 
@@ -2836,6 +2864,7 @@ def generate_artifact_via_worker(
                 f"Do not include preamble text outside the {artifact_key.upper()} content.",
             ],
             expected_artifacts=[_artifact_filename(artifact_key)],
+            **worker_type_settings_for_role(target, role),
         )
         status = store.run_job(str(job["id"]))
         if str(status.get("status", "")) != "completed":

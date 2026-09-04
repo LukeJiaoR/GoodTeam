@@ -2828,7 +2828,7 @@ def test_save_artifact_rejects_path_outside_current_run(tmp_path):
 def test_build_start_console_context_reads_project_and_model_config(tmp_path):
     project_config = tmp_path / "real-project.local.yaml"
     project_config.write_text(
-        "name: Real Product\nkey: REAL\nmodel_profile: cheap\ndelivery_mode: multi_service\nrole_model_overrides:\n  architect: codex:gpt-5.5\ndeployment_backend:\n  mode: ssh_compose\n  staging_ssh_target: real-staging\n  staging_remote_dir: /srv/real\n  staging_deploy_command: docker compose up -d\n  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health\ndelivery_contract:\n  required: true\n  minimum_evidence: functional\n  fatal_output_patterns:\n    migration_error: migrate: executable file not found\n  staging_acceptance:\n    critical-user-journey:\n      type: local_command\n      command: ./scripts/e2e-critical.sh\n",
+        "name: Real Product\nkey: REAL\nmodel_profile: cheap\ndelivery_mode: multi_service\nrole_model_overrides:\n  architect: codex:gpt-5.5\nworker_type_settings:\n  implementation:\n    reasoning_depth: high\n    additional_prompt: Keep APIs stable.\n    desired_instances: 2\ndeployment_backend:\n  mode: ssh_compose\n  staging_ssh_target: real-staging\n  staging_remote_dir: /srv/real\n  staging_deploy_command: docker compose up -d\n  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health\ndelivery_contract:\n  required: true\n  minimum_evidence: functional\n  fatal_output_patterns:\n    migration_error: migrate: executable file not found\n  staging_acceptance:\n    critical-user-journey:\n      type: local_command\n      command: ./scripts/e2e-critical.sh\n",
         encoding="utf-8",
     )
     context = build_start_console_context(
@@ -2846,6 +2846,11 @@ def test_build_start_console_context_reads_project_and_model_config(tmp_path):
     assert context["model_profile"] == "cheap"
     assert context["delivery_mode"] == "multi_service"
     assert context["role_model_overrides"]["architect"] == "codex:gpt-5.5"
+    assert context["worker_type_settings"]["implementation"] == {
+        "reasoning_depth": "high",
+        "additional_prompt": "Keep APIs stable.",
+        "desired_instances": 2,
+    }
     assert context["deployment_backend"]["mode"] == "ssh_compose"
     assert context["deployment_backend"]["staging_ssh_target"] == "real-staging"
     assert context["delivery_contract"]["required"] is True
@@ -5536,17 +5541,60 @@ def test_api_project_config_update_still_accepts_project_key_with_workers(tmp_pa
             "worker_backend_mode": "codex",
             "workers": {"implementation": "opencode", "qa": "codex"},
             "role_models": {"implementation": "opencode:opencode-go/qwen3.7-max"},
+            "worker_type_settings": {
+                "implementation": {
+                    "reasoning_depth": "high",
+                    "additional_prompt": "Keep APIs stable.",
+                    "desired_instances": 2,
+                }
+            },
         },
     )
 
     assert status == 200
     assert payload["role_worker_backends"]["implementation"] == "opencode"
+    assert payload["worker_type_settings"]["implementation"] == {
+        "reasoning_depth": "high",
+        "additional_prompt": "Keep APIs stable.",
+        "desired_instances": 2,
+    }
     config = tmp_path / "projects" / "wbp.local.yaml"
     content = config.read_text(encoding="utf-8")
     assert "workers:" in content
     assert "  implementation: opencode" in content
     assert "role_model_overrides:" in content
     assert "  implementation: opencode:opencode-go/qwen3.7-max" in content
+    assert "worker_type_settings:" in content
+    assert '    additional_prompt: "Keep APIs stable."' in content
+
+
+@pytest.mark.parametrize(
+    ("settings", "message"),
+    [
+        ({"unknown": {"reasoning_depth": "high"}}, "Unknown worker role: unknown"),
+        ({"qa": {"reasoning_depth": "extreme"}}, "reasoning_depth must be one of"),
+        ({"qa": {"desired_instances": 9}}, "desired_instances must be between 1 and 8"),
+        ({"qa": {"additional_prompt": "x" * 4001}}, "additional_prompt must be at most 4000 characters"),
+    ],
+)
+def test_api_project_config_rejects_invalid_worker_type_settings(tmp_path, settings, message):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="WBP")
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/project-config",
+        {
+            "project_key": "WBP",
+            "worker_backend_mode": "codex",
+            "workers": {},
+            "worker_type_settings": settings,
+        },
+    )
+
+    assert status == 400
+    assert message in payload["message"]
 
 
 def test_context_generate_requires_confirmation(tmp_path):
