@@ -104,7 +104,7 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 }
 
 
-function ManagerMissionEntry({ busy, data, embedded = true, error, onStart, t }) {
+function ManagerMissionEntry({ busy, embedded = true, error, onStart, suggestions = [], t }) {
   const [goal, setGoal] = useState('');
   const submit = (event) => {
     event.preventDefault();
@@ -112,20 +112,31 @@ function ManagerMissionEntry({ busy, data, embedded = true, error, onStart, t })
   };
   return (
     <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
-      <div>
-        <p className="product-eyebrow">{t('work.start.eyebrow')}</p>
-        {embedded ? <h3>{t('work.start.title')}</h3> : <h2>{t('work.start.title')}</h2>}
-        <p>{t('work.start.description')}</p>
-      </div>
+      {suggestions.length ? (
+        <div className="team-manager-suggestions" aria-label={t('work.taskAssistant.suggestions')}>
+          {suggestions.map((suggestion) => (
+            <button
+              key={suggestion.id}
+              onClick={() => setGoal(t(`work.taskAssistant.suggestionDrafts.${suggestion.id}`))}
+              type="button"
+            >
+              {t(`work.taskAssistant.suggestionLabels.${suggestion.id}`)}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <label>
-        <span>{t('work.start.goal')}</span>
-        <textarea rows="4" required value={goal} onChange={(event) => setGoal(event.target.value)} />
+        <span className="sr-only">{t('work.taskAssistant.message')}</span>
+        <textarea
+          placeholder={t('work.taskAssistant.placeholder')}
+          rows="3"
+          required
+          value={goal}
+          onChange={(event) => setGoal(event.target.value)}
+        />
       </label>
       {error ? <ProductError error={error} t={t} /> : null}
-      <Button busy={busy} disabled={!goal.trim()} type="submit">{t('work.start.action')}</Button>
-      <p className="product-boundary-note">
-        {t('work.start.boundary', { profile: data?.start_context?.model_profile || 'balanced' })}
-      </p>
+      <Button busy={busy} disabled={!goal.trim()} type="submit">{t('work.taskAssistant.send')}</Button>
     </form>
   );
 }
@@ -158,7 +169,8 @@ function timelineCopy(item, t) {
 }
 
 function TimelineItem({ item, language, t }) {
-  const timestamp = Date.parse(item.timestamp);
+  const itemTimestamp = item.timestamp || item.created_at || '';
+  const timestamp = Date.parse(itemTimestamp);
   const formatted = Number.isFinite(timestamp)
     ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp))
     : '';
@@ -172,7 +184,7 @@ function TimelineItem({ item, language, t }) {
         <div className="team-manager-system-chip">
           <span className="team-manager-system-chip__dot" aria-hidden="true" />
           <span className="team-manager-system-chip__text">{copy}</span>
-          {formatted ? <time dateTime={item.timestamp}>{formatted}</time> : null}
+          {formatted ? <time dateTime={itemTimestamp}>{formatted}</time> : null}
         </div>
       </li>
     );
@@ -184,7 +196,7 @@ function TimelineItem({ item, language, t }) {
       <div className="team-manager-event__bubble">
         <div className="team-manager-event__meta">
           <strong>{actorLabel}</strong>
-          {formatted ? <time dateTime={item.timestamp}>{formatted}</time> : null}
+          {formatted ? <time dateTime={itemTimestamp}>{formatted}</time> : null}
         </div>
         <p>{copy}</p>
         {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
@@ -381,6 +393,53 @@ function ManagerAttention({
   );
 }
 
+function ProjectPreparationAttention({ attention, busy, onContinue, t }) {
+  const requirements = attention.input_requirements || {};
+  const commands = requirements.commands || [];
+  const [selectedCommands, setSelectedCommands] = useState(() => commands.map((item) => item.id));
+  const [goal, setGoal] = useState('');
+  const [brief, setBrief] = useState('');
+  const kind = requirements.kind || 'project_preparation';
+  const submit = () => {
+    let values = { confirmed: true };
+    if (kind === 'command_confirmation') values = { confirmed_command_ids: selectedCommands };
+    if (kind === 'project_initialization') values = { goal: goal.trim(), brief: brief.trim() };
+    onContinue?.(attention.step_id, values);
+  };
+  const canContinue = kind !== 'project_initialization' || (goal.trim() && brief.trim());
+  return (
+    <section className="team-attention" data-kind="project_preparation" aria-label={t('work.manager.attention')}>
+      <p className="team-attention__label"><AlertCircle aria-hidden="true" size={15} />{t('work.taskAssistant.preparationTitle')}</p>
+      <h3>{t(`work.taskAssistant.preparation.${kind}`)}</h3>
+      {kind === 'command_confirmation' ? (
+        <div className="team-preparation-options">
+          {commands.map((command) => (
+            <label key={command.id}>
+              <input
+                checked={selectedCommands.includes(command.id)}
+                onChange={(event) => setSelectedCommands((current) => (
+                  event.target.checked ? [...current, command.id] : current.filter((id) => id !== command.id)
+                ))}
+                type="checkbox"
+              />
+              <code>{command.command}</code>
+            </label>
+          ))}
+        </div>
+      ) : null}
+      {kind === 'project_initialization' ? (
+        <div className="team-preparation-fields">
+          <label>{t('work.taskAssistant.projectGoal')}<input value={goal} onChange={(event) => setGoal(event.target.value)} /></label>
+          <label>{t('work.taskAssistant.projectBrief')}<textarea value={brief} onChange={(event) => setBrief(event.target.value)} /></label>
+        </div>
+      ) : null}
+      <Button busy={busy === 'preparation'} disabled={!canContinue} onClick={submit}>
+        {t('work.taskAssistant.continuePreparation')}
+      </Button>
+    </section>
+  );
+}
+
 function ManagerMissionControls({ busy, canCancel, onTerminate, t }) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   if (!canCancel) return null;
@@ -413,7 +472,6 @@ function ManagerPane({
   attention,
   busy,
   capabilities,
-  data,
   error,
   language,
   mission,
@@ -423,6 +481,8 @@ function ManagerPane({
   onKeepDiscussingChangeIntent,
   onReview,
   onRetry,
+  onConfirmTask,
+  onContinuePreparation,
   onStart,
   onStartChangeIntent,
   onTerminate,
@@ -430,6 +490,8 @@ function ManagerPane({
   sectionProps,
   timeline,
   t,
+  suggestions,
+  proposedTask,
 }) {
   const managerTone = attention?.kind === 'blocker'
     ? 'danger'
@@ -489,9 +551,8 @@ function ManagerPane({
         </div>
       </header>
       <div className="team-manager-conversation" onScroll={handleConversationScroll} ref={conversationRef}>
-        {mission ? (
-          <>
-            {!timelineHasMissionRequest ? (
+        <>
+            {mission && mission.source !== 'task_assistant' && !timelineHasMissionRequest ? (
               <p className="team-manager-objective">
                 <span>{t('work.manager.currentMission')}</span>
                 <strong>{mission.objective}</strong>
@@ -499,9 +560,32 @@ function ManagerPane({
             ) : null}
             {error ? <ProductError error={error} t={t} /> : null}
             <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
-              {(timeline || []).map((item) => <TimelineItem item={item} key={item.id} language={language} t={t} />)}
+              {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t} />)}
             </ol>
-            <ManagerAttention
+            {proposedTask && !proposedTask.run_id ? (
+              <section className="team-task-proposal" aria-label={t('work.taskAssistant.proposal')}>
+                <span>{t('work.taskAssistant.proposal')}</span>
+                <p>{proposedTask.exact_request}</p>
+                <Button
+                  busy={busy === 'task-confirm'}
+                  disabled={Boolean(proposedTask.confirmed)}
+                  onClick={() => onConfirmTask?.(proposedTask.id)}
+                >
+                  {proposedTask.confirmed
+                    ? t('work.taskAssistant.preparing')
+                    : t('work.taskAssistant.startTask')}
+                </Button>
+              </section>
+            ) : null}
+            {attention?.kind === 'project_preparation' ? (
+              <ProjectPreparationAttention
+                attention={attention}
+                busy={busy}
+                key={attention.id}
+                onContinue={onContinuePreparation}
+                t={t}
+              />
+            ) : <ManagerAttention
               attention={attention}
               busy={busy}
               key={`${attention?.id || 'none'}:${attention?.intent_commit?.id || 'direct'}:${attention?.intent_commit?.status || 'idle'}`}
@@ -514,26 +598,25 @@ function ManagerPane({
               onStartChangeIntent={onStartChangeIntent}
               projectKey={projectKey}
               t={t}
-            />
-          </>
-        ) : (
+            />}
+        </>
+      </div>
+      {!mission?.read_only ? (
+        <footer className="team-manager-dock">
           <ManagerMissionEntry
-            busy={busy === 'start'}
-            data={data}
-            error={error}
+            busy={busy === 'message'}
             onStart={onStart}
+            suggestions={suggestions}
             t={t}
           />
-        )}
-      </div>
-      {mission && (capabilities || []).some((item) => item.action === 'cancel_mission') ? (
-        <footer className="team-manager-dock">
+          {mission && (capabilities || []).some((item) => item.action === 'cancel_mission') ? (
           <ManagerMissionControls
             busy={busy}
             canCancel
             onTerminate={onTerminate}
             t={t}
           />
+          ) : null}
         </footer>
       ) : null}
     </section>
@@ -753,6 +836,8 @@ function TeamWorkspace({
   onInspect,
   onKeepDiscussingChangeIntent,
   onRetry,
+  onConfirmTask,
+  onContinuePreparation,
   onStart,
   onStartChangeIntent,
   onTerminate,
@@ -915,7 +1000,6 @@ function TeamWorkspace({
           attention={workspace.attention_request}
           busy={busy}
           capabilities={workspace.capabilities || []}
-          data={data}
           error={error}
           language={language}
           mission={mission}
@@ -925,6 +1009,8 @@ function TeamWorkspace({
           onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
           onReview={attentionReviewTask ? reviewAttentionOutcome : undefined}
           onRetry={onRetry}
+          onConfirmTask={onConfirmTask}
+          onContinuePreparation={onContinuePreparation}
           onStart={onStart}
           onStartChangeIntent={onStartChangeIntent}
           onTerminate={onTerminate}
@@ -932,6 +1018,8 @@ function TeamWorkspace({
           sectionProps={sectionProps('manager')}
           timeline={workspace.manager_timeline || []}
           t={t}
+          suggestions={workspace.suggestions || []}
+          proposedTask={workspace.proposed_task || null}
         />
         <ExecutionPane
           actors={workspace.execution_actors || []}

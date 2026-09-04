@@ -39,6 +39,12 @@ export const getMessages = (projectKey, runId, gate = '', { signal } = {}) => {
 };
 
 export const startRun = (body, options) => jsonPost('/api/start', body, options);
+export const sendTaskAssistantMessage = (projectKey, body, options) => jsonPost(
+  `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/messages`, body, options,
+);
+export const taskAssistantAction = (projectKey, body, options) => jsonPost(
+  `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/actions`, body, options,
+);
 export const retryRun = (projectKey, options) => jsonPost('/api/retry', { project_key: projectKey }, options);
 export const terminateRun = (projectKey, options) => jsonPost('/api/terminate', { project_key: projectKey }, options);
 export const dispatchTrack = (body, options) => jsonPost('/api/dispatch-track', body, options);
@@ -86,8 +92,10 @@ export const runApi = {
   getWorkflowGraph,
   keepDiscussingChangeIntent,
   retryRun,
+  sendTaskAssistantMessage,
   startChangeIntent,
   startRun,
   startSmoke,
+  taskAssistantAction,
   terminateRun,
 };

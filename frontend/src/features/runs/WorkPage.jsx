@@ -752,6 +752,7 @@ export default function WorkPage() {
   const projectedMission = projectedWorkspace?.mission || null;
   const hasProjectedWorkspace = Boolean(projectedWorkspace);
   const hasProjectedMission = Boolean(projectedMission);
+  const isTaskAssistantConversation = projectedMission?.source === 'task_assistant';
   const currentRunId = data?.active_run
     ? (projectedMission?.source === 'workflow' ? projectedMission.run_id : data?.state?.run_id) || ''
     : '';
@@ -767,7 +768,7 @@ export default function WorkPage() {
   const currentRunSummary = runHistory.find((item) => item.run_id === currentRunId);
   const contextUpdatedAt = projectedMission?.updated_at || currentRunSummary?.updated_at || '';
   const contextUpdatedLabel = formattedRunUpdate(contextUpdatedAt, language);
-  const hasRunContext = Boolean(data?.active_run || hasProjectedMission);
+  const hasRunContext = Boolean(data?.active_run || (hasProjectedMission && !isTaskAssistantConversation));
   const showRunSelector = runHistory.length > 0 && (
     !hasRunContext || runHistory.some((item) => item.run_id !== currentRunId)
   );
@@ -930,15 +931,18 @@ export default function WorkPage() {
     }
   };
 
-  const start = (goal) => mutate('start', () => runApi.startRun({
-    idea: goal,
-    project_key: projectKey,
-    model_profile: data?.start_context?.model_profile || 'balanced',
-    delivery_mode: data?.start_context?.delivery_mode || 'init_project',
-    source_type: 'existing_project',
-    project_config: data?.start_context?.project_config || '',
-    dry_run: false,
-  })).catch(() => {});
+  const sendTaskAssistantMessage = (text) => mutate('message', () => runApi.sendTaskAssistantMessage(
+    projectKey,
+    { message_id: globalThis.crypto?.randomUUID?.() || `message-${Date.now()}`, text },
+  )).catch(() => {});
+
+  const confirmTaskAssistantProposal = (proposalId) => mutate('task-confirm', () => (
+    runApi.taskAssistantAction(projectKey, { action: 'confirm_task', proposal_id: proposalId })
+  )).catch(() => {});
+
+  const continueProjectPreparation = (stepId, values) => mutate('preparation', () => (
+    runApi.taskAssistantAction(projectKey, { action: 'continue_preparation', step_id: stepId, values })
+  )).catch(() => {});
 
   if (status === 'loading') return <main id="main-content" className="product-page"><WorkSkeleton t={t} /></main>;
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
@@ -1078,7 +1082,9 @@ export default function WorkPage() {
             onInspect={openInspector}
             onKeepDiscussingChangeIntent={handleKeepDiscussingChangeIntent}
             onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
-            onStart={start}
+            onStart={sendTaskAssistantMessage}
+            onConfirmTask={confirmTaskAssistantProposal}
+            onContinuePreparation={continueProjectPreparation}
             onStartChangeIntent={handleStartChangeIntent}
             onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
             projectKey={projectKey}
@@ -1093,7 +1099,7 @@ export default function WorkPage() {
           data={data}
           embedded={false}
           error={mutationError}
-          onStart={start}
+          onStart={sendTaskAssistantMessage}
           t={t}
         />
       ) : (

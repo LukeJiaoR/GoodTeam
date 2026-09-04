@@ -38,7 +38,8 @@ export default function useProjectState(projectKey, { api = runApi, poll = true 
   }, [projectKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!poll || !data?.active_run || globalThis.document?.hidden) return undefined;
+    const taskAssistantConversation = data?.team_workspace?.mission?.source === 'task_assistant';
+    if (!poll || (!data?.active_run && !taskAssistantConversation) || globalThis.document?.hidden) return undefined;
     const controller = new AbortController();
     const timer = globalThis.setInterval(() => {
       if (!globalThis.document?.hidden) void refresh({ signal: controller.signal, quiet: true });
@@ -47,7 +48,7 @@ export default function useProjectState(projectKey, { api = runApi, poll = true 
       globalThis.clearInterval(timer);
       controller.abort();
     };
-  }, [data?.active_run, poll, refresh]);
+  }, [data?.active_run, data?.team_workspace?.mission?.source, poll, refresh]);
 
   return { data, error, refresh, status };
 }
