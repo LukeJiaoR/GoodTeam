@@ -1790,3 +1790,38 @@ def test_active_operator_queue_is_scoped_to_the_current_project(tmp_path: Path) 
 
 def test_no_active_durable_work_returns_stable_empty_contract(tmp_path: Path) -> None:
     assert build_team_workspace(state=None, workflow_active=False, project_root=tmp_path) == empty_team_workspace()
+
+
+def test_task_assistant_conversation_is_the_mission_before_workflow_start(tmp_path: Path) -> None:
+    session = {
+        "schema_version": "task_assistant_session.v1",
+        "project_key": "DEMO",
+        "status": "onboarding",
+        "timeline": [
+            {
+                "message_id": "welcome:DEMO",
+                "actor": "task_assistant",
+                "event": "welcome_existing_project",
+                "content": "",
+                "created_at": "2026-09-04T10:00:00Z",
+                "run_id": "",
+            }
+        ],
+        "attention_request": None,
+        "proposed_task": None,
+        "suggestions": [{"id": "understand-project"}],
+    }
+
+    projection = build_team_workspace(
+        state=None,
+        workflow_active=False,
+        project_root=tmp_path,
+        project_key="DEMO",
+        task_assistant_session=session,
+    )
+
+    assert projection["mission"]["source"] == "task_assistant"
+    assert projection["manager_timeline"][0]["id"] == "welcome:DEMO"
+    assert projection["manager_timeline"][0]["timestamp"] == "2026-09-04T10:00:00Z"
+    assert projection["manager_timeline"][0]["event"] == "welcome_existing_project"
+    assert projection["suggestions"] == session["suggestions"]

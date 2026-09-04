@@ -48,15 +48,15 @@ test('root redirects to the redesigned project portfolio', async () => {
   expect(router.state.location.pathname).toBe('/projects');
 });
 
-test('project root bookmarks enter the new Team workspace', async () => {
+test('project root bookmarks enter the Task Assistant conversation', async () => {
   const router = createMemoryRouter(
-    createProductRoutes({ TeamComponent: TeamStub }),
+    createProductRoutes({ WorkComponent: WorkStub }),
     { initialEntries: ['/?project=DEMO%20SPACE'] },
   );
   render(<RouterProvider router={router} />);
 
-  expect(await screen.findByRole('heading', { name: 'Project team' })).toBeVisible();
-  expect(router.state.location.pathname).toBe('/projects/DEMO%20SPACE/team');
+  expect(await screen.findByRole('heading', { name: 'Project work' })).toBeVisible();
+  expect(router.state.location.pathname).toBe('/projects/DEMO%20SPACE/work');
 });
 
 test('legacy compatibility route redirects into redesigned Work', async () => {

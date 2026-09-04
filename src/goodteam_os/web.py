@@ -48,6 +48,9 @@ from goodteam_os.graph import (
 )
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
+from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
+from goodteam_os.task_assistant import TaskAssistantService
+from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.native_picker import choose_native_path
@@ -2301,6 +2304,11 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
     start_context = build_start_console_context(workspace, project_config=project_config)
     state = resolve_dashboard_state(workspace, project_key=project_key)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
+    task_assistant_session = (
+        TaskAssistantService(workspace).session(project_key, project_root)
+        if project_root is not None
+        else None
+    )
     resources = build_resource_items(state)
     approval_reviews = build_approval_reviews(state, workspace=workspace)
     action_items = build_action_items(workspace, project_key=project_key)
@@ -2323,6 +2331,7 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
         "resources": resources,
         "start_context": start_context,
         "active_run": active_run,
+        "task_assistant_session": task_assistant_session,
         "role_observations": build_role_observations(state),
         "workflow_steps": build_workflow_steps(state),
         "approval_reviews": approval_reviews,
@@ -2341,6 +2350,7 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
             approval_reviews=approval_reviews,
             action_items=action_items,
             intent_commits=intent_commits,
+            task_assistant_session=task_assistant_session,
         ),
     }
 
@@ -3376,10 +3386,12 @@ def start_workflow(
     role_model_overrides: list[str] | None = None,
     load_profile: str = "greenfield",
     dry_run: bool = False,
+    run_id: str = "",
 ) -> dict[str, object]:
     if not idea.strip():
         raise ValueError("Workflow goal is required.")
     key = normalize_project_key(project_key)
+    requested_run_id = str(run_id).strip()
     if not dry_run and is_active_run(resolve_dashboard_state(workspace, project_key=key)):
         raise ValueError("An active run already exists. Finish, archive, or resume it before starting another run.")
 
@@ -3411,7 +3423,7 @@ def start_workflow(
         role_overrides=role_model_overrides or [],
     )
     state = create_initial_state(
-        run_id=str(uuid4()),
+        run_id=requested_run_id or str(uuid4()),
         project_key=key,
         idea=idea.strip(),
     )
@@ -3864,7 +3876,7 @@ def start_request_changes_intent(
     if state is None:
         raise ProjectApiError(
             "intent_mission_not_found",
-            "This Manager mission is no longer active.",
+            "This Task Assistant mission is no longer active.",
             409,
             recovery=["refresh_approval_brief"],
         )
@@ -3908,8 +3920,32 @@ def discuss_request_changes_intent(
         intent_id=intent_id,
     )
     _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
+    state = StateStore(workspace).read_project_current(normalize_project_key(project_key))
+    project_config = (
+        Path(state.source_ref)
+        if state is not None and state.source_ref and state.source_ref != "manual"
+        else None
+    )
+    interpretation = None
+    if project_config is not None and project_config.is_file():
+        target = dict(intent.get("target") or {})
+        try:
+            interpretation = run_manager_interpretation(
+                project_config=project_config,
+                run_id=str(dict(intent.get("mission") or {}).get("run_id", "")),
+                project_key=normalize_project_key(project_key),
+                intent_id=intent_id,
+                change_request=text,
+                context=(
+                    f"Approval: {target.get('approval', '')}\n"
+                    f"Artifact: {target.get('artifact_key', '')}\n"
+                    f"Target: {target.get('target_type', '')}:{target.get('target_id', '')}"
+                ),
+            )
+        except ManagerExecutionError as exc:
+            raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
     try:
-        updated = store.discuss(intent_id, text)
+        updated = store.discuss(intent_id, text, interpretation=interpretation)
     except IntentCommitError as exc:
         raise ProjectApiError("intent_discussion_invalid", str(exc), 400) from exc
     return {"intent_commit": updated}
@@ -4010,8 +4046,9 @@ def confirm_request_changes_intent(
             return _committed_intent_response(confirming, idempotent=True)
 
         interpretation = dict(confirming.get("confirmed_interpretation") or {})
-        instruction = str(interpretation.get("summary", "") or "").strip()
+        instruction = str(confirming.get("draft_text", "") or "").strip()
         target = dict(confirming.get("target") or {})
+        manager_execution = dict(interpretation.get("manager_execution") or {})
         try:
             decision_result = decide_approval(
                 workspace=workspace,
@@ -4026,6 +4063,18 @@ def confirm_request_changes_intent(
                     "intent_commit_id": intent_id,
                     "interpretation_schema_version": str(
                         interpretation.get("schema_version", "")
+                    ),
+                    **(
+                        {
+                            "manager_job_id": str(manager_execution.get("job_id", "")),
+                            "manager_adapter": str(manager_execution.get("adapter", "")),
+                            "manager_model": str(manager_execution.get("model", "")),
+                            "manager_reasoning_depth": str(
+                                manager_execution.get("reasoning_depth", "")
+                            ),
+                        }
+                        if manager_execution
+                        else {}
                     ),
                 },
                 expected_run_id=str(
@@ -5630,6 +5679,161 @@ def handle_project_api_post(
         result["readiness"] = readiness
         result["capabilities"] = build_capabilities(readiness)
         return (201 if result["created"] else 200), result
+    task_assistant_message_match = re.fullmatch(
+        r"/api/projects/([^/]+)/task-assistant/messages",
+        path,
+    )
+    if task_assistant_message_match:
+        key = _decode_project_api_key(task_assistant_message_match.group(1))
+        key, _target, root = _project_target_and_root(workspace, key)
+        project_config = _project_config_for_key(workspace, key)
+        try:
+            return 200, TaskAssistantService(
+                workspace,
+                project_config=project_config,
+            ).send_message(
+                project_key=key,
+                root=root,
+                message_id=str(request.get("message_id", "")),
+                text=str(request.get("text", "")),
+            )
+        except ManagerExecutionError as exc:
+            raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
+    task_assistant_action_match = re.fullmatch(
+        r"/api/projects/([^/]+)/task-assistant/actions",
+        path,
+    )
+    if task_assistant_action_match:
+        key = _decode_project_api_key(task_assistant_action_match.group(1))
+        key, target, root = _project_target_and_root(workspace, key)
+        action = str(request.get("action", ""))
+        if action not in {"confirm_task", "continue_preparation"}:
+            raise ProjectApiError(
+                "invalid_request",
+                "Unknown Task Assistant action.",
+                400,
+                recovery=["retry_request"],
+            )
+        store = TaskAssistantSessionStore(workspace, key)
+        executor = ProjectReadinessExecutor(workspace)
+        proposal_id = str(request.get("proposal_id", ""))
+        if action == "confirm_task":
+            session = store.confirm_task(proposal_id)
+            readiness = executor.status(key, root)
+        else:
+            raw_values = request.get("values", {})
+            if not isinstance(raw_values, dict):
+                raise ProjectApiError(
+                    "invalid_request",
+                    "Project preparation values must be a JSON object.",
+                    400,
+                    recovery=["retry_request"],
+                )
+            readiness = executor.submit_input(
+                key,
+                root,
+                str(request.get("step_id", "")),
+                raw_values,
+                background=False,
+            )
+            session = TaskAssistantService(
+                workspace,
+                readiness_executor=executor,
+            ).session(key, root)
+        if not build_capabilities(readiness)["start_workflow"]:
+            return 202, {
+                "task_assistant_session": session,
+                "workflow_started": False,
+                "status": "preparing_project",
+            }
+        proposal = dict(session.get("proposed_task") or {})
+        if not proposal.get("confirmed"):
+            return 200, {
+                "task_assistant_session": session,
+                "workflow_started": False,
+                "status": "ready_for_request",
+            }
+        proposal_id = str(proposal.get("id", ""))
+        claim_id = uuid4().hex
+        start_run_id = f"task-{proposal_id}"
+        session = store.claim_workflow_start(proposal_id, claim_id, start_run_id)
+        proposal = dict(session.get("proposed_task") or {})
+        bound_run_id = str(proposal.get("run_id", ""))
+        if bound_run_id:
+            return 200, {
+                "task_assistant_session": session,
+                "workflow_started": True,
+                "status": "workflow_started",
+                "run_id": bound_run_id,
+            }
+        claimed_run_id = str(proposal.get("start_run_id", ""))
+        current_state = StateStore(workspace).read_project_current(key)
+        if (
+            current_state is not None
+            and current_state.run_id == claimed_run_id
+            and current_state.current_node != "start"
+        ):
+            session = store.reconcile_workflow(proposal_id, claimed_run_id)
+            return 200, {
+                "task_assistant_session": session,
+                "workflow_started": True,
+                "status": "workflow_started",
+                "run_id": claimed_run_id,
+            }
+        if str(proposal.get("start_status", "")) == "indeterminate":
+            raise ProjectApiError(
+                "workflow_start_indeterminate",
+                "The prior workflow start could not be proven complete; automatic retry is blocked to prevent a duplicate run.",
+                409,
+                recovery=["inspect_workflow_state", "retry_after_manual_reconciliation"],
+            )
+        if str(proposal.get("start_claim_id", "")) != claim_id:
+            session = store.mark_workflow_start_indeterminate(
+                proposal_id,
+                reason="The workflow start owner exited before completion was durably recorded.",
+            )
+            proposal = dict(session.get("proposed_task") or {})
+            if str(proposal.get("start_status", "")) == "indeterminate":
+                raise ProjectApiError(
+                    "workflow_start_indeterminate",
+                    "The prior workflow start could not be proven complete; automatic retry is blocked to prevent a duplicate run.",
+                    409,
+                    recovery=["inspect_workflow_state", "retry_after_manual_reconciliation"],
+                )
+            return 202, {
+                "task_assistant_session": session,
+                "workflow_started": False,
+                "status": "workflow_starting",
+                "run_id": "",
+            }
+        project_config = _project_config_for_key(workspace, key)
+        try:
+            result = start_workflow(
+                workspace=workspace,
+                idea=str(proposal.get("exact_request", "")),
+                project_key=key,
+                model_config=Path("models.yaml"),
+                model_profile=str(target.get("model_profile", "") or "balanced"),
+                delivery_mode=str(target.get("delivery_mode", "") or "init_project"),
+                source_type=str(readiness.get("project_mode", "") or "existing_project"),
+                project_config=project_config,
+                load_profile="greenfield",
+                run_id=start_run_id,
+            )
+        except Exception as exc:
+            store.mark_workflow_start_indeterminate(proposal_id, claim_id=claim_id, reason=str(exc))
+            raise
+        session = store.bind_workflow(
+            proposal_id,
+            str(result.get("run_id", "")),
+            claim_id=claim_id,
+        )
+        return 200, {
+            "task_assistant_session": session,
+            "workflow_started": True,
+            "status": "workflow_started",
+            "run_id": str(result.get("run_id", "")),
+        }
     mode_match = re.fullmatch(r"/api/projects/([^/]+)/mode", path)
     if mode_match:
         key = _decode_project_api_key(mode_match.group(1))
@@ -5798,7 +6002,7 @@ def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel))",
+            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions))",
             path,
         )
     )
@@ -6473,6 +6677,10 @@ def normalize_worker_type_settings(value: object, *, strict: bool = True) -> dic
         except (TypeError, ValueError):
             if strict:
                 raise ValueError(f"worker_type_settings.{role}.desired_instances must be an integer") from None
+            desired_instances = 1
+        if role == "orchestrator" and desired_instances != 1:
+            if strict:
+                raise ValueError("Task Assistant desired_instances must be 1")
             desired_instances = 1
         if reasoning_depth not in WORKER_REASONING_DEPTHS:
             if strict:

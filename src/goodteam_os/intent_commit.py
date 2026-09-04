@@ -41,7 +41,7 @@ class IntentCommitError(ValueError):
 
 
 class IntentCommitStore:
-    """Persist Manager intent discussions beside the existing project state.
+    """Persist Task Assistant intent discussions beside the existing project state.
 
     This store is a small GoodTeam-owned projection, not a second approval
     authority. Confirmation still delegates to the existing approval mutation
@@ -160,15 +160,25 @@ class IntentCommitStore:
             self._write_payload(payload)
             return deepcopy(record), True
 
-    def discuss(self, intent_id: str, text: str) -> dict[str, object]:
+    def discuss(
+        self,
+        intent_id: str,
+        text: str,
+        *,
+        interpretation: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
         change_request = _normalize_change_request(text)
+        resolved_interpretation = (
+            _normalize_manager_interpretation(interpretation, change_request)
+            if interpretation is not None
+            else deterministic_interpretation(change_request)
+        )
 
         def update(record: dict[str, object]) -> None:
             _require_status(record, "discussing")
             timestamp = _now()
-            interpretation = deterministic_interpretation(change_request)
             record["draft_text"] = change_request
-            record["interpretation"] = interpretation
+            record["interpretation"] = deepcopy(resolved_interpretation)
             record["status"] = "ready_to_confirm"
             record["updated_at"] = timestamp
             _append_event(
@@ -183,7 +193,7 @@ class IntentCommitStore:
                 actor="manager",
                 event="change_intent_summarized",
                 timestamp=timestamp,
-                content=str(interpretation["summary"]),
+                content=str(resolved_interpretation["summary"]),
             )
 
         return self._update(intent_id, update)
@@ -215,13 +225,26 @@ class IntentCommitStore:
             _require_status(record, "ready_to_confirm")
             interpretation = _mapping(record.get("interpretation"))
             summary = _text(interpretation.get("summary"))
-            expected_interpretation = deterministic_interpretation(summary) if summary else {}
+            source = _text(interpretation.get("source"))
+            if source == "manager_worker":
+                try:
+                    expected_interpretation = _normalize_manager_interpretation(
+                        interpretation,
+                        _text(record.get("draft_text")),
+                    )
+                except IntentCommitError:
+                    expected_interpretation = {}
+            else:
+                expected_interpretation = deterministic_interpretation(summary) if summary else {}
             if (
                 not summary
-                or _text(record.get("draft_text")) != summary
+                or (
+                    source != "manager_worker"
+                    and _text(record.get("draft_text")) != summary
+                )
                 or dict(interpretation) != expected_interpretation
             ):
-                raise IntentCommitError("The Manager does not have a safe interpretation to confirm.")
+                raise IntentCommitError("The Task Assistant does not have a safe interpretation to confirm.")
             timestamp = _now()
             record["status"] = "committing"
             record["confirmation_started_at"] = timestamp
@@ -418,7 +441,7 @@ def deterministic_interpretation(change_request: str) -> dict[str, object]:
         if text and text not in explicit_items:
             explicit_items.append(text)
     if not explicit_items:
-        raise IntentCommitError("The Manager could not form an explicit interpretation safely.")
+        raise IntentCommitError("The Task Assistant could not form an explicit interpretation safely.")
     return {
         "schema_version": INTENT_INTERPRETATION_SCHEMA_VERSION,
         "source": "deterministic_explicit_request",
@@ -430,10 +453,55 @@ def deterministic_interpretation(change_request: str) -> dict[str, object]:
     }
 
 
+def _normalize_manager_interpretation(
+    interpretation: Mapping[str, object],
+    change_request: str,
+) -> dict[str, object]:
+    request = _normalize_change_request(change_request)
+    if (
+        _text(interpretation.get("schema_version")) != INTENT_INTERPRETATION_SCHEMA_VERSION
+        or _text(interpretation.get("source")) != "manager_worker"
+        or _text(interpretation.get("request")) != request
+    ):
+        raise IntentCommitError("The Task Assistant returned an interpretation for a different request.")
+    summary = _text(interpretation.get("summary"))
+    raw_items = interpretation.get("items")
+    execution = _mapping(interpretation.get("manager_execution"))
+    if (
+        not summary
+        or not isinstance(raw_items, list)
+        or not raw_items
+        or _text(execution.get("role")) != "orchestrator"
+        or not _text(execution.get("job_id"))
+    ):
+        raise IntentCommitError("The Task Assistant returned an incomplete interpretation.")
+    items: list[dict[str, str]] = []
+    for raw_item in raw_items:
+        item = _mapping(raw_item)
+        text = _text(item.get("text"))
+        if _text(item.get("kind")) != "explicit_request" or not text:
+            raise IntentCommitError("The Task Assistant returned an invalid interpretation item.")
+        items.append({"kind": "explicit_request", "text": text})
+    return {
+        "schema_version": INTENT_INTERPRETATION_SCHEMA_VERSION,
+        "source": "manager_worker",
+        "summary": summary,
+        "items": items,
+        "request": request,
+        "manager_execution": {
+            "job_id": _text(execution.get("job_id")),
+            "role": "orchestrator",
+            "adapter": _text(execution.get("adapter")),
+            "model": _text(execution.get("model")),
+            "reasoning_depth": _text(execution.get("reasoning_depth")) or "default",
+        },
+    }
+
+
 def _normalize_change_request(text: str) -> str:
     normalized = "\n".join(line.rstrip() for line in str(text or "").strip().splitlines()).strip()
     if not normalized:
-        raise IntentCommitError("Describe the complete change you want the Manager to interpret.")
+        raise IntentCommitError("Describe the complete change you want the Task Assistant to interpret.")
     if len(normalized) > MAX_CHANGE_REQUEST_LENGTH:
         raise IntentCommitError(
             f"Change requests must be {MAX_CHANGE_REQUEST_LENGTH} characters or fewer."

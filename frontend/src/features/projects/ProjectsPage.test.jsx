@@ -284,7 +284,7 @@ test('shows a shape-matching skeleton, then renders one workspace row per projec
   expect(screen.getByRole('button', { name: 'Enter workspace: Ready' })).toHaveTextContent('Ready');
 });
 
-test('enters the new Team workspace directly from a project row', async () => {
+test('enters the Task Assistant Work conversation directly from a project row', async () => {
   const user = userEvent.setup();
   const navigate = vi.fn();
   const api = {
@@ -297,7 +297,7 @@ test('enters the new Team workspace directly from a project row', async () => {
 
   await user.click(await screen.findByRole('button', { name: 'Enter workspace: Demo' }));
 
-  expect(navigate).toHaveBeenCalledWith('/projects/DEMO%20SPACE/team');
+  expect(navigate).toHaveBeenCalledWith('/projects/DEMO%20SPACE/work');
 });
 
 test('renders a localized empty launcher after the project list resolves', async () => {
@@ -336,7 +336,7 @@ test('opens project import on demand, traps focus, closes, and restores the laun
   await waitFor(() => expect(addButton).toHaveFocus());
 });
 
-test('loads a selected project once and enters its Team workspace', async () => {
+test('loads a selected project once and enters its Task Assistant conversation', async () => {
   const user = userEvent.setup();
   const navigate = vi.fn();
   const api = {
@@ -355,7 +355,7 @@ test('loads a selected project once and enters its Team workspace', async () => 
 
   expect(api.importProject).toHaveBeenCalledTimes(1);
   expect(api.importProject).toHaveBeenCalledWith({ root: '/tmp/demo' });
-  expect(navigate).toHaveBeenCalledWith('/projects/DEMO/team');
+  expect(navigate).toHaveBeenCalledWith('/projects/DEMO/work');
 });
 
 test('rejects a relative project path inline without posting and returns focus to the field', async () => {
@@ -416,7 +416,7 @@ test('duplicate imports enter the existing Team workspace', async () => {
   await user.type(screen.getByLabelText('Project directory'), '/work/known');
   await user.click(screen.getByRole('button', { name: 'Load project' }));
 
-  expect(navigate).toHaveBeenCalledWith('/projects/KNOWN/team');
+  expect(navigate).toHaveBeenCalledWith('/projects/KNOWN/work');
 });
 
 test('rejects an import response without a project key and stays in the dialog', async () => {
@@ -553,7 +553,7 @@ test.each([
 
   expect(api.importProject).toHaveBeenCalledTimes(2);
   expect(api.importProject).toHaveBeenLastCalledWith({ root: '/work/retry' });
-  expect(navigate).toHaveBeenCalledWith('/projects/RETRIED/team');
+  expect(navigate).toHaveBeenCalledWith('/projects/RETRIED/work');
 });
 
 test('return-to-projects recovery clears the inline error and focuses the preserved field', async () => {

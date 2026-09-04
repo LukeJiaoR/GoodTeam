@@ -4,6 +4,7 @@ from pathlib import Path
 from threading import Barrier, Event, Lock
 
 import pytest
+import goodteam_os.project_readiness as readiness
 
 from goodteam_os.project_readiness import (
     ProjectReadinessStore,
@@ -31,6 +32,21 @@ def test_classify_unstructured_nonempty_directory_as_unconfirmed(tmp_path: Path)
     root.mkdir()
     (root / "notes.bin").write_bytes(b"asset")
     assert classify_project_mode(root) == "unconfirmed"
+
+
+def test_nested_repository_container_suggests_existing_project(tmp_path: Path) -> None:
+    root = tmp_path / "container"
+    nested = root / "CLIProxyAPI"
+    nested.mkdir(parents=True)
+    (nested / "go.mod").write_text("module example.com/proxy\n", encoding="utf-8")
+    (root / "Management-Center").mkdir()
+
+    assert readiness.assess_project_mode(root) == {
+        "mode": "existing_project",
+        "confidence": "high",
+        "evidence": ["CLIProxyAPI/go.mod"],
+    }
+    assert classify_project_mode(root) == "existing_project"
 
 
 def test_readiness_initialization_is_recoverable_and_mode_confirmation_is_persisted(

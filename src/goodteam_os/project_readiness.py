@@ -27,6 +27,14 @@ MANIFEST_NAMES = {
 }
 SOURCE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java"}
 IGNORED_NAMES = {".DS_Store", "Thumbs.db"}
+IGNORED_PROJECT_DIRS = {
+    ".cache",
+    ".venv",
+    "dist",
+    "build",
+    "node_modules",
+    "vendor",
+}
 MODE_STEPS = {
     "new_project": ["new_project_init", "project_brief", "worker_preflight"],
     "existing_project": [
@@ -49,19 +57,51 @@ class AnchoredWrite:
     backup_descriptor: int | None
 
 
-def classify_project_mode(root: Path) -> str:
-    entries = [entry for entry in root.iterdir() if entry.name not in IGNORED_NAMES]
+def assess_project_mode(root: Path) -> dict[str, object]:
+    entries = sorted(
+        (entry for entry in root.iterdir() if entry.name not in IGNORED_NAMES),
+        key=lambda entry: entry.name,
+    )
     visible = [entry for entry in entries if entry.name != ".git"]
     if not visible:
-        return "new_project"
+        return {"mode": "new_project", "confidence": "high", "evidence": []}
     if (root / ".git").exists():
-        return "existing_project"
+        return {"mode": "existing_project", "confidence": "high", "evidence": [".git"]}
     for entry in visible:
-        if entry.name in MANIFEST_NAMES or entry.suffix.lower() in SOURCE_SUFFIXES:
-            return "existing_project"
-        if entry.is_dir() and entry.name in {"src", "app", "frontend", "backend", "packages"}:
-            return "existing_project"
-    return "unconfirmed"
+        if _is_project_signal(entry):
+            return {"mode": "existing_project", "confidence": "high", "evidence": [entry.name]}
+    for directory in visible:
+        if directory.is_symlink() or not directory.is_dir() or directory.name in IGNORED_PROJECT_DIRS:
+            continue
+        try:
+            children = sorted(directory.iterdir(), key=lambda entry: entry.name)
+        except OSError:
+            continue
+        for child in children[:200]:
+            if child.is_symlink() or child.name in IGNORED_NAMES:
+                continue
+            if _is_project_signal(child):
+                return {
+                    "mode": "existing_project",
+                    "confidence": "high",
+                    "evidence": [f"{directory.name}/{child.name}"],
+                }
+    return {"mode": "unconfirmed", "confidence": "low", "evidence": []}
+
+
+def _is_project_signal(entry: Path) -> bool:
+    return (
+        entry.name in MANIFEST_NAMES
+        or entry.suffix.lower() in SOURCE_SUFFIXES
+        or (
+            entry.is_dir()
+            and entry.name in {"src", "app", "frontend", "backend", "packages"}
+        )
+    )
+
+
+def classify_project_mode(root: Path) -> str:
+    return str(assess_project_mode(root)["mode"])
 
 
 class ProjectReadinessStore:

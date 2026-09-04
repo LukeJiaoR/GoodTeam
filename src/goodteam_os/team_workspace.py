@@ -265,6 +265,7 @@ def build_team_workspace(
     approval_reviews: Sequence[Mapping[str, object]] = (),
     action_items: Sequence[Mapping[str, object]] = (),
     intent_commits: Sequence[Mapping[str, object]] = (),
+    task_assistant_session: Mapping[str, object] | None = None,
     read_only: bool = False,
     historical_reason: str = "",
 ) -> dict[str, Any]:
@@ -276,7 +277,7 @@ def build_team_workspace(
     """
 
     if state is not None and workflow_active:
-        return _build_workflow_workspace(
+        projection = _build_workflow_workspace(
             state=state,
             tasks=tasks,
             worker_jobs=worker_jobs,
@@ -286,6 +287,7 @@ def build_team_workspace(
             read_only=read_only,
             historical_reason=historical_reason,
         )
+        return _merge_task_assistant_session(projection, task_assistant_session)
     if not read_only and operator_state_dir is not None and project_key:
         queue_item = _active_operator_item(operator_state_dir, project_key)
         if queue_item is not None:
@@ -310,7 +312,72 @@ def build_team_workspace(
             read_only=True,
             historical_reason=historical_reason,
         )
+    if task_assistant_session:
+        return _build_task_assistant_workspace(task_assistant_session)
     return empty_team_workspace()
+
+
+def _build_task_assistant_workspace(session: Mapping[str, object]) -> dict[str, Any]:
+    timeline = _task_assistant_timeline(session)
+    return {
+        "schema_version": TEAM_WORKSPACE_SCHEMA_VERSION,
+        "mission": {
+            "id": f"task-assistant:{_text(session.get('project_key'))}",
+            "run_id": "",
+            "execution_id": "",
+            "project_key": _text(session.get("project_key")),
+            "source": "task_assistant",
+            "title": "",
+            "objective": "",
+            "status": _text(session.get("status")) or "onboarding",
+            "read_only": False,
+            "started_at": _text(timeline[0].get("timestamp")) if timeline else "",
+            "updated_at": _latest_timestamp(timeline),
+        },
+        "manager_timeline": timeline,
+        "attention_request": session.get("attention_request"),
+        "execution_actors": [],
+        "outcome_tasks": [],
+        "capabilities": [],
+        "suggestions": list(session.get("suggestions", []) or []),
+        "proposed_task": session.get("proposed_task"),
+    }
+
+
+def _merge_task_assistant_session(
+    projection: dict[str, Any],
+    session: Mapping[str, object] | None,
+) -> dict[str, Any]:
+    if not session:
+        return projection
+    prior = _task_assistant_timeline(session)
+    if (
+        len(prior) == 1
+        and _text(prior[0].get("event")).startswith("welcome_")
+        and not _text(prior[0].get("timestamp"))
+    ):
+        prior = []
+    return {
+        **projection,
+        "manager_timeline": _dedupe_timeline([*prior, *projection["manager_timeline"]]),
+        "suggestions": [],
+        "proposed_task": session.get("proposed_task"),
+    }
+
+
+def _task_assistant_timeline(session: Mapping[str, object]) -> list[dict[str, Any]]:
+    return [
+        {
+            **dict(item),
+            "id": _text(item.get("message_id")) or _text(item.get("id")),
+            "timestamp": _text(item.get("created_at")) or _text(item.get("timestamp")),
+            "kind": _text(item.get("kind")) or "conversation",
+            "details": dict(item.get("details", {}) or {}),
+            "refs": list(item.get("refs", []) or []),
+        }
+        for item in session.get("timeline", [])
+        if isinstance(item, Mapping)
+    ]
 
 
 def _build_workflow_workspace(

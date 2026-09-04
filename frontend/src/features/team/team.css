@@ -252,6 +252,7 @@
 }
 .team-configuration-row > label select { padding-right: 2rem; }
 .team-configuration-row > label textarea { min-height: 3.8rem; padding-block: 0.55rem; resize: vertical; line-height: 1.4; }
+.team-configuration-row__hint { color: var(--product-text-muted); font-size: 0.68rem; line-height: 1.35; }
 .team-configuration-row__prompt { grid-column: 2 / -1; }
 .team-configuration-row__readiness { display: flex; gap: 0.35rem; align-items: center; min-height: 2.35rem; color: var(--product-success); font-size: 0.72rem; }
 .team-configuration-row__readiness[data-ready="false"] { color: var(--product-warning); }

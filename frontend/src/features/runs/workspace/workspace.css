@@ -4,7 +4,7 @@
   max-width: 46rem;
   padding: clamp(1rem, 3vw, 1.5rem);
   background: var(--work-surface);
-  border: 1px solid var(--work-border);
+  border: 1px solid var(--work-border, rgba(127, 127, 127, 0.24));
   border-radius: var(--work-radius);
 }
 
@@ -24,7 +24,7 @@
 .work-workspace-shell .work-focus-banner {
   padding: 1.25rem 1.4rem;
   background: var(--work-surface);
-  border: 1px solid var(--work-border);
+  border: 1px solid var(--work-border, rgba(127, 127, 127, 0.24));
   border-radius: var(--work-radius);
   transition: border-color 0.2s ease, background 0.2s ease;
 }
@@ -1642,7 +1642,7 @@
 .work-workspace-shell .team-manager-entry {
   gap: 1.1rem;
   margin: 0;
-  padding: clamp(1.25rem, 3vw, 2rem);
+  padding: 0;
   background: transparent;
   border-radius: 0;
   box-shadow: none;
@@ -1671,12 +1671,76 @@
 
 .work-workspace-shell .team-manager-entry textarea {
   width: 100%;
-  min-height: 9rem;
+  min-height: 5.5rem;
   resize: vertical;
 }
 
 .work-workspace-shell .team-manager-entry .product-button {
   justify-self: start;
+}
+
+.work-workspace-shell .team-manager-suggestions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.work-workspace-shell .team-manager-suggestions button {
+  padding: 0.45rem 0.68rem;
+  color: var(--work-text-muted);
+  background: var(--work-material);
+  border: 1px solid var(--work-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.work-workspace-shell .team-manager-suggestions button:hover,
+.work-workspace-shell .team-manager-suggestions button:focus-visible {
+  color: var(--work-text);
+  border-color: var(--work-accent);
+}
+
+.work-workspace-shell .team-task-proposal {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0 1.1rem 1rem;
+  padding: 0.9rem;
+  background: var(--work-material-deep);
+  border: 1px solid var(--work-border);
+  border-radius: 14px;
+}
+
+.work-workspace-shell .team-task-proposal > span {
+  color: var(--work-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.work-workspace-shell .team-task-proposal p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.work-workspace-shell .team-task-proposal .product-button {
+  justify-self: start;
+}
+
+.work-workspace-shell .team-preparation-options,
+.work-workspace-shell .team-preparation-fields {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.work-workspace-shell .team-preparation-options label {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.work-workspace-shell .team-preparation-fields label {
+  display: grid;
+  gap: 0.35rem;
 }
 
 .work-workspace-shell .team-manager-timeline,

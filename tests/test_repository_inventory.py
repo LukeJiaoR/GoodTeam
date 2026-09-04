@@ -74,6 +74,22 @@ def test_inventory_builds_from_dirty_git_snapshot(tmp_path: Path) -> None:
     assert inventory["scan"]["files_seen"] == 2
 
 
+def test_inventory_ignores_goodteam_runtime_directory(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "src").mkdir()
+    (root / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    runtime_home = root / ".goodteam" / "workers" / "job-1" / ".codex-home"
+    runtime_home.mkdir(parents=True)
+    (runtime_home / "auth.json").symlink_to(tmp_path / "outside-auth.json")
+
+    snapshot = capture_repository_snapshot(root, project_key="DEMO")
+    inventory = build_repository_inventory(root, snapshot=snapshot)
+
+    assert inventory["entry_points"] == ["src/app.py"]
+    assert all(not path.startswith(".goodteam") for path in inventory["directory_structure"])
+
+
 def test_inventory_treats_tracked_gitlink_as_opaque_directory(tmp_path: Path) -> None:
     submodule = tmp_path / "submodule"
     submodule.mkdir()

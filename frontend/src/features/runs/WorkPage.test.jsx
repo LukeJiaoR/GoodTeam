@@ -43,6 +43,8 @@ const mocks = vi.hoisted(() => ({
   keepDiscussingChangeIntent: vi.fn(),
   startSmoke: vi.fn(),
   startRun: vi.fn(),
+  sendTaskAssistantMessage: vi.fn(),
+  taskAssistantAction: vi.fn(),
   startChangeIntent: vi.fn(),
   retryRun: vi.fn(),
   terminateRun: vi.fn(),
@@ -69,6 +71,8 @@ vi.mock('./runApi', () => ({
     startSmoke: mocks.startSmoke,
     startChangeIntent: mocks.startChangeIntent,
     startRun: mocks.startRun,
+    sendTaskAssistantMessage: mocks.sendTaskAssistantMessage,
+    taskAssistantAction: mocks.taskAssistantAction,
     terminateRun: mocks.terminateRun,
   },
 }));
@@ -364,7 +368,7 @@ function managerIntentData(status = 'discussing', draftText = '') {
   return data;
 }
 
-test('renders the Manager-centered three-pane workspace from the durable projection', async () => {
+test('renders the Task Assistant-centered three-pane workspace from the durable projection', async () => {
   const data = projectedWorkData();
   data.workflow_steps = [
     { number: '1', key: 'product_requirement', title: 'Product / Requirement', status: 'done', status_label: 'Done' },
@@ -380,8 +384,8 @@ test('renders the Manager-centered three-pane workspace from the durable project
 
   renderWorkPage();
 
-  expect(screen.getByRole('region', { name: 'Manager' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Manager' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Task Assistant' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Task Assistant' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Execution' })).toBeVisible();
@@ -412,7 +416,7 @@ test('renders the Manager-centered three-pane workspace from the durable project
   expect(screen.queryByRole('button', { name: 'Run details' })).not.toBeInTheDocument();
   expect(document.querySelector('.work-context-drawer')).toHaveAttribute('data-open', 'true');
   expect(screen.queryByRole('button', { name: 'Mission history' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Open the Manager conversation…' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Open the Task Assistant conversation…' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Inspect workflow' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Inspect workers' })).not.toBeInTheDocument();
@@ -607,7 +611,7 @@ test('keeps active Execution LEDs static when reduced motion is preferred', () =
   }
 });
 
-test('starts empty Work from the Manager inside the three-pane workspace', async () => {
+test('opens empty Work as a Task Assistant conversation and keeps suggestions subordinate to free input', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   mocks.useProjectState.mockReturnValue({
     data: {
@@ -623,12 +627,16 @@ test('starts empty Work from the Manager inside the three-pane workspace', async
       state: null,
       team_workspace: {
         schema_version: 'team_workspace.v1',
-        mission: null,
-        manager_timeline: [],
+        mission: { id: 'task-assistant:DEMO', source: 'task_assistant', status: 'onboarding' },
+        manager_timeline: [
+          { id: 'welcome:DEMO', actor: 'task_assistant', event: 'welcome_existing_project', timestamp: '' },
+        ],
         attention_request: null,
         execution_actors: [],
         outcome_tasks: [],
         capabilities: [],
+        suggestions: [{ id: 'understand-project' }, { id: 'fix-problem' }],
+        proposed_task: null,
       },
       workflow_steps: [],
       worker_jobs: [],
@@ -638,29 +646,62 @@ test('starts empty Work from the Manager inside the three-pane workspace', async
     status: 'ready',
   });
   mocks.getProjectRuns.mockResolvedValue({ runs: [] });
-  mocks.startRun.mockResolvedValue({ run_id: 'run-new' });
+  mocks.sendTaskAssistantMessage.mockResolvedValue({ intent: 'project_understanding' });
 
   renderWorkPage('/projects/DEMO/work');
 
   expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
-  expect(screen.getByRole('region', { name: 'Manager' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Task Assistant' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
   expect(screen.getByText('No worker records yet.')).toBeVisible();
   expect(screen.getByText('No tasks yet.')).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'What should the team work on?' })).toBeVisible();
+  expect(screen.getByText(/What can I help you with\?/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Understand this project' })).toBeVisible();
   expect(document.querySelector('.work-start-panel')).not.toBeInTheDocument();
 
-  await userEvent.type(screen.getByLabelText('Mission'), 'Ship the Manager-centered empty state.');
-  await userEvent.click(screen.getByRole('button', { name: 'Send to Manager' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Understand this project' }));
+  expect(screen.getByLabelText('Message')).toHaveValue('Help me understand this project');
+  expect(mocks.sendTaskAssistantMessage).not.toHaveBeenCalled();
+  await userEvent.clear(screen.getByLabelText('Message'));
+  await userEvent.type(screen.getByLabelText('Message'), 'Review the authentication design.');
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-  expect(mocks.startRun).toHaveBeenCalledWith({
-    idea: 'Ship the Manager-centered empty state.',
-    project_key: 'DEMO',
-    model_profile: 'balanced',
-    delivery_mode: 'init_project',
-    source_type: 'existing_project',
-    project_config: '/workspace/projects/demo.local.yaml',
-    dry_run: false,
+  expect(mocks.sendTaskAssistantMessage).toHaveBeenCalledWith(
+    'DEMO',
+    expect.objectContaining({ text: 'Review the authentication design.' }),
+  );
+});
+
+test('requires explicit confirmation of a Task Assistant proposal before starting', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: null,
+      agile_board: { columns: {}, counts: {} },
+      approval_reviews: [],
+      start_context: { project_name: 'Demo project' },
+      state: null,
+      workflow_steps: [],
+      worker_jobs: [],
+      team_workspace: {
+        schema_version: 'team_workspace.v1',
+        mission: { id: 'task-assistant:DEMO', source: 'task_assistant', status: 'waiting_for_human' },
+        manager_timeline: [], attention_request: null, execution_actors: [], outcome_tasks: [], capabilities: [],
+        suggestions: [],
+        proposed_task: { id: 'proposal-1', exact_request: 'Fix login and add a regression test', confirmed: false },
+      },
+    }, error: null, refresh, status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [] });
+  mocks.taskAssistantAction.mockResolvedValue({ workflow_started: true, run_id: 'run-1' });
+
+  renderWorkPage('/projects/DEMO/work');
+  expect(screen.getByText('Fix login and add a regression test')).toBeVisible();
+  expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Start this task' }));
+
+  expect(mocks.taskAssistantAction).toHaveBeenCalledWith('DEMO', {
+    action: 'confirm_task', proposal_id: 'proposal-1',
   });
 });
 
@@ -701,7 +742,7 @@ test('keeps an active Operator mission on Work when workflow history has a stale
 
   renderWorkPage('/projects/DEMO/work');
 
-  expect(await screen.findByRole('region', { name: 'Manager' })).toBeVisible();
+  expect(await screen.findByRole('region', { name: 'Task Assistant' })).toBeVisible();
   expect(screen.getByText('Keep the current Operator mission visible through review.')).toBeVisible();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work');
   const selector = await screen.findByRole('combobox', { name: 'Select run' });
@@ -723,10 +764,10 @@ test('falls back to the legacy run views for an unsupported workspace contract v
   renderWorkPage();
 
   expect(screen.getByRole('navigation', { name: 'Run views' })).toBeVisible();
-  expect(screen.queryByRole('region', { name: 'Manager' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Task Assistant' })).not.toBeInTheDocument();
 });
 
-test('opens Request changes as a durable Manager discussion without review mutation', async () => {
+test('opens Request changes as a durable Task Assistant discussion without review mutation', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
@@ -749,7 +790,7 @@ test('opens Request changes as a durable Manager discussion without review mutat
   expect(refresh).toHaveBeenCalledTimes(1);
 });
 
-test('routes the detail canvas Request changes into Manager Intent Commit', async () => {
+test('routes the detail canvas Request changes into Task Assistant Intent Commit', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   data.workflow_steps = [
@@ -787,7 +828,7 @@ test('routes the detail canvas Request changes into Manager Intent Commit', asyn
   });
 });
 
-test('routes the detail plan task Request changes into Manager Intent Commit', async () => {
+test('routes the detail plan task Request changes into Task Assistant Intent Commit', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   data.agile_board = {
@@ -847,7 +888,7 @@ test('durably summarizes change text, supports Keep discussing, and commits only
   expect(screen.getByText('What would you like changed?')).toBeVisible();
   expect(screen.getByText('Discussing · not committed')).toBeVisible();
   await userEvent.type(screen.getByLabelText('What should change?'), draft);
-  await userEvent.click(screen.getByRole('button', { name: 'Review Manager interpretation' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review Task Assistant interpretation' }));
 
   expect(mocks.discussChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1', draft);
   expect(mocks.decideReview).not.toHaveBeenCalled();
@@ -963,14 +1004,14 @@ test('restores a persisted discussion on re-entry and fails closed when it is st
   expect(screen.queryByRole('button', { name: 'Confirm changes' })).not.toBeInTheDocument();
 });
 
-test('keeps Manager attention in the conversation after recorded mission history', async () => {
+test('keeps Task Assistant attention in the conversation after recorded mission history', async () => {
   const data = managerReviewData();
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
 
   renderWorkPage();
 
-  const manager = screen.getByRole('region', { name: 'Manager' });
+  const manager = screen.getByRole('region', { name: 'Task Assistant' });
   expect(within(manager).getByText('Needs you', { selector: '.product-status-badge' }))
     .toHaveAttribute('data-tone', 'active');
   const attention = manager.querySelector('.team-attention');
@@ -993,7 +1034,7 @@ test('renders compact system event chips for machine state and deliverable updat
 
   renderWorkPage();
 
-  const manager = screen.getByRole('region', { name: 'Manager' });
+  const manager = screen.getByRole('region', { name: 'Task Assistant' });
   const systemChip = manager.querySelector('.team-manager-event--system .team-manager-system-chip');
   expect(systemChip).toBeInTheDocument();
   expect(within(systemChip).getByText('prd.md is ready.')).toBeVisible();
@@ -1077,7 +1118,7 @@ test('smart auto-scroll follows timeline when near bottom, preserves position wh
   // Auto-scrolls to new bottom
   expect(conversation.scrollTop).toBe(1200);
 
-  // 3. User is scrolled up again, but a NEW ManagerAttention arrives
+  // 3. User is scrolled up again, but new Task Assistant attention arrives
   conversation.scrollTop = 300;
   fireEvent.scroll(conversation);
 
@@ -1113,7 +1154,7 @@ test('smart auto-scroll follows timeline when near bottom, preserves position wh
   expect(conversation.scrollTop).toBe(1500);
 });
 
-test('renders a decision-ready Manager approval brief and keeps exact approval direct', async () => {
+test('renders a decision-ready Task Assistant approval brief and keeps exact approval direct', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
@@ -1123,7 +1164,7 @@ test('renders a decision-ready Manager approval brief and keeps exact approval d
 
   renderWorkPage();
 
-  const manager = screen.getByRole('region', { name: 'Manager' });
+  const manager = screen.getByRole('region', { name: 'Task Assistant' });
   const attention = manager.querySelector('.team-attention');
   expect(within(attention).getByText('You are approving')).toBeVisible();
   expect(within(attention).getByText(
@@ -1183,7 +1224,7 @@ test('falls back to generic attention for an unsupported approval brief version'
 
   renderWorkPage();
 
-  const manager = screen.getByRole('region', { name: 'Manager' });
+  const manager = screen.getByRole('region', { name: 'Task Assistant' });
   const attention = manager.querySelector('.team-attention');
   expect(within(attention).getByText(
     'Review the current evidence and decide whether the team should continue.',
@@ -1192,7 +1233,7 @@ test('falls back to generic attention for an unsupported approval brief version'
   expect(within(attention).getByRole('button', { name: 'Approve' })).toBeVisible();
 });
 
-test('refreshes the Manager brief when exact approval binding is stale', async () => {
+test('refreshes the Task Assistant brief when exact approval binding is stale', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const stale = Object.assign(
     new Error('This approval changed after the brief was loaded.'),
@@ -1207,14 +1248,14 @@ test('refreshes the Manager brief when exact approval binding is stale', async (
 
   renderWorkPage();
 
-  const manager = screen.getByRole('region', { name: 'Manager' });
+  const manager = screen.getByRole('region', { name: 'Task Assistant' });
   await user.click(within(manager).getByRole('button', { name: 'Approve and continue' }));
 
   await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   expect(await screen.findByText('This approval changed after the brief was loaded.')).toBeVisible();
 });
 
-test('opens the exact attention Outcome in-place and restores Manager focus on close', async () => {
+test('opens the exact attention Outcome in-place and restores Task Assistant focus on close', async () => {
   const data = managerReviewData();
   const scrollIntoView = vi.fn();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -1227,7 +1268,7 @@ test('opens the exact attention Outcome in-place and restores Manager focus on c
 
   renderWorkPage('/projects/DEMO/work/runs/run-active?context=manager');
 
-  const manager = screen.getByRole('region', { name: 'Manager' });
+  const manager = screen.getByRole('region', { name: 'Task Assistant' });
   const reviewButton = within(manager).getByRole('button', { name: 'Inspect details →' });
   const architecture = document.querySelector('[data-task-id="DEMO-ARCH"]');
   const implementation = document.querySelector('[data-task-id="DEMO-IMPL"]');
@@ -1259,16 +1300,16 @@ test('opens the exact attention Outcome in-place and restores Manager focus on c
   await user.click(within(dialog).getAllByRole('button', { name: 'Close' })[0]);
 
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  const restoredManager = screen.getByRole('region', { name: 'Manager' });
-  expect(restoredManager).toBeVisible();
-  expect(within(restoredManager).getByText('Make OAuth production ready')).toBeVisible();
+  const restoredTaskAssistant = screen.getByRole('region', { name: 'Task Assistant' });
+  expect(restoredTaskAssistant).toBeVisible();
+  expect(within(restoredTaskAssistant).getByText('Make OAuth production ready')).toBeVisible();
   expect(architecture).toHaveAttribute('data-active-review', 'true');
   expect(reviewButton).toHaveFocus();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
   expect(screen.getByTestId('location-search')).toHaveTextContent('?context=manager');
 });
 
-test('routes Request changes from exact Outcome details back into the Manager discussion', async () => {
+test('routes Request changes from exact Outcome details back into the Task Assistant discussion', async () => {
   const data = managerReviewData();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
@@ -1293,7 +1334,7 @@ test('routes Request changes from exact Outcome details back into the Manager di
   );
   expect(mocks.decideReview).not.toHaveBeenCalled();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Manager' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Task Assistant' })).toBeVisible();
 });
 
 test('uses only the modal Full Review action for dedicated review navigation', async () => {
@@ -1370,7 +1411,7 @@ test('keeps Outcome task details project-facing and resolves dependencies exactl
   expect(within(dialog).queryByText('2026-08-30T11:50:32.201021+00:00')).not.toBeInTheDocument();
 });
 
-test('uses a Manager-default mobile tab workspace with keyboard navigation and mounted pane state', async () => {
+test('uses a Task Assistant-default mobile tab workspace with keyboard navigation and mounted pane state', async () => {
   const data = managerIntentData('discussing');
   stubMediaPreferences({ mobile: true });
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
@@ -1392,7 +1433,7 @@ test('uses a Manager-default mobile tab workspace with keyboard navigation and m
   const outcomesPanel = document.getElementById('team-panel-outcomes');
   expect(managerTab).toHaveAttribute('aria-selected', 'true');
   expect(managerTab).toHaveAttribute('tabindex', '0');
-  expect(managerTab).toHaveAccessibleName('Manager. Needs you');
+  expect(managerTab).toHaveAccessibleName('Task Assistant. Needs you');
   expect(managerTab.querySelector('.team-mobile-nav__attention')).toBeInTheDocument();
   expect(executionTab).toHaveAttribute('aria-selected', 'false');
   expect(outcomesTab).toHaveAttribute('aria-selected', 'false');
@@ -1425,7 +1466,7 @@ test('uses a Manager-default mobile tab workspace with keyboard navigation and m
   expect(managerPanel).not.toBeVisible();
 });
 
-test('opens exact Manager review from the mobile Manager tab and retains its Outcome target', async () => {
+test('opens exact Task Assistant review from the mobile Task Assistant tab and retains its Outcome target', async () => {
   const data = managerReviewData();
   const scrollIntoView = vi.fn();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -1439,7 +1480,7 @@ test('opens exact Manager review from the mobile Manager tab and retains its Out
 
   renderWorkPage('/projects/DEMO/work/runs/run-active?mobile=manager-first');
   const tablist = screen.getByRole('tablist', { name: 'Team panes' });
-  const managerTab = within(tablist).getByRole('tab', { name: /Manager/ });
+  const managerTab = within(tablist).getByRole('tab', { name: /Task Assistant/ });
   const outcomesTab = within(tablist).getByRole('tab', { name: 'Outcomes' });
   const managerPanel = document.getElementById('team-panel-manager');
   const outcomesPanel = document.getElementById('team-panel-outcomes');
@@ -1475,7 +1516,7 @@ test('opens exact Manager review from the mobile Manager tab and retains its Out
   expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
 });
 
-test('requires confirmation before the Manager cancels a mission', async () => {
+test('requires confirmation before the Task Assistant cancels a mission', async () => {
   const data = projectedWorkData();
   data.team_workspace.attention_request = {
     id: 'workflow-blocked', kind: 'blocker', target_id: 'run-active', reason: 'execution_blocked',
@@ -1526,7 +1567,7 @@ test('labels the active run and run selector with task titles instead of raw IDs
   expect(screen.queryByText('run-active')).not.toBeInTheDocument();
 });
 
-test.each([false, true])('renders historical Manager history read-only in semantic order (mobile=%s)', async (mobile) => {
+test.each([false, true])('renders historical Task Assistant history read-only in semantic order (mobile=%s)', async (mobile) => {
   stubMediaPreferences({ mobile });
   mocks.useProjectState.mockReturnValue({
     data: projectedWorkData(),

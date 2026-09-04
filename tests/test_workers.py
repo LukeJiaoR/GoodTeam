@@ -1,7 +1,10 @@
 import json
+import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.workers import (
@@ -662,6 +665,57 @@ def test_worker_job_store_creates_protocol_files(tmp_path):
     assert "summaries" in pickup_packet
     assert "Do not change code." in (job_root / "constraints.md").read_text(encoding="utf-8")
     assert json.loads((job_root / "job.json").read_text(encoding="utf-8"))["adapter"] == "human"
+
+
+@pytest.mark.parametrize("adapter", ["pi", "pi-rpc", "opencode"])
+def test_worker_job_store_refuses_backend_without_enforced_read_only_mode(tmp_path, monkeypatch, adapter):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-read-only",
+        role="orchestrator",
+        adapter=adapter,
+        task="Classify this request without changing anything.",
+        context="",
+        constraints=["Read only."],
+        expected_artifacts=[],
+        execution_policy="read_only",
+    )
+    monkeypatch.setattr(
+        store,
+        "_run_session_backend",
+        lambda *args, **kwargs: pytest.fail("unsafe session backend must not launch"),
+    )
+
+    result = store.run_job(str(job["id"]))
+
+    assert result["status"] == "failed"
+    assert "does not support enforced read-only" in result["summary"]
+
+
+def test_worker_job_store_replaces_json_only_after_complete_temp_write(tmp_path, monkeypatch):
+    store = WorkerJobStore(tmp_path)
+    target = tmp_path / "state" / "job.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps({"status": "queued"}), encoding="utf-8")
+    replacement = {"status": "running", "summary": "Worker started."}
+    observed_sources: list[Path] = []
+    original_replace = os.replace
+
+    def observe_replace(source, destination):
+        source_path = Path(source)
+        assert Path(destination) == target
+        assert json.loads(source_path.read_text(encoding="utf-8")) == replacement
+        assert json.loads(target.read_text(encoding="utf-8")) == {"status": "queued"}
+        observed_sources.append(source_path)
+        original_replace(source, destination)
+
+    monkeypatch.setattr("goodteam_os.workers.os.replace", observe_replace)
+
+    store._write_json(target, replacement)
+
+    assert len(observed_sources) == 1
+    assert not observed_sources[0].exists()
+    assert json.loads(target.read_text(encoding="utf-8")) == replacement
 
 
 def test_worker_role_prompt_is_stable_and_task_is_separate(tmp_path):
@@ -1766,6 +1820,75 @@ def test_agy_build_command_has_no_gemini_only_flags():
     assert "--dangerously-skip-permissions" in cmd
     assert "--model" not in cmd
     assert "--approval-mode" not in cmd
+
+
+@pytest.mark.parametrize(
+    ("adapter", "expected"),
+    [
+        ("codex", ["--config", 'model_reasoning_effort="high"']),
+        ("claude", ["--effort", "high"]),
+        ("agy", ["--effort", "high"]),
+        ("opencode", ["--variant", "high"]),
+    ],
+)
+def test_cli_reasoning_depth_becomes_runtime_arguments(adapter, expected):
+    from goodteam_os.workers import _command_with_reasoning_depth
+
+    command = _command_with_reasoning_depth(["agent", "run"], adapter=adapter, reasoning_depth="high")
+
+    assert command[-2:] == expected
+
+
+def test_default_or_unsupported_cli_reasoning_depth_adds_no_runtime_arguments():
+    from goodteam_os.workers import _command_with_reasoning_depth
+
+    assert _command_with_reasoning_depth(["gemini", "-p"], adapter="gemini", reasoning_depth="high") == ["gemini", "-p"]
+    assert _command_with_reasoning_depth(["codex", "exec"], adapter="codex", reasoning_depth="default") == ["codex", "exec"]
+
+
+@pytest.mark.parametrize(
+    ("adapter", "command", "required", "forbidden"),
+    [
+        (
+            "codex",
+            ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-"],
+            ["--sandbox", "read-only", "--ignore-user-config", "--ignore-rules", "--ephemeral"],
+            ["--dangerously-bypass-approvals-and-sandbox"],
+        ),
+        (
+            "claude",
+            ["claude", "-p", "--dangerously-skip-permissions"],
+            ["--safe-mode", "--tools", ""],
+            ["--dangerously-skip-permissions"],
+        ),
+        (
+            "agy",
+            ["agy", "-p", "--dangerously-skip-permissions"],
+            ["--mode", "plan", "--sandbox", "--disable-slash-commands"],
+            ["--dangerously-skip-permissions"],
+        ),
+        (
+            "gemini",
+            ["gemini", "-p", "--approval-mode", "yolo"],
+            ["--approval-mode", "plan"],
+            ["yolo"],
+        ),
+    ],
+)
+def test_read_only_execution_policy_removes_unsafe_cli_modes(adapter, command, required, forbidden):
+    from goodteam_os.workers import _command_with_execution_policy
+
+    secured = _command_with_execution_policy(command, adapter=adapter, execution_policy="read_only")
+
+    assert all(value in secured for value in required)
+    assert all(value not in secured for value in forbidden)
+
+
+def test_read_only_execution_policy_rejects_opencode() -> None:
+    from goodteam_os.workers import _command_with_execution_policy
+
+    with pytest.raises(ValueError, match="does not support enforced read-only"):
+        _command_with_execution_policy(["opencode", "run"], adapter="opencode", execution_policy="read_only")
 
 
 def test_opencode_backend_uses_positional_prompt_and_model_flag():
