@@ -71,21 +71,7 @@ class TaskAssistantSessionStore:
         def mutate(session: dict[str, object]) -> dict[str, object]:
             if session["timeline"]:
                 return session
-            event, suggestions = _opening_presentation(mode)
-            session["project_mode_hint"] = dict(mode_hint)
-            session["timeline"] = [
-                {
-                    "message_id": f"welcome:{self.project_key}",
-                    "actor": "task_assistant",
-                    "event": event,
-                    "content": "",
-                    "run_id": "",
-                    "created_at": _now(),
-                }
-            ]
-            session["suggestions"] = [{"id": item} for item in suggestions]
-            session["status"] = "onboarding"
-            return session
+            return initial_task_assistant_session(self.project_key, mode_hint, created_at=_now())
 
         return self._mutate(mutate)
 
@@ -238,3 +224,33 @@ def _opening_presentation(mode: str) -> tuple[str, tuple[str, ...]]:
         "inspect-directory",
         "custom-request",
     )
+
+
+def initial_task_assistant_session(
+    project_key: str,
+    mode_hint: dict[str, object],
+    *,
+    created_at: str = "",
+) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    mode = str(mode_hint.get("mode", "unconfirmed"))
+    event, suggestions = _opening_presentation(mode)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "project_key": key,
+        "status": "onboarding",
+        "timeline": [
+            {
+                "message_id": f"welcome:{key}",
+                "actor": "task_assistant",
+                "event": event,
+                "content": "",
+                "run_id": "",
+                "created_at": created_at,
+            }
+        ],
+        "attention_request": None,
+        "proposed_task": None,
+        "project_mode_hint": dict(mode_hint),
+        "suggestions": [{"id": item} for item in suggestions],
+    }

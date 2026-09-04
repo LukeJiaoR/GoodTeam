@@ -6,7 +6,7 @@ from typing import Any, Callable
 from goodteam_os.project_import import confirm_project_mode
 from goodteam_os.project_readiness import assess_project_mode
 from goodteam_os.project_readiness_executor import ProjectReadinessExecutor
-from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+from goodteam_os.task_assistant_session import TaskAssistantSessionStore, initial_task_assistant_session
 
 
 _WORK_TERMS = (
@@ -55,7 +55,10 @@ class TaskAssistantService:
 
     def session(self, project_key: str, root: Path) -> dict[str, object]:
         store = TaskAssistantSessionStore(self.workspace, project_key)
-        return store.initialize_context(assess_project_mode(root))
+        session = store.read()
+        if session["timeline"]:
+            return session
+        return initial_task_assistant_session(project_key, assess_project_mode(root))
 
     def send_message(
         self,

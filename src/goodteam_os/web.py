@@ -49,6 +49,7 @@ from goodteam_os.graph import (
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
 from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
+from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.native_picker import choose_native_path
@@ -2302,6 +2303,11 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
     start_context = build_start_console_context(workspace, project_config=project_config)
     state = resolve_dashboard_state(workspace, project_key=project_key)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
+    task_assistant_session = (
+        TaskAssistantService(workspace).session(project_key, project_root)
+        if project_root is not None
+        else None
+    )
     resources = build_resource_items(state)
     approval_reviews = build_approval_reviews(state, workspace=workspace)
     action_items = build_action_items(workspace, project_key=project_key)
@@ -2324,6 +2330,7 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
         "resources": resources,
         "start_context": start_context,
         "active_run": active_run,
+        "task_assistant_session": task_assistant_session,
         "role_observations": build_role_observations(state),
         "workflow_steps": build_workflow_steps(state),
         "approval_reviews": approval_reviews,
@@ -2342,6 +2349,7 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
             approval_reviews=approval_reviews,
             action_items=action_items,
             intent_commits=intent_commits,
+            task_assistant_session=task_assistant_session,
         ),
     }
 
@@ -5668,6 +5676,19 @@ def handle_project_api_post(
         result["readiness"] = readiness
         result["capabilities"] = build_capabilities(readiness)
         return (201 if result["created"] else 200), result
+    task_assistant_message_match = re.fullmatch(
+        r"/api/projects/([^/]+)/task-assistant/messages",
+        path,
+    )
+    if task_assistant_message_match:
+        key = _decode_project_api_key(task_assistant_message_match.group(1))
+        key, _target, root = _project_target_and_root(workspace, key)
+        return 200, TaskAssistantService(workspace).send_message(
+            project_key=key,
+            root=root,
+            message_id=str(request.get("message_id", "")),
+            text=str(request.get("text", "")),
+        )
     mode_match = re.fullmatch(r"/api/projects/([^/]+)/mode", path)
     if mode_match:
         key = _decode_project_api_key(mode_match.group(1))
@@ -5836,7 +5857,7 @@ def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel))",
+            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/messages)",
             path,
         )
     )

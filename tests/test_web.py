@@ -617,6 +617,58 @@ def test_project_state_exposes_versioned_team_workspace_projection(tmp_path: Pat
     assert payload["agile_board"]["counts"]["backlog"] == 5
 
 
+def test_project_state_exposes_task_assistant_before_first_workflow(tmp_path: Path) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    (project_root / "package.json").write_text("{}", encoding="utf-8")
+    _write_context_project(tmp_path, project_root, key="TEAM")
+
+    payload = web.build_project_work_state(tmp_path, "TEAM")
+
+    assert payload["task_assistant_session"]["project_mode_hint"]["mode"] == "existing_project"
+    assert payload["team_workspace"]["mission"]["source"] == "task_assistant"
+    assert payload["team_workspace"]["manager_timeline"][0]["event"] == "welcome_existing_project"
+
+
+def test_task_assistant_message_api_uses_project_bound_service(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    calls = []
+
+    class FakeService:
+        def __init__(self, workspace):
+            calls.append(("workspace", workspace))
+
+        def send_message(self, **values):
+            calls.append(("message", values))
+            return {"intent": "project_understanding", "task_assistant_session": {}}
+
+    monkeypatch.setattr(web, "TaskAssistantService", FakeService)
+
+    status, payload = web.handle_project_api_post(
+        tmp_path,
+        "/api/projects/TEAM/task-assistant/messages",
+        {"message_id": "message-1", "text": "看一下当前项目"},
+    )
+
+    assert status == 200
+    assert payload["intent"] == "project_understanding"
+    assert calls[-1] == (
+        "message",
+        {
+            "project_key": "TEAM",
+            "root": project_root.resolve(),
+            "message_id": "message-1",
+            "text": "看一下当前项目",
+        },
+    )
+
+
+def test_http_router_recognizes_task_assistant_message_path() -> None:
+    assert web._is_project_api_post_path("/api/projects/DEMO/task-assistant/messages") is True
+
+
 def test_project_state_restores_persisted_intent_commit_discussion(tmp_path: Path) -> None:
     project_root = tmp_path / "target"
     project_root.mkdir()
