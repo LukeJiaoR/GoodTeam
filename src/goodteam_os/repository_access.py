@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 DEFAULT_IGNORED_DIRECTORIES = frozenset(
     {
         ".git",
+        ".goodteam",
         ".hg",
         ".svn",
         ".venv",

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the Team-page Manager configuration drive the Work-page Manager intent conversation while preserving human approval authority.
+**Goal:** Make the Team-page Task Assistant configuration drive the Work-page Task Assistant conversation while preserving human approval authority.
 
-**Architecture:** Keep `orchestrator` as the stable internal role key and present it as Manager. A bounded Manager execution service resolves the latest project role backend, model, reasoning, and additional prompt, creates one `WorkerJobStore` job, parses its structured interpretation, and stores job provenance in the durable intent record. Confirmation always commits the user's exact text, never model-expanded text; projects without a file-backed configuration retain the deterministic compatibility path.
+**Architecture:** Keep `orchestrator` as the stable internal role key and present it as Task Assistant. A bounded execution service resolves the latest project role backend, model, reasoning, and additional prompt, creates one read-only `WorkerJobStore` job for every configured chat turn, parses its structured interpretation, and stores runtime-policy provenance. Confirmation always commits the user's exact text, never model-expanded text. A cross-process start claim and deterministic run ID prevent duplicate workflow dispatch; an unprovable interrupted start fails closed for manual reconciliation.
 
 **Tech Stack:** Python control plane and worker store, pytest, React, Vitest/Testing Library.
 
@@ -58,3 +58,21 @@
 - [x] Run the full backend suite and Python lint.
 - [x] Run frontend tests, lint, and production build.
 - [x] Run `git diff --check` and record the exact verification evidence and any environmental failures.
+
+### Task 5: Close PR review execution-chain gaps
+
+**Files:**
+- Modify: `src/goodteam_os/manager_execution.py`
+- Modify: `src/goodteam_os/task_assistant.py`
+- Modify: `src/goodteam_os/task_assistant_session.py`
+- Modify: `src/goodteam_os/web.py`
+- Modify: `src/goodteam_os/workers.py`
+- Modify: focused tests and localized Task Assistant copy
+
+- [x] Route every configured primary chat message through the selected Task Assistant provider, model, reasoning depth, and additional prompt.
+- [x] Initialize missing legacy readiness records before the first message.
+- [x] Surface completed repository-understanding artifacts as idempotent assistant messages.
+- [x] Serialize message retries and workflow-start claims across processes.
+- [x] Publish workflow state only after execution reaches a durable gate; block automatic replay when completion is indeterminate.
+- [x] Enforce read-only execution for pre-confirmation model turns and reject adapters without a verifiable read-only boundary.
+- [x] Repeat full Tier 4 validation and update PR #400 with evidence.

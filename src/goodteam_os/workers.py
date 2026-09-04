@@ -472,6 +472,42 @@ def _command_with_reasoning_depth(
     return [*updated, *arguments]
 
 
+def _command_with_execution_policy(
+    command: list[str],
+    *,
+    adapter: str,
+    execution_policy: str,
+) -> list[str]:
+    if execution_policy != "read_only":
+        return list(command)
+    normalized_adapter = {
+        "anthropic": "claude",
+        "antigravity": "agy",
+    }.get(adapter, adapter)
+    updated = [
+        value for value in command
+        if value not in {"--dangerously-bypass-approvals-and-sandbox", "--dangerously-skip-permissions"}
+    ]
+    if normalized_adapter == "codex":
+        arguments = ["--sandbox", "read-only", "--ignore-user-config", "--ignore-rules", "--ephemeral"]
+        if "-" in updated:
+            prompt_index = updated.index("-")
+            return [*updated[:prompt_index], *arguments, *updated[prompt_index:]]
+        return [*updated, *arguments]
+    if normalized_adapter == "claude":
+        return [*updated, "--safe-mode", "--tools", ""]
+    if normalized_adapter == "agy":
+        return [*updated, "--mode", "plan", "--sandbox", "--disable-slash-commands"]
+    if normalized_adapter == "gemini":
+        try:
+            approval_index = updated.index("--approval-mode")
+            updated[approval_index + 1] = "plan"
+        except (ValueError, IndexError):
+            updated.extend(["--approval-mode", "plan"])
+        return updated
+    raise ValueError(f"Adapter does not support enforced read-only execution: {adapter}")
+
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 
 
@@ -835,6 +871,7 @@ class WorkerJobStore:
         reasoning_depth: str = "",
         additional_prompt: str = "",
         desired_instances: int = 1,
+        execution_policy: str = "standard",
     ) -> dict[str, Any]:
         job_id = f"job-{uuid4()}"
         job_root = self.root / job_id
@@ -860,6 +897,7 @@ class WorkerJobStore:
             "reasoning_depth": reasoning_depth,
             "additional_prompt": additional_prompt,
             "desired_instances": desired_instances,
+            "execution_policy": execution_policy,
         }
         for key, value in {
             "pi_path": pi_path,
@@ -1031,7 +1069,16 @@ class WorkerJobStore:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
         memory_citations = self._memory_citations_from_pickup_packet(job_root)
         adapter = str(job["adapter"])
-        if adapter == "noop":
+        if str(job.get("execution_policy", "standard")) == "read_only" and (
+            adapter in SESSION_BACKENDS or adapter == "opencode"
+        ):
+            status_payload = self._write_status(
+                job_root,
+                job,
+                status="failed",
+                summary=f"Adapter does not support enforced read-only execution: {adapter}",
+            )
+        elif adapter == "noop":
             status_payload = self._complete_noop(job_root, job)
         elif adapter == "fake":
             status_payload = self._complete_fake(job_root, job)
@@ -1930,7 +1977,11 @@ class WorkerJobStore:
         preflight = _cli_preflight(spec, binary, model)
         adapter = str(job.get("adapter", ""))
         command = _command_with_reasoning_depth(
-            spec.build_command(binary, model, runtime_context.runtime_cwd, result_path),
+            _command_with_execution_policy(
+                spec.build_command(binary, model, runtime_context.runtime_cwd, result_path),
+                adapter=adapter,
+                execution_policy=str(job.get("execution_policy", "standard") or "standard"),
+            ),
             adapter=adapter,
             reasoning_depth=str(job.get("reasoning_depth", "") or ""),
         )
@@ -2555,6 +2606,34 @@ def _runtime_policy_evidence(command: list[str]) -> dict[str, Any]:
             unsafe=True,
             warning_reason="runtime_policy_unsafe",
         )
+    if _has_flag_value(values, "--sandbox", "read-only"):
+        return _runtime_policy(
+            sandbox_mode="read-only",
+            approval_policy="non-interactive",
+            unsafe=False,
+            warning_reason="",
+        )
+    if "--safe-mode" in values and _has_flag_value(values, "--tools", ""):
+        return _runtime_policy(
+            sandbox_mode="tools-disabled",
+            approval_policy="no-tools",
+            unsafe=False,
+            warning_reason="",
+        )
+    if _has_flag_value(values, "--approval-mode", "plan") or _has_flag_value(values, "--mode", "plan"):
+        return _runtime_policy(
+            sandbox_mode="plan",
+            approval_policy="plan",
+            unsafe=False,
+            warning_reason="",
+        )
+    if _has_flag_value(values, "--agent", "plan"):
+        return _runtime_policy(
+            sandbox_mode="plan",
+            approval_policy="plan",
+            unsafe=False,
+            warning_reason="",
+        )
     return _runtime_policy(
         sandbox_mode="unknown",
         approval_policy="unknown",
@@ -2574,7 +2653,7 @@ def _runtime_policy(
         "runtime_sandbox_mode": sandbox_mode,
         "runtime_approval_policy": approval_policy,
         "runtime_unsafe_mode": unsafe,
-        "runtime_policy_warning": True,
+        "runtime_policy_warning": bool(warning_reason),
         "runtime_policy_warning_reason": warning_reason,
     }
 

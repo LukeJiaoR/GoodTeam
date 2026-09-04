@@ -3386,10 +3386,12 @@ def start_workflow(
     role_model_overrides: list[str] | None = None,
     load_profile: str = "greenfield",
     dry_run: bool = False,
+    run_id: str = "",
 ) -> dict[str, object]:
     if not idea.strip():
         raise ValueError("Workflow goal is required.")
     key = normalize_project_key(project_key)
+    requested_run_id = str(run_id).strip()
     if not dry_run and is_active_run(resolve_dashboard_state(workspace, project_key=key)):
         raise ValueError("An active run already exists. Finish, archive, or resume it before starting another run.")
 
@@ -3421,7 +3423,7 @@ def start_workflow(
         role_overrides=role_model_overrides or [],
     )
     state = create_initial_state(
-        run_id=str(uuid4()),
+        run_id=requested_run_id or str(uuid4()),
         project_key=key,
         idea=idea.strip(),
     )
@@ -5684,12 +5686,19 @@ def handle_project_api_post(
     if task_assistant_message_match:
         key = _decode_project_api_key(task_assistant_message_match.group(1))
         key, _target, root = _project_target_and_root(workspace, key)
-        return 200, TaskAssistantService(workspace).send_message(
-            project_key=key,
-            root=root,
-            message_id=str(request.get("message_id", "")),
-            text=str(request.get("text", "")),
-        )
+        project_config = _project_config_for_key(workspace, key)
+        try:
+            return 200, TaskAssistantService(
+                workspace,
+                project_config=project_config,
+            ).send_message(
+                project_key=key,
+                root=root,
+                message_id=str(request.get("message_id", "")),
+                text=str(request.get("text", "")),
+            )
+        except ManagerExecutionError as exc:
+            raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
     task_assistant_action_match = re.fullmatch(
         r"/api/projects/([^/]+)/task-assistant/actions",
         path,
@@ -5745,19 +5754,80 @@ def handle_project_api_post(
                 "status": "ready_for_request",
             }
         proposal_id = str(proposal.get("id", ""))
+        claim_id = uuid4().hex
+        start_run_id = f"task-{proposal_id}"
+        session = store.claim_workflow_start(proposal_id, claim_id, start_run_id)
+        proposal = dict(session.get("proposed_task") or {})
+        bound_run_id = str(proposal.get("run_id", ""))
+        if bound_run_id:
+            return 200, {
+                "task_assistant_session": session,
+                "workflow_started": True,
+                "status": "workflow_started",
+                "run_id": bound_run_id,
+            }
+        claimed_run_id = str(proposal.get("start_run_id", ""))
+        current_state = StateStore(workspace).read_project_current(key)
+        if (
+            current_state is not None
+            and current_state.run_id == claimed_run_id
+            and current_state.current_node != "start"
+        ):
+            session = store.reconcile_workflow(proposal_id, claimed_run_id)
+            return 200, {
+                "task_assistant_session": session,
+                "workflow_started": True,
+                "status": "workflow_started",
+                "run_id": claimed_run_id,
+            }
+        if str(proposal.get("start_status", "")) == "indeterminate":
+            raise ProjectApiError(
+                "workflow_start_indeterminate",
+                "The prior workflow start could not be proven complete; automatic retry is blocked to prevent a duplicate run.",
+                409,
+                recovery=["inspect_workflow_state", "retry_after_manual_reconciliation"],
+            )
+        if str(proposal.get("start_claim_id", "")) != claim_id:
+            session = store.mark_workflow_start_indeterminate(
+                proposal_id,
+                reason="The workflow start owner exited before completion was durably recorded.",
+            )
+            proposal = dict(session.get("proposed_task") or {})
+            if str(proposal.get("start_status", "")) == "indeterminate":
+                raise ProjectApiError(
+                    "workflow_start_indeterminate",
+                    "The prior workflow start could not be proven complete; automatic retry is blocked to prevent a duplicate run.",
+                    409,
+                    recovery=["inspect_workflow_state", "retry_after_manual_reconciliation"],
+                )
+            return 202, {
+                "task_assistant_session": session,
+                "workflow_started": False,
+                "status": "workflow_starting",
+                "run_id": "",
+            }
         project_config = _project_config_for_key(workspace, key)
-        result = start_workflow(
-            workspace=workspace,
-            idea=str(proposal.get("exact_request", "")),
-            project_key=key,
-            model_config=Path("models.yaml"),
-            model_profile=str(target.get("model_profile", "") or "balanced"),
-            delivery_mode=str(target.get("delivery_mode", "") or "init_project"),
-            source_type=str(readiness.get("project_mode", "") or "existing_project"),
-            project_config=project_config,
-            load_profile="greenfield",
+        try:
+            result = start_workflow(
+                workspace=workspace,
+                idea=str(proposal.get("exact_request", "")),
+                project_key=key,
+                model_config=Path("models.yaml"),
+                model_profile=str(target.get("model_profile", "") or "balanced"),
+                delivery_mode=str(target.get("delivery_mode", "") or "init_project"),
+                source_type=str(readiness.get("project_mode", "") or "existing_project"),
+                project_config=project_config,
+                load_profile="greenfield",
+                run_id=start_run_id,
+            )
+        except Exception as exc:
+            store.mark_workflow_start_indeterminate(proposal_id, claim_id=claim_id, reason=str(exc))
+            raise
+        session = store.bind_workflow(
+            proposal_id,
+            str(result.get("run_id", "")),
+            claim_id=claim_id,
         )
-        session = store.bind_workflow(proposal_id, str(result.get("run_id", "")))
         return 200, {
             "task_assistant_session": session,
             "workflow_started": True,

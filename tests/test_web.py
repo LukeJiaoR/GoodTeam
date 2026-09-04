@@ -633,12 +633,12 @@ def test_project_state_exposes_task_assistant_before_first_workflow(tmp_path: Pa
 def test_task_assistant_message_api_uses_project_bound_service(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / "target"
     project_root.mkdir()
-    _write_context_project(tmp_path, project_root, key="TEAM")
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
     calls = []
 
     class FakeService:
-        def __init__(self, workspace):
-            calls.append(("workspace", workspace))
+        def __init__(self, workspace, *, project_config):
+            calls.append(("workspace", workspace, project_config))
 
         def send_message(self, **values):
             calls.append(("message", values))
@@ -654,6 +654,7 @@ def test_task_assistant_message_api_uses_project_bound_service(tmp_path: Path, m
 
     assert status == 200
     assert payload["intent"] == "project_understanding"
+    assert calls[0] == ("workspace", tmp_path, config.resolve())
     assert calls[-1] == (
         "message",
         {
@@ -687,7 +688,7 @@ def test_task_assistant_confirm_action_starts_exact_proposal_once_ready(tmp_path
 
     def fake_start_workflow(**values):
         calls.append(values)
-        return {"run_id": "run-1"}
+        return {"run_id": values["run_id"]}
 
     monkeypatch.setattr(web, "ProjectReadinessExecutor", ReadyExecutor)
     monkeypatch.setattr(web, "build_capabilities", lambda state: {"start_workflow": True})
@@ -701,9 +702,166 @@ def test_task_assistant_confirm_action_starts_exact_proposal_once_ready(tmp_path
 
     assert status == 200
     assert payload["workflow_started"] is True
-    assert payload["task_assistant_session"]["proposed_task"]["run_id"] == "run-1"
+    assert payload["task_assistant_session"]["proposed_task"]["run_id"] == f"task-{proposal['id']}"
     assert calls[0]["idea"] == "修复登录问题"
     assert calls[0]["project_config"] == config.resolve()
+    assert calls[0]["run_id"] == f"task-{proposal['id']}"
+
+    repeated_status, repeated_payload = web.handle_project_api_post(
+        tmp_path,
+        "/api/projects/TEAM/task-assistant/actions",
+        {"action": "confirm_task", "proposal_id": proposal["id"]},
+    )
+
+    assert repeated_status == 200
+    assert repeated_payload["run_id"] == f"task-{proposal['id']}"
+    assert len(calls) == 1
+
+
+def test_concurrent_task_confirmations_start_workflow_only_once(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    store = web.TaskAssistantSessionStore(tmp_path, "TEAM")
+    store.append_message("message-1", "user", "修复登录问题")
+    proposal_id = store.propose_task(["message-1"], "修复登录问题")["proposed_task"]["id"]
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+    first_result = {}
+
+    class ReadyExecutor:
+        def __init__(self, workspace):
+            pass
+
+        def status(self, key, root):
+            return {"lifecycle": "ready"}
+
+    def fake_start_workflow(**values):
+        calls.append(values)
+        call_number = len(calls)
+        if call_number == 1:
+            started.set()
+            assert release.wait(timeout=5)
+        return {"run_id": values["run_id"]}
+
+    def first_confirmation():
+        try:
+            first_result["value"] = web.handle_project_api_post(
+                tmp_path,
+                "/api/projects/TEAM/task-assistant/actions",
+                {"action": "confirm_task", "proposal_id": proposal_id},
+            )
+        except BaseException as exc:
+            first_result["error"] = exc
+
+    monkeypatch.setattr(web, "ProjectReadinessExecutor", ReadyExecutor)
+    monkeypatch.setattr(web, "build_capabilities", lambda state: {"start_workflow": True})
+    monkeypatch.setattr(web, "start_workflow", fake_start_workflow)
+    thread = threading.Thread(target=first_confirmation)
+    thread.start()
+    assert started.wait(timeout=5)
+
+    second_status, second_payload = web.handle_project_api_post(
+        tmp_path,
+        "/api/projects/TEAM/task-assistant/actions",
+        {"action": "confirm_task", "proposal_id": proposal_id},
+    )
+    release.set()
+    thread.join(timeout=5)
+
+    assert "error" not in first_result
+    assert len(calls) == 1
+    assert second_status == 202
+    assert second_payload["status"] == "workflow_starting"
+    assert second_payload["task_assistant_session"]["status"] == "workflow_starting"
+
+
+def test_task_confirmation_reconciles_persisted_start_after_interruption(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    store = web.TaskAssistantSessionStore(tmp_path, "TEAM")
+    store.append_message("message-1", "user", "修复登录问题")
+    proposal = store.propose_task(["message-1"], "修复登录问题")["proposed_task"]
+    store.confirm_task(proposal["id"])
+    run_id = f"task-{proposal['id']}"
+    store.claim_workflow_start(proposal["id"], "interrupted-owner", run_id)
+    state = create_initial_state(run_id, "TEAM", "修复登录问题")
+    state.current_node = "prd_review_gate"
+    state.next_node = "await_prd_approval"
+    StateStore(tmp_path).write_project_current(state)
+
+    class ReadyExecutor:
+        def __init__(self, workspace):
+            pass
+
+        def status(self, key, root):
+            return {"lifecycle": "ready"}
+
+    monkeypatch.setattr(web, "ProjectReadinessExecutor", ReadyExecutor)
+    monkeypatch.setattr(web, "build_capabilities", lambda state: {"start_workflow": True})
+    monkeypatch.setattr(
+        web,
+        "start_workflow",
+        lambda **values: pytest.fail("reconciliation must not start a second workflow"),
+    )
+
+    status, payload = web.handle_project_api_post(
+        tmp_path,
+        "/api/projects/TEAM/task-assistant/actions",
+        {"action": "confirm_task", "proposal_id": proposal["id"]},
+    )
+
+    assert status == 200
+    assert payload["run_id"] == run_id
+    assert payload["task_assistant_session"]["proposed_task"]["run_id"] == run_id
+
+
+def test_task_confirmation_does_not_retry_an_indeterminate_start(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    _write_context_project(tmp_path, project_root, key="TEAM")
+    store = web.TaskAssistantSessionStore(tmp_path, "TEAM")
+    store.append_message("message-1", "user", "修复登录问题")
+    proposal = store.propose_task(["message-1"], "修复登录问题")["proposed_task"]
+    calls = []
+
+    class ReadyExecutor:
+        def __init__(self, workspace):
+            pass
+
+        def status(self, key, root):
+            return {"lifecycle": "ready"}
+
+    def interrupted_start(**values):
+        calls.append(values)
+        raise RuntimeError("connection lost after dispatch")
+
+    monkeypatch.setattr(web, "ProjectReadinessExecutor", ReadyExecutor)
+    monkeypatch.setattr(web, "build_capabilities", lambda state: {"start_workflow": True})
+    monkeypatch.setattr(web, "start_workflow", interrupted_start)
+
+    with pytest.raises(RuntimeError, match="connection lost"):
+        web.handle_project_api_post(
+            tmp_path,
+            "/api/projects/TEAM/task-assistant/actions",
+            {"action": "confirm_task", "proposal_id": proposal["id"]},
+        )
+
+    with pytest.raises(web.ProjectApiError) as captured:
+        web.handle_project_api_post(
+            tmp_path,
+            "/api/projects/TEAM/task-assistant/actions",
+            {"action": "confirm_task", "proposal_id": proposal["id"]},
+        )
+
+    assert captured.value.code == "workflow_start_indeterminate"
+    assert captured.value.status == 409
+    assert len(calls) == 1
+    session = store.read()
+    assert session["status"] == "workflow_start_indeterminate"
+    assert session["proposed_task"]["start_status"] == "indeterminate"
 
 
 def test_task_assistant_confirm_action_keeps_preparing_without_exposing_readiness_error(
@@ -3745,6 +3903,35 @@ def test_start_workflow_writes_state_and_checkpoint(tmp_path):
     assert actions[0]["actor"] == "human"
     assert actions[1]["actor"] == "system"
     assert actions[1]["artifact"] == "prd"
+
+
+def test_start_workflow_does_not_publish_requested_run_before_execution_completes(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
+    observed = {}
+
+    def fail_after_claim(*, state, workspace, project_config):
+        current = StateStore(workspace).read_project_current("TEAM")
+        observed["run_id"] = current.run_id if current is not None else ""
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(web, "run_adoption_until_next_gate", fail_after_claim)
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        web.start_workflow(
+            workspace=tmp_path,
+            idea="修复登录问题",
+            project_key="TEAM",
+            model_config=Path("models.yaml"),
+            model_profile="balanced",
+            source_type="existing_project",
+            project_config=config,
+            run_id="task-proposal-1",
+        )
+
+    assert observed["run_id"] == ""
+    assert StateStore(tmp_path).read_project_current("TEAM") is None
 
 
 def test_start_workflow_custom_delivery_standards_are_transient_state_and_prd(tmp_path):
