@@ -99,21 +99,22 @@ test('Execution LEDs use semantic Work tokens and stop for reduced motion', () =
   expect(reducedMotionRule).toMatchObject({ animation: 'none' });
 });
 
-test('Manager workspace keeps one raised and inset material system', () => {
+test('Manager workspace uses flat operational hierarchy and reserves elevation for attention', () => {
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-workspace')).toMatchObject({
     'grid-template-areas': '"execution manager outcomes"',
-    background: 'var(--work-material)',
+    background: 'transparent',
     border: '0',
-    'border-radius': '28px',
+    'border-radius': '0',
+    'box-shadow': 'none',
   });
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-pane')).toMatchObject({
-    background: 'var(--work-material)',
-    border: '0',
-    'border-radius': '22px',
-    'box-shadow': 'var(--work-shadow-soft)',
+    background: 'var(--work-surface)',
+    border: '1px solid var(--work-border)',
+    'border-radius': '12px',
+    'box-shadow': 'none',
   });
-  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-pane--manager')['box-shadow'])
-    .toBe('var(--work-shadow-raised)');
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-pane--manager')['border-color'])
+    .toContain('var(--work-accent)');
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-attention')['box-shadow'])
     .toContain('var(--work-shadow-raised)');
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-inspector__tabs')).toMatchObject({

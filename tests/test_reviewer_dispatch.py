@@ -721,6 +721,35 @@ def test_parallel_phase_opt_in_creates_one_job_per_profile_with_identity(tmp_pat
     assert all(job["idempotency_key"] for job in jobs)
 
 
+def test_parallel_reviewer_jobs_apply_worker_type_settings(tmp_path: Path):
+    store = WorkerJobStore(tmp_path)
+    artifact = _artifact(tmp_path)
+    target = _target("correctness-security", dispatch=_parallel_dispatch())
+    target["worker_type_settings"] = {
+        "code_review": {
+            "reasoning_depth": "high",
+            "additional_prompt": "Prioritize authorization boundaries.",
+            "desired_instances": "2",
+        }
+    }
+
+    dispatch_reviewer_jobs_for_gate(
+        store=store,
+        state=_state(),
+        target=target,
+        approval="staging",
+        artifact_key="staging_report",
+        artifact_path=str(artifact),
+        context="review context",
+    )
+
+    [job] = store.list_jobs()
+    assert job["role"] == "code_review"
+    assert job["reasoning_depth"] == "high"
+    assert job["additional_prompt"] == "Prioritize authorization boundaries."
+    assert job["desired_instances"] == 2
+
+
 def test_parallel_mode_without_rollout_acknowledgement_does_not_create_jobs(tmp_path: Path):
     store = WorkerJobStore(tmp_path)
     artifact = _artifact(tmp_path)

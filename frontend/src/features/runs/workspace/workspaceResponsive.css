@@ -470,3 +470,32 @@
     width: 100%;
   }
 }
+
+@media (max-width: 767px) {
+  .work-workspace-shell .team-pane {
+    background: var(--work-surface);
+    border: 1px solid var(--work-border);
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .work-workspace-shell .team-mobile-nav {
+    background: var(--work-surface);
+    border: 1px solid var(--work-border);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--work-shadow) 20%, transparent);
+  }
+
+  .work-workspace-shell .team-mobile-nav [role="tab"] {
+    border-radius: 8px;
+  }
+
+  .work-workspace-shell .team-mobile-nav [role="tab"][data-active="true"] {
+    background: var(--work-accent-soft);
+    box-shadow: none;
+  }
+
+  .work-workspace-shell .team-manager-event__bubble {
+    max-width: calc(100% - 2.35rem);
+  }
+}

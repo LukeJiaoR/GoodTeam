@@ -804,6 +804,9 @@ class WorkerJobStore:
         pi_model: str = "",
         pi_thinking_level: str = "",
         pi_session_dir: str = "",
+        reasoning_depth: str = "",
+        additional_prompt: str = "",
+        desired_instances: int = 1,
     ) -> dict[str, Any]:
         job_id = f"job-{uuid4()}"
         job_root = self.root / job_id
@@ -826,6 +829,9 @@ class WorkerJobStore:
             "worker_session_ref": worker_session_ref,
             "execution_id": execution_id,
             "project_key": project_key,
+            "reasoning_depth": reasoning_depth,
+            "additional_prompt": additional_prompt,
+            "desired_instances": desired_instances,
         }
         for key, value in {
             "pi_path": pi_path,
@@ -2189,8 +2195,7 @@ class WorkerJobStore:
             configured_model = spec.model_default if spec is not None else "auto"
         pickup_context = self._render_worker_pickup_context(job_root)
         sandbox_context = _worker_sandbox_context_prompt(job)
-        return "\n\n".join(
-            [
+        sections = [
                 f"# GoodTeam Worker Job {job['id']}",
                 f"Role: {job['role']}",
                 f"Configured worker backend: {job['adapter']}.",
@@ -2203,6 +2208,12 @@ class WorkerJobStore:
                 "At the end, summarize changed files, verification commands, and unresolved risks.",
                 "## Role Prompt",
                 (job_root / "role_prompt.md").read_text(encoding="utf-8"),
+        ]
+        additional_prompt = str(job.get("additional_prompt", "") or "").strip()
+        if additional_prompt:
+            sections.extend(["## Additional Worker Type Instructions", additional_prompt])
+        sections.extend(
+            [
                 "## Task",
                 (job_root / "task.md").read_text(encoding="utf-8"),
                 "## Context",
@@ -2234,6 +2245,7 @@ Do not copy the parenthetical guidance text itself into your final answer.
 Keep each bullet short, factual, and free of secrets.""",
             ]
         )
+        return "\n\n".join(sections)
 
     def _render_worker_pickup_context(self, job_root: Path) -> str:
         packet_path = job_root / "role_pickup_packet.json"

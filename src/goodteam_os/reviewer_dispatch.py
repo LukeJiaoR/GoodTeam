@@ -6,7 +6,7 @@ from typing import Any
 from goodteam_os.project_reviewer_profiles import REVIEWER_PROFILE_PHASES, normalize_reviewer_profile_config
 from goodteam_os.review_provenance import reviewer_phase_for_approval
 from goodteam_os.reviewer_profiles import ReviewerProfile, get_reviewer_profile
-from goodteam_os.workers import WorkerJobStore
+from goodteam_os.workers import SESSION_BACKENDS, WorkerJobStore
 
 
 DISPATCH_MODES = ("single", "parallel")
@@ -164,6 +164,7 @@ def dispatch_reviewer_jobs_for_gate(
     )
     results: list[dict[str, Any]] = []
     for profile in profiles:
+        role = REVIEWER_ROLE_BY_PHASE.get(phase, "review")
         job, _created = store.create_or_reuse_job(
             **_reviewer_job_spec(
                 run_id=run_id,
@@ -175,7 +176,8 @@ def dispatch_reviewer_jobs_for_gate(
                 artifact_version=artifact_version,
                 dispatch_group_id=dispatch_group_id,
                 context=context,
-            )
+            ),
+            **_worker_type_job_settings(target, role=role, adapter=profile.adapter),
         )
         result = dict(job)
         result.setdefault("job_id", str(job.get("id", "")))
@@ -425,6 +427,31 @@ def _reviewer_job_spec(
     }
 
 
+def _worker_type_job_settings(
+    target: Mapping[str, object] | None,
+    *,
+    role: str,
+    adapter: str,
+) -> dict[str, object]:
+    raw_all = target.get("worker_type_settings", {}) if target is not None else {}
+    raw = raw_all.get(role, {}) if isinstance(raw_all, Mapping) else {}
+    if not isinstance(raw, Mapping):
+        raw = {}
+    reasoning = str(raw.get("reasoning_depth", "default") or "default").strip().lower()
+    if reasoning not in {"default", "low", "medium", "high"}:
+        reasoning = "default"
+    try:
+        desired_instances = min(max(int(raw.get("desired_instances", 1) or 1), 1), 8)
+    except (TypeError, ValueError):
+        desired_instances = 1
+    return {
+        "reasoning_depth": reasoning,
+        "additional_prompt": str(raw.get("additional_prompt", "") or "").strip(),
+        "desired_instances": desired_instances,
+        "pi_thinking_level": reasoning if adapter in SESSION_BACKENDS and reasoning != "default" else "",
+    }
+
+
 def _reviewer_task(*, profile: ReviewerProfile, approval: str, artifact_key: str, artifact_path: str) -> str:
     focus = "\n".join(f"- {item}" for item in profile.focus_areas)
     sections = "\n".join(f"- {item}" for item in profile.required_report_sections)
@@ -476,6 +503,10 @@ def _retry_reviewer_job_spec(job: Mapping[str, object], *, retry_attempt: int) -
             "Review the named current artifact and report findings, evidence, and recommendation.",
         ],
         "expected_artifacts": expected_artifacts,
+        "reasoning_depth": _clean_text(job.get("reasoning_depth")),
+        "additional_prompt": _clean_text(job.get("additional_prompt")),
+        "desired_instances": int(job.get("desired_instances", 1) or 1),
+        "pi_thinking_level": _clean_text(job.get("pi_thinking_level")),
         "profile_id": profile_id,
         "approval": approval,
         "gate": approval,

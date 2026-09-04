@@ -187,6 +187,7 @@ def update_worker_backend_config(
     mode: str,
     workers: dict[str, str],
     role_model_overrides: dict[str, str] | None = None,
+    worker_type_settings: dict[str, dict[str, object]] | None = None,
 ) -> None:
     """Update only worker backend blocks in a local project config."""
     lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -200,6 +201,18 @@ def update_worker_backend_config(
         model_lines = [f"  {role}: {model}\n" for role, model in role_model_overrides.items()]
         model_block = ["role_model_overrides:\n", *model_lines] if model_lines else []
         lines = _replace_or_append_top_level_block(lines, "role_model_overrides", model_block)
+    if worker_type_settings is not None:
+        settings_lines: list[str] = []
+        for role, settings in worker_type_settings.items():
+            settings_lines.append(f"  {role}:\n")
+            if settings.get("reasoning_depth"):
+                settings_lines.append(f"    reasoning_depth: {_yaml_scalar(settings['reasoning_depth'])}\n")
+            if settings.get("additional_prompt"):
+                settings_lines.append(f"    additional_prompt: {_yaml_scalar(settings['additional_prompt'])}\n")
+            if settings.get("desired_instances"):
+                settings_lines.append(f"    desired_instances: {int(settings['desired_instances'])}\n")
+        settings_block = ["worker_type_settings:\n", *settings_lines] if settings_lines else []
+        lines = _replace_or_append_top_level_block(lines, "worker_type_settings", settings_block)
     config_path.write_text("".join(lines), encoding="utf-8")
 
 

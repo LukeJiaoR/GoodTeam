@@ -41,40 +41,30 @@ function renderSettings(path = '/projects/DEMO/settings/workers') {
   const router = createMemoryRouter([
     {
       element: <TranslationLayout />,
-      children: [{ path: '/projects/:projectKey/settings/:section', element: <ProjectSettingsPage /> }],
+      children: [
+        { path: '/projects/:projectKey/settings/:section', element: <ProjectSettingsPage /> },
+        { path: '/projects/:projectKey/team', element: <h1>Unified Team</h1> },
+      ],
     },
   ], { initialEntries: [path] });
   render(<RouterProvider router={router} />);
+  return router;
 }
 
 afterEach(() => {
   vi.clearAllMocks();
 });
 
-test('renders worker preflight as a structured list with hints and raw JSON collapsed', async () => {
-  renderSettings();
+test('redirects the legacy workers settings route to the unified Team surface', async () => {
+  const router = renderSettings();
 
-  expect(await screen.findByText('codex', { selector: 'strong' })).toBeVisible();
-  expect(screen.getByText('fake', { selector: 'strong' })).toBeVisible();
-  expect(screen.getAllByText('Ready')).toHaveLength(2);
-  expect(screen.getByText('Unavailable')).toBeVisible();
-  expect(screen.getByText('Set the NOOP secret before dispatch.')).toBeVisible();
-  expect(screen.getByText('Raw preflight report', { selector: 'summary' })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Workers and models' })).toHaveAttribute('aria-current', 'true');
-  expect(screen.getByRole('link', { name: 'General' })).not.toHaveAttribute('aria-current');
+  expect(await screen.findByRole('heading', { name: 'Unified Team' })).toBeVisible();
+  expect(router.state.location.pathname).toBe('/projects/DEMO/team');
 });
 
-test('shows an empty state when no preflight data exists', async () => {
-  mocks.projectState.mockReturnValue({
-    start_context: {
-      project_key: 'DEMO',
-      project_name: 'Demo project',
-      worker_backend: { mode: 'codex' },
-      worker_backend_options: ['codex'],
-      project_report: {},
-    },
-  });
-  renderSettings();
+test('keeps non-Team project settings in the settings surface', async () => {
+  renderSettings('/projects/DEMO/settings/general');
 
-  expect(await screen.findByText('No worker preflight data is available.')).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'General' })).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'Workers and models' })).not.toBeInTheDocument();
 });

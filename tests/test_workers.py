@@ -2120,6 +2120,43 @@ def test_codex_adapter_uses_job_model_when_present(tmp_path, monkeypatch):
     assert "Configured model: gpt-5.3-codex." in calls[0]["input"]
 
 
+def test_worker_job_persists_type_settings_and_appends_additional_prompt(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="implementation",
+        adapter="codex",
+        task="Implement the change.",
+        context="Approved context.",
+        reasoning_depth="high",
+        additional_prompt="Keep public APIs stable.",
+        desired_instances=3,
+    )
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+
+    persisted = json.loads((job_root / "job.json").read_text(encoding="utf-8"))
+    prompt = store._worker_prompt(job_root, persisted)
+
+    assert persisted["reasoning_depth"] == "high"
+    assert persisted["additional_prompt"] == "Keep public APIs stable."
+    assert persisted["desired_instances"] == 3
+    assert "## Additional Worker Type Instructions\n\nKeep public APIs stable." in prompt
+
+
+def test_worker_prompt_omits_empty_additional_prompt_section(tmp_path):
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(
+        run_id="run-1",
+        role="qa",
+        adapter="codex",
+        task="Verify.",
+        context="Context.",
+    )
+    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
+
+    assert "Additional Worker Type Instructions" not in store._worker_prompt(job_root, job)
+
+
 def test_worker_prompt_uses_adapter_default_model_instead_of_codex_default_for_agy(tmp_path, monkeypatch):
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
     calls = []

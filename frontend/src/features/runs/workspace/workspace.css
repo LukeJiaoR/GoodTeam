@@ -2169,3 +2169,114 @@
 .work-workspace-shell .team-outcome-list > li[data-expanded="true"] .team-outcome-card__chevron {
   transform: rotate(90deg);
 }
+
+/* The workspace is an operational surface: hierarchy comes from structure and
+   state, while elevation is reserved for dialogs and active attention. */
+.work-workspace-shell .team-workspace {
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.work-workspace-shell .team-pane {
+  background: var(--work-surface);
+  border: 1px solid var(--work-border);
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.work-workspace-shell .team-pane--manager {
+  border-color: color-mix(in srgb, var(--work-accent) 30%, var(--work-border));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--work-shadow) 10%, transparent);
+}
+
+.work-workspace-shell .team-pane__header,
+.work-workspace-shell .team-pane--manager .team-pane__header,
+.work-workspace-shell .team-manager-dock {
+  background: var(--work-surface);
+  border-bottom: 1px solid var(--work-border);
+}
+
+.work-workspace-shell .team-manager-dock {
+  border-top: 1px solid var(--work-border);
+  border-bottom: 0;
+}
+
+.work-workspace-shell .team-pane__count,
+.work-workspace-shell .team-avatar,
+.work-workspace-shell .team-avatar--manager,
+.work-workspace-shell .team-manager-event__bubble,
+.work-workspace-shell .team-manager-event[data-actor="user"] .team-manager-event__bubble,
+.work-workspace-shell .team-actor-list li,
+.work-workspace-shell .team-outcome-list > li,
+.work-workspace-shell .team-outcome-card__index,
+.work-workspace-shell .team-outcome-card__details-button {
+  box-shadow: none;
+}
+
+.work-workspace-shell .team-pane__count,
+.work-workspace-shell .team-outcome-card__index {
+  border: 1px solid var(--work-border);
+}
+
+.work-workspace-shell .team-avatar {
+  background: var(--work-surface-muted);
+  border: 1px solid var(--work-border);
+}
+
+.work-workspace-shell .team-avatar--manager {
+  color: var(--work-on-accent);
+  background: var(--work-accent);
+  border-color: transparent;
+}
+
+.work-workspace-shell .team-manager-event__bubble {
+  background: var(--work-surface-muted);
+  border: 1px solid var(--work-border);
+  border-radius: 10px;
+}
+
+.work-workspace-shell .team-manager-event[data-actor="user"] .team-manager-event__bubble {
+  background: var(--work-accent-soft);
+  border-color: color-mix(in srgb, var(--work-accent) 24%, var(--work-border));
+}
+
+.work-workspace-shell .team-manager-system-chip {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.work-workspace-shell .team-actor-list,
+.work-workspace-shell .team-outcome-list {
+  gap: 0;
+}
+
+.work-workspace-shell .team-actor-list li,
+.work-workspace-shell .team-outcome-list > li {
+  margin-bottom: 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--work-border);
+  border-radius: 0;
+}
+
+.work-workspace-shell .team-actor-list li:first-child,
+.work-workspace-shell .team-outcome-list > li:first-child {
+  border-top: 0;
+}
+
+.work-workspace-shell .team-actor-list li[data-state="working"],
+.work-workspace-shell .team-actor-list li[data-state="reviewing"],
+.work-workspace-shell .team-actor-list li[data-state="fixing"],
+.work-workspace-shell .team-outcome-list > li[data-attention="true"] {
+  background: color-mix(in srgb, var(--work-accent-soft) 42%, transparent);
+  box-shadow: inset 3px 0 0 var(--work-accent);
+}
+
+.work-workspace-shell .team-outcome-list > li[data-active-review="true"] {
+  background: var(--work-surface-muted);
+  box-shadow: inset 3px 0 0 var(--work-accent-strong);
+}
