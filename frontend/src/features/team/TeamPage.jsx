@@ -106,7 +106,10 @@ function ConfigurationDialog({ agents, data, onClose, onSave, saving, t }) {
     setDraft((current) => {
       const next = { ...current };
       for (const role of selectedRoles) {
-        next[role] = { ...batchDraft };
+        next[role] = {
+          ...batchDraft,
+          desiredInstances: role === 'orchestrator' ? 1 : batchDraft.desiredInstances,
+        };
       }
       return next;
     });
@@ -123,7 +126,7 @@ function ConfigurationDialog({ agents, data, onClose, onSave, saving, t }) {
       workerTypeSettings[row.role] = {
         reasoning_depth: value.reasoningDepth,
         additional_prompt: value.additionalPrompt.trim(),
-        desired_instances: Number(value.desiredInstances),
+        desired_instances: row.role === 'orchestrator' ? 1 : Number(value.desiredInstances),
       };
     }
     onSave({ globalBackend, workers, roleModels, workerTypeSettings });
@@ -205,7 +208,7 @@ function ConfigurationDialog({ agents, data, onClose, onSave, saving, t }) {
             const backend = agentByBackend[value.backend];
             const models = [...new Set([value.model, ...(backend?.models || [])].filter(Boolean))];
             return (
-              <section className="team-configuration-row" key={row.role}>
+              <section className="team-configuration-row" data-testid={`team-configuration-${row.role}`} key={row.role}>
                 <div className="team-configuration-row__identity">
                   <label className="team-selection-control">
                     <input type="checkbox" checked={selectedRoles.has(row.role)} onChange={() => toggleRole(row.role)} aria-label={t('team.configuration.selectType', { type: row.label })} />
@@ -236,7 +239,8 @@ function ConfigurationDialog({ agents, data, onClose, onSave, saving, t }) {
                 </label>
                 <label>
                   <span>{t('team.configuration.desiredInstances')}</span>
-                  <input aria-label={t('team.configuration.desiredInstances')} type="number" min="1" max="8" step="1" required value={value.desiredInstances} onChange={(event) => setTypeSetting(row.role, 'desiredInstances', event.target.value)} />
+                  <input aria-label={t('team.configuration.desiredInstances')} type="number" min="1" max="8" step="1" required disabled={row.role === 'orchestrator'} value={row.role === 'orchestrator' ? 1 : value.desiredInstances} onChange={(event) => setTypeSetting(row.role, 'desiredInstances', event.target.value)} />
+                  {row.role === 'orchestrator' ? <small className="team-configuration-row__hint">{t('team.configuration.managerSingleton')}</small> : null}
                 </label>
                 <div className="team-configuration-row__readiness" data-ready={backend?.ready !== false}>
                   {backend?.ready === false ? <AlertTriangle aria-hidden="true" size={14} /> : <Check aria-hidden="true" size={14} />}

@@ -78,12 +78,12 @@
   },
   "roles": [
     {
-      "name": "Orchestrator / PM",
+      "name": "Manager",
       "key": "orchestrator",
       "artifact": "state",
       "description": "Owns graph routing, checkpoints, approvals, and handoff discipline.",
       "next_action": "Keep workflow paused until the current gate changes.",
-      "stable_prompt": "You are the Orchestrator / PM role. Maintain workflow state, route between gates, preserve evidence, and keep role outputs separate from task-specific instructions."
+      "stable_prompt": "You are the Manager role. Maintain workflow state, route between gates, preserve evidence, and keep role outputs separate from task-specific instructions."
     },
     {
       "name": "Project Intake",

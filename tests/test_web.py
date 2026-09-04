@@ -2277,7 +2277,7 @@ def test_build_role_observations_maps_artifacts_to_role_statuses():
     observations = build_role_observations(state)
     product = next(role for role in observations if role["name"] == "Product / Requirement")
     architect = next(role for role in observations if role["name"] == "Architect")
-    orchestrator = next(role for role in observations if role["name"] == "Orchestrator / PM")
+    orchestrator = next(role for role in observations if role["name"] == "Manager")
     implementation = next(role for role in observations if role["name"] == "Implementation")
 
     assert orchestrator["model"] == "codex:gpt-5.5"
@@ -5595,6 +5595,13 @@ def test_api_project_config_rejects_invalid_worker_type_settings(tmp_path, setti
 
     assert status == 400
     assert message in payload["message"]
+
+
+def test_manager_worker_type_rejects_multiple_instances() -> None:
+    with pytest.raises(ValueError, match="Manager desired_instances must be 1"):
+        web.normalize_worker_type_settings(
+            {"orchestrator": {"desired_instances": 2}}
+        )
 
 
 def test_context_generate_requires_confirmation(tmp_path):

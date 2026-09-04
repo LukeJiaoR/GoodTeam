@@ -444,6 +444,34 @@ def _command_with_prompt(command: list[str], prompt: str, *, prompt_via: str) ->
     return updated
 
 
+def _command_with_reasoning_depth(
+    command: list[str],
+    *,
+    adapter: str,
+    reasoning_depth: str,
+) -> list[str]:
+    depth = str(reasoning_depth or "default").strip().lower()
+    if depth not in {"low", "medium", "high"}:
+        return list(command)
+    normalized_adapter = {
+        "anthropic": "claude",
+        "antigravity": "agy",
+    }.get(adapter, adapter)
+    arguments = {
+        "codex": ["--config", f'model_reasoning_effort="{depth}"'],
+        "claude": ["--effort", depth],
+        "agy": ["--effort", depth],
+        "opencode": ["--variant", depth],
+    }.get(normalized_adapter)
+    if arguments is None:
+        return list(command)
+    updated = list(command)
+    if normalized_adapter == "codex" and "-" in updated:
+        prompt_index = updated.index("-")
+        return [*updated[:prompt_index], *arguments, *updated[prompt_index:]]
+    return [*updated, *arguments]
+
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 
 
@@ -1900,8 +1928,12 @@ class WorkerJobStore:
         worker_env = self._worker_env(job_root, spec, runtime_context.runtime_cwd)
         pythonpath_workspace_src = (runtime_context.runtime_cwd / "src").is_dir()
         preflight = _cli_preflight(spec, binary, model)
-        command = spec.build_command(binary, model, runtime_context.runtime_cwd, result_path)
         adapter = str(job.get("adapter", ""))
+        command = _command_with_reasoning_depth(
+            spec.build_command(binary, model, runtime_context.runtime_cwd, result_path),
+            adapter=adapter,
+            reasoning_depth=str(job.get("reasoning_depth", "") or ""),
+        )
         runtime_evidence = {
             **_worker_runtime_evidence(
                 runtime_context,

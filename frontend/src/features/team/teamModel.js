@@ -1,7 +1,7 @@
 const ACTIVE_STATES = new Set(['working', 'reviewing', 'fixing']);
 const UNAVAILABLE_STATES = new Set(['blocked', 'failed', 'stopped']);
 const ROLE_LABELS = {
-  orchestrator: 'Orchestrator',
+  orchestrator: 'Manager',
   research: 'Research',
   product_requirement: 'Product / Requirement',
   architect: 'Architect',
@@ -59,7 +59,7 @@ export function buildWorkerTypes(data, agents = []) {
       modelExplicit: Boolean(explicitModel.model),
       reasoningDepth: settings.reasoning_depth || 'default',
       additionalPrompt: settings.additional_prompt || '',
-      desiredInstances: Number(settings.desired_instances) || 1,
+      desiredInstances: role === 'orchestrator' ? 1 : Number(settings.desired_instances) || 1,
       instances,
       status: workerStatus(instances, backendReady),
     };

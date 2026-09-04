@@ -95,6 +95,68 @@ def test_start_and_discussion_are_durable_without_approval_mutation(tmp_path: Pa
     assert not (tmp_path / "state" / "projects" / "DEMO" / "action-log.jsonl").exists()
 
 
+def test_configured_manager_executes_interpretation_but_confirmation_commits_exact_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_config = tmp_path / "demo.local.yaml"
+    project_config.write_text("name: Demo\nkey: DEMO\n", encoding="utf-8")
+    opened = _start(tmp_path)
+    state = StateStore(tmp_path).read_project_current("DEMO")
+    state.source_ref = str(project_config)
+    StateStore(tmp_path).write_project_current(state)
+    request = "Ship Google only.\nKeep the provider boundary generic."
+    manager_calls: list[dict[str, object]] = []
+
+    def fake_manager(**kwargs):
+        manager_calls.append(kwargs)
+        return {
+            "schema_version": "intent_interpretation.v1",
+            "source": "manager_worker",
+            "summary": "Limit launch scope to Google without coupling the provider boundary.",
+            "items": [
+                {"kind": "explicit_request", "text": "Ship Google only."},
+                {"kind": "explicit_request", "text": "Keep the provider boundary generic."},
+            ],
+            "request": request,
+            "manager_execution": {
+                "job_id": "job-manager",
+                "role": "orchestrator",
+                "adapter": "codex",
+                "model": "gpt-5.4",
+                "reasoning_depth": "high",
+            },
+        }
+
+    monkeypatch.setattr(web, "run_manager_interpretation", fake_manager)
+    discussed = web.discuss_request_changes_intent(
+        workspace=tmp_path,
+        project_key="DEMO",
+        intent_id=opened["intent_commit"]["id"],
+        text=request,
+    )["intent_commit"]
+
+    assert manager_calls[0]["project_config"] == project_config
+    assert manager_calls[0]["change_request"] == request
+    assert discussed["interpretation"]["source"] == "manager_worker"
+    assert discussed["interpretation"]["summary"].startswith("Limit launch scope")
+
+    decisions: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        web,
+        "decide_approval",
+        lambda **kwargs: decisions.append(kwargs) or {"run_id": "run-intent", "next_node": "revise_prd"},
+    )
+    web.confirm_request_changes_intent(
+        workspace=tmp_path,
+        project_key="DEMO",
+        intent_id=opened["intent_commit"]["id"],
+    )
+
+    assert decisions[0]["note"] == request
+    assert decisions[0]["client_context"]["manager_job_id"] == "job-manager"
+
+
 def test_keep_discussing_returns_to_draft_without_committing(tmp_path: Path, monkeypatch) -> None:
     decide_calls: list[dict[str, object]] = []
     monkeypatch.setattr(web, "decide_approval", lambda **kwargs: decide_calls.append(kwargs))

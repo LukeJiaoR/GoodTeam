@@ -3,6 +3,8 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.workers import (
     AGY_BACKEND,
@@ -1766,6 +1768,30 @@ def test_agy_build_command_has_no_gemini_only_flags():
     assert "--dangerously-skip-permissions" in cmd
     assert "--model" not in cmd
     assert "--approval-mode" not in cmd
+
+
+@pytest.mark.parametrize(
+    ("adapter", "expected"),
+    [
+        ("codex", ["--config", 'model_reasoning_effort="high"']),
+        ("claude", ["--effort", "high"]),
+        ("agy", ["--effort", "high"]),
+        ("opencode", ["--variant", "high"]),
+    ],
+)
+def test_cli_reasoning_depth_becomes_runtime_arguments(adapter, expected):
+    from goodteam_os.workers import _command_with_reasoning_depth
+
+    command = _command_with_reasoning_depth(["agent", "run"], adapter=adapter, reasoning_depth="high")
+
+    assert command[-2:] == expected
+
+
+def test_default_or_unsupported_cli_reasoning_depth_adds_no_runtime_arguments():
+    from goodteam_os.workers import _command_with_reasoning_depth
+
+    assert _command_with_reasoning_depth(["gemini", "-p"], adapter="gemini", reasoning_depth="high") == ["gemini", "-p"]
+    assert _command_with_reasoning_depth(["codex", "exec"], adapter="codex", reasoning_depth="default") == ["codex", "exec"]
 
 
 def test_opencode_backend_uses_positional_prompt_and_model_flag():

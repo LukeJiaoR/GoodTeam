@@ -48,6 +48,7 @@ from goodteam_os.graph import (
 )
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
+from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.native_picker import choose_native_path
@@ -3908,8 +3909,32 @@ def discuss_request_changes_intent(
         intent_id=intent_id,
     )
     _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
+    state = StateStore(workspace).read_project_current(normalize_project_key(project_key))
+    project_config = (
+        Path(state.source_ref)
+        if state is not None and state.source_ref and state.source_ref != "manual"
+        else None
+    )
+    interpretation = None
+    if project_config is not None and project_config.is_file():
+        target = dict(intent.get("target") or {})
+        try:
+            interpretation = run_manager_interpretation(
+                project_config=project_config,
+                run_id=str(dict(intent.get("mission") or {}).get("run_id", "")),
+                project_key=normalize_project_key(project_key),
+                intent_id=intent_id,
+                change_request=text,
+                context=(
+                    f"Approval: {target.get('approval', '')}\n"
+                    f"Artifact: {target.get('artifact_key', '')}\n"
+                    f"Target: {target.get('target_type', '')}:{target.get('target_id', '')}"
+                ),
+            )
+        except ManagerExecutionError as exc:
+            raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
     try:
-        updated = store.discuss(intent_id, text)
+        updated = store.discuss(intent_id, text, interpretation=interpretation)
     except IntentCommitError as exc:
         raise ProjectApiError("intent_discussion_invalid", str(exc), 400) from exc
     return {"intent_commit": updated}
@@ -4010,8 +4035,9 @@ def confirm_request_changes_intent(
             return _committed_intent_response(confirming, idempotent=True)
 
         interpretation = dict(confirming.get("confirmed_interpretation") or {})
-        instruction = str(interpretation.get("summary", "") or "").strip()
+        instruction = str(confirming.get("draft_text", "") or "").strip()
         target = dict(confirming.get("target") or {})
+        manager_execution = dict(interpretation.get("manager_execution") or {})
         try:
             decision_result = decide_approval(
                 workspace=workspace,
@@ -4026,6 +4052,18 @@ def confirm_request_changes_intent(
                     "intent_commit_id": intent_id,
                     "interpretation_schema_version": str(
                         interpretation.get("schema_version", "")
+                    ),
+                    **(
+                        {
+                            "manager_job_id": str(manager_execution.get("job_id", "")),
+                            "manager_adapter": str(manager_execution.get("adapter", "")),
+                            "manager_model": str(manager_execution.get("model", "")),
+                            "manager_reasoning_depth": str(
+                                manager_execution.get("reasoning_depth", "")
+                            ),
+                        }
+                        if manager_execution
+                        else {}
                     ),
                 },
                 expected_run_id=str(
@@ -6473,6 +6511,10 @@ def normalize_worker_type_settings(value: object, *, strict: bool = True) -> dic
         except (TypeError, ValueError):
             if strict:
                 raise ValueError(f"worker_type_settings.{role}.desired_instances must be an integer") from None
+            desired_instances = 1
+        if role == "orchestrator" and desired_instances != 1:
+            if strict:
+                raise ValueError("Manager desired_instances must be 1")
             desired_instances = 1
         if reasoning_depth not in WORKER_REASONING_DEPTHS:
             if strict:
