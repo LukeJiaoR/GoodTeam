@@ -62,12 +62,12 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
     requestAnimationFrame(() => document.getElementById('projects-add-project')?.focus());
   };
 
-  const enterProject = (projectKey) => navigate(routes.projectTeam(projectKey));
+  const enterProject = (projectKey) => navigate(routes.projectWork(projectKey));
 
   const handleImported = (payload) => {
     const projectKey = payload?.project?.project_key;
     if (!projectKey) return;
-    navigate(routes.projectTeam(projectKey));
+    navigate(routes.projectWork(projectKey));
   };
 
   return (

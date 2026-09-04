@@ -13,7 +13,7 @@ import ProductLayout from './ProductLayout';
 function RootRedirect() {
   const { search } = useLocation();
   const projectKey = new URLSearchParams(search).get('project')?.trim();
-  return <Navigate to={projectKey ? routes.projectTeam(projectKey) : routes.projects()} replace />;
+  return <Navigate to={projectKey ? routes.projectWork(projectKey) : routes.projects()} replace />;
 }
 
 function LegacyRedirect() {
