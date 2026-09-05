@@ -1,291 +1,284 @@
 # GoodTeam Architecture
 
-GoodTeam is a local-first control layer for AI software delivery. It owns the
-workflow ledger, approval state, artifacts, memory, and provenance. External
-systems such as GitHub, CI, Telegram, Playwright, and coding agents are adapters:
-they produce evidence or perform bounded work, but they do not own GoodTeam's
-source of truth.
+GoodTeam is a local-first control layer for AI-assisted software delivery. It owns workflow state, human decision authority, evidence, artifacts, provenance, and project memory. External coding agents, GitHub, CI, Telegram, and browser automation are adapters: they perform work or produce evidence, but they do not own GoodTeam's source of truth.
 
-This document is a stable architecture overview. Historical design context lives
-in `docs/plans/`, `docs/product-vision.md`, `docs/current-progress.md`, and
-`docs/backlog.md`.
+This document describes the architecture that is current on `main`. Historical design context lives in `docs/plans/`, `docs/current-progress.md`, `docs/backlog.md`, and `docs/archive/`. For the short current-state summary, see [`status.md`](status.md).
 
-## System Context
+## Product interaction model
+
+The current user journey is chat-first:
+
+```mermaid
+flowchart TD
+    Projects[Projects]
+    Work[Work / Task Assistant]
+    Team[Team configuration]
+    Review[Review]
+    Knowledge[Knowledge]
+
+    Projects --> Work
+    Work --> Team
+    Work --> Review
+    Work --> Knowledge
+    Review --> Work
+    Knowledge --> Work
+```
+
+`/projects/<PROJECT_KEY>/work` is the primary interaction surface. Task Assistant / 任务助手 handles ordinary project understanding, questions, clarification, work intake, progress, retry, and server-authorized actions in one project-scoped conversation. Team, Review, and Knowledge remain dedicated detail workbenches.
+
+Legacy Project Home, Inbox, Activity, and Settings product surfaces have been retired. Compatibility redirects remain, but they are not part of the current product architecture.
+
+## Control-plane boundary
+
+Task Assistant is a conversational layer over GoodTeam-owned state, not an autonomous source of authority.
+
+```mermaid
+flowchart TD
+    Human[Human]
+    Conversation[Task Assistant conversation]
+    Readiness[Project readiness / safety state]
+    Proposal[Proposed work]
+    Confirmation[Server-issued human confirmation]
+    Workflow[Workflow runner]
+    Workers[Worker backends]
+    Evidence[Verification + review evidence]
+    Decision[Human decision]
+    Ledger[State + action ledger + provenance + memory]
+
+    Human --> Conversation
+    Conversation --> Readiness
+    Conversation --> Proposal
+    Proposal --> Confirmation
+    Readiness --> Confirmation
+    Human --> Confirmation
+    Confirmation --> Workflow
+    Workflow --> Workers
+    Workers --> Evidence
+    Workflow --> Evidence
+    Evidence --> Decision
+    Human --> Decision
+    Decision --> Ledger
+    Conversation --> Ledger
+    Workflow --> Ledger
+```
+
+Key invariants:
+
+- Readiness remains backend-owned even though it is no longer a separate user journey.
+- User text is preserved exactly in the project conversation and proposed-task history.
+- Model interpretation can explain or classify intent, but it cannot authorize readiness or workflow mutations.
+- Consequential actions use server-issued action IDs and explicit human confirmation.
+- Pre-confirmation model execution is read-only or fails closed.
+- Worker and reviewer outputs are advisory evidence; humans remain approval authority.
+- Conversation, workflow, and worker persistence is durable and project-scoped.
+
+## System context
 
 ```mermaid
 flowchart LR
     Human[Human operator]
-    GoodTeam[GoodTeam local control layer]
-    Target[Target project workspace]
-
-    subgraph LocalFiles[Owned local files]
-        State[state/projects/*]
-        Artifacts[artifacts/runs/*]
-        Memory[.goodteam/memory/*]
-        Tasks[.goodteam/tasks/*]
-        Provenance[.goodteam/provenance/*]
-    end
+    Frontend[React product UI]
+    API[GoodTeam HTTP/API layer]
+    Assistant[Task Assistant services]
+    Workflow[Workflow runner]
+    State[Owned local state]
+    Target[Target project]
 
     subgraph WorkerBackends[Worker backends]
         Codex[Codex CLI]
         Claude[Claude CLI]
+        Pi[Pi RPC]
         Fake[fake]
-        HumanBackend[human]
+        HumanWorker[human]
         Noop[noop]
     end
 
-    subgraph Adapters[External adapters]
-        GitHub[GitHub PRs]
-        CI[GitHub Actions / CI]
-        Telegram[Telegram review client]
-        Playwright[Playwright / live smoke]
+    subgraph ExternalAdapters[External adapters]
+        GitHub[GitHub / PRs]
+        CI[CI]
+        Telegram[Telegram]
+        Browser[Playwright / live smoke]
     end
 
-    Human -->|starts, reviews, lands| GoodTeam
-    GoodTeam -->|reads and writes| LocalFiles
-    GoodTeam -->|configures and inspects| Target
-    GoodTeam -->|dispatches bounded jobs| WorkerBackends
-    WorkerBackends -->|patches, reports, stdout/stderr| Target
-    GoodTeam -->|opens, binds, inspects| GitHub
-    GitHub -->|head SHA and checks| CI
-    CI -->|status evidence| GoodTeam
-    GoodTeam -->|approval cards and commands| Telegram
-    Telegram -->|human decisions| GoodTeam
-    GoodTeam -->|isolated live verification| Playwright
-    Playwright -->|observed evidence| GoodTeam
+    Human --> Frontend
+    Frontend --> API
+    API --> Assistant
+    API --> Workflow
+    API --> State
+    Assistant --> State
+    Assistant --> Target
+    Workflow --> State
+    Workflow --> WorkerBackends
+    WorkerBackends --> Target
+    WorkerBackends --> State
+    Workflow --> ExternalAdapters
+    ExternalAdapters --> State
 
-    LocalFiles -. source of truth .-> GoodTeam
-    Adapters -. evidence producers .-> GoodTeam
+    State -. source of truth .-> API
 ```
 
-Key rule: the GoodTeam ledger remains authoritative. Adapters can fail, retry,
-or be replaced without changing the ownership model.
-
-## Component Architecture
-
-```mermaid
-flowchart TD
-    CLI[goodteam_os.cli]
-    Web[web.py API and dashboard server]
-    Frontend[frontend React dashboard]
-    Graph[graph.py workflow runner]
-    State[state.py state store]
-    Workers[workers.py backend registry and jobs]
-    Memory[memory.py WAL and retrieval]
-    Staging[staging.py delivery contracts]
-    Tasks[tasks.py local task board]
-    Telegram[telegram.py review client]
-    Projects[projects.py project config discovery]
-    Provenance[provenance manifests and action events]
-
-    CLI --> Web
-    CLI --> Graph
-    CLI --> Projects
-
-    Frontend -->|/api/*| Web
-    Web --> State
-    Web --> Graph
-    Web --> Workers
-    Web --> Memory
-    Web --> Staging
-    Web --> Tasks
-    Web --> Projects
-    Web --> Telegram
-    Web --> Provenance
-
-    Graph --> State
-    Graph --> Workers
-    Graph --> Staging
-    Graph --> Memory
-    Graph --> Provenance
-
-    Workers --> Memory
-    Workers --> Provenance
-    Telegram --> Web
-
-    State --> LocalState[(state JSON and checkpoints)]
-    Workers --> JobFiles[(worker job dirs)]
-    Memory --> MemoryFiles[(events.jsonl and horizons)]
-    Staging --> Evidence[(delivery evidence)]
-    Tasks --> TaskFiles[(tasks.json)]
-    Provenance --> ProvFiles[(PR/job/review lineage)]
-```
-
-## Module Responsibilities
+## Current component responsibilities
 
 | Module / area | Responsibility |
 | --- | --- |
-| `src/goodteam_os/cli.py` | CLI entry point for init, start, serve, doctor, and inspection commands. |
-| `src/goodteam_os/web.py` | HTTP API, dashboard state projection, approval decisions, review workbench helpers, and same-origin guarded actions. |
-| `src/goodteam_os/graph.py` | Workflow progression, gate transitions, worker scheduling, and run advancement. |
-| `src/goodteam_os/state.py` | Durable run state, approval decisions, checkpoints, and project current state. |
-| `src/goodteam_os/workers.py` | Worker backend registry, job store, dispatch packets, stdout/stderr/result handling, and backend readiness. |
+| `src/goodteam_os/web.py` | HTTP API, product projections, server-authorized mutations, review/approval entrypoints, and integration glue. |
+| `src/goodteam_os/task_assistant.py` | Project-scoped conversational intake and routing around authoritative readiness/workflow state. |
+| `src/goodteam_os/task_assistant_session.py` | Durable conversation, proposed-task, attention, and workflow-binding persistence. |
+| `src/goodteam_os/manager_execution.py` | Executes configured Task Assistant model turns with runtime-policy provenance while preserving human authority. |
+| `src/goodteam_os/project_readiness.py` | Backend-owned project preparation and safety state used behind the chat-first experience. |
+| `src/goodteam_os/team_workspace.py` | Projects the conversation and workflow/runtime events into the Work experience. |
+| `src/goodteam_os/graph.py` | Workflow progression, gates, worker scheduling, and run advancement. |
+| `src/goodteam_os/state.py` | Durable workflow state, checkpoints, approval decisions, and project current state. |
+| `src/goodteam_os/workers.py` | Worker backend registry, job store, dispatch packets, runtime state, logs/results, and backend readiness. |
 | `src/goodteam_os/memory.py` | Project-local and role-scoped memory, WAL events, retrieval, and pickup context. |
-| `src/goodteam_os/staging.py` | Delivery contract configuration and staging acceptance evidence. |
-| `src/goodteam_os/tasks.py` | Local task board projection and task persistence. |
+| `src/goodteam_os/tasks.py` | Local project task ledger. |
 | `src/goodteam_os/projects.py` | Project config discovery and root resolution. |
-| `src/goodteam_os/telegram.py` | Telegram commands, approval cards, remote review sessions, and decision notes. |
-| `frontend/` | React dashboard that consumes `/api/*` and renders project state, approvals, workers, memory, and Dev Loop surfaces. |
-| `.goodteam/` under target projects | Project-owned tasks, memory, provenance, and local GoodTeam state artifacts. |
+| `src/goodteam_os/staging.py` | Delivery contract and staging acceptance evidence. |
+| `frontend/` | React product UI for Projects, Work, Team, Review, and Knowledge. |
+| `.goodteam/` under target projects | Project-owned tasks, memory, provenance, worker-job data, and Pi session data where configured. Task Assistant conversation persistence is not stored here. |
 
-## End-To-End Workflow
+`web.py` is still a broad integration module. New business rules should prefer focused services with tests instead of further concentrating domain logic in HTTP handlers.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Human as Human operator
-    participant CLI as goodteam-os CLI / Web UI
-    participant Projects as Project config
-    participant Graph as Workflow runner
-    participant State as StateStore
-    participant Workers as Worker backends
-    participant Evidence as Evidence and provenance
-    participant Review as Review Workbench
-    participant GitHub as GitHub / CI
+## Project conversation and workflow start
 
-    Human->>CLI: init project or select existing config
-    CLI->>Projects: resolve project root and config
-    Human->>CLI: start idea / run
-    CLI->>Graph: create initial workflow state
-    Graph->>State: write current state and checkpoint
-    Graph->>Evidence: write PRD/RFC artifacts
-    Graph-->>Human: pause at approval gate
-    Human->>Review: inspect artifact, evidence, reviewers
-    Human->>Review: approve / request changes / reject
-    Review->>State: write approval decision and action event
-    State-->>Graph: gate decision available
-    Graph->>Workers: dispatch bounded implementation/review/QA jobs
-    Workers->>Evidence: write results, logs, provenance handles
-    Workers->>GitHub: create or update PRs when scoped
-    GitHub-->>Evidence: CI status and head SHA evidence
-    Evidence-->>Review: render current gate evidence
-    Human->>CLI: land approved PR and clean branch/worktree
-    CLI->>Evidence: record land/cleanup/provenance
-```
-
-## Approval And Evidence Model
+The durable Task Assistant session is workspace-scoped at `state/projects/<PROJECT_KEY>/task-assistant-session.json`; it is deliberately not written into the imported repository.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Graph as Workflow runner
-    participant Artifact as Artifact store
-    participant Evidence as Evidence snapshot builders
-    participant Reviewers as Reviewer jobs and provenance
-    participant Web as Web Review Workbench
-    participant TG as Telegram review client
-    actor Human as Human operator
-    participant Ledger as Action ledger / state
+    actor Human as Human
+    participant UI as Work UI
+    participant TA as Task Assistant
+    participant Session as Conversation store
+    participant Ready as Readiness
+    participant Exec as Manager execution
+    participant Graph as Workflow
+    participant Workers as Workers
 
-    Graph->>Artifact: generate gate artifact
-    Graph->>Evidence: build CI/smoke/QA/blocker snapshot
-    Evidence->>Reviewers: read reviewer provenance and recommendations
-    Evidence-->>Web: actionable review object
-    Evidence-->>TG: approval card digest
-    Web-->>Human: evidence, recommendation, provenance
-    TG-->>Human: remote approval card and commands
-    Human->>Web: approve / request changes / reject
-    Human->>TG: optional Telegram decision or note
-    Web->>Ledger: write approval_decided event
-    TG->>Ledger: write approval_decided event with origin metadata
-    Ledger-->>Graph: decision unblocks advance or loop
+    Human->>UI: Open/import project
+    UI->>TA: Load project conversation
+    TA->>Session: Read durable session
+    TA->>Ready: Read authoritative preparation state
+    TA-->>UI: Greeting, history, suggestions, attention
+
+    Human->>UI: Send message
+    UI->>TA: Exact text + message id
+    TA->>Session: Persist exact text idempotently
+    TA->>Exec: Interpret/answer in bounded read-only mode when configured
+    Exec-->>TA: Response + execution provenance
+
+    alt informational / project-understanding request
+        TA-->>UI: Answer or bounded understanding progress
+    else actionable request
+        TA->>Session: Create/revise proposed task
+        TA-->>UI: Proposed task + server action
+        Human->>UI: Explicit confirmation
+        UI->>TA: Server-issued action + idempotency key
+        TA->>Graph: Start once readiness and confirmation are valid
+        Graph->>Workers: Dispatch bounded work
+    end
 ```
 
-Recommendations and reviewer outputs are advisory. The human decision remains the
-approval authority.
+The same project conversation remains visible before, during, and after workflow execution. Starting a run binds workflow identity to the existing conversation instead of replacing onboarding history.
 
-## Execution Identity And PR/CI Binding
+## Worker execution model
 
-```mermaid
-flowchart TD
-    Issue[Issue number]
-    Attempt[Attempt number]
-    ExecutionID[Execution ID]
-    Branch[Deterministic branch]
-    PR[Pull request]
-    HeadSHA[PR head SHA]
-    CIRun[CI workflow run]
-    Ledger[Execution ledger]
-    Idempotency[Idempotency keys]
-
-    Issue --> ExecutionID
-    Attempt --> ExecutionID
-    ExecutionID --> Branch
-    Branch --> PR
-    PR --> HeadSHA
-    HeadSHA --> CIRun
-    CIRun --> Ledger
-    ExecutionID --> Ledger
-    ExecutionID --> Idempotency
-    Idempotency -->|prevents duplicate work| Ledger
-
-    classDef identity fill:#fff8e1,stroke:#f9a825,color:#5d4037;
-    classDef evidence fill:#eef3ff,stroke:#5c6bc0,color:#1a237e;
-    class Issue,Attempt,ExecutionID,Branch,Idempotency identity;
-    class PR,HeadSHA,CIRun,Ledger evidence;
-```
-
-This identity chain is why execution and binding tests are stricter than normal
-helper tests. Loose identifiers can bind evidence to the wrong work.
-
-## Memory And Provenance Graph
+Worker adapters execute bounded jobs. GoodTeam owns job identity, runtime policy, result handling, retry semantics, and evidence lineage.
 
 ```mermaid
 flowchart LR
-    Run[Workflow run]
-    WorkerJob[Worker job]
-    TaskContract[task.md / constraints.md]
-    Result[result.md]
-    Review[pre-review and review rationale]
-    PR[Pull request]
-    Manifest[provenance manifest]
-    WAL[events.jsonl]
-    RoleMemory[role-scoped memory horizons]
-    ProjectMemory[project memory]
-    FutureCrossProject[future cross-project memory]
+    Task[Bounded task]
+    Job[Worker job]
+    Policy[Runtime / scope policy]
+    Backend[Codex / Claude / Pi / fake / human / noop]
+    Result[Result + logs + provenance]
+    Review[Verification / review]
 
-    Run --> WorkerJob
-    WorkerJob --> TaskContract
-    WorkerJob --> Result
+    Task --> Job
+    Job --> Policy
+    Policy --> Backend
+    Backend --> Result
     Result --> Review
-    Review --> PR
-    PR --> Manifest
-    TaskContract --> Manifest
-    Result --> Manifest
-    Review --> Manifest
-    Manifest --> WAL
-    WAL --> RoleMemory
-    WAL --> ProjectMemory
-    ProjectMemory -. planned projection .-> FutureCrossProject
-    RoleMemory -. planned projection .-> FutureCrossProject
 ```
 
-The current moat is ownership: project-local state, artifacts, and memory are
-portable files. The roadmap is compounding: every delivery should make future
-runs cheaper, faster, and better grounded.
+The current configuration model supports project defaults and role-oriented overrides. See [`config-reference.md`](config-reference.md) and [`worker-backends.md`](worker-backends.md) for the implemented contract.
 
-## Current vs Planned Boundary
+## Approval and evidence model
 
 ```mermaid
 flowchart TD
-    Current[Implemented now]
-    Planned[Planned or gated]
+    Artifact[Artifact / patch / result]
+    Verification[Tests / CI / smoke]
+    Reviewers[Reviewer evidence]
+    Snapshot[Evidence snapshot]
+    Human[Human reviewer]
+    Decision[Approve / request changes / reject]
+    Ledger[Action ledger]
 
-    Current --> LocalLedger[Local state, checkpoints, action events]
-    Current --> ApprovalGates[Human approval gates]
-    Current --> WorkerRegistry[Pluggable worker backend registry]
-    Current --> ReviewWorkbench[Review Workbench evidence surfaces]
-    Current --> TelegramReview[Telegram remote supervision]
-    Current --> TestingStrategy[Risk-tiered verification strategy]
-
-    Planned --> VisualDocs[Full visual docs system]
-    Planned --> OperatorGuide[Stable operator guide]
-    Planned --> ConfigReference[Config reference]
-    Planned --> LiveSmokePlaybook[Live smoke playbook]
-    Planned --> CrossProjectMemory[Cross-project memory]
-    Planned --> RealParallelWorkers[Real parallel worker fan-in]
-    Planned --> WebExplainer[Dashboard /docs or /explainer route]
+    Artifact --> Snapshot
+    Verification --> Snapshot
+    Reviewers --> Snapshot
+    Snapshot --> Human
+    Human --> Decision
+    Decision --> Ledger
 ```
 
-When changing architecture docs, keep this boundary explicit. Do not document
-planned behavior as if it already exists.
+Reviewer provenance, recommendations, and policy severity improve decision quality but remain advisory. Approval authority stays with the human operator unless a future explicit product contract says otherwise.
+
+## Identity and provenance
+
+A delivery should remain traceable across issue/task intent, conversation messages, workflow execution, worker jobs, branch/PR, CI, review decisions, and memory.
+
+```mermaid
+flowchart LR
+    UserText[Exact user text]
+    Proposal[Proposed task revision]
+    Run[Run / execution id]
+    Job[Worker job]
+    PR[PR / head SHA]
+    CI[CI / smoke]
+    Review[Review decision]
+    Provenance[Provenance ledger]
+    Memory[Project memory]
+
+    UserText --> Proposal
+    Proposal --> Run
+    Run --> Job
+    Job --> PR
+    PR --> CI
+    CI --> Review
+    Review --> Provenance
+    Job --> Provenance
+    Provenance --> Memory
+```
+
+Loose or inferred identity must not bind evidence to a different run, artifact version, PR, or retry attempt.
+
+## Memory model
+
+GoodTeam keeps owned project-local memory and provenance so future work can recover prior decisions and evidence without treating external tools as the durable record. See [`memory-model.md`](memory-model.md) and [`provenance-ledger.md`](provenance-ledger.md).
+
+## Current vs active design
+
+### Implemented current contract
+
+- Projects → Work / Team / Review / Knowledge product structure.
+- Task Assistant as the primary project interaction surface.
+- Backend-owned readiness hidden behind the conversational journey.
+- Durable project-scoped Task Assistant session and exact user-text preservation.
+- Configurable Task Assistant execution with bounded pre-confirmation policy.
+- Human-authorized workflow start and approval decisions.
+- Pluggable worker backends and durable worker job evidence.
+- Review evidence, provenance, project memory, and risk-tiered verification.
+
+### Active design, not yet stable contract
+
+- **Role → TeamRole → Worker** separation, including independent role enablement and runtime worker lifecycle/history.
+- Broader control-plane UX for enabling/inactivating roles and initializing/releasing workers.
+- Deeper parallel worker fan-out/fan-in and dynamic collaboration graphs.
+
+Do not document these active-design items as implemented until their domain model, persistence, migration, and invariant tests land.
+
+## Documentation boundary
+
+Stable architecture and operator/reference manuals live directly under `docs/`. Historical plans, progress snapshots, audits, and research are evidence, not current contracts. See [`README.md`](README.md) for the documentation lifecycle and [`archive/README.md`](archive/README.md) for archival rules.

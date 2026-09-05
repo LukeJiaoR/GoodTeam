@@ -1,8 +1,10 @@
-# Reviewer Profiles and Invocation Evidence
+# Archived design: Reviewer Profiles and Invocation Evidence
 
-Status: proposed
-Date: 2026-07-04
-Scope: design only
+> Archived 2026-09-06. This July 2026 proposal is retained for design history. The current implemented contract is [`../../reviewer-profiles.md`](../../reviewer-profiles.md).
+
+Status: superseded
+Original date: 2026-07-04
+Original scope: design only
 
 ## Context
 

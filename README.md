@@ -1,581 +1,150 @@
 # GoodTeam — Local-First AI Engineering Team OS
 
-GoodTeam is the local-first control layer for AI software delivery. It coordinates
-specialized coding agents, project tools, CI, review, deployment evidence, and memory
-into one owned workflow ledger, so a human can ship software through explicit,
-reviewable gates.
+GoodTeam is a local-first control layer for AI-assisted software delivery. It coordinates project understanding, AI workers, workflow state, review evidence, CI, human decisions, provenance, and memory through one owned control plane.
 
-**GoodTeam owns the engineering-org protocol; external tools are adapters.** The role
-chain, workflow state, approval gates, evidence model, review workbench, memory, and
-provenance are first-party. Plane, GitHub, CI, Playwright, deployment tooling, and the
-agent CLIs are integrated as replaceable adapters — they produce evidence, but the
-GoodTeam ledger remains the source of truth for workflow decisions.
+**GoodTeam owns the delivery protocol; external tools are adapters.** Coding agents, GitHub, CI, Telegram, and browser automation can perform work or produce evidence, but GoodTeam keeps the authoritative state and human decision trail.
 
-The foundation:
+## Current product model
 
-- Start a run from an idea.
-- Generate durable PRD/RFC artifacts.
-- Persist workflow state to JSON and write checkpoints.
-- Pause at human approval gates with an evidence-backed review workbench.
-- Record an append-only approval audit trail (decision origin, actor, review mode,
-  evidence snapshot) across Web and Telegram clients.
-- Keep project-local GoodTeam memory and task ledgers under each target project.
+The current product surface is:
 
-GoodTeam can operate without Plane, Linear, or any external tracker. External systems are optional sync surfaces; the local project runtime is the source of truth for memory, artifacts, decisions, and tasks.
+```text
+Projects → Work / Team / Review / Knowledge
+```
 
-## Quick Start
+- **Projects** imports or opens a local project.
+- **Work** is the primary interaction surface. Task Assistant / 任务助手 handles project understanding, questions, work intake, clarification, progress, retries, and server-authorized actions in one project-scoped conversation.
+- **Team** exposes project execution configuration.
+- **Review** is the evidence-backed human review and approval surface.
+- **Knowledge** exposes repository understanding, artifacts, and memory.
 
-Install the package (this pulls in `rank-bm25` and the `goodteam-os` CLI):
+Readiness still exists, but it is a backend-owned safety state rather than a separate user journey. Model interpretation may explain or classify intent; it cannot authorize consequential mutations. Workflow start and approval remain explicit human decisions bound to server-owned state.
+
+Legacy Project Home, Inbox, Activity, and Settings product pages have been retired. Compatibility redirects remain for old bookmarks.
+
+For the short current-state summary, see [`docs/status.md`](docs/status.md). For the canonical documentation map and authority rules, see [`docs/README.md`](docs/README.md).
+
+## Quick start
+
+Create a development environment:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q
-```
-
-Start and manage GoodTeam as a background service (default port `21001`):
-
-```bash
 npm --prefix frontend install
 npm --prefix frontend run build
-goodteam restart                 # stop an existing managed server, then start it
+```
+
+Start GoodTeam as the managed local service:
+
+```bash
+goodteam restart
 goodteam status
+```
+
+The managed service defaults to port `21001`. Open:
+
+```text
+http://localhost:21001/projects
+```
+
+`goodteam restart` uses the current directory as its runtime workspace unless you pass `--workspace`. The older `goodteam-os` command remains available for compatibility and direct CLI workflows.
+
+To stop the managed service:
+
+```bash
 goodteam stop
 ```
 
-`restart` uses the current directory as its workspace. Override it or the port with
-`--workspace /path/to/workspace` and `--port 21002`. The existing `goodteam-os`
-command remains available for compatibility. The workspace stores project/runtime
-data only; React assets are resolved from the GoodTeam checkout or installation,
-independently of the current directory and workspace. For packaged deployments,
-set `GOODTEAM_FRONTEND_DIST=/absolute/path/to/frontend/dist` to select the build.
-If the build is missing or lacks `index.html`, startup fails with the attempted
-paths and build instructions instead of silently loading the legacy dashboard.
+## Add or inspect a project
 
-On macOS, Project Root and Context Source Browse actions use the system Finder
-picker when GoodTeam is bound to a loopback host. Cancellation keeps the current
-form value. Non-macOS, headless, remote-bind, and native-picker error cases keep
-using GoodTeam's existing Web file/directory browser, including directory
-navigation and folder creation.
+The normal product path is to open `/projects`, select an absolute local directory, and continue directly into the project's Work conversation. Import records GoodTeam metadata without treating the selected repository as disposable workspace state.
 
-### Configure one worker backend (codex)
-
-For a first real demo run, use `codex` as the single recommended backend path:
-
-1. Install the `codex` CLI.
-2. Authenticate the `codex` CLI per the official Codex docs.
-3. Verify readiness with doctor (or `init`, which runs doctor automatically) and confirm `codex` is reported as ready in worker backend preflight:
+For CLI-oriented setup and doctor checks:
 
 ```bash
-# doctor-only
+goodteam-os init --key MYAPP --name "My App" --repo /absolute/path/to/repo
 goodteam-os doctor --project-config projects/myapp.local.yaml
-
-# or create the config and run doctor in one step
-goodteam-os init --key MYAPP --name "My App" --repo /path/to/your/repo
 ```
 
-Full 30-minute demo walkthrough is separate and is being documented around `scripts/demo-up.sh`.
+Machine-specific project configs should normally live in `projects/<key>.local.yaml`; do not commit credentials or private secrets.
 
-### No-credentials PRD gate path (fake worker)
+See [`docs/config-reference.md`](docs/config-reference.md) for the implemented project configuration contract.
 
-You can still scaffold a project and reach the first approval gate with **no model credentials**, because the PRD gate is deterministic and the default worker backend is `fake`:
+## Worker backends
 
-```bash
-# 1. Create a project config (writes projects/myapp.local.yaml + runs doctor)
-goodteam-os init --key MYAPP --name "My App" --repo /path/to/your/repo
+GoodTeam supports bounded worker execution through replaceable backends. Current references include Codex, Claude/Anthropic, Pi persistent sessions, `fake`, `human`, and `noop` paths; backend readiness and exact capabilities vary by adapter.
 
-# 2. Start a run from an idea
-goodteam-os start "Build a task tracker" --project-key MYAPP \
-  --project-config projects/myapp.local.yaml --workspace ./run
+The currently implemented configuration model is still role-oriented: projects can declare a default worker backend plus per-role overrides. See [`docs/worker-backends.md`](docs/worker-backends.md) and [`docs/config-reference.md`](docs/config-reference.md).
 
-# 3. Open the dashboard
-goodteam-os serve --workspace ./run --port 8788
-```
+The proposed **Role → TeamRole → Worker** separation is active design work tracked outside this README. Do not treat it as an implemented runtime contract until its domain model, persistence, migration, and invariant tests land.
 
-Expected result:
+## Human authority and evidence
 
-- `run/artifacts/runs/<run_id>/prd/prd.md`
-- `run/state/projects/MYAPP/current.json`
-- `run/state/projects/MYAPP/checkpoints/<run_id>/prd_review_gate.json`
-- `next_node` is `await_prd_approval`
+Worker output is evidence, not approval authority. GoodTeam keeps consequential transitions bound to explicit state and human decisions.
 
-See [`projects/example.yaml`](projects/example.yaml) for the full project-config schema.
-
-Other backends: `fake` is the fastest no-creds path to the PRD gate; `codex` is the recommended real implementation/QA backend for the full demo; `anthropic` (Claude CLI) remains supported when you prefer that stack.
-
-Open the redesigned project portfolio at:
+A typical path is:
 
 ```text
-http://localhost:8788/
+Project conversation
+  ↓
+read-only understanding / proposed work
+  ↓
+explicit human confirmation
+  ↓
+workflow + bounded workers
+  ↓
+tests / CI / smoke / reviewer evidence
+  ↓
+human review decision
+  ↓
+ledger + provenance + memory
 ```
 
-The root URL redirects to `/projects`. Open a project's Work space with:
+The same project conversation remains available across onboarding and workflow execution; starting a run does not replace the user's original request with a model rewrite.
 
-```text
-http://localhost:8788/projects/<PROJECT_KEY>/work
-```
+## Local-first state
 
-### Redesigned project loading
+GoodTeam keeps authoritative runtime and project records in local workspace/project storage, including workflow state, checkpoints, artifacts, worker jobs, action history, provenance, task ledgers, and memory. Exact storage locations are feature-specific; for example, the durable Task Assistant session is workspace-scoped under `state/projects/<PROJECT_KEY>/` rather than written into the imported repository.
 
-The default project-loading experience is available at:
+External systems may participate, but they are not the only copy of the delivery record.
 
-```text
-http://localhost:8788/projects
-http://localhost:8788/projects/<PROJECT_KEY>/work
-```
+## Development
 
-`/projects` accepts an absolute local directory, records it once, and opens a
-project's Work space with Task Assistant as the primary interaction. Import is
-read-only with respect to the selected directory: registration and readiness
-state are stored in the GoodTeam workspace, and importing the same root again returns the same project instead
-of creating a duplicate. New-project, existing-codebase, and unconfirmed modes
-share the same persisted readiness model, which Task Assistant uses behind the
-conversation and restores across browser reloads and server restarts.
-
-The root route redirects to `/projects`. Workflow operations are available at
-`/projects/<PROJECT_KEY>/work`; old `/legacy` and `/projects/<PROJECT_KEY>/home`
-bookmarks redirect to the corresponding Work route. The backend readiness engine
-still gates workflow start and projects its preparation state through Task
-Assistant.
-
-### Frontend-Backend Separation & Local Development
-
-GoodTeam OS operates under a clean frontend-backend separated architecture.
-
-#### 1. Backend Server
-The Python backend manages the APIs, workflow state transitions, and file system interactions:
-```bash
-# Start backend server on port 8788
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --port 8788
-```
-
-#### 2. Frontend Development (Independent Dev Server)
-The React dashboard runs as a separate dev server with proxy settings forwarding `/api/*` requests to the backend:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Open `http://localhost:8790/` in your browser. GoodTeam pins the local frontend dev server to port 8790 so it does not collide with Vite's default 5173 used by other workspaces. All operations (e.g., loading project overview, submitting approvals, starts, and edits) will route seamlessly through the dev server proxy to the backend.
-
-#### 3. Production Hosting (Backend Static File Serving)
-To deploy or host the React dashboard directly via the Python backend, compile the static files:
-```bash
-cd frontend
-npm run build
-```
-Once compiled to `frontend/dist/`, starting the backend server (`goodteam_os.cli serve`) automatically serves that React application on `http://localhost:8788/`, regardless of the data workspace. Use `GOODTEAM_FRONTEND_DIST` to point at a build outside the checkout. If no valid build can be resolved, product-page requests return an actionable diagnostic page; GoodTeam never presents the feature-incomplete legacy dashboard as the current UI.
-
-## Model Profiles
-
-Default role-to-model routing lives in `models.yaml`.
-
-Start with a preset profile:
+Typical repository checks are:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
-  --workspace /tmp/goodteam-os-run \
-  --model-profile balanced
+PYTHONPATH=src .venv/bin/python -m pytest tests -q
+.venv/bin/ruff check src/goodteam_os/ tests/
+npm --prefix frontend test
+npm --prefix frontend run lint
+npm --prefix frontend run build
+git diff --check
 ```
 
-Available V1 profiles:
+Use the risk-tiered verification policy in [`docs/testing-strategy.md`](docs/testing-strategy.md) rather than running expensive suites mechanically for every change.
 
-- `balanced`
-- `cheap`
-- `max_quality`
+For branch and worktree cleanup rules, read [`docs/development-branch-hygiene.md`](docs/development-branch-hygiene.md).
 
-Override one role for a single run:
+## Documentation
 
-```bash
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
-  --workspace /tmp/goodteam-os-run \
-  --model-profile cheap \
-  --role-model architect=codex:gpt-5.5 \
-  --role-model qa=codex:gpt-5.3-codex
-```
+Use documentation in this order when sources disagree:
 
-Preview the model matrix and planned artifact paths without writing state or artifacts:
+1. **Code and tests** for executable behavior.
+2. **Stable manuals** under `docs/` for current product/operator contracts.
+3. [`docs/status.md`](docs/status.md) for short-lived current orientation.
+4. Historical plans, audits, research, progress logs, and generated OpenWiki pages for design history and evidence.
 
-```bash
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli start "Build AI Team OS" \
-  --workspace /tmp/goodteam-os-run \
-  --model-profile cheap \
-  --role-model architect=codex:gpt-5.5 \
-  --dry-run
-```
+Start here:
 
-The chosen profile and role model matrix are saved into `state/projects/<project-key>/current.json`, so each project can keep its own active run and model choices.
+- [`docs/README.md`](docs/README.md) — documentation map, authority, and lifecycle rules.
+- [`docs/status.md`](docs/status.md) — current product surface and active-design boundary.
+- [`docs/explainer.md`](docs/explainer.md) — concise product explanation.
+- [`docs/architecture.md`](docs/architecture.md) — current system architecture.
+- [`docs/operator-guide.md`](docs/operator-guide.md) — day-to-day operation.
+- [`docs/review-and-approval-guide.md`](docs/review-and-approval-guide.md) — review and approval semantics.
+- [`docs/live-smoke-playbook.md`](docs/live-smoke-playbook.md) — isolated live-smoke guidance.
+- [`docs/testing-strategy.md`](docs/testing-strategy.md) — verification policy.
 
-## tmux
-
-`tmux` is not required, but it is the preferred way to keep the dashboard attached once installed:
-
-```bash
-tmux new -s goodteam-dashboard
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli serve --workspace /tmp/goodteam-os-run --port 8788
-```
-
-## Smoke Loops
-
-GoodTeam can run local smoke loops that exercise the workflow, approval gates, workers, verification commands, and machine-readable evidence reports:
-
-```bash
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli smoke \
-  --workspace /tmp/goodteam-smoke \
-  --suite contentops,self \
-  --cycles 2 \
-  --autonomy full \
-  --worker-mode fake
-```
-
-Use `--dry-run` to preview planned cycles without creating project configs, state, artifacts, or target files. Smoke reports are written to:
-
-```text
-<workspace>/state/smoke-runs/latest.json
-```
-
-Supported smoke suites:
-
-- `contentops`: runs the CONTENTOPS canary workflow against an isolated local target under the smoke workspace. Set `GOODTEAM_CONTENTOPS_ROOT` only when you intentionally want to point at an existing target root.
-- `self`: runs GoodTeam against GoodTeam from a temporary git worktree. If the smoke workspace is inside this repo, GoodTeam automatically places the self worktree under an external temp root; set `GOODTEAM_SELF_WORKTREE_ROOT` to override it. Because this uses `git worktree`, it tests committed code at `HEAD`; commit the current GoodTeam changes before treating self-smoke results as acceptance evidence.
-
-Supported smoke worker modes:
-
-- `fake`: deterministic local worker adapter for smoke-loop verification.
-- `noop`: records protocol-only worker completion.
-- `codex`: invokes the configured Codex CLI worker adapter.
-- `anthropic`: drives the `claude` CLI (Claude Code) headless worker; set `ANTHROPIC_API_KEY` and pair with `model_profile: anthropic`.
-
-On failure, GoodTeam classifies the failure as `product`, `test`, or `env` and writes a blocker task into the target's `.goodteam/tasks/tasks.json`.
-
-Smoke projects are also first-class agile board tasks. Each smoke cycle creates or updates a high-priority task in the target task ledger, moves it through `backlog`/`doing`/`blocked`/`done`, and attaches the smoke report plus worker result paths as evidence when available.
-
-For full product acceptance evidence, use the isolated wrapper:
-
-```bash
-scripts/full-acceptance-smoke.sh \
-  --output-root /tmp/goodteam-full-smoke \
-  --suite contentops,self \
-  --cycles 1 \
-  --worker-mode fake
-```
-
-The wrapper standardizes `report.md`, `summary.json`, `coverage-matrix.md`, `logs/`, `screenshots/`, and `state-snapshots/` under the selected output root. It defaults to credential-free fake/noop workers; real CLI workers such as Codex or Claude require `--allow-real-worker`.
-
-View the same lightweight Kanban data from the CLI:
-
-```bash
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli board \
-  --project-root /absolute/path/to/project
-```
-
-The dashboard exposes the same data in the `Agile Board` tab, alongside the existing `Smoke Runs` tab.
-
-## 30-Minute Demo: idea → PRD → working app → release
-
-The end-to-end path a new user can run on a clean machine: start from an idea,
-approve each gate in the dashboard, and watch real workers build and release a
-working app — with a full audit trail. (Requires the `codex` backend configured
-above. ~15–25 min, mostly the real implementation/QA workers.)
-
-```bash
-# Brings up an isolated, real-worker demo OUTSIDE this repo (../goodteam-demo),
-# checks codex is ready, starts the pinned idea "Build a task tracker", and serves
-# the dashboard at http://localhost:8788 stopped at the first approval gate.
-scripts/demo-up.sh --reset
-#   flags: --port=NNNN  --build (rebuild frontend/dist)  --reset (wipe + reseed)
-```
-
-Then drive it from the dashboard at `http://localhost:8788/?project=DEMO`
-— everything is approved in the UI, no extra CLI steps:
-
-1. **Approvals tab → approve PRD.** The PRD is generated up front (no model
-   credentials needed for this step).
-2. **Approve RFC / plan.** This triggers the real `codex` workers (UI →
-   implementation → QA, dispatched in sequence). This is the long step.
-3. **Approve release.** The run reaches `complete`.
-4. **Read the audit trail:** the **Artifacts** tab (PRD, RFC, QA report,
-   release notes), the **Approvals** tab (every gate decision), and the
-   **Memory** tab (what each role retrieved, with `mem:` handles).
-
-Result: a working app scaffold under `../goodteam-demo/workspace/target`
-(frontend + backend + tests + README), built to match your idea, with every gate
-and worker result recorded. Swap the pinned idea by editing the `start` line in
-`scripts/demo-up.sh`, or run your own project via `init` + `start` (Quick Start).
-
-The demo workspace lives outside this repo so worker context stays clean; it
-never touches your real project configs.
-
-## GoodTeam Self-Hosting (Release/Dev)
-
-For GoodTeam-on-GoodTeam development, run orchestration from a pinned release instance outside the repo, and target a dev worktree:
-
-```bash
-scripts/release-up.sh --ref v1.0.0
-```
-
-Then dispatch from the release instance toward a dev worktree (`--project-root /abs/path/to/dev-worktree`). To advance the pinned release ref, use the graduation gate:
-
-```bash
-scripts/graduate-release.sh --ref <tag-or-commit> --yes
-```
-
-## Project Targets
-
-Create a local project config for your own repos from the dashboard, or add one directly under `projects/`:
-
-```yaml
-name: My Product
-key: MYPROD
-model_profile: balanced
-delivery_mode: init_project
-repos:
-  docs: /absolute/path/to/my-product-docs
-  backend: /absolute/path/to/my-product-api
-  frontend: /absolute/path/to/my-product-web
-task_backend:
-  mode: local
-  sync:
-worker_backend:
-  mode: codex
-deployment_backend:
-  mode: ssh_compose
-  staging_ssh_target: my-product-staging
-  staging_remote_dir: /srv/my-product
-  staging_git_ref: main
-  staging_public_url: https://staging.example.com
-  staging_deploy_command: git fetch --all && git checkout main && git pull --ff-only origin main && docker compose -f deploy/docker-compose.staging.yml up -d --build --remove-orphans
-  staging_healthcheck_command: docker compose -f deploy/docker-compose.staging.yml ps && curl -fsS http://127.0.0.1:8080/health
-  staging_smoke_command: curl -fsS https://staging.example.com/health
-delivery_contract:
-  required: true
-  minimum_evidence: functional
-  fatal_output_patterns:
-    migration_missing: migrate: executable file not found
-    missing_relation: relation .* does not exist
-  staging_acceptance:
-    migrations:
-      type: ssh_command
-      command: docker compose -f deploy/docker-compose.staging.yml exec -T backend ./migrate status
-    critical-user-journey:
-      type: local_command
-      command: ./scripts/e2e-critical.sh https://staging.example.com
-```
-
-For a new single-root project, the config can use one repo entry:
-
-```yaml
-delivery_mode: custom
-delivery_standards:
-  standard_0001: Deliver a locally runnable first slice with documented setup and verification commands.
-  standard_0002: Preserve existing contracts and include focused regression tests.
-repos:
-  root: /absolute/path/to/my-product
-```
-
-Then check the project target:
-
-```bash
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli doctor \
-  --project-config projects/my-project.local.yaml
-```
-
-`doctor` (and the `init` command, which runs it automatically) reports a `worker_backend_preflight` section: whether the configured worker CLI is on `PATH`, whether credentials are present (presence only — never the secret value), and an actionable `hint`. For example it flags when a stale `CODEX_API_KEY` could shadow `~/.codex/auth.json`, or when `claude login` is needed for the `anthropic` worker — so credential gaps surface before a worker fails.
-
-Local project configs are intended to be machine-specific and may contain repo paths or tracker metadata. Keep secrets out of them; use environment variables or local secret files for credentials.
-
-Target projects can also declare an optional staging deployment backend. V1 supports `Docker Compose + SSH` only and is designed for hosts that are already provisioned:
-
-```yaml
-deployment_backend:
-  mode: ssh_compose
-  staging_ssh_target: my-product-staging
-  staging_remote_dir: /srv/my-product
-  staging_git_ref: main
-  staging_public_url: https://staging.example.com
-  staging_deploy_command: git fetch --all && git checkout main && git pull --ff-only origin main && docker compose -f deploy/docker-compose.staging.yml up -d --build --remove-orphans
-  staging_healthcheck_command: docker compose -f deploy/docker-compose.staging.yml ps && curl -fsS http://127.0.0.1:8080/health
-  staging_smoke_command: curl -fsS https://staging.example.com/health
-```
-
-GoodTeam is positioned as a full-cycle internet product team, not just a deploy runner. For staging-backed projects, add a delivery contract so GoodTeam can distinguish "infrastructure is alive" from "the product is functionally usable":
-
-```yaml
-delivery_contract:
-  required: true
-  minimum_evidence: functional
-  fatal_output_patterns:
-    migration_missing: migrate: executable file not found
-    missing_relation: relation .* does not exist
-  staging_acceptance:
-    critical-user-journey:
-      type: local_command
-      command: ./scripts/e2e-critical.sh https://staging.example.com
-```
-
-`staging_acceptance` checks are project-declared representative user journeys or operational readiness checks. GoodTeam does not guess product behavior; it executes the contract, records evidence, and blocks staging when required functional evidence is missing.
-
-When `deployment_backend.mode: ssh_compose` is configured for an adopted existing project, GoodTeam inserts a staging gate between QA/code review and final release approval:
-
-- QA/code review complete
-- deploy to staging over SSH
-- validate staging health/smoke commands
-- run delivery-contract acceptance checks
-- block if fatal output patterns appear, even when a command exits 0
-- human staging approval
-- final release approval
-
-Doctor reports whether the staging backend is fully configured, whether `ssh` is available locally, and whether the delivery contract has enough evidence for the requested gate. GoodTeam only records command metadata and result evidence; it does not copy secrets, manage SSH keys, initialize remote hosts, or upload files with rsync in this version.
-
-Project management actions are scoped to GoodTeam metadata:
-
-- `Terminate run` archives the selected project's active run and clears `state/projects/<project-key>/current.json`.
-- `Delete project` removes the selected `projects/<project-key>.local.yaml` config and `state/projects/<project-key>/` runtime state from GoodTeam.
-- `Delete project` does not delete any repository directories listed under `repos:`.
-
-Projects can carry their own default model strategy:
-
-```yaml
-model_profile: balanced
-role_model_overrides:
-  architect: codex:gpt-5.5
-  frontend: codex:gpt-5.3-codex
-```
-
-At run start, GoodTeam resolves models in this order: the global `models.yaml` profile, the project `model_profile`, the project `role_model_overrides`, then any one-run `--role-model` or dashboard override.
-
-Projects can also declare their delivery shape:
-
-```yaml
-delivery_mode: init_project
-```
-
-Supported delivery modes:
-
-- `mvp`: validation-ready slice with the smallest useful product surface, local run commands, deterministic tests, and a clear evolution path.
-- `init_project`: production starter for a real internet product, including frontend/backend separation, API contracts, data layer, routing, DevOps, CI/test commands, deployment notes, and health checks.
-- `multi_service`: multi-service product shape with service boundaries, API or event contracts, gateway/router responsibilities, database ownership, async/queue needs, observability, orchestration, and rollback strategy.
-- `static_site`: static site or landing page with build output, local preview, content/route structure, responsive accessibility basics, and deployment notes.
-- `cli_tool`: command-line tool with argument and flag contracts, help text, exit codes, deterministic tests, and installation/run docs.
-- `library`: library or SDK with public API docs, semantic versioning expectations, host-independent examples, and unit tests.
-- `data_pipeline`: idempotent ETL/data pipeline with schemas or contracts, sample data, reproducible backfill, retry behavior, and tests.
-- `mobile_app`: mobile app with target platform, build/run commands, navigation/state expectations, offline/error states, and basic flow verification.
-- `feature_increment`: incremental feature for an existing system with contract compatibility, regression tests, and rollout/rollback notes.
-- `custom`: project-defined delivery standards read from `delivery_standards`.
-
-If omitted, GoodTeam defaults to `init_project`. The selected delivery mode is stored in `state/projects/<project-key>/current.json` and flows into PRD, RFC, implementation handoff, worker expected artifacts, and QA expectations.
-
-For multi-repo products, GoodTeam stores project runtime data in the shared parent project directory when the configured repos live together:
-
-```text
-<project-root>/.goodteam/memory/project-memory.md
-<project-root>/.goodteam/memory/roles/<role-key>/long-term.md
-<project-root>/.goodteam/memory/roles/<role-key>/mid-term.md
-<project-root>/.goodteam/memory/roles/<role-key>/short-term.md
-<project-root>/.goodteam/memory/roles/<role-key>/index.json
-<project-root>/.goodteam/memory/roles/<role-key>/events.jsonl
-<project-root>/.goodteam/tasks/tasks.json
-```
-
-Each role owns its own long-, mid-, and short-term memory files. Long-term role memory is for durable role-specific project facts and contracts, mid-term role memory is for active decisions and conventions, and short-term role memory is for interrupted work, pickup notes, next actions, blockers, and handoffs.
-
-Role memory is designed for low-token pickup:
-
-- `events.jsonl` is the append-only source for memory updates and rebuilds.
-- `index.json` stores hashes, character counts, and compact summaries for each horizon.
-- Worker jobs should read `short-term.md` plus the `index.json` summaries first, not the full long/mid files.
-- Full `long-term.md` or `mid-term.md` should be expanded only when the current task needs that specific context.
-- Rebuilds can regenerate role memory files from `events.jsonl` when the markdown files become stale or too noisy.
-
-The local task ledger is built in. Plane or Linear adapters can synchronize from this ledger later, but they are not required for planning or execution.
-
-Task backends are configured per project:
-
-```yaml
-task_backend:
-  mode: local
-  sync:
-```
-
-To sync local tasks to an external kanban later, keep `mode: local` and add adapters:
-
-```yaml
-task_backend:
-  mode: local
-  sync: plane
-  plane:
-    api_host_url: https://api.plane.so/
-    workspace_slug: leader_kanban
-    project_id: "<plane-project-id>"
-    api_key_env: PLANE_API_KEY
-    mcp_server: plane
-```
-
-Do not put the Plane API key itself in project config. `api_key_env` names the local environment variable or MCP-side secret source.
-
-Worker execution is also configured separately from the workflow protocol. Set a global default and, optionally, override the backend per role:
-
-```yaml
-worker_backend:
-  mode: codex            # global default for any role not listed below
-workers:
-  implementation: anthropic   # this role runs on the claude CLI
-  qa: codex                   # this role runs on the codex CLI
-```
-
-Supported worker modes include one-shot Codex, Claude, Gemini, Agy, and OpenCode adapters plus `fake`, `noop`, and `human`. Pi is a separate optional persistent-session backend (`pi`, alias `pi-rpc`) and is deliberately not registered in the one-shot `CLI_BACKENDS` loop. Each role resolves its backend from `workers.<role>`, falling back to `worker_backend.mode`, then `codex`; `doctor` reports readiness for every referenced backend. The worker job protocol remains local-first under `<project-root>/.goodteam/workers/jobs/<job_id>/`; external runtimes are adapters, not the source of truth. Pi installation, configuration, resume, local evidence, and `worker-session` control commands are documented in [`docs/worker-backends.md`](docs/worker-backends.md#pi-persistent-sessions).
-
-Early CONTENTOPS E2E worker execution uses Codex CLI for every role:
-
-- Command: `codex exec --model gpt-5.3-codex --skip-git-repo-check`
-- Adapter: `worker_backend.mode: codex`
-- Evidence: each job stores command, exit code, stdout, stderr, preflight diagnostics, and final result under `.goodteam/workers/jobs/<job_id>/`.
-
-Codex CLI uses the locally configured provider and credentials. Provider credentials must come from environment variables or a secret manager when future adapters need them. Do not commit API keys or paste secrets into GoodTeam project configs.
-Codex worker preflight records only non-secret facts, such as whether `OPENAI_API_KEY`, `CODEX_API_KEY`, or `CODEX_ACCESS_TOKEN` is present; it never stores credential values.
-
-Staging deploy commands follow the same local-only rule: SSH authentication must come from the user's existing SSH config, agent, and known_hosts; GoodTeam never stores or writes keys.
-
-## Boundary
-
-This repo must not read Codex local MCP credentials at runtime. Plane credentials for future adapters should come from environment variables or a secret manager.
-
-## Telegram Approval & Remote Supervision Client
-
-Telegram is a first-class approval client for GoodTeam's human gate protocol, not a
-shallow notification adapter. It drives decisions through the same ledger, approval
-state, evidence model, and stale-button safety rules as the dashboard — the dashboard
-remains the deep review workbench, Telegram is the complete mobile client. The channel
-is local-first and uses long polling, not a public webhook:
-
-```bash
-export GOODTEAM_TG_BOT_TOKEN="<telegram-bot-token>"
-export GOODTEAM_TG_CHAT_ID="<chat-id>"
-export GOODTEAM_TG_ALLOWED_USERS="<telegram-user-id>,<telegram-user-id>"
-
-PYTHONPATH=src .venv/bin/python -m goodteam_os.cli tg-poll \
-  --workspace /tmp/goodteam-os-run \
-  --project-key CONTENTOPS
-```
-
-From Telegram, an allowed operator can approve / request changes / reject a gate
-(including step-by-step item review with masked request-change notes), and supervise a
-run remotely with read-only commands:
-
-- `/gt status` — active project, current run, current node, pending gate, active
-  worker count, blocker count.
-- `/gt approvals` — pending approval cards with quick review buttons that route through
-  the same audited decision path.
-- `/gt workers` — recent/active worker jobs, status, elapsed time, masked last-error
-  excerpt.
-- `/gt evidence` — latest CI / smoke / QA / release-readiness status and blocker count.
-
-Every approval decision records an audit row — `decision_origin` (`web`/`telegram`),
-`actor_ref`, `review_mode`, an evidence snapshot, and item-level review state — so a
-later reviewer can reconstruct who approved a gate, from which client, after which
-review path. All outbound Telegram text is masked (paths, IPs, SSH targets, tokens,
-deploy dirs); the supervision commands are read-only and cannot run arbitrary shell or
-bypass server-action safety. Only environment variable names and configured/allowed
-metadata are recorded by GoodTeam. Do not put bot tokens in project configs or
-committed files.
+Historical implementation records remain useful for traceability, but a completed plan or old progress snapshot is not proof of the current contract.
