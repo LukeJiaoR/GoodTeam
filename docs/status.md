@@ -65,11 +65,11 @@ When that model lands, update the stable references and architecture in the same
 
 ## Documentation source of truth
 
-Use documentation in this order:
+Use documentation in this order when sources disagree:
 
-1. Stable manuals linked from [`README.md`](README.md).
-2. This current-status file for short-lived product orientation.
-3. Code and tests for executable behavior.
-4. Historical plans, audits, progress logs, and generated OpenWiki pages only for design history and evidence.
+1. **Code and tests** for executable behavior.
+2. **Stable manuals** linked from [`README.md`](README.md) for current product and operator contracts.
+3. This current-status file for short-lived product orientation.
+4. Historical plans, audits, progress logs, research, dogfood evidence, and generated OpenWiki pages only for design history and evidence.
 
 `openwiki/` is a generated/read-only projection. `docs/` is the canonical human-maintained documentation source.
