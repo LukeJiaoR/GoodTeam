@@ -15,12 +15,6 @@ export function useAppearancePreferences() {
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches || false;
   });
 
-  const [theme, setTheme] = useState(() => {
-    return typeof window.localStorage?.getItem === 'function'
-      ? window.localStorage.getItem('gt-theme') || 'vivid'
-      : 'vivid';
-  });
-
   const [languagePreference, setLanguagePreferenceState] = useState(() => {
     const saved = typeof window.localStorage?.getItem === 'function'
       ? window.localStorage.getItem(LANGUAGE_STORAGE_KEY)
@@ -51,13 +45,6 @@ export function useAppearancePreferences() {
   }, [darkMode]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    if (typeof window.localStorage?.setItem === 'function') {
-      window.localStorage.setItem('gt-theme', theme);
-    }
-  }, [theme]);
-
-  useEffect(() => {
     if (typeof window.localStorage?.setItem === 'function') {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, languagePreference);
     }
@@ -66,8 +53,6 @@ export function useAppearancePreferences() {
   return {
     darkMode,
     setDarkMode,
-    theme,
-    setTheme,
     language,
     languagePreference,
     setLanguagePreference,

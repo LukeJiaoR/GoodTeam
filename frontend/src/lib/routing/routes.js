@@ -2,9 +2,6 @@ const segment = (value) => encodeURIComponent(String(value || '').trim());
 
 export const routes = Object.freeze({
   projects: () => '/projects',
-  inbox: () => '/inbox',
-  activity: () => '/activity',
-  settings: () => '/settings',
   projectTeam: (projectKey) => `/projects/${segment(projectKey)}/team`,
   projectWork: (projectKey) => `/projects/${segment(projectKey)}/work`,
   projectRun: (projectKey, runId) => (
@@ -15,9 +12,6 @@ export const routes = Object.freeze({
     `/projects/${segment(projectKey)}/review/${segment(reviewId)}`
   ),
   projectKnowledge: (projectKey) => `/projects/${segment(projectKey)}/knowledge`,
-  projectSettings: (projectKey, section = 'general') => (
-    `/projects/${segment(projectKey)}/settings/${segment(section)}`
-  ),
 });
 
 export function legacyDestination(search = '') {

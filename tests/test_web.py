@@ -3774,6 +3774,14 @@ def test_product_frontend_replaces_legacy_dashboard_contracts():
 
     assert not (frontend / "App.jsx").exists()
     assert not (frontend / "components" / "ProjectTabRouter.jsx").exists()
+    for retired_page in [
+        frontend / "features" / "inbox" / "InboxPage.jsx",
+        frontend / "features" / "activity" / "ActivityPage.jsx",
+        frontend / "features" / "settings" / "SettingsPage.jsx",
+        frontend / "features" / "settings" / "ProjectSettingsPage.jsx",
+        frontend / "components" / "ui" / "Breadcrumb.jsx",
+    ]:
+        assert not retired_page.exists()
 
     router = (frontend / "app" / "AppRouter.jsx").read_text(encoding="utf-8")
     for route in [
@@ -3814,7 +3822,7 @@ def test_product_frontend_replaces_legacy_dashboard_contracts():
     assert "/api/project-config" in settings_api
 
 
-def test_frontend_i18n_locale_files_exist_and_define_core_chrome_keys():
+def test_frontend_i18n_locale_files_exist_and_define_current_product_chrome_keys():
     root = Path(__file__).resolve().parents[1]
     en = root / "frontend" / "src" / "i18n" / "locales" / "en.js"
     zh = root / "frontend" / "src" / "i18n" / "locales" / "zh-CN.js"
@@ -3825,20 +3833,45 @@ def test_frontend_i18n_locale_files_exist_and_define_core_chrome_keys():
     en_text = en.read_text(encoding="utf-8")
     zh_text = zh.read_text(encoding="utf-8")
     for key in [
-        "nav.groups.work",
-        "nav.tabs.overview",
-        "nav.tabs.approvals",
-        "chrome.dashboard",
-        "chrome.exit",
-        "chrome.runId",
-        "language.auto",
-        "language.english",
-        "language.chinese",
-        "theme.toggle",
-        "approvalBanner.review",
+        "product.brand",
+        "product.navigation.projects",
+        "product.navigation.projectLabel",
+        "product.workNavigation.team",
+        "product.workNavigation.workbench",
+        "product.workNavigation.reviews",
+        "product.workNavigation.knowledge",
+        "product.appearance.label",
+        "product.appearance.light",
+        "product.appearance.dark",
+        "product.language.label",
+        "product.language.auto",
+        "product.language.en",
+        "product.language.zhCN",
     ]:
         assert key in en_text
         assert key in zh_text
+
+    # Retired dashboard chrome, inbox/activity/settings surfaces, and the hidden
+    # Vivid/Minimal theme system stay deleted; these keys must not return.
+    for key in [
+        "nav.groups.work",
+        "nav.tabs.overview",
+        "chrome.runId",
+        "language.english",
+        "theme.toggle",
+        "approvalBanner.review",
+        "product.navigation.inbox",
+        "product.navigation.activity",
+        "product.navigation.settings",
+        "product.navigation.projectSettings",
+        "product.navigation.breadcrumb",
+        "inbox.title",
+        "activity.title",
+        "settings.title",
+        "toast.settingsSaved",
+    ]:
+        assert key not in en_text
+        assert key not in zh_text
 
 
 
