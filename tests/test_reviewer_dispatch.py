@@ -721,7 +721,16 @@ def test_parallel_phase_opt_in_creates_one_job_per_profile_with_identity(tmp_pat
     assert all(job["idempotency_key"] for job in jobs)
 
 
-def test_parallel_reviewer_jobs_apply_worker_type_settings(tmp_path: Path):
+def test_parallel_reviewer_jobs_apply_legacy_worker_type_settings_without_team_state(tmp_path: Path):
+    """Legacy compatibility: unmigrated targets still honor role settings.
+
+    This target carries no Team Control Plane state, so reviewer dispatch
+    falls back to the legacy `worker_type_settings` branch. The Team-attached
+    contract (job binds the resolved Worker's identity and runtime) is
+    covered by
+    `test_reviewer_dispatch_binds_resolved_worker_identity_and_runtime` in
+    test_team_control_plane.py.
+    """
     store = WorkerJobStore(tmp_path)
     artifact = _artifact(tmp_path)
     target = _target("correctness-security", dispatch=_parallel_dispatch())

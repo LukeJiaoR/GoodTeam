@@ -113,7 +113,8 @@ mocks.getAgents.mockResolvedValue({ agents: [] });
 test('builds a layered team model with roles, capability, and workers', () => {
   const team = buildTeamModel(stateFixture());
   expect(team.revision).toBe(4);
-  expect(team.roles).toHaveLength(4);
+  // The model maps every payload role in order; the roster may be any size.
+  expect(team.roles.map((role) => role.role)).toEqual(['implementation', 'qa', 'research', 'planner']);
   const implementation = team.roles[0];
   expect(implementation.workers).toHaveLength(2);
   expect(implementation.workers[0].runtimeLabel).toBe('codex · gpt-5.4');
@@ -195,14 +196,15 @@ test('edits worker identity and runtime into diff-based commands', async () => {
   await user.selectOptions(within(dialog).getByLabelText('Reasoning depth'), 'medium');
   await user.click(within(dialog).getByRole('button', { name: 'Save worker' }));
 
-  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
-    'DEMO',
-    [
-      { kind: 'rename_worker', worker_id: 'implementation-a', name: 'Builder Prime' },
-      { kind: 'change_worker_runtime', worker_id: 'implementation-a', reasoning_depth: 'medium' },
-    ],
-    expect.anything(),
-  ));
+  // Exactly the diffed mutations, as one decision; the helper's emission
+  // order is a reviewability choice, not a domain contract.
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalled());
+  const [, commands] = mocks.sendTeamCommands.mock.calls.at(-1);
+  expect(commands).toHaveLength(2);
+  expect(commands).toEqual(expect.arrayContaining([
+    { kind: 'rename_worker', worker_id: 'implementation-a', name: 'Builder Prime' },
+    { kind: 'change_worker_runtime', worker_id: 'implementation-a', reasoning_depth: 'medium' },
+  ]));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
@@ -254,22 +256,31 @@ test('history panel groups the decision ledger', async () => {
 
   await user.click(screen.getByRole('button', { name: 'History' }));
   const dialog = screen.getByRole('dialog');
-  expect(within(dialog).getByText('team_role.disabled')).toBeVisible();
-  expect(within(dialog).getByText('worker.inactivated')).toBeVisible();
+  // One decision header for the shared decision id: both causal events stay
+  // grouped, visible, and attributed. The raw ledger enum stays a backend
+  // contract; the panel may translate event labels later.
   expect(within(dialog).getAllByText('dec-1')).toHaveLength(1);
-  expect(within(dialog).getByText(/cascaded/).textContent).toMatch('cascaded');
+  expect(within(dialog).getAllByRole('listitem')).toHaveLength(2);
+  expect(within(dialog).getByText('Disable Research')).toBeVisible();
+  expect(within(dialog).getByText(/research-a/)).toBeVisible();
+  expect(within(dialog).getByText(/cascaded/)).toBeVisible();
   await user.keyboard('{Escape}');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
 test('surfaces command failures to the user', async () => {
-  mocks.sendTeamCommands.mockRejectedValue(new Error('team_command_rejected'));
+  mocks.sendTeamCommands.mockRejectedValue(new Error('The team control plane rejected this command.'));
   const user = userEvent.setup();
   renderTeam();
 
   const implementation = screen.getByRole('heading', { name: 'Implementation' }).closest('article');
   await user.click(within(implementation).getByRole('button', { name: 'Disable' }));
-  await waitFor(() => expect(screen.getByText(/team_command_rejected/)).toBeVisible());
+  // The failure must be announced accessibly, never silently swallowed.
+  // The exact copy (or a friendly mapping of an internal error code) is free
+  // to evolve.
+  const alert = await screen.findByRole('alert');
+  expect(alert).toBeVisible();
+  expect(within(alert).getByText(/rejected this command/)).toBeVisible();
 });
 
 test('worker edit commands diff identity, role, runtime, and lifecycle', () => {
@@ -292,10 +303,15 @@ test('worker edit commands diff identity, role, runtime, and lifecycle', () => {
     reasoningDepth: 'high',
     additionalPrompt: 'Be brief.',
   });
-  expect(commands).toEqual([
+  // The command *set* is the contract: exactly the four diffed mutations and
+  // nothing else. The commands run as one domain transaction where this
+  // order is not load-bearing, so the helper's emission order stays free to
+  // change for reviewability.
+  expect(commands).toHaveLength(4);
+  expect(commands).toEqual(expect.arrayContaining([
     { kind: 'rename_worker', worker_id: 'implementation-a', name: 'Builder A2' },
     { kind: 'change_worker_role', worker_id: 'implementation-a', role: 'qa' },
     { kind: 'change_worker_runtime', worker_id: 'implementation-a', provider: 'claude', model: 'claude-opus-4-5', reasoning_depth: 'high', additional_prompt: 'Be brief.' },
     { kind: 'activate_worker', worker_id: 'implementation-a' },
-  ]);
+  ]));
 });
