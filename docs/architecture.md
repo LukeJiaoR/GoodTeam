@@ -126,7 +126,7 @@ flowchart LR
 | `src/goodteam_os/task_assistant_session.py` | Durable conversation, proposed-task, attention, and workflow-binding persistence. |
 | `src/goodteam_os/manager_execution.py` | Executes configured Task Assistant model turns with runtime-policy provenance while preserving human authority. |
 | `src/goodteam_os/project_readiness.py` | Backend-owned project preparation and safety state used behind the chat-first experience. |
-| `src/goodteam_os/team_workspace.py` | Projects conversation and workflow/runtime events into the Work experience. |
+| `src/goodteam_os/team_workspace.py` | Projects the conversation and workflow/runtime events into the Work experience. |
 | `src/goodteam_os/graph.py` | Workflow progression, gates, worker scheduling, and run advancement. |
 | `src/goodteam_os/state.py` | Durable workflow state, checkpoints, approval decisions, and project current state. |
 | `src/goodteam_os/workers.py` | Worker backend registry, job store, dispatch packets, runtime state, logs/results, and backend readiness. |
@@ -135,11 +135,13 @@ flowchart LR
 | `src/goodteam_os/projects.py` | Project config discovery and root resolution. |
 | `src/goodteam_os/staging.py` | Delivery contract and staging acceptance evidence. |
 | `frontend/` | React product UI for Projects, Work, Team, Review, and Knowledge. |
-| `.goodteam/` under target projects | Project-owned runtime artifacts such as tasks, memory, provenance, and worker/session data where applicable. |
+| `.goodteam/` under target projects | Project-owned tasks, memory, provenance, worker-job data, and Pi session data where configured. Task Assistant conversation persistence is not stored here. |
 
 `web.py` is still a broad integration module. New business rules should prefer focused services with tests instead of further concentrating domain logic in HTTP handlers.
 
 ## Project conversation and workflow start
+
+The durable Task Assistant session is workspace-scoped at `state/projects/<PROJECT_KEY>/task-assistant-session.json`; it is deliberately not written into the imported repository.
 
 ```mermaid
 sequenceDiagram
