@@ -1029,3 +1029,25 @@ def test_debate_dispatch_binds_team_worker_and_gates_disabled_roles(tmp_path, mo
     assert lines == []
     after = len([item for item in store.list_jobs() if item["role"] == "code_review"])
     assert after == before
+
+
+def test_debate_dispatch_fails_closed_on_corrupt_team_state(tmp_path, monkeypatch):
+    """Corrupt team state is unreadable truth, not absent truth.
+
+    Regression for the follow-up review finding: a state file that exists but
+    cannot be parsed must fail closed (no debate lines, no job), never fall
+    back to the legacy explicit-adapter dispatch.
+    """
+    from goodteam_os.debate import default_debate_dispatch
+    from goodteam_os.workers import WorkerJobStore
+
+    config = make_project(tmp_path)
+    migrated_target(config)
+    workspace = config.parent.parent
+    TeamControlPlaneStore(workspace, "demo").state_path.write_text("{corrupt", encoding="utf-8")
+
+    dispatch = default_debate_dispatch(workspace, "demo", "run-corrupt")
+    lines = dispatch(role="code_review", kind="challenge", gate="code_review")
+
+    assert lines == []
+    assert WorkerJobStore(workspace).list_jobs() == []

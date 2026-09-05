@@ -143,7 +143,9 @@ def _team_worker_runtime(
 
     Team states gate fail closed: a disabled or unstaffed/unready role raises
     :class:`DebateGated`, and the dispatch produces no lines and no job.
-    Legacy projects without team state keep the explicit adapter.
+    A state file that exists but cannot be read is corrupted truth, not
+    absent truth, so it also fails closed instead of falling back to legacy.
+    Only projects with no team state at all keep the explicit adapter.
     """
     from goodteam_os.team_control_plane import (
         TeamControlPlaneError,
@@ -153,8 +155,9 @@ def _team_worker_runtime(
 
     try:
         state = TeamControlPlaneStore(workspace, project_key).read()
-    except TeamControlPlaneError:
-        state = None
+    except TeamControlPlaneError as exc:
+        # Corrupt team state must fail closed: no debate lines, no job.
+        raise DebateGated(f"Team control-plane state is unreadable: {exc}") from exc
     if state is None:
         return {
             "adapter": fallback_adapter,
@@ -168,15 +171,8 @@ def _team_worker_runtime(
         resolution = resolve_worker_from_state(state, role)
     except TeamControlPlaneError as exc:
         raise DebateGated(str(exc)) from exc
-    if resolution is None:
-        return {
-            "adapter": fallback_adapter,
-            "model": "",
-            "reasoning_depth": "",
-            "additional_prompt": "",
-            "worker_id": "",
-            "worker_name": "",
-        }
+    if resolution is None:  # pragma: no cover - state implies a resolution
+        raise DebateGated(f"Team state has no resolution for role: {role}")
     return {
         "adapter": str(resolution["adapter"]),
         "model": str(resolution["model"] or ""),
