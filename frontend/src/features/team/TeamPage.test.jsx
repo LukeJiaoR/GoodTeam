@@ -1,14 +1,15 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
 import { translate } from '../../i18n';
 import TeamPage from './TeamPage';
-import { buildWorkerTypes } from './teamModel';
+import { buildTeamModel, capabilityCounts, workerCreateCommand, workerEditCommands } from './teamModel';
 
 const mocks = vi.hoisted(() => ({
   getAgents: vi.fn(),
-  saveWorkerDefaults: vi.fn(),
+  sendTeamCommands: vi.fn(),
+  getTeamEvents: vi.fn(),
   projectState: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -17,41 +18,70 @@ vi.mock('../runs/useProjectState', () => ({
   default: () => ({ data: mocks.projectState(), error: null, refresh: mocks.refresh, status: 'ready' }),
 }));
 
-function stateFixture() {
+function teamFixture() {
   return {
-    active_run: { run_id: 'run-1' },
-    start_context: {
-      project_name: 'Demo project',
-      worker_backend: { mode: 'codex' },
-      worker_backend_options: ['codex', 'claude'],
-      worker_roles: ['architect', 'implementation', 'qa'],
-      role_model_overrides: { architect: 'claude:claude-opus-4-5' },
-      worker_type_settings: {
-        implementation: {
-          reasoning_depth: 'high',
-          additional_prompt: 'Keep APIs stable.',
-          desired_instances: 2,
-        },
+    schema_version: 'team_capability_view.v1',
+    revision: 4,
+    roles: [
+      {
+        role: 'implementation',
+        label: 'Implementation',
+        state: 'enabled',
+        capability: 'ready',
+        workers: [
+          { id: 'implementation-a', name: 'Builder A', lifecycle: 'active', dispatchable: true, provider: 'codex', model: 'gpt-5.4', reasoning_depth: 'high', additional_prompt: 'Keep APIs stable.' },
+          { id: 'implementation-b', name: 'Builder B', lifecycle: 'inactive', dispatchable: false, provider: 'claude', model: '', reasoning_depth: 'default', additional_prompt: '' },
+        ],
       },
-      project_report: {
-        role_worker_backends: { architect: 'claude' },
-        worker_backends_preflight: {
-          codex: { ready: true },
-          claude: { ready: false, hint: 'Sign in to Claude.' },
-        },
+      {
+        role: 'qa',
+        label: 'QA',
+        state: 'enabled',
+        capability: 'degraded',
+        workers: [
+          { id: 'qa-a', name: 'QA A', lifecycle: 'inactive', dispatchable: false, provider: 'fake', model: '', reasoning_depth: 'default', additional_prompt: '' },
+        ],
       },
-    },
-    team_workspace: {
-      execution_actors: [
-        { id: 'worker-1', role: 'implementation', state: 'working', responsibility: 'Build the API', task_id: 'DEMO-1' },
-        { id: 'worker-2', role: 'implementation', state: 'waiting', responsibility: 'Update the UI', task_id: 'DEMO-2' },
-        { id: 'worker-3', role: 'architect', state: 'blocked', responsibility: 'Review boundaries', task_id: 'DEMO-3' },
-      ],
+      {
+        role: 'research',
+        label: 'Research',
+        state: 'enabled',
+        capability: 'unstaffed',
+        workers: [],
+      },
+      {
+        role: 'planner',
+        label: 'Planner',
+        state: 'disabled',
+        capability: 'disabled',
+        workers: [],
+      },
+    ],
+    manager: {
+      role: 'orchestrator',
+      label: 'Task Assistant',
+      runtime: { provider: 'codex', model: 'gpt-5.4', reasoning_depth: 'high', additional_prompt: '' },
     },
   };
 }
 
-function renderTeam(api = { getSettingsAgents: mocks.getAgents, getProjectSettings: vi.fn(), saveWorkerDefaults: mocks.saveWorkerDefaults }) {
+function stateFixture() {
+  return {
+    active_run: { run_id: 'run-1' },
+    team: teamFixture(),
+    start_context: {
+      project_name: 'Demo project',
+      worker_backend_options: ['codex', 'claude', 'fake'],
+    },
+  };
+}
+
+function renderTeam(api = {
+  getSettingsAgents: mocks.getAgents,
+  getProjectSettings: mocks.projectState,
+  sendTeamCommands: mocks.sendTeamCommands,
+  getTeamEvents: mocks.getTeamEvents,
+}) {
   return render(
     <MemoryRouter initialEntries={['/projects/DEMO/team']}>
       <Routes>
@@ -72,148 +102,200 @@ afterEach(() => {
       { backend: 'claude', available: true, ready: false, models: ['claude-opus-4-5'], model_default: 'claude-opus-4-5' },
     ],
   });
-  mocks.saveWorkerDefaults.mockResolvedValue({ ok: true });
+  mocks.sendTeamCommands.mockResolvedValue({ ok: true, decision_id: 'dec-1', team: teamFixture() });
+  mocks.getTeamEvents.mockResolvedValue({ events: [] });
   mocks.refresh.mockResolvedValue(stateFixture());
 });
 
 mocks.projectState.mockReturnValue(stateFixture());
 mocks.getAgents.mockResolvedValue({ agents: [] });
 
-test('groups multiple runtime instances under their Worker Type', () => {
-  const rows = buildWorkerTypes(stateFixture(), []);
-  const implementation = rows.find((row) => row.role === 'implementation');
-  const architect = rows.find((row) => row.role === 'architect');
-
-  expect(implementation.instances).toHaveLength(2);
-  expect(implementation.status).toBe('active');
-  expect(implementation.backend).toBe('codex');
-  expect(implementation.reasoningDepth).toBe('high');
-  expect(implementation.additionalPrompt).toBe('Keep APIs stable.');
-  expect(implementation.desiredInstances).toBe(2);
-  expect(architect.status).toBe('unavailable');
-  expect(architect.model).toBe('claude-opus-4-5');
+test('builds a layered team model with roles, capability, and workers', () => {
+  const team = buildTeamModel(stateFixture());
+  expect(team.revision).toBe(4);
+  expect(team.roles).toHaveLength(4);
+  const implementation = team.roles[0];
+  expect(implementation.workers).toHaveLength(2);
+  expect(implementation.workers[0].runtimeLabel).toBe('codex · gpt-5.4');
+  expect(team.manager.label).toBe('Task Assistant');
+  expect(capabilityCounts(team.roles)).toEqual({ ready: 1, unstaffed: 1, degraded: 1, disabled: 1 });
 });
 
-test('presents orchestrator as the singleton Task Assistant', async () => {
-  const data = stateFixture();
-  data.start_context.worker_roles = ['orchestrator', ...data.start_context.worker_roles];
-  data.start_context.worker_type_settings.orchestrator = {
-    reasoning_depth: 'high',
-    additional_prompt: 'Keep decisions concise.',
-    desired_instances: 6,
-  };
-  mocks.projectState.mockReturnValue(data);
-
-  const manager = buildWorkerTypes(data, []).find((row) => row.role === 'orchestrator');
-  expect(manager.label).toBe('Task Assistant');
-  expect(manager.desiredInstances).toBe(1);
-
-  const user = userEvent.setup();
-  renderTeam();
-  expect(screen.getByRole('heading', { name: 'Task Assistant' })).toBeVisible();
-  expect(screen.queryByRole('heading', { name: 'Orchestrator' })).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Configure team' }));
-  const managerRow = screen.getByTestId('team-configuration-orchestrator');
-  expect(within(managerRow).getByLabelText('Desired instances')).toBeDisabled();
-  expect(within(managerRow).getByText('Task Assistant is a single logical owner.')).toBeVisible();
-});
-
-test('renders one unified Team surface with Worker Types and real instances', async () => {
+test('renders roles and workers as separate layers with capability states', async () => {
   renderTeam();
 
   expect(screen.getByRole('heading', { name: 'Team' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Configure team' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Implementation' })).toBeVisible();
-  expect(screen.getByText('2 instances')).toBeVisible();
-  expect(screen.getByText('Build the API')).toBeVisible();
-  expect(screen.getByText('Update the UI')).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'QA' })).toBeVisible();
+  expect(screen.getByText('Builder A')).toBeVisible();
+  expect(screen.getByText('Builder B')).toBeVisible();
+  const qa = screen.getByRole('heading', { name: 'QA' }).closest('article');
+  expect(within(qa).getByText('Degraded')).toBeVisible();
+  const research = screen.getByRole('heading', { name: 'Research' }).closest('article');
+  expect(within(research).getByText('Unstaffed')).toBeVisible();
+  const planner = screen.getByRole('heading', { name: 'Planner' }).closest('article');
+  expect(within(planner).getByText('Disabled')).toBeVisible();
+  // The legacy type-level configuration surface stays gone.
+  expect(screen.queryByText('Desired instances')).not.toBeInTheDocument();
 });
 
-test('edits all type-level settings in one modal', async () => {
+test('disabling a role goes through the control-plane command', async () => {
   const user = userEvent.setup();
   renderTeam();
 
-  const trigger = screen.getByRole('button', { name: 'Configure team' });
-  await user.click(trigger);
-  const dialog = screen.getByRole('dialog', { name: 'Configure team' });
-  expect(within(dialog).getAllByLabelText('Runtime / provider')).toHaveLength(4);
-  expect(within(dialog).getAllByLabelText('Model')).toHaveLength(4);
-  expect(within(dialog).getAllByLabelText('Reasoning depth')).toHaveLength(4);
-  expect(within(dialog).getAllByLabelText('Desired instances')).toHaveLength(4);
-  expect(within(dialog).getAllByLabelText('Additional prompt')).toHaveLength(4);
+  const implementation = screen.getByRole('heading', { name: 'Implementation' }).closest('article');
+  await user.click(within(implementation).getByRole('button', { name: 'Disable' }));
 
-  const runtimeControls = within(dialog).getAllByLabelText('Runtime / provider').slice(1);
-  const modelControls = within(dialog).getAllByLabelText('Model').slice(1);
-  const reasoningControls = within(dialog).getAllByLabelText('Reasoning depth').slice(1);
-  const desiredControls = within(dialog).getAllByLabelText('Desired instances').slice(1);
-  const promptControls = within(dialog).getAllByLabelText('Additional prompt').slice(1);
-  await user.selectOptions(runtimeControls[2], 'claude');
-  await user.selectOptions(modelControls[2], 'claude-opus-4-5');
-  await user.selectOptions(reasoningControls[2], 'medium');
-  await user.clear(desiredControls[2]);
-  await user.type(desiredControls[2], '3');
-  await user.type(promptControls[2], 'Run the regression suite.');
-  await user.click(within(dialog).getByRole('button', { name: 'Save configuration' }));
-
-  expect(mocks.saveWorkerDefaults).toHaveBeenCalledWith(
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
     'DEMO',
-    'codex',
-    { architect: 'claude', qa: 'claude' },
-    { architect: 'claude:claude-opus-4-5', qa: 'claude:claude-opus-4-5' },
-    {
-      architect: { reasoning_depth: 'default', additional_prompt: '', desired_instances: 1 },
-      implementation: { reasoning_depth: 'high', additional_prompt: 'Keep APIs stable.', desired_instances: 2 },
-      qa: { reasoning_depth: 'medium', additional_prompt: 'Run the regression suite.', desired_instances: 3 },
-    },
-  );
+    [{ kind: 'disable_role', role: 'implementation' }],
+    expect.objectContaining({ reason: expect.any(String) }),
+  ));
+  expect(mocks.refresh).toHaveBeenCalled();
+});
+
+test('pausing and deleting a worker emits lifecycle commands', async () => {
+  const user = userEvent.setup();
+  renderTeam();
+
+  await user.click(screen.getByRole('button', { name: 'Pause Builder A' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
+    'DEMO',
+    [{ kind: 'inactivate_worker', worker_id: 'implementation-a' }],
+    expect.anything(),
+  ));
+
+  await user.click(screen.getByRole('button', { name: 'Delete Builder B; logical delete, history stays' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
+    'DEMO',
+    [{ kind: 'delete_worker', worker_id: 'implementation-b' }],
+    expect.anything(),
+  ));
+});
+
+test('activating a paused worker emits activate command', async () => {
+  const user = userEvent.setup();
+  renderTeam();
+
+  await user.click(screen.getByRole('button', { name: 'Activate Builder B' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
+    'DEMO',
+    [{ kind: 'activate_worker', worker_id: 'implementation-b' }],
+    expect.anything(),
+  ));
+});
+
+test('edits worker identity and runtime into diff-based commands', async () => {
+  const user = userEvent.setup();
+  renderTeam();
+
+  await user.click(screen.getByRole('button', { name: 'Edit Builder A' }));
+  const dialog = screen.getByRole('dialog');
+  await user.clear(within(dialog).getByLabelText('Name'));
+  await user.type(within(dialog).getByLabelText('Name'), 'Builder Prime');
+  await user.selectOptions(within(dialog).getByLabelText('Reasoning depth'), 'medium');
+  await user.click(within(dialog).getByRole('button', { name: 'Save worker' }));
+
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
+    'DEMO',
+    [
+      { kind: 'rename_worker', worker_id: 'implementation-a', name: 'Builder Prime' },
+      { kind: 'change_worker_runtime', worker_id: 'implementation-a', reasoning_depth: 'medium' },
+    ],
+    expect.anything(),
+  ));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(trigger).toHaveFocus();
 });
 
-test('applies one configuration to multiple selected Worker Types', async () => {
+test('adds a worker with an explicit role and runtime', async () => {
   const user = userEvent.setup();
   renderTeam();
 
-  await user.click(screen.getByRole('button', { name: 'Configure team' }));
-  const dialog = screen.getByRole('dialog', { name: 'Configure team' });
-  await user.click(within(dialog).getByRole('checkbox', { name: 'Select Implementation' }));
-  await user.click(within(dialog).getByRole('checkbox', { name: 'Select QA' }));
-  await user.selectOptions(within(dialog).getByLabelText('Batch runtime / provider'), 'claude');
-  await user.selectOptions(within(dialog).getByLabelText('Batch model'), 'claude-opus-4-5');
-  await user.selectOptions(within(dialog).getByLabelText('Batch reasoning depth'), 'high');
-  await user.clear(within(dialog).getByLabelText('Batch desired instances'));
-  await user.type(within(dialog).getByLabelText('Batch desired instances'), '3');
-  await user.type(within(dialog).getByLabelText('Batch additional prompt'), 'Keep the patch focused.');
-  await user.click(within(dialog).getByRole('button', { name: 'Apply to 2 types' }));
-  await user.click(within(dialog).getByRole('button', { name: 'Save configuration' }));
+  await user.click(screen.getByRole('button', { name: 'Add worker' }));
+  const dialog = screen.getByRole('dialog');
+  await user.selectOptions(within(dialog).getByLabelText('Role'), 'research');
+  await user.selectOptions(within(dialog).getByLabelText('Runtime / provider'), 'codex');
+  await user.selectOptions(within(dialog).getByLabelText('Model'), 'gpt-5.4');
+  await user.click(within(dialog).getByRole('button', { name: 'Add worker' }));
 
-  expect(mocks.saveWorkerDefaults).toHaveBeenCalledWith(
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
     'DEMO',
-    'codex',
-    { architect: 'claude', implementation: 'claude', qa: 'claude' },
-    {
-      architect: 'claude:claude-opus-4-5',
-      implementation: 'claude:claude-opus-4-5',
-      qa: 'claude:claude-opus-4-5',
-    },
-    {
-      architect: { reasoning_depth: 'default', additional_prompt: '', desired_instances: 1 },
-      implementation: { reasoning_depth: 'high', additional_prompt: 'Keep the patch focused.', desired_instances: 3 },
-      qa: { reasoning_depth: 'high', additional_prompt: 'Keep the patch focused.', desired_instances: 3 },
-    },
-  );
+    [workerCreateCommand('research', { name: '', provider: 'codex', model: 'gpt-5.4', reasoningDepth: 'default', additionalPrompt: '' })],
+    expect.anything(),
+  ));
 });
 
-test('closes the configuration modal with Escape and restores focus', async () => {
+test('edits the Task Assistant runtime without making it a role', async () => {
   const user = userEvent.setup();
   renderTeam();
-  const trigger = screen.getByRole('button', { name: 'Configure team' });
 
-  await user.click(trigger);
-  expect(screen.getByRole('dialog')).toBeVisible();
+  const managerSection = screen.getByRole('heading', { name: 'Task Assistant' }).closest('section');
+  await user.click(within(managerSection).getByRole('button', { name: 'Runtime' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).queryByLabelText('Role')).not.toBeInTheDocument();
+  await user.selectOptions(within(dialog).getByLabelText('Runtime / provider'), 'claude');
+  await user.click(within(dialog).getByRole('button', { name: 'Save runtime' }));
+
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
+    'DEMO',
+    [{ kind: 'change_manager_runtime', provider: 'claude', model: '', reasoning_depth: 'high', additional_prompt: '' }],
+    expect.anything(),
+  ));
+});
+
+test('history panel groups the decision ledger', async () => {
+  mocks.getTeamEvents.mockResolvedValue({
+    events: [
+      { id: 'e1', decision_id: 'dec-1', timestamp: '2026-09-05T10:00:00Z', actor: 'user', surface: 'team_ui', event: 'team_role.disabled', target: { kind: 'team_role', id: 'research' }, reason: 'Disable Research', cause: 'user_command' },
+      { id: 'e2', decision_id: 'dec-1', timestamp: '2026-09-05T10:00:00Z', actor: 'system', surface: 'team_ui', event: 'worker.inactivated', target: { kind: 'worker', id: 'research-a' }, reason: '', cause: 'cascade' },
+    ],
+  });
+  const user = userEvent.setup();
+  renderTeam();
+
+  await user.click(screen.getByRole('button', { name: 'History' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText('team_role.disabled')).toBeVisible();
+  expect(within(dialog).getByText('worker.inactivated')).toBeVisible();
+  expect(within(dialog).getAllByText('dec-1')).toHaveLength(1);
+  expect(within(dialog).getByText(/cascaded/).textContent).toMatch('cascaded');
   await user.keyboard('{Escape}');
-
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(trigger).toHaveFocus();
+});
+
+test('surfaces command failures to the user', async () => {
+  mocks.sendTeamCommands.mockRejectedValue(new Error('team_command_rejected'));
+  const user = userEvent.setup();
+  renderTeam();
+
+  const implementation = screen.getByRole('heading', { name: 'Implementation' }).closest('article');
+  await user.click(within(implementation).getByRole('button', { name: 'Disable' }));
+  await waitFor(() => expect(screen.getByText(/team_command_rejected/)).toBeVisible());
+});
+
+test('worker edit commands diff identity, role, runtime, and lifecycle', () => {
+  const worker = {
+    id: 'implementation-a',
+    name: 'Builder A',
+    role: 'implementation',
+    lifecycle: 'inactive',
+    provider: 'codex',
+    model: '',
+    reasoningDepth: 'default',
+    additionalPrompt: '',
+  };
+  const commands = workerEditCommands(worker, {
+    name: 'Builder A2',
+    role: 'qa',
+    lifecycle: 'active',
+    provider: 'claude',
+    model: 'claude-opus-4-5',
+    reasoningDepth: 'high',
+    additionalPrompt: 'Be brief.',
+  });
+  expect(commands).toEqual([
+    { kind: 'rename_worker', worker_id: 'implementation-a', name: 'Builder A2' },
+    { kind: 'change_worker_role', worker_id: 'implementation-a', role: 'qa' },
+    { kind: 'change_worker_runtime', worker_id: 'implementation-a', provider: 'claude', model: 'claude-opus-4-5', reasoning_depth: 'high', additional_prompt: 'Be brief.' },
+    { kind: 'activate_worker', worker_id: 'implementation-a' },
+  ]);
 });

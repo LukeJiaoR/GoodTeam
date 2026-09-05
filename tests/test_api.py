@@ -2433,18 +2433,32 @@ workers:
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert payload["ok"] is True
+    # The settings bridge now reports the full effective role -> backend map
+    # derived from the Team Control Plane state (#402): posted overrides plus
+    # the global mode for every other rostered role, and the Task Assistant's
+    # own runtime (still `fake`, which the payload never touches).
     assert payload["role_worker_backends"] == {
+        "orchestrator": "fake",
         "product_requirement": "anthropic",
+        "research": "codex",
         "architect": "claude",
+        "review": "codex",
         "planner": "gemini",
         "ui": "antigravity",
         "implementation": "agy",
+        "frontend": "codex",
+        "backend": "codex",
         "qa": "codex",
+        "code_review": "codex",
+        "release": "codex",
+        "retro_memory": "codex",
     }
     assert payload["role_model_overrides"] == {
-        "architect": "claude-sonnet-4-6",
-        "implementation": "gemini-2.5-pro",
+        "architect": "claude:claude-sonnet-4-6",
+        "implementation": "agy:gemini-2.5-pro",
     }
+    # The Task Assistant keeps its untouched `fake` runtime, so the preflight
+    # set includes it alongside every synced worker provider.
     assert set(payload["worker_backends_preflight"]) == {
         "codex",
         "anthropic",
@@ -2452,19 +2466,22 @@ workers:
         "gemini",
         "agy",
         "antigravity",
+        "fake",
     }
-    assert "mode: codex" in config.read_text(encoding="utf-8")
-    assert "  product_requirement: anthropic" in config.read_text(encoding="utf-8")
-    assert "  architect: claude" in config.read_text(encoding="utf-8")
-    assert "  planner: gemini" in config.read_text(encoding="utf-8")
-    assert "  ui: antigravity" in config.read_text(encoding="utf-8")
-    assert "  implementation: agy" in config.read_text(encoding="utf-8")
-    assert "  qa: codex" in config.read_text(encoding="utf-8")
     content = config.read_text(encoding="utf-8")
+    # The YAML worker blocks are the derived compatibility view rewritten from
+    # the control-plane state; worker_provider per role and provider:model
+    # overrides are canonicalized.
+    assert "  product_requirement: anthropic" in content
+    assert "  architect: claude" in content
+    assert "  planner: gemini" in content
+    assert "  ui: antigravity" in content
+    assert "  implementation: agy" in content
+    assert "  qa: codex" in content
     role_model_block = content.split("role_model_overrides:\n", 1)[1]
-    assert "  architect: claude-sonnet-4-6" in role_model_block
-    assert "  implementation: gemini-2.5-pro" in role_model_block
-    assert "  qa:" not in role_model_block
+    assert "  architect: claude:claude-sonnet-4-6" in role_model_block
+    assert "  implementation: agy:gemini-2.5-pro" in role_model_block
+    assert "  qa:" not in role_model_block.split("worker_type_settings:", 1)[0]
 
     invalid = simulate_post(
         {

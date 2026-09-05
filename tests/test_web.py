@@ -485,6 +485,7 @@ def test_product_spa_path_contract() -> None:
     assert web.is_product_spa_path("/projects/DEMO/review") is True
     assert web.is_product_spa_path("/projects/DEMO/review/prd") is True
     assert web.is_product_spa_path("/projects/DEMO/knowledge") is True
+    assert web.is_product_spa_path("/projects/DEMO/team") is True
     assert web.is_product_spa_path("/projects/DEMO/settings/general") is True
     assert web.is_product_spa_path("/api/projects") is False
     assert web.is_product_spa_path("/review-workbench/run-1") is False
@@ -3819,7 +3820,9 @@ def test_product_frontend_replaces_legacy_dashboard_contracts():
     assert "/api/recover-takeover-brief" in review_api
     assert "/api/artifact" in review_api
     assert "/api/artifact" in knowledge_api
-    assert "/api/project-config" in settings_api
+    # Team mutations go through the control-plane command surface (#402).
+    assert "/team/commands" in settings_api
+    assert "/team/events" in settings_api
 
 
 def test_frontend_i18n_locale_files_exist_and_define_current_product_chrome_keys():

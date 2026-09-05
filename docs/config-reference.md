@@ -62,6 +62,18 @@ delivery_contract:
 | `providers` | Optional | Provider credential metadata for doctor checks. |
 | `delivery_contract` | Optional | Functional evidence requirements before release/staging decisions. |
 
+> **Worker configuration is derived, not canonical (#402).** Since the Team
+> Control Plane landed, `worker_backend`, `workers`,
+> `worker_type_settings` (including `desired_instances`), and
+> `role_model_overrides` are a compatibility view that GoodTeam rewrites from
+> the canonical team state after every team mutation. Team composition truth
+> (Role capabilities, Worker instances, runtimes, lifecycles) lives in
+> `state/projects/<KEY>/team-state.json`, with every change recorded in
+> `state/projects/<KEY>/team-events.jsonl`. Mutate teams through the Team
+> surface, the Task Assistant, or `POST /api/projects/<key>/team/commands` —
+> see `docs/team-control-plane.md`. Hand-editing the worker blocks has no
+> effect after the project's team state has been created.
+
 The parser currently supports a small indentation-based YAML subset: each
 non-comment line is either `key: value` or a `key:` that opens a nested block. Do
 not assume full YAML list syntax is available unless parser support is extended.

@@ -153,6 +153,15 @@ def dispatch_reviewer_jobs_for_gate(
     if not profiles:
         return []
 
+    role = REVIEWER_ROLE_BY_PHASE.get(phase, "review")
+    if target is not None:
+        # Dispatch invariant, enforced backend-side: a disabled TeamRole or a
+        # TeamRole without an active runtime-eligible Worker can never
+        # dispatch, regardless of which surface asked for the review.
+        from goodteam_os.team_control_plane import resolve_worker_for_role
+
+        resolve_worker_for_role(dict(target), role)
+
     run_id = str(getattr(state, "run_id", "") or "")
     artifact_version = artifact_version_for_path(artifact_path)
     dispatch_group_id = _dispatch_group_id(
@@ -164,7 +173,6 @@ def dispatch_reviewer_jobs_for_gate(
     )
     results: list[dict[str, Any]] = []
     for profile in profiles:
-        role = REVIEWER_ROLE_BY_PHASE.get(phase, "review")
         job, _created = store.create_or_reuse_job(
             **_reviewer_job_spec(
                 run_id=run_id,
@@ -433,6 +441,19 @@ def _worker_type_job_settings(
     role: str,
     adapter: str,
 ) -> dict[str, object]:
+    from goodteam_os.graph import worker_type_settings_for_role
+
+    if target is not None:
+        # With team state attached, reasoning depth and the additional prompt
+        # come from the role's first active Worker (worker-scoped runtime).
+        # Reviewer profiles keep their explicit adapter/model.
+        settings = worker_type_settings_for_role(dict(target), role)
+        return {
+            "reasoning_depth": str(settings.get("reasoning_depth", "default")),
+            "additional_prompt": str(settings.get("additional_prompt", "")),
+            "desired_instances": int(settings.get("desired_instances", 1) or 1),
+            "pi_thinking_level": str(settings.get("pi_thinking_level", "")),
+        }
     raw_all = target.get("worker_type_settings", {}) if target is not None else {}
     raw = raw_all.get(role, {}) if isinstance(raw_all, Mapping) else {}
     if not isinstance(raw, Mapping):

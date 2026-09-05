@@ -12,7 +12,8 @@ from uuid import uuid4
 from goodteam_os.state import normalize_project_key
 
 
-SCHEMA_VERSION = "task_assistant_session.v1"
+SCHEMA_VERSION = "task_assistant_session.v2"
+_LEGACY_SCHEMA_VERSIONS = {"task_assistant_session.v1"}
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -30,7 +31,12 @@ class TaskAssistantSessionStore:
         if not self.path.is_file():
             return self._empty()
         payload = json.loads(self.path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
+        if not isinstance(payload, dict):
+            raise ValueError("Task Assistant session is invalid")
+        version = str(payload.get("schema_version", ""))
+        if version in _LEGACY_SCHEMA_VERSIONS:
+            return _upgrade_session_v1(payload)
+        if version != SCHEMA_VERSION:
             raise ValueError("Task Assistant session is invalid")
         return payload
 
@@ -114,6 +120,60 @@ class TaskAssistantSessionStore:
 
     def set_attention(self, attention: dict[str, object] | None) -> dict[str, object]:
         return self._mutate(lambda session: {**session, "attention_request": attention})
+
+    def propose_team_decision(
+        self,
+        *,
+        commands: list[dict[str, object]],
+        reason: str,
+        source_message_id: str,
+    ) -> dict[str, object]:
+        """Record a Manager-proposed team decision awaiting user approval.
+
+        The proposal itself mutates no team state; the control plane executes
+        only after the user confirms.
+        """
+        cleaned_commands = [dict(item) for item in commands if isinstance(item, dict)]
+        if not cleaned_commands:
+            raise ValueError("Team decision proposal requires at least one command")
+
+        def mutate(session: dict[str, object]) -> dict[str, object]:
+            return {
+                **session,
+                "pending_team_decision": {
+                    "id": uuid4().hex,
+                    "commands": cleaned_commands,
+                    "reason": str(reason),
+                    "source_message_id": str(source_message_id),
+                    "status": "pending",
+                    "created_at": _now(),
+                },
+            }
+
+        return self._mutate(mutate)
+
+    def take_pending_team_decision(self, proposal_id: str) -> dict[str, object]:
+        """Pop the pending team decision after it was applied or dismissed."""
+
+        def mutate(session: dict[str, object]) -> dict[str, object]:
+            pending = dict(session.get("pending_team_decision") or {})
+            if pending.get("id") != str(proposal_id) or pending.get("status") != "pending":
+                raise ValueError("Team decision proposal is unavailable")
+            session["pending_team_decision"] = None
+            return session
+
+        return self._mutate(mutate)
+
+    def set_pending_team_decision_status(self, proposal_id: str, status: str) -> dict[str, object]:
+        def mutate(session: dict[str, object]) -> dict[str, object]:
+            pending = dict(session.get("pending_team_decision") or {})
+            if pending.get("id") != str(proposal_id):
+                raise ValueError("Team decision proposal is unavailable")
+            pending["status"] = str(status)
+            session["pending_team_decision"] = pending
+            return session
+
+        return self._mutate(mutate)
 
     def propose_task(self, source_message_ids: list[str], exact_request: str) -> dict[str, object]:
         request = str(exact_request)
@@ -325,9 +385,19 @@ class TaskAssistantSessionStore:
             "timeline": [],
             "attention_request": None,
             "proposed_task": None,
+            "pending_team_decision": None,
             "project_mode_hint": None,
             "suggestions": [],
         }
+
+
+def _upgrade_session_v1(payload: dict[str, object]) -> dict[str, object]:
+    """Lazy in-memory upgrade: v1 sessions gain the team-decision slot."""
+    return {
+        **payload,
+        "schema_version": SCHEMA_VERSION,
+        "pending_team_decision": payload.get("pending_team_decision"),
+    }
 
 
 def _now() -> str:
@@ -394,6 +464,7 @@ def initial_task_assistant_session(
         ],
         "attention_request": None,
         "proposed_task": None,
+        "pending_team_decision": None,
         "project_mode_hint": dict(mode_hint),
         "suggestions": [{"id": item} for item in suggestions],
     }
