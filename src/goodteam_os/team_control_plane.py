@@ -63,12 +63,27 @@ ROLE_CATALOG: tuple[dict[str, str], ...] = (
 ROLE_KEYS = tuple(item["key"] for item in ROLE_CATALOG)
 
 # Roles that were dispatchable under the legacy worker-config model when the
-# control plane shipped. Migration enables exactly these so a migrated team
-# keeps its historical dispatch behavior. Role Definitions added to
-# ROLE_CATALOG in later releases must not silently become enabled for every
-# team: they migrate as disabled until a user explicitly enables them, so
-# capability expansion is always an authorized decision (#402 §11, #407).
-MIGRATION_BASELINE_ROLES: frozenset[str] = frozenset(ROLE_KEYS)
+# control plane shipped (#402 §11). This baseline is an explicit frozen
+# literal **on purpose**: it must never be derived from ROLE_CATALOG, or the
+# next release that adds a Role Definition would silently auto-enable it for
+# every migrating team. Add a key here only as a deliberate, reviewed product
+# decision that all teams should gain that capability — migration
+# compatibility never requires it (#407).
+MIGRATION_BASELINE_ROLES: frozenset[str] = frozenset({
+    "research",
+    "product_requirement",
+    "architect",
+    "review",
+    "planner",
+    "ui",
+    "implementation",
+    "frontend",
+    "backend",
+    "qa",
+    "code_review",
+    "release",
+    "retro_memory",
+})
 
 TEAM_ROLE_STATES = ("enabled", "disabled")
 WORKER_LIFECYCLES = ("active", "inactive", "released", "deleted")

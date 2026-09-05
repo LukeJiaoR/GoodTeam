@@ -106,13 +106,22 @@ def test_migration_covers_catalog_with_baseline_roles_enabled(tmp_path):
 def test_future_catalog_roles_are_not_auto_enabled_by_migration(tmp_path, monkeypatch):
     """Migration compatibility boundary: catalog growth must not expand teams.
 
-    MIGRATION_BASELINE_ROLES freezes the roles that were dispatchable when
-    the control plane shipped. A Role Definition added to ROLE_CATALOG in a
-    later release must migrate as disabled — otherwise every existing team
-    would silently gain the new capability, and enabling it could never be a
-    deliberate user decision.
+    MIGRATION_BASELINE_ROLES is an explicit frozen literal, deliberately NOT
+    derived from ROLE_CATALOG, so monkeypatching the catalog here faithfully
+    simulates a future release whose source grew the catalog while the
+    baseline stayed unchanged. A Role Definition added to ROLE_CATALOG in a
+    later release must migrate as disabled and unstaffed — otherwise every
+    existing team would silently gain the new capability, and enabling it
+    could never be a deliberate user decision.
     """
     from goodteam_os import team_control_plane
+
+    # Tripwires for un-reviewed baseline edits: the hypothetical future role
+    # must not already be baseline-enabled, and the hand-frozen baseline must
+    # stay a maintained subset of the live catalog (catches typos and
+    # orphaned keys after catalog renames/removals).
+    assert "security_audit" not in MIGRATION_BASELINE_ROLES
+    assert MIGRATION_BASELINE_ROLES <= {item["key"] for item in ROLE_CATALOG}
 
     future_catalog = (
         *ROLE_CATALOG,
