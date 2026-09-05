@@ -19,24 +19,26 @@ The frontend is React 19 with React Router, Vite, Tailwind, and test tooling des
 
 ## Routes and product surfaces
 
+The current product is `Projects → Work / Team / Review / Knowledge`.
+
 | Route | Purpose |
 | --- | --- |
-| `/` | Existing multi-project/legacy dashboard. |
-| `/?project=<PROJECT_KEY>` | Existing project-focused workflow dashboard. |
+| `/` | Redirects to `/projects`, or to project Work with `/?project=<PROJECT_KEY>`. |
 | `/projects` | Product project list and directory-based import. |
-| `/projects/:projectKey/home` | Product Project Home with facts, preparation, actions, and workflow eligibility. |
+| `/projects/:projectKey/work` (and `/work/runs/:runId`) | Task Assistant workbench for the project. |
+| `/projects/:projectKey/team` | Task Assistant and Worker Type configuration. |
+| `/projects/:projectKey/review` (and `/review/:reviewId`) | Review workspace. |
+| `/projects/:projectKey/knowledge` | Understanding, artifacts/docs, and memory. |
 
 `frontend/src/app/AppRouter.jsx` defines the product router. The server permits SPA fallback for the supported product paths so direct navigation resolves to the React application.
 
-The product routes are additive: the project readiness endpoint can bridge a ready project back into the legacy `/?project=…` workflow view while a dedicated run-workspace product surface is still evolving.
+Legacy bookmarks are compatibility input only; the product never links to them: `/inbox`, `/activity`, and `/settings` redirect to `/projects`; `/projects/:projectKey/home` redirects to Work; `/projects/:projectKey/settings/:section` redirects to Team; `/legacy?project=…` routes by its old tab parameter.
 
 ## Project loading and readiness presentation
 
-`ProjectsPage` retrieves projects and groups them by attention, active work, preparation, readiness, and legacy state. `LoadProjectPanel` submits an absolute directory; the server responds with the canonical project/home identity.
+`ProjectsPage` retrieves projects and groups them by attention, active work, preparation, readiness, and legacy state. `LoadProjectPanel` submits an absolute directory; the server responds with the canonical project identity. Work's Task Assistant drives readiness confirmation inline before a workflow starts, and Knowledge renders the persisted repository-understanding artifact via `RepositoryOverview`.
 
-`ProjectHomePage` fetches its state from the server and polls only while readiness is running. `ReadinessCenter` displays step status, attempts, timestamps, artifacts, errors/recovery, and retry paths; `ReadinessInputPanel` submits structured confirmations or command choices. The page disables workflow start from the server’s `capabilities`/reason field.
-
-This behavior matters because [project readiness](../workflows/project-readiness.md) is an explicit safety gate: client-side display must not become a competing state machine.
+This behavior matters because [project readiness](../workflows/project-readiness.md) is an explicit safety gate: client-side display must not become a competing state machine, and the readiness engine stays server-owned.
 
 ## API ownership and error contract
 

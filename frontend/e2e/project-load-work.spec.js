@@ -57,3 +57,39 @@ test('project entry paths converge on Work without writing to the target', async
   expect(targetSnapshot(existingRoot)).toEqual(before);
   expect(consoleErrors).toEqual([]);
 });
+
+test('legacy bookmarks redirect and the project shell reaches Team/Review/Knowledge', async ({ page }) => {
+  const consoleErrors = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  await page.addInitScript(() => localStorage.setItem('gt-language', 'en'));
+
+  for (const legacy of ['/inbox', '/activity', '/settings']) {
+    await page.goto(legacy);
+    await expect(page).toHaveURL(/\/projects$/);
+    await expect(page.getByRole('heading', { name: 'Choose a project' })).toBeVisible();
+  }
+
+  await page.goto('/projects/EXISTING/settings/general');
+  await expect(page).toHaveURL(/\/projects\/EXISTING\/team$/);
+  await expect(page.getByRole('heading', { name: 'Team', exact: true })).toBeVisible();
+
+  await page.goto('/projects/EXISTING/home');
+  await expect(page).toHaveURL(/\/projects\/EXISTING\/work$/);
+  await expect(page.getByRole('heading', { name: 'Task Assistant' })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Reviews', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/EXISTING\/review$/);
+  await expect(page.getByRole('heading', { name: 'Review', exact: true })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Knowledge base', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/EXISTING\/knowledge$/);
+  await expect(page.getByRole('heading', { name: 'Knowledge', exact: true })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Team', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/EXISTING\/team$/);
+  await expect(page.getByRole('heading', { name: 'Team', exact: true })).toBeVisible();
+
+  expect(consoleErrors).toEqual([]);
+});
