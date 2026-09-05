@@ -1289,6 +1289,11 @@ def active_workers_for_role(state: dict[str, object], role: str) -> list[dict[st
 def resolve_worker_for_role(target: dict[str, object], role: str) -> dict[str, object] | None:
     """Resolve the Worker that will execute a role, enforcing dispatch gates.
 
+    One resolution carries the **complete execution runtime** (adapter, model,
+    reasoning depth, additional prompt, pi thinking level, desired instance
+    count) of the exact Worker that will run, so callers can never mix one
+    Worker's identity with another Worker's settings.
+
     Returns ``None`` when the target carries no team state (legacy/unmigrated
     project), letting callers fall back to legacy resolution. Raises
     :class:`TeamDispatchBlocked` when the TeamRole is disabled or no active,
@@ -1309,9 +1314,10 @@ def resolve_worker_for_role(target: dict[str, object], role: str) -> dict[str, o
             f"The {role_label(role)} capability is disabled for this team. Enable it before dispatching work.",
             role=role,
         )
+    active = active_workers_for_role(state, role)
     eligible = [
         worker
-        for worker in active_workers_for_role(state, role)
+        for worker in active
         if worker_runtime_eligible(dict(worker["runtime"]).get("provider"))
     ]
     if not eligible:
@@ -1321,33 +1327,48 @@ def resolve_worker_for_role(target: dict[str, object], role: str) -> dict[str, o
             role=role,
         )
     eligible.sort(key=lambda w: (str(w["created_at"]), str(w["id"])))
-    return _worker_resolution(eligible[0])
+    desired = min(max(len(active), 1), 8)
+    return _worker_resolution(eligible[0], desired_instances=desired)
 
 
-def _worker_resolution(worker: dict[str, object]) -> dict[str, object]:
+def _pi_level_for(adapter: str, reasoning_depth: str) -> str:
+    from goodteam_os.workers import SESSION_BACKENDS
+
+    return reasoning_depth if adapter in SESSION_BACKENDS and reasoning_depth != "default" else ""
+
+
+def _worker_resolution(worker: dict[str, object], *, desired_instances: int = 1) -> dict[str, object]:
     runtime = dict(worker["runtime"])
+    adapter = normalize_provider(runtime.get("provider", ""))
+    reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
     return {
         "worker_id": str(worker["id"]),
         "worker_name": str(worker["name"]),
         "role": str(worker["role"]),
-        "adapter": normalize_provider(runtime.get("provider", "")),
+        "adapter": adapter,
         "model": str(runtime.get("model", "") or ""),
-        "reasoning_depth": str(runtime.get("reasoning_depth", "default") or "default"),
+        "reasoning_depth": reasoning_depth,
         "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
+        "pi_thinking_level": _pi_level_for(adapter, reasoning_depth),
+        "desired_instances": desired_instances,
     }
 
 
 def _manager_resolution(state: dict[str, object]) -> dict[str, object]:
     manager = dict(state["manager"])  # type: ignore[arg-type]
     runtime = dict(manager.get("runtime", {}) or {})
+    adapter = normalize_provider(runtime.get("provider", ""))
+    reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
     return {
         "worker_id": MANAGER_ROLE,
         "worker_name": "Task Assistant",
         "role": MANAGER_ROLE,
-        "adapter": normalize_provider(runtime.get("provider", "")),
+        "adapter": adapter,
         "model": str(runtime.get("model", "") or ""),
-        "reasoning_depth": str(runtime.get("reasoning_depth", "default") or "default"),
+        "reasoning_depth": reasoning_depth,
         "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
+        "pi_thinking_level": _pi_level_for(adapter, reasoning_depth),
+        "desired_instances": 1,
     }
 
 

@@ -876,3 +876,113 @@ def test_task_assistant_team_decision_actions(tmp_path):
         )
     assert unavailable.value.status == 409
     assert unavailable.value.code == "team_decision_unavailable"
+
+
+# ------------------------------------- 11. worker resolution is the whole contract
+
+
+def test_resolution_provides_complete_runtime_without_cross_worker_mixing(tmp_path, monkeypatch):
+    """One worker resolution must carry the full execution runtime.
+
+    Regression for the P1 found in review: with Worker A active-but-unready
+    and Worker B active-and-ready, dispatch must use B's identity AND B's
+    reasoning depth / prompt — never B's identity with A's settings.
+    """
+    from goodteam_os import team_control_plane
+    from goodteam_os.graph import _worker_job_fields
+    from goodteam_os.state import create_initial_state
+
+    config = make_project(
+        tmp_path,
+        extra_yaml="worker_type_settings:\n  implementation:\n    desired_instances: 2\n",
+    )
+    execute(config, [
+        {"kind": "change_worker_runtime", "worker_id": "implementation-a",
+         "provider": "codex", "reasoning_depth": "high", "additional_prompt": "Worker A prompt."},
+        {"kind": "change_worker_runtime", "worker_id": "implementation-b",
+         "reasoning_depth": "medium", "additional_prompt": "Worker B prompt."},
+    ])
+
+    def doctor(mode):
+        return {"mode": mode, "ready": mode != "codex"}
+
+    monkeypatch.setattr(team_control_plane, "worker_backend_doctor", doctor)
+    target = migrated_target(config)
+    state = create_initial_state("run-mix", "demo", "idea")
+
+    resolution = team_control_plane.resolve_worker_for_role(target, "implementation")
+    assert resolution is not None
+    # Worker A (codex, unready) is skipped entirely; B provides everything.
+    assert resolution["worker_id"] == "implementation-b"
+    assert resolution["adapter"] == "fake"
+    assert resolution["reasoning_depth"] == "medium"
+    assert resolution["additional_prompt"] == "Worker B prompt."
+    assert resolution["pi_thinking_level"] == ""
+    assert resolution["desired_instances"] == 2
+
+    fields = _worker_job_fields(target, "implementation", state)
+    assert fields["worker_id"] == "implementation-b"
+    assert fields["adapter"] == "fake"
+    assert fields["reasoning_depth"] == "medium"
+    assert fields["additional_prompt"] == "Worker B prompt."
+    assert fields["desired_instances"] == 2
+
+
+def test_reviewer_dispatch_binds_resolved_worker_identity_and_runtime(tmp_path, monkeypatch):
+    """Reviewer jobs are executed by the resolved team Worker.
+
+    Regression for the P1 found in review: the reviewer gate must not merely
+    consult the team and then run a profile preset — the job must carry the
+    executing Worker's identity (worker_id/worker_name) and that Worker's
+    runtime, so provenance can always answer which Worker ran the review.
+    """
+    from goodteam_os import team_control_plane
+    from goodteam_os.reviewer_dispatch import dispatch_reviewer_jobs_for_gate
+    from goodteam_os.workers import WorkerJobStore
+
+    config = make_project(
+        tmp_path,
+        extra_yaml=(
+            "worker_type_settings:\n"
+            "  code_review:\n"
+            "    reasoning_depth: high\n"
+            "    additional_prompt: Review carefully.\n"
+        ),
+    )
+    execute(config, [{"kind": "change_worker_runtime", "worker_id": "code_review-a", "provider": "fake"}])
+
+    def doctor(mode):
+        return {"mode": mode, "ready": True}
+
+    monkeypatch.setattr(team_control_plane, "worker_backend_doctor", doctor)
+    target = migrated_target(config)
+    target["reviewer_profiles"] = {"implementation": ["correctness-security"]}
+    target["reviewer_dispatch"] = {
+        "mode": "parallel",
+        "phases": {"implementation": "parallel"},
+        "rollout": {"enabled": True, "acknowledge": "parallel-reviewer-dispatch-is-advisory"},
+    }
+
+    project_root = tmp_path / "runtime"
+    project_root.mkdir()
+    store = WorkerJobStore(project_root)
+
+    class RunState:
+        run_id = "run-review"
+
+    results = dispatch_reviewer_jobs_for_gate(
+        store=store,
+        state=RunState(),
+        target=target,
+        approval="code_review",
+        artifact_key="code_review",
+        artifact_path="missing.md",
+        context="ctx",
+    )
+    assert len(results) == 1
+    job = next(item for item in store.list_jobs() if item["id"] == results[0]["job_id"])
+    assert job["worker_id"] == "code_review-a"
+    assert job["worker_name"] == "Reviewer A"
+    assert job["adapter"] == "fake"
+    assert job["reasoning_depth"] == "high"
+    assert job["additional_prompt"] == "Review carefully."

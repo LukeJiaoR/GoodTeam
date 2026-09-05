@@ -1804,12 +1804,18 @@ def _worker_job_fields(
             "model": fallback_model,
             **worker_type_settings_for_role(target, role),
         }
+    # The resolution IS the execution contract: identity, provider, model,
+    # reasoning depth, and prompt all come from this one Worker. Never merge
+    # fields from a second "first active worker" lookup here.
     return {
         "adapter": resolution["adapter"],
         "model": resolution["model"] or fallback_model,
         "worker_id": resolution["worker_id"],
         "worker_name": resolution["worker_name"],
-        **worker_type_settings_for_role(target, role),
+        "reasoning_depth": resolution["reasoning_depth"],
+        "additional_prompt": resolution["additional_prompt"],
+        "pi_thinking_level": resolution["pi_thinking_level"],
+        "desired_instances": resolution["desired_instances"],
     }
 
 

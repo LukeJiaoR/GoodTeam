@@ -119,7 +119,14 @@ workers.
 ## Dispatch invariants (fail closed)
 
 `resolve_worker_for_role` gates every project dispatch path
-(implementation trio, artifact generation, reviewer dispatch):
+(implementation trio, artifact generation, reviewer dispatch) and returns the
+**complete execution runtime** of the exact Worker that will run — identity,
+provider, model, reasoning depth, prompt, pi thinking level, and instance
+count come from one resolution, so a job can never mix one Worker's identity
+with another Worker's settings. Reviewer jobs (code review / release
+advisory profiles) bind `worker_id`/`worker_name` and execute with the
+resolved Worker's runtime; the profile's built-in adapter is only a legacy
+fallback for unmigrated targets:
 
 - TeamRole disabled → `TeamDispatchBlocked(team_role_disabled)`, even when a
   worker id is passed directly or the planner still references the worker.
