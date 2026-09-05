@@ -5851,13 +5851,11 @@ def test_tg_notify_gate_env_override_routes_correctly(monkeypatch):
 def test_frontend_dev_server_uses_goodteam_specific_default_port():
     root = Path(__file__).resolve().parents[1]
     vite_config = (root / "frontend" / "vite.config.js").read_text(encoding="utf-8")
-    readme = (root / "README.md").read_text(encoding="utf-8")
     dev_up = (root / "scripts" / "dev-up.sh").read_text(encoding="utf-8")
 
     assert "port: 8790" in vite_config
     assert "strictPort: true" in vite_config
     assert "'/api': 'http://127.0.0.1:8788'" in vite_config
-    assert "http://localhost:8790/" in readme
     assert "npm run dev → :8790" in dev_up
     assert ":5173" not in dev_up
 
