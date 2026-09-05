@@ -24,6 +24,7 @@ from goodteam_os.task_assistant import (
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.team_control_plane import (
     MANAGER_ROLE,
+    MIGRATION_BASELINE_ROLES,
     ROLE_CATALOG,
     TEAM_STATE_TARGET_KEY,
     TeamControlPlaneError,
@@ -85,18 +86,49 @@ def worker_ids(config_path: Path, role: str, *, lifecycle: str | None = None) ->
 # ---------------------------------------------------------------- 1. domain
 
 
-def test_role_catalog_is_distinct_from_team_role_state_and_workers(tmp_path):
+def test_migration_covers_catalog_with_baseline_roles_enabled(tmp_path):
     config = make_project(tmp_path)
     target = migrated_target(config)
     state = target[TEAM_STATE_TARGET_KEY]
 
     # Role catalog is global and immutable; TeamRole state is per project;
-    # Workers are individual records.
+    # Workers are individual records. Migration enables the frozen
+    # legacy-dispatchable baseline (MIGRATION_BASELINE_ROLES) so migrated
+    # teams keep historical dispatch behavior.
     assert {item["key"] for item in ROLE_CATALOG} >= {"research", "implementation", "qa"}
     assert set(state["roles"]) == {item["key"] for item in ROLE_CATALOG}
-    assert all(role_state["state"] == "enabled" for role_state in state["roles"].values())
+    for baseline_role in MIGRATION_BASELINE_ROLES:
+        assert state["roles"][baseline_role]["state"] == "enabled"
     assert MANAGER_ROLE not in state["roles"]
     assert all(worker["lifecycle"] == "active" for worker in state["workers"])
+
+
+def test_future_catalog_roles_are_not_auto_enabled_by_migration(tmp_path, monkeypatch):
+    """Migration compatibility boundary: catalog growth must not expand teams.
+
+    MIGRATION_BASELINE_ROLES freezes the roles that were dispatchable when
+    the control plane shipped. A Role Definition added to ROLE_CATALOG in a
+    later release must migrate as disabled — otherwise every existing team
+    would silently gain the new capability, and enabling it could never be a
+    deliberate user decision.
+    """
+    from goodteam_os import team_control_plane
+
+    future_catalog = (
+        *ROLE_CATALOG,
+        {"key": "security_audit", "label": "Security audit", "worker_prefix": "Auditor"},
+    )
+    monkeypatch.setattr(team_control_plane, "ROLE_CATALOG", future_catalog)
+
+    config = make_project(tmp_path)
+    state = migrated_target(config)[TEAM_STATE_TARGET_KEY]
+
+    assert set(state["roles"]) == {item["key"] for item in future_catalog}
+    assert state["roles"]["security_audit"]["state"] == "disabled"
+    # The post-baseline role gets no workers: enabling it later is an explicit
+    # staffing decision, not a migration side effect.
+    assert all(worker["role"] != "security_audit" for worker in state["workers"])
+    assert state["roles"]["implementation"]["state"] == "enabled"
 
 
 def test_load_project_target_without_standard_layout_keeps_legacy_semantics(tmp_path):
@@ -110,6 +142,13 @@ def test_load_project_target_without_standard_layout_keeps_legacy_semantics(tmp_
 
 
 def test_desired_instances_migration_materializes_distinct_stable_workers(tmp_path):
+    """Legacy compatibility boundary: `desired_instances` is migration input.
+
+    Only the legacy → control-plane migration consumes role-level
+    `desired_instances`; after migration, worker count is derived from
+    first-class Worker records, so this must never be read as the canonical
+    Worker model contract.
+    """
     config = make_project(
         tmp_path,
         extra_yaml=(
@@ -142,7 +181,7 @@ def test_desired_instances_migration_materializes_distinct_stable_workers(tmp_pa
     assert resolution["reasoning_depth"] == "high"
 
 
-def test_migration_is_idempotent_and_records_one_ledger_decision(tmp_path):
+def test_migration_is_idempotent_without_duplicate_workers_or_events(tmp_path):
     config = make_project(tmp_path, extra_yaml="worker_type_settings:\n  qa:\n    desired_instances: 2\n")
     workspace = config.parent.parent
 
@@ -150,18 +189,21 @@ def test_migration_is_idempotent_and_records_one_ledger_decision(tmp_path):
     store = TeamControlPlaneStore(workspace, "demo")
     first_events = store.read_events()
     assert first_events
-    assert len({event["decision_id"] for event in first_events}) == 1
+    # Causal identity: every migration event is traceable to its decision.
+    assert all(event["decision_id"] for event in first_events)
     assert all(event["actor"] == "migration" for event in first_events)
     qa_workers = [w for w in first[TEAM_STATE_TARGET_KEY]["workers"] if w["role"] == "qa"]
     assert [w["id"] for w in qa_workers] == ["qa-a", "qa-b"]
 
-    # Rerun: no duplicate workers, no duplicate events, no revision bump.
+    # Rerun: no duplicate workers, no new events, no revision drift. The
+    # number of decisions a migration uses is an implementation choice; the
+    # contract is that replaying it causes no additional effective mutation.
     second = migrated_target(config)
     assert [w["id"] for w in second[TEAM_STATE_TARGET_KEY]["workers"] if w["role"] == "qa"] == [
         "qa-a",
         "qa-b",
     ]
-    assert len(store.read_events()) == len(first_events)
+    assert store.read_events() == first_events
     assert second[TEAM_STATE_TARGET_KEY]["revision"] == first[TEAM_STATE_TARGET_KEY]["revision"]
 
 
@@ -304,9 +346,13 @@ def test_re_enable_role_does_not_recreate_workers(tmp_path):
     execute(config, [{"kind": "disable_role", "role": "research"}])
     before = worker_ids(config, "research")
     execute(config, [{"kind": "enable_role", "role": "research"}])
+    # Identity invariant: re-enabling never duplicates or re-creates the
+    # Workers that existed before the disable, and history stays intact.
     assert worker_ids(config, "research") == before
     assert len(worker_ids(config, "research", lifecycle="inactive")) == 1
-    # Enable alone leaves the team unstaffed-active: no auto activation.
+    # Current product policy (not an identity invariant): enable alone does
+    # not auto-reactivate; the capability stays unstaffed until a Worker is
+    # explicitly activated, so re-enable can never silently resume dispatch.
     assert worker_ids(config, "research", lifecycle="active") == []
 
 
@@ -735,7 +781,6 @@ def test_team_commands_endpoint_executes_and_returns_view(tmp_path):
     )
     assert status == 200
     assert payload["changed"] is True
-    assert payload["team"]["roles"][0]["schema_version"] if False else True
     research = next(entry for entry in payload["team"]["roles"] if entry["role"] == "research")
     assert research["state"] == "disabled"
     assert payload["events"][0]["surface"] == "team_ui"

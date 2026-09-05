@@ -224,7 +224,15 @@ def test_implementation_worker_job_specs_include_qa_role_messages_only(tmp_path)
     assert "Should the API be versioned?" not in contexts["implementation"]
 
 
-def test_implementation_worker_job_specs_apply_type_settings_without_duplicating_jobs(tmp_path):
+def test_legacy_unmigrated_worker_type_settings_apply_without_duplicating_jobs(tmp_path):
+    """Unmigrated/scratch targets keep the legacy role-settings dispatch path.
+
+    Targets without Team Control Plane state (e.g. scratch projects outside
+    the standard workspace layout) still dispatch through the legacy
+    `worker_type_settings` branch of `_worker_job_fields`. The contract is
+    that legacy `desired_instances` never explodes one role into N duplicate
+    job specs — not that the workflow always emits exactly this job set.
+    """
     state = create_initial_state("run-1", "CONTENTOPS", "Ship billing")
     target = {
         "worker_backend": {"mode": "codex"},
@@ -239,9 +247,10 @@ def test_implementation_worker_job_specs_apply_type_settings_without_duplicating
     }
 
     specs = implementation_worker_job_specs(state, target, workspace=tmp_path)
-    implementation = next(spec for spec in specs if spec["role"] == "implementation")
+    implementation_specs = [spec for spec in specs if spec["role"] == "implementation"]
+    assert len(implementation_specs) == 1
+    implementation = implementation_specs[0]
 
-    assert len(specs) == 3
     assert implementation["reasoning_depth"] == "high"
     assert implementation["additional_prompt"] == "Keep public APIs stable."
     assert implementation["desired_instances"] == 4

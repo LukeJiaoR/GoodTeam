@@ -211,10 +211,19 @@ def test_manager_chat_turn_runs_configured_orchestrator_and_returns_decision(
     assert turn["manager_execution"]["job_id"] == "job-chat"
 
 
-def test_manager_chat_turn_uses_safe_explicit_reasoning_when_team_setting_is_default(
+def test_manager_chat_turn_resolves_default_team_setting_to_explicit_supported_reasoning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A default Team runtime setting must still resolve a valid runtime.
+
+    ``default`` is not a worker-executable reasoning value; ``_manager_settings``
+    maps it to ``high``, the current documented portable default. That literal
+    is an implementation choice that may vary by provider/model later — the
+    contract under test is (1) the resolved job never runs with the raw
+    ``default`` value, and (2) the reported execution evidence matches the
+    runtime the job actually used.
+    """
     project_root = tmp_path / "project"
     project_root.mkdir()
     config = tmp_path / "default.local.yaml"
@@ -251,8 +260,9 @@ def test_manager_chat_turn_uses_safe_explicit_reasoning_when_team_setting_is_def
         context="Project mode: existing_project",
     )
 
+    # Current portable default in `_manager_settings`; not a safety property.
     assert captured["reasoning_depth"] == "high"
-    assert turn["manager_execution"]["reasoning_depth"] == "high"
+    assert turn["manager_execution"]["reasoning_depth"] == captured["reasoning_depth"]
 
 
 def test_manager_chat_turn_resolves_orchestrator_model_from_selected_profile(

@@ -62,6 +62,14 @@ ROLE_CATALOG: tuple[dict[str, str], ...] = (
 )
 ROLE_KEYS = tuple(item["key"] for item in ROLE_CATALOG)
 
+# Roles that were dispatchable under the legacy worker-config model when the
+# control plane shipped. Migration enables exactly these so a migrated team
+# keeps its historical dispatch behavior. Role Definitions added to
+# ROLE_CATALOG in later releases must not silently become enabled for every
+# team: they migrate as disabled until a user explicitly enables them, so
+# capability expansion is always an authorized decision (#402 §11, #407).
+MIGRATION_BASELINE_ROLES: frozenset[str] = frozenset(ROLE_KEYS)
+
 TEAM_ROLE_STATES = ("enabled", "disabled")
 WORKER_LIFECYCLES = ("active", "inactive", "released", "deleted")
 DISPATCHABLE_LIFECYCLES = ("active",)
@@ -431,8 +439,11 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
 
     Migration preserves behavior exactly:
 
-    - every catalog Role becomes an **enabled** TeamRole (all roles were
-      dispatchable before the control plane existed);
+    - every legacy-dispatchable Role (the frozen
+      :data:`MIGRATION_BASELINE_ROLES` baseline, plus any Role the project's
+      legacy config explicitly used) becomes an **enabled** TeamRole; catalog
+      roles added after the baseline migrate as **disabled** so future
+      capability growth never silently expands an existing team;
     - ``desired_instances = N`` materializes N distinct, deterministically
       named Worker records;
     - per-role backend overrides, ``role_model_overrides``, and
@@ -451,8 +462,17 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
     workers: list[dict[str, object]] = []
     for catalog_item in ROLE_CATALOG:
         role = catalog_item["key"]
-        roles[role] = {"state": "enabled", "updated_at": _now()}
         role_settings = dict(settings.get(role, {}) or {}) if isinstance(settings.get(role, {}), dict) else {}
+        # Explicit legacy config is evidence the capability was already in use.
+        has_legacy_config = (
+            role in settings
+            or role in workers_config
+            or bool(str(overrides.get(role, "") or "").strip())
+        )
+        enabled = role in MIGRATION_BASELINE_ROLES or has_legacy_config
+        roles[role] = {"state": "enabled" if enabled else "disabled", "updated_at": _now()}
+        if not enabled:
+            continue
         desired_raw = role_settings.get("desired_instances", 1)
         try:
             desired = int(desired_raw)
@@ -532,6 +552,7 @@ def migration_events(
     timestamp = _now()
     events: list[dict[str, object]] = []
     for role, role_state in dict(state["roles"]).items():
+        enabled = str(role_state.get("state", "enabled")) == "enabled"
         events.append(
             {
                 "id": _new_id("evt"),
@@ -541,9 +562,13 @@ def migration_events(
                 "actor": "migration",
                 "surface": "migration",
                 "source_ref": {"legacy_digest": dict(state["migrated"]).get("legacy_digest", "")},
-                "event": f"{TEAM_ROLE_EVENT_PREFIX}.enabled",
+                "event": f"{TEAM_ROLE_EVENT_PREFIX}.{'enabled' if enabled else 'disabled'}",
                 "target": {"kind": "team_role", "id": role},
-                "reason": "Migrated from legacy worker-role config: role was dispatchable.",
+                "reason": (
+                    "Migrated from legacy worker-role config: role was dispatchable."
+                    if enabled
+                    else "Role added to the catalog after this project's migration baseline; not enabled by migration."
+                ),
                 "before": {"state": "absent"},
                 "after": {"state": role_state["state"]},
                 "cause": "migration_init",
