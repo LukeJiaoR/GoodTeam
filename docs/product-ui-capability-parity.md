@@ -7,7 +7,7 @@ approval policy, evidence, execution identity, and mutations.
 | Legacy capability | Authoritative API | Product route / component | Boundary | Verification | Status |
 | --- | --- | --- | --- | --- | --- |
 | Projects overview and load | `GET /api/projects`, `POST /api/projects/import` | `/projects`, `ProjectsPage` | Import is GoodTeam-owned and does not mutate the selected target | Projects unit + isolated import E2E | Migrated |
-| Project readiness and workflow entry | `/api/projects/:key/home`, readiness actions, workflow bridge | `/projects/:key/home`, `ProjectHomePage` | Server capability projection controls entry | Readiness backend/frontend + isolated E2E | Migrated; bridge target updated in this migration |
+| Project readiness and workflow entry | `/api/projects/:key/home`, readiness actions, workflow bridge | `/projects/:key/work`, Task Assistant | Task Assistant drives the server-owned readiness engine and workflow gate | Readiness backend + Work frontend + isolated E2E | Migrated; legacy readiness page removed |
 | Workflow stages and current/next node | `GET /api/state`, `GET /api/workflow/graph` | `/projects/:key/work`, `WorkPage` | State and graph are read-only projections | Work route/unit + deep-link E2E | Migrated |
 | Run identity and history | `GET /api/projects/:key/runs`, `GET /api/projects/:key/runs/:runId` | `/projects/:key/work/runs/:runId`, `WorkPage` | URL run ID must match a server-known run; history is read-only | Projection/backend + refresh/back-forward E2E | Migrated |
 | Plan and Agile board | `GET /api/state` (`agile_board`, workflow steps) | Work / Plan | No client-side task-state inference | Work projection tests | Migrated |
@@ -25,7 +25,7 @@ approval policy, evidence, execution identity, and mutations.
 | Immutable activity | State action log projection | `/activity`, `ActivityPage` | Events are read-only and filter-only in the client | Activity unit + filter E2E | Migrated |
 | Global appearance, locale, health | Preferences and `GET /api/state` | `/settings`, `SettingsPage` | Preferences remain local; health is server-observed | Settings unit + bilingual/theme E2E | Migrated |
 | Worker/model defaults and project configuration | `GET/POST /api/settings`, agent/project-config APIs | global Settings and `/projects/:key/settings/:section` | Workspace defaults affect only future imports; project mutations keep same-origin and server validation | Settings/config backend + isolated E2E | Migrated |
-| Legacy bookmarks | product router + SPA fallback | redirects to product Home/Work/Review/Knowledge | No normal navigation targets `/legacy` | Router/backend + E2E assertion | Migrated |
+| Legacy bookmarks | product router + SPA fallback | redirects to product Work/Review/Knowledge | No normal navigation targets `/legacy` or project Home | Router/backend + E2E assertion | Migrated |
 
 The full Tier 4 run proved this matrix. The unmounted legacy application,
 module-dashboard components, and their now-orphaned hooks/utilities were removed;

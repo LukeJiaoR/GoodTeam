@@ -12,7 +12,7 @@ export default defineConfig({
     viewport: { width: 1440, height: 1000 },
   },
   webServer: {
-    command: 'PYTHONPATH=../src "${GOODTEAM_E2E_PYTHON:-../.venv/bin/python}" -m goodteam_os.cli serve --workspace /private/tmp/goodteam-project-load-e2e/workspace --host 127.0.0.1 --port 8899',
+    command: 'GOODTEAM_HOME=/private/tmp/goodteam-project-load-e2e/home GOODTEAM_PROJECTS_REGISTRY=/private/tmp/goodteam-project-load-e2e/home/projects.json PYTHONPATH=../src "${GOODTEAM_E2E_PYTHON:-../.venv/bin/python}" -m goodteam_os.cli serve --workspace /private/tmp/goodteam-project-load-e2e/workspace --host 127.0.0.1 --port 8899',
     url: 'http://127.0.0.1:8899/projects',
     reuseExistingServer: false,
     timeout: 120000,

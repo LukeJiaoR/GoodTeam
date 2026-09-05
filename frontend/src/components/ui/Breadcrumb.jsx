@@ -12,7 +12,7 @@ export default function Breadcrumb({ projectKey = '', t }) {
   ];
 
   if (projectKey) {
-    items.push({ label: projectKey, to: routes.projectHome(projectKey) });
+    items.push({ label: projectKey, to: routes.projectWork(projectKey) });
 
     if (pathname.includes('/work')) {
       items.push({ label: t('product.navigation.work'), to: routes.projectWork(projectKey), current: true });

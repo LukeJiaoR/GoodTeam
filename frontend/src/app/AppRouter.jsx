@@ -26,6 +26,11 @@ function ProjectTeamRedirect() {
   return <Navigate to={routes.projectTeam(projectKey)} replace />;
 }
 
+function ProjectWorkRedirect() {
+  const { projectKey = '' } = useParams();
+  return <Navigate to={routes.projectWork(projectKey)} replace />;
+}
+
 export function createProductRoutes({
   ProjectsComponent = ProjectsPage,
   WorkComponent = WorkPage,
@@ -43,7 +48,7 @@ export function createProductRoutes({
         { path: '/inbox', element: <Navigate to={routes.projects()} replace /> },
         { path: '/activity', element: <Navigate to={routes.projects()} replace /> },
         { path: '/settings', element: <Navigate to={routes.projects()} replace /> },
-        { path: '/projects/:projectKey/home', element: <ProjectTeamRedirect /> },
+        { path: '/projects/:projectKey/home', element: <ProjectWorkRedirect /> },
         { path: '/projects/:projectKey/team', element: <TeamComponent /> },
         {
           path: '/projects/:projectKey/work',

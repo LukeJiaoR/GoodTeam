@@ -117,7 +117,7 @@ export default function RepositoryOverview({ artifact, language = 'en' }) {
   const commands = commandGroups(overview.commands);
 
   return (
-    <section className="project-home-section repository-overview" aria-labelledby="repository-overview-title">
+    <section className="repository-overview" aria-labelledby="repository-overview-title">
       <div className="projects-section-heading">
         <h2 id="repository-overview-title">{t('readiness.overview.title')}</h2>
         <p>{t('readiness.overview.description')}</p>
