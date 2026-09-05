@@ -4,9 +4,17 @@ import { getProjectState } from '../runs/runApi';
 
 export const getSettingsAgents = getAgents;
 export const getProjectSettings = getProjectState;
-export const saveWorkerDefaults = (projectKey, mode, workers = {}, roleModels = {}, workerTypeSettings = {}) => requestJson('/api/project-config', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ project: projectKey, worker_backend_mode: mode, workers, role_models: roleModels, worker_type_settings: workerTypeSettings }),
-});
+export const sendTeamCommands = (projectKey, commands, { reason = '', commandKey = '' } = {}) => requestJson(
+  `/api/projects/${encodeURIComponent(projectKey)}/team/commands`,
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commands, reason, command_key: commandKey }),
+  },
+);
+export const getTeamEvents = (projectKey, { signal } = {}) => requestJson(
+  `/api/projects/${encodeURIComponent(projectKey)}/team/events`,
+  { signal },
+);
 
-export const settingsApi = { getProjectSettings, getSettingsAgents, saveWorkerDefaults };
+export const settingsApi = { getProjectSettings, getSettingsAgents, sendTeamCommands, getTeamEvents };

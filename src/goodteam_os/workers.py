@@ -872,6 +872,8 @@ class WorkerJobStore:
         additional_prompt: str = "",
         desired_instances: int = 1,
         execution_policy: str = "standard",
+        worker_id: str = "",
+        worker_name: str = "",
     ) -> dict[str, Any]:
         job_id = f"job-{uuid4()}"
         job_root = self.root / job_id
@@ -905,6 +907,8 @@ class WorkerJobStore:
             "pi_model": pi_model,
             "pi_thinking_level": pi_thinking_level,
             "pi_session_dir": pi_session_dir,
+            "worker_id": worker_id,
+            "worker_name": worker_name,
         }.items():
             if value:
                 job[key] = value

@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from goodteam_os.graph import resolve_project_runtime_root, resolve_role_adapter, worker_type_settings_for_role
+from goodteam_os.graph import SESSION_BACKENDS, resolve_project_runtime_root, resolve_role_adapter, worker_type_settings_for_role
 from goodteam_os.models import resolve_project_model_profile
 from goodteam_os.projects import load_project_target
 from goodteam_os.workers import WorkerJobStore
@@ -147,6 +147,16 @@ def _model_name(configured_model: str) -> str:
 
 
 def _configured_manager_model(target: dict[str, object]) -> str:
+    from goodteam_os.team_control_plane import attached_team_state
+
+    state = attached_team_state(target)
+    if state is not None:
+        manager = dict(state.get("manager", {}) or {})
+        runtime = dict(manager.get("runtime", {}) or {})
+        model = str(runtime.get("model", "") or "").strip()
+        if model:
+            provider = str(runtime.get("provider", "") or "").strip()
+            return f"{provider}:{model}" if provider else model
     configured_path = str(os.getenv("GOODTEAM_MODEL_CONFIG", "") or "").strip()
     model_config = Path(configured_path).expanduser() if configured_path else Path(__file__).resolve().parents[2] / "models.yaml"
     try:
@@ -157,9 +167,27 @@ def _configured_manager_model(target: dict[str, object]) -> str:
 
 
 def _manager_settings(target: dict[object, object]) -> dict[str, object]:
-    settings = worker_type_settings_for_role(target, "orchestrator")
-    # Task Assistant is one logical owner. Parallel authority is intentionally unsupported.
-    settings["desired_instances"] = 1
+    from goodteam_os.team_control_plane import attached_team_state
+
+    state = attached_team_state(target)
+    if state is not None:
+        manager = dict(state.get("manager", {}) or {})
+        runtime = dict(manager.get("runtime", {}) or {})
+        reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
+        settings = {
+            "reasoning_depth": reasoning_depth,
+            "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
+            # Task Assistant is one logical owner. Parallel authority is
+            # intentionally unsupported.
+            "desired_instances": 1,
+            "pi_thinking_level": reasoning_depth
+            if resolve_role_adapter(target, "orchestrator") in SESSION_BACKENDS and reasoning_depth != "default"
+            else "",
+        }
+    else:
+        settings = worker_type_settings_for_role(target, "orchestrator")
+        # Task Assistant is one logical owner. Parallel authority is intentionally unsupported.
+        settings["desired_instances"] = 1
     # "default" means GoodTeam's portable default, not an unbounded user-global CLI value.
     # Passing an explicit supported level keeps model compatibility deterministic.
     if settings.get("reasoning_depth") == "default":
@@ -226,8 +254,14 @@ def _manager_chat_task(text: str) -> str:
             "Respond as the project's Task Assistant and classify the user's current message.",
             "Use intent work_request for a request that should become an executable task.",
             "Use intent project_understanding for a request to inspect or explain the current project.",
+            "Use intent team_management only for a persistent Team composition change (enable/disable a capability, add/pause/release a worker, change a worker's runtime or role).",
             "Use intent ambiguous when a safe clarifying question is required.",
-            'The JSON shape must be: {"intent": "work_request|project_understanding|ambiguous", "response": "concise user-facing reply"}.',
+            'The JSON shape must be: {"intent": "work_request|project_understanding|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
+            "team_commands and team_authorization are required only for intent team_management; omit them otherwise.",
+            "Use team_authorization user_authorized only when the user's current message itself explicitly requests the team change; then no extra confirmation is needed.",
+            "When you believe the team should change but the user did not ask for it, use team_authorization manager_proposed and wait for approval.",
+            "A preference scoped to the current task or run (for example 'this time skip research') is never a team command.",
+            "Never claim a capability the provided Team capability summary does not have; explain missing capability boundaries when they affect the request.",
             "Do not claim that project inspection or workflow execution has completed.",
             "",
             "## Current user message",
@@ -236,7 +270,7 @@ def _manager_chat_task(text: str) -> str:
     )
 
 
-def _parse_chat_turn(output: str) -> dict[str, str]:
+def _parse_chat_turn(output: str) -> dict[str, object]:
     text = str(output or "").strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
     candidate = fenced.group(1) if fenced else text
@@ -248,9 +282,56 @@ def _parse_chat_turn(output: str) -> dict[str, str]:
         raise ManagerExecutionError("The configured Task Assistant did not return a structured chat response.")
     intent = str(payload.get("intent", "") or "").strip()
     response = str(payload.get("response", "") or "").strip()
-    if intent not in {"work_request", "project_understanding", "ambiguous"} or not response or len(response) > 4_000:
+    if intent not in {"work_request", "project_understanding", "team_management", "ambiguous"} or not response or len(response) > 4_000:
         raise ManagerExecutionError("The configured Task Assistant returned an invalid structured chat response.")
-    return {"intent": intent, "response": response}
+    parsed: dict[str, object] = {"intent": intent, "response": response}
+    if intent == "team_management":
+        commands = _parse_team_commands(payload.get("team_commands"))
+        authorization = str(payload.get("team_authorization", "") or "").strip()
+        if not commands:
+            raise ManagerExecutionError("The configured Task Assistant returned a team decision without commands.")
+        if authorization not in {"user_authorized", "manager_proposed"}:
+            raise ManagerExecutionError("The configured Task Assistant returned an invalid team authorization.")
+        parsed["team_commands"] = commands
+        parsed["team_authorization"] = authorization
+    return parsed
+
+
+TEAM_COMMAND_KINDS = {
+    "enable_role",
+    "disable_role",
+    "initialize_worker",
+    "activate_worker",
+    "inactivate_worker",
+    "release_worker",
+    "delete_worker",
+    "change_worker_runtime",
+    "change_worker_role",
+    "rename_worker",
+    "change_manager_runtime",
+}
+
+
+def _parse_team_commands(raw: object) -> list[dict[str, object]]:
+    if not isinstance(raw, list):
+        return []
+    commands: list[dict[str, object]] = []
+    for item in raw[:8]:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "") or "").strip()
+        if kind not in TEAM_COMMAND_KINDS:
+            raise ManagerExecutionError("The configured Task Assistant returned an unknown team command.")
+        command: dict[str, object] = {"kind": kind}
+        for key in ("role", "worker_id", "name"):
+            value = str(item.get(key, "") or "").strip()
+            if value:
+                command[key] = value[:200]
+        for key in ("provider", "model", "reasoning_depth", "additional_prompt"):
+            if key in item:
+                command[key] = str(item.get(key, "") or "")[:4000]
+        commands.append(command)
+    return commands
 
 
 def _parse_interpretation(output: str) -> dict[str, Any]:

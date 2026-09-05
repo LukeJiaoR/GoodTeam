@@ -37,6 +37,9 @@ class AgileDevState:
     blockers: list[str] = field(default_factory=list)
     model_profile: str = "balanced"
     role_models: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Immutable Team execution snapshot bound when the run starts. Later Team
+    # changes must never rewrite what this run executed with.
+    team_snapshot: dict[str, object] = field(default_factory=dict)
     current_node: str = "start"
     next_node: str = "product_requirement"
     load_profile: str = "greenfield"
@@ -208,6 +211,7 @@ class StateStore:
         data.setdefault("blockers", [])
         data.setdefault("model_profile", "balanced")
         data.setdefault("role_models", {})
+        data.setdefault("team_snapshot", {})
         data.setdefault("load_profile", "greenfield")
         return AgileDevState(**data)
 

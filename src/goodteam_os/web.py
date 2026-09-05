@@ -51,6 +51,11 @@ from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
 from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
 from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+from goodteam_os.team_control_plane import (
+    TeamControlPlaneError,
+    TeamControlPlaneStore,
+    execute_team_commands,
+)
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
 from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
 from goodteam_os.native_picker import choose_native_path
@@ -2299,6 +2304,40 @@ def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
     return serialize_task_board(build_task_board(LocalTaskStore(ledger.parents[2], project_key=project_key).list_tasks()))
 
 
+def build_team_view_payload(workspace: Path, project_key: str) -> dict[str, object]:
+    """Current Team truth for the Team surface: capability view plus ledger metadata."""
+    key = normalize_project_key(project_key)
+    config_path = _project_config_for_key(workspace, key)
+    from goodteam_os.team_control_plane import build_team_capability_view, ensure_team_state
+
+    state = ensure_team_state(workspace, key, config_path)
+    if state is None:
+        raise ProjectApiError(
+            "team_state_unavailable",
+            "Team control-plane state is unavailable for this project.",
+            404,
+            recovery=["reload_project"],
+        )
+    store = TeamControlPlaneStore(workspace, key)
+    return {
+        "team": build_team_capability_view(state),
+        "events": store.read_events(limit=200),
+    }
+
+
+def build_team_events_payload(workspace: Path, project_key: str) -> dict[str, object]:
+    key = normalize_project_key(project_key)
+    _project_config_for_key(workspace, key)
+    store = TeamControlPlaneStore(workspace, key)
+    events = store.read_events(limit=500)
+    return {
+        "schema_version": "team_decision_ledger.v1",
+        "project_key": key,
+        "event_count": len(events),
+        "events": events,
+    }
+
+
 def build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
     project_config = _project_config_for_key(workspace, project_key)
     start_context = build_start_console_context(workspace, project_config=project_config)
@@ -2325,11 +2364,17 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
     intent_commits = IntentCommitStore(workspace, project_key).list_intents(
         mission_id=state.run_id if state is not None else "",
     )
+    team_payload = None
+    try:
+        team_payload = build_team_view_payload(workspace, project_key)["team"]
+    except (ProjectApiError, ValueError):
+        team_payload = None
     return {
         "type": "project",
         "state": asdict(state) if state is not None else None,
         "resources": resources,
         "start_context": start_context,
+        "team": team_payload,
         "active_run": active_run,
         "task_assistant_session": task_assistant_session,
         "role_observations": build_role_observations(state),
@@ -3433,6 +3478,15 @@ def start_workflow(
     state.delivery_mode = normalize_delivery_mode(delivery_mode or str(target.get("delivery_mode", "") or "init_project"))
     state.delivery_standards = _normalize_start_delivery_standards(delivery_standards) if state.delivery_mode == "custom" else []
     state.role_models = role_models
+    if not dry_run and project_config is not None and project_config.is_file():
+        # Bind the immutable Team execution snapshot for this durable run so
+        # later Team changes never rewrite historical execution truth. A
+        # workflow start is an explicit team touchpoint and may migrate once.
+        from goodteam_os.team_control_plane import build_team_execution_snapshot, ensure_team_state
+
+        team_state = ensure_team_state(workspace, key, project_config)
+        if team_state is not None:
+            state.team_snapshot = build_team_execution_snapshot(team_state)
     profile = resolve_profile(load_profile or "greenfield")
     state.load_profile = profile.name
     use_fix_profile = profile.name == "fix" and source_type != "existing_project"
@@ -5608,6 +5662,16 @@ def handle_project_api_get(
         _project_config_for_key(workspace, key)
         run_id = _decode_project_run_id(run_match.group(2))
         return 200, build_project_run_detail(workspace, key, run_id)
+    team_events_match = re.fullmatch(r"/api/projects/([^/]+)/team/events", path)
+    if team_events_match:
+        key = _decode_project_api_key(team_events_match.group(1))
+        _project_config_for_key(workspace, key)
+        return 200, build_team_events_payload(workspace, key)
+    team_match = re.fullmatch(r"/api/projects/([^/]+)/team", path)
+    if team_match:
+        key = _decode_project_api_key(team_match.group(1))
+        _project_config_for_key(workspace, key)
+        return 200, build_team_view_payload(workspace, key)
     if path.startswith("/api/projects/") and path.endswith("/home"):
         encoded_key = path.removeprefix("/api/projects/").removesuffix("/home")
         _decode_project_api_key(encoded_key)
@@ -5707,6 +5771,26 @@ def handle_project_api_post(
         key = _decode_project_api_key(task_assistant_action_match.group(1))
         key, target, root = _project_target_and_root(workspace, key)
         action = str(request.get("action", ""))
+        if action in {"confirm_team_decision", "dismiss_team_decision"}:
+            proposal_id = str(request.get("proposal_id", ""))
+            service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
+            try:
+                if action == "confirm_team_decision":
+                    session = service.confirm_pending_team_decision(project_key=key, proposal_id=proposal_id)
+                else:
+                    session = service.dismiss_pending_team_decision(project_key=key, proposal_id=proposal_id)
+            except ValueError as exc:
+                raise ProjectApiError(
+                    "team_decision_unavailable",
+                    str(exc),
+                    409,
+                    recovery=["reload_project", "retry_request"],
+                ) from exc
+            return 200, {
+                "task_assistant_session": session,
+                "applied": action == "confirm_team_decision",
+                "team": build_team_view_payload(workspace, key)["team"],
+            }
         if action not in {"confirm_task", "continue_preparation"}:
             raise ProjectApiError(
                 "invalid_request",
@@ -5833,6 +5917,54 @@ def handle_project_api_post(
             "workflow_started": True,
             "status": "workflow_started",
             "run_id": str(result.get("run_id", "")),
+        }
+    team_commands_match = re.fullmatch(r"/api/projects/([^/]+)/team/commands", path)
+    if team_commands_match:
+        key = _decode_project_api_key(team_commands_match.group(1))
+        config_path = _project_config_for_key(workspace, key)
+        raw_commands = request.get("commands", [])
+        if not isinstance(raw_commands, list) or not raw_commands:
+            raise ProjectApiError(
+                "invalid_request",
+                "Team commands payload must include a non-empty commands list.",
+                400,
+                recovery=["retry_request"],
+            )
+        commands = [dict(item) for item in raw_commands if isinstance(item, dict)]
+        if len(commands) != len(raw_commands):
+            raise ProjectApiError(
+                "invalid_request",
+                "Each team command must be a JSON object.",
+                400,
+                recovery=["retry_request"],
+            )
+        try:
+            outcome = execute_team_commands(
+                workspace,
+                key,
+                commands,
+                actor="user",
+                surface="team_ui",
+                reason=str(request.get("reason", "") or "")[:300],
+                source_ref={"client_context": dict(request.get("client_context") or {})} if request.get("client_context") else None,
+                command_key=str(request.get("command_key", "") or "")[:200],
+                config_path=config_path,
+            )
+        except TeamControlPlaneError as exc:
+            raise ProjectApiError(
+                "team_command_rejected",
+                str(exc),
+                409,
+                recovery=["reload_team", "retry_request"],
+            ) from exc
+        return 200, {
+            "ok": True,
+            "decision_id": outcome["decision_id"],
+            "changed": outcome["changed"],
+            "replayed": outcome["replayed"],
+            "team_revision": outcome["team_revision"],
+            "events": outcome["events"],
+            "team": outcome["team"],
         }
     mode_match = re.fullmatch(r"/api/projects/([^/]+)/mode", path)
     if mode_match:
@@ -6002,7 +6134,7 @@ def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions))",
+            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions)|team/commands)",
             path,
         )
     )
@@ -6097,7 +6229,7 @@ def is_product_spa_path(path: str) -> bool:
     return bool(
         path in {"/", "/legacy", "/projects", "/inbox", "/activity", "/settings"}
         or re.fullmatch(
-            r"/projects/[^/]+/(?:home|work|work/runs/[^/]+|review|review/[^/]+|knowledge|settings/[^/]+)",
+            r"/projects/[^/]+/(?:home|work|work/runs/[^/]+|review|review/[^/]+|knowledge|team|settings/[^/]+)",
             path,
         )
     )
@@ -6568,6 +6700,12 @@ def normalize_worker_backend(value: object) -> dict[str, object]:
 
 
 def update_project_worker_backend_settings(workspace: Path, request: dict[str, object]) -> dict[str, object]:
+    """Deprecated role-keyed settings bridge, adapted onto the control plane.
+
+    The canonical mutation path is `POST /api/projects/<key>/team/commands`.
+    This adapter only translates the legacy role-keyed payload into the same
+    domain commands; it never writes worker config directly.
+    """
     project_key = str(request.get("project", "") or request.get("project_key", "")).strip()
     if not project_key:
         raise ValueError("project is required")
@@ -6593,36 +6731,137 @@ def update_project_worker_backend_settings(workspace: Path, request: dict[str, o
     )
 
     config_path = _project_config_for_key(workspace, project_key)
+    from goodteam_os.team_control_plane import MANAGER_ROLE, attached_team_state, ensure_team_state
+
+    # A settings write is a team touchpoint: migrate once before translating.
+    ensure_team_state(workspace, normalize_project_key(project_key), config_path)
     target = load_project_target(config_path)
-    existing_role_models = target.get("role_model_overrides", {})
-    existing_worker_type_settings = normalize_worker_type_settings(target.get("worker_type_settings", {}), strict=False)
-    role_model_overrides = (
-        {str(role): str(model) for role, model in existing_role_models.items()}
-        if not role_models_present and isinstance(existing_role_models, dict)
-        else {}
-    )
-    for role, model in role_models.items():
-        if not model or model.lower() == "default":
-            role_model_overrides.pop(role, None)
-        else:
-            role_model_overrides[role] = model
-    update_worker_backend_config(
-        config_path,
-        mode=mode,
-        workers=_ordered_worker_overrides(workers),
-        role_model_overrides=_ordered_role_model_overrides(role_model_overrides),
-        worker_type_settings=_ordered_worker_type_settings(
-            worker_type_settings if worker_type_settings_present else existing_worker_type_settings
-        ),
-    )
+    state = attached_team_state(target)
+    if state is None:
+        # Unmigrated/synthetic target: preserve the legacy direct write path.
+        existing_role_models = target.get("role_model_overrides", {})
+        existing_worker_type_settings = normalize_worker_type_settings(target.get("worker_type_settings", {}), strict=False)
+        role_model_overrides = (
+            {str(role): str(model) for role, model in existing_role_models.items()}
+            if not role_models_present and isinstance(existing_role_models, dict)
+            else {}
+        )
+        for role, model in role_models.items():
+            if not model or model.lower() == "default":
+                role_model_overrides.pop(role, None)
+            else:
+                role_model_overrides[role] = model
+        update_worker_backend_config(
+            config_path,
+            mode=mode,
+            workers=_ordered_worker_overrides(workers),
+            role_model_overrides=_ordered_role_model_overrides(role_model_overrides),
+            worker_type_settings=_ordered_worker_type_settings(
+                worker_type_settings if worker_type_settings_present else existing_worker_type_settings
+            ),
+        )
+        report = check_project_target(load_project_target(config_path))
+        return {
+            "ok": True,
+            "role_worker_backends": report["role_worker_backends"],
+            "worker_backends_preflight": report["worker_backends_preflight"],
+            "role_model_overrides": _ordered_role_model_overrides(role_model_overrides),
+            "worker_type_settings": _ordered_worker_type_settings(
+                worker_type_settings if worker_type_settings_present else existing_worker_type_settings
+            ),
+        }
+
+    # Migrated project: translate the role-keyed payload into control-plane
+    # commands under one decision.
+    from goodteam_os.team_control_plane import build_team_capability_view
+
+    commands: list[dict[str, object]] = []
+    view = build_team_capability_view(state)
+    for entry in view["roles"]:
+        role = str(entry["role"])
+        roster = [dict(worker) for worker in entry["workers"]]
+        active = [worker for worker in roster if worker["lifecycle"] == "active"]
+        target_provider = workers.get(role) or mode
+        target_model = ""
+        if role in role_models:
+            raw_model = role_models[role]
+            # The legacy contract treats "default" (and blank) as clearing the
+            # per-role model override.
+            if raw_model.strip() and raw_model.strip().lower() != "default":
+                target_model = raw_model.split(":", 1)[1].strip() if ":" in raw_model else raw_model.strip()
+        role_settings = dict(worker_type_settings.get(role, {}) or {})
+        for worker in active:
+            command: dict[str, object] = {
+                "kind": "change_worker_runtime",
+                "worker_id": worker["id"],
+                "provider": target_provider,
+            }
+            if role_models_present:
+                command["model"] = target_model
+            if worker_type_settings_present:
+                command["reasoning_depth"] = str(role_settings.get("reasoning_depth", "default") or "default")
+                command["additional_prompt"] = str(role_settings.get("additional_prompt", "") or "")
+            commands.append(command)
+        if worker_type_settings_present:
+            desired = int(role_settings.get("desired_instances", 1) or 1)
+            inactive_pool = [worker for worker in roster if worker["lifecycle"] == "inactive"]
+            while len(active) < desired:
+                if inactive_pool:
+                    worker = inactive_pool.pop(0)
+                    commands.append({"kind": "activate_worker", "worker_id": worker["id"]})
+                    active.append(worker)
+                else:
+                    commands.append(
+                        {
+                            "kind": "initialize_worker",
+                            "role": role,
+                            "ensure_role_enabled": True,
+                            "runtime": {
+                                "provider": target_provider,
+                                "model": target_model,
+                                "reasoning_depth": str(role_settings.get("reasoning_depth", "default") or "default"),
+                                "additional_prompt": str(role_settings.get("additional_prompt", "") or ""),
+                            },
+                        }
+                    )
+                    active.append({"id": ""})
+            while len(active) > desired:
+                worker = active.pop()
+                if worker.get("id"):
+                    commands.append({"kind": "inactivate_worker", "worker_id": worker["id"]})
+    if MANAGER_ROLE in workers or MANAGER_ROLE in role_models or (worker_type_settings_present and MANAGER_ROLE in worker_type_settings):
+        manager_command: dict[str, object] = {"kind": "change_manager_runtime"}
+        if MANAGER_ROLE in workers:
+            manager_command["provider"] = workers[MANAGER_ROLE]
+        if role_models_present and MANAGER_ROLE in role_models:
+            raw_model = role_models[MANAGER_ROLE]
+            if raw_model.strip() and raw_model.strip().lower() != "default":
+                manager_command["model"] = raw_model.split(":", 1)[1].strip() if ":" in raw_model else raw_model.strip()
+        if worker_type_settings_present:
+            manager_settings = dict(worker_type_settings.get(MANAGER_ROLE, {}) or {})
+            manager_command["reasoning_depth"] = str(manager_settings.get("reasoning_depth", "default") or "default")
+            manager_command["additional_prompt"] = str(manager_settings.get("additional_prompt", "") or "")
+        commands.append(manager_command)
+    if commands:
+        execute_team_commands(
+            workspace,
+            normalize_project_key(project_key),
+            commands,
+            actor="user",
+            surface="api",
+            reason="Legacy role-keyed settings bridge.",
+            config_path=config_path,
+        )
     report = check_project_target(load_project_target(config_path))
     return {
         "ok": True,
         "role_worker_backends": report["role_worker_backends"],
         "worker_backends_preflight": report["worker_backends_preflight"],
-        "role_model_overrides": _ordered_role_model_overrides(role_model_overrides),
-        "worker_type_settings": _ordered_worker_type_settings(
-            worker_type_settings if worker_type_settings_present else existing_worker_type_settings
+        "role_model_overrides": _ordered_role_model_overrides(
+            dict(load_project_target(config_path).get("role_model_overrides", {}) or {})
+        ),
+        "worker_type_settings": normalize_worker_type_settings(
+            load_project_target(config_path).get("worker_type_settings", {}), strict=False
         ),
     }
 

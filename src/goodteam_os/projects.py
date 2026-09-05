@@ -7,6 +7,7 @@ from goodteam_os.models import _parse_simple_yaml
 from goodteam_os.project_reviewer_profiles import reviewer_profiles_report
 from goodteam_os.reviewer_dispatch import reviewer_dispatch_diagnostics
 from goodteam_os.staging import deployment_backend_report, delivery_contract_report
+from goodteam_os.team_control_plane import attach_team_control_plane
 from goodteam_os.workers import worker_backend_doctor
 
 
@@ -28,7 +29,11 @@ DELIVERY_MODES = (
 
 
 def load_project_target(config_path: Path) -> ProjectTarget:
-    return _parse_simple_yaml(config_path)
+    target = _parse_simple_yaml(config_path)
+    # Attach canonical Team Control Plane state (lazy migration on first
+    # touch) so every consumer sees the same current team truth.
+    attach_team_control_plane(target, config_path)
+    return target
 
 
 def _slug(value: str) -> str:

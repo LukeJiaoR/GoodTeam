@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from collections.abc import Callable
 from difflib import unified_diff
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -1645,9 +1646,21 @@ def run_retro_until_complete(
 
 
 def resolve_role_adapter(target: dict[str, object], role: str) -> str:
-    """Pick the worker backend for a single role: per-role `workers.<role>`
-    overrides the global `worker_backend.mode`, defaulting to codex. This is what
-    lets a project run, say, implementation on claude and qa on codex."""
+    """Pick the worker backend for a single role.
+
+    With Team Control Plane state attached, the first active Worker of the
+    role owns the runtime. Legacy projects without team state resolve from
+    per-role `workers.<role>` overriding the global `worker_backend.mode`,
+    defaulting to codex. This does not gate dispatch — dispatch paths must go
+    through `resolve_worker_for_role`, which fails closed.
+    """
+    from goodteam_os.team_control_plane import active_workers_for_role, attached_team_state, normalize_provider
+
+    state = attached_team_state(target)
+    if state is not None and role != "orchestrator":
+        active = sorted(active_workers_for_role(state, role), key=lambda w: (str(w["created_at"]), str(w["id"])))
+        if active:
+            return normalize_provider(dict(active[0]["runtime"]).get("provider", ""))
     default_mode = str(dict(target.get("worker_backend", {})).get("mode", "codex") or "codex")
     per_role = str(dict(target.get("workers", {})).get(role, "") or "").strip()
     adapter = per_role or default_mode
@@ -1657,6 +1670,31 @@ def resolve_role_adapter(target: dict[str, object], role: str) -> str:
 
 
 def worker_type_settings_for_role(target: dict[object, object], role: str) -> dict[str, object]:
+    from goodteam_os.team_control_plane import MANAGER_ROLE, active_workers_for_role, attached_team_state
+
+    state = attached_team_state(target)
+    if state is not None:
+        if role == MANAGER_ROLE:
+            manager = dict(state.get("manager", {}) or {})
+            runtime = dict(manager.get("runtime", {}) or {})
+            reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
+            return {
+                "reasoning_depth": reasoning_depth,
+                "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
+                "desired_instances": 1,
+                "pi_thinking_level": _pi_thinking_level(resolve_role_adapter(target, role), reasoning_depth),
+            }
+        active = sorted(active_workers_for_role(state, role), key=lambda w: (str(w["created_at"]), str(w["id"])))
+        if active:
+            runtime = dict(active[0]["runtime"])
+            reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
+            return {
+                "reasoning_depth": reasoning_depth,
+                "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
+                # Worker count derives from Worker records, not a count field.
+                "desired_instances": min(max(len(active), 1), 8),
+                "pi_thinking_level": _pi_thinking_level(resolve_role_adapter(target, role), reasoning_depth),
+            }
     all_settings = target.get("worker_type_settings", {})
     if not isinstance(all_settings, dict):
         all_settings = {}
@@ -1677,8 +1715,13 @@ def worker_type_settings_for_role(target: dict[object, object], role: str) -> di
         "reasoning_depth": reasoning_depth,
         "additional_prompt": additional_prompt,
         "desired_instances": desired_instances,
-        "pi_thinking_level": reasoning_depth if adapter in SESSION_BACKENDS and reasoning_depth != "default" else "",
+        "pi_thinking_level": _pi_thinking_level(adapter, reasoning_depth),
     }
+
+
+def _pi_thinking_level(adapter: str, reasoning_depth: str) -> str:
+
+    return reasoning_depth if adapter in SESSION_BACKENDS and reasoning_depth != "default" else ""
 
 
 def run_implementation_workers(
@@ -1734,6 +1777,48 @@ def dispatch_gate_reviewer_jobs(
     )
 
 
+def _worker_job_fields(
+    target: dict[object, object],
+    role: str,
+    state: AgileDevState,
+    *,
+    model_fallback: Callable[[], str] | None = None,
+) -> dict[str, object]:
+    """Resolve the dispatching Worker for a role, enforcing Team gates.
+
+    Fails closed: a disabled TeamRole or a TeamRole without an active,
+    runtime-eligible Worker raises TeamDispatchBlocked. The resolved Worker's
+    runtime is authoritative; the role-level model profile only fills in when
+    the Worker has no explicit model configured.
+    """
+    from goodteam_os.team_control_plane import resolve_worker_for_role
+
+    if model_fallback is not None:
+        fallback_model = model_fallback()
+    else:
+        fallback_model = worker_model_for_role(state, role)
+    resolution = resolve_worker_for_role(target, role)
+    if resolution is None:
+        return {
+            "adapter": resolve_role_adapter(target, role),
+            "model": fallback_model,
+            **worker_type_settings_for_role(target, role),
+        }
+    # The resolution IS the execution contract: identity, provider, model,
+    # reasoning depth, and prompt all come from this one Worker. Never merge
+    # fields from a second "first active worker" lookup here.
+    return {
+        "adapter": resolution["adapter"],
+        "model": resolution["model"] or fallback_model,
+        "worker_id": resolution["worker_id"],
+        "worker_name": resolution["worker_name"],
+        "reasoning_depth": resolution["reasoning_depth"],
+        "additional_prompt": resolution["additional_prompt"],
+        "pi_thinking_level": resolution["pi_thinking_level"],
+        "desired_instances": resolution["desired_instances"],
+    }
+
+
 def implementation_worker_job_specs(
     state: AgileDevState,
     target: dict[object, object],
@@ -1745,8 +1830,6 @@ def implementation_worker_job_specs(
         {
             "run_id": state.run_id,
             "role": "ui",
-            "adapter": resolve_role_adapter(target, "ui"),
-            "model": ui_delivery_worker_model(state),
             "task": ui_delivery_task(state, delivery_mode),
             "context": worker_context_for_role(state, "ui", workspace=workspace),
             "constraints": [
@@ -1757,13 +1840,11 @@ def implementation_worker_job_specs(
                 "Capture browser screenshot evidence when a local frontend can run.",
             ],
             "expected_artifacts": ui_delivery_expected_artifacts(delivery_mode),
-            **worker_type_settings_for_role(target, "ui"),
+            **_worker_job_fields(target, "ui", state, model_fallback=lambda: ui_delivery_worker_model(state)),
         },
         {
             "run_id": state.run_id,
             "role": "implementation",
-            "adapter": resolve_role_adapter(target, "implementation"),
-            "model": worker_model_for_role(state, "implementation"),
             "task": implementation_task(state, delivery_mode),
             "context": worker_context_for_role(state, "implementation", workspace=workspace),
             "constraints": [
@@ -1772,13 +1853,11 @@ def implementation_worker_job_specs(
                 "Do not store secrets.",
             ],
             "expected_artifacts": implementation_expected_artifacts(delivery_mode),
-            **worker_type_settings_for_role(target, "implementation"),
+            **_worker_job_fields(target, "implementation", state),
         },
         {
             "run_id": state.run_id,
             "role": "qa",
-            "adapter": resolve_role_adapter(target, "qa"),
-            "model": worker_model_for_role(state, "qa"),
             "task": f"Verify the implemented {state.idea} with reproducible commands and record any gaps.",
             "context": worker_context_for_role(state, "qa", workspace=workspace),
             "constraints": [
@@ -1787,7 +1866,7 @@ def implementation_worker_job_specs(
                 "Do not leave long-running dev servers in the foreground; use bounded smoke checks and clean up background processes.",
             ],
             "expected_artifacts": qa_expected_artifacts(delivery_mode),
-            **worker_type_settings_for_role(target, "qa"),
+            **_worker_job_fields(target, "qa", state),
         },
     ]
 
@@ -2850,12 +2929,13 @@ def generate_artifact_via_worker(
         if runtime_root is None:
             return None
 
+        job_fields = _worker_job_fields(target, role, state)
         store = WorkerJobStore(runtime_root)
         job = store.create_job(
             run_id=state.run_id,
             role=role,
-            adapter=resolve_role_adapter(target, role),
-            model=worker_model_for_role(state, role),
+            model=job_fields.pop("model"),
+            adapter=job_fields.pop("adapter"),
             task=task_text,
             context=worker_context_for_role(state, role, workspace=workspace),
             constraints=[
@@ -2864,7 +2944,7 @@ def generate_artifact_via_worker(
                 f"Do not include preamble text outside the {artifact_key.upper()} content.",
             ],
             expected_artifacts=[_artifact_filename(artifact_key)],
-            **worker_type_settings_for_role(target, role),
+            **job_fields,
         )
         status = store.run_job(str(job["id"]))
         if str(status.get("status", "")) != "completed":

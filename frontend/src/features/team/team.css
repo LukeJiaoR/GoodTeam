@@ -311,3 +311,89 @@
   .team-batch-configuration__fields .product-button { grid-column: 1 / -1; width: 100%; }
   .team-dialog__footer { padding-inline: 1rem; }
 }
+
+/* --- Role / Worker control-plane surface (#402) --- */
+
+.team-page__actions { display: flex; flex: none; gap: 0.6rem; align-items: center; }
+
+.team-summary { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.team-summary [data-tone="degraded"] strong { color: var(--product-warning, #b7791f); }
+.team-summary [data-tone="disabled"] strong { color: var(--product-text-muted); }
+
+.team-manager { margin-top: 2.2rem; }
+.team-manager__row {
+  display: grid;
+  grid-template-columns: minmax(17rem, 1fr) minmax(20rem, 1.2fr) auto;
+  gap: 1.4rem;
+  align-items: center;
+  padding: 0.9rem;
+  border: 1px solid var(--product-border);
+  border-radius: 8px;
+  background: var(--product-surface-muted);
+}
+.team-manager__row h2 { margin: 0; font-size: 0.98rem; }
+.team-manager__row p { margin: 0.2rem 0 0; color: var(--product-text-muted); font-size: 0.78rem; }
+.team-manager__runtime { display: flex; gap: 0.7rem; align-items: center; min-width: 0; }
+.team-manager__runtime code { overflow: hidden; font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
+
+.team-role-workers { display: grid; gap: 0.15rem; margin: 0; padding: 0; list-style: none; }
+.team-role-workers li {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  min-height: 2.35rem;
+}
+.team-role-workers strong { overflow: hidden; font-size: 0.82rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.team-role-workers__runtime { overflow: hidden; color: var(--product-text-muted); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+.team-role-workers__actions { display: inline-flex; gap: 0.25rem; justify-self: end; }
+
+.team-worker__workers { min-width: 0; }
+.team-worker__capability { display: grid; gap: 0.45rem; justify-items: start; }
+.team-role-actions { display: flex; gap: 0.4rem; }
+.team-role-actions .product-button { padding: 0.32rem 0.7rem; font-size: 0.78rem; }
+.team-role-warning { display: inline-flex; gap: 0.35rem; align-items: center; margin: 0; color: var(--product-warning, #b7791f); font-size: 0.72rem; }
+
+.team-dialog__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem 1.1rem; padding: 1.2rem 1.5rem; }
+.team-dialog__fields label { display: grid; gap: 0.3rem; font-size: 0.78rem; }
+.team-dialog__fields label > span { color: var(--product-text-muted); font-weight: 620; }
+.team-dialog__fields select,
+.team-dialog__fields input,
+.team-dialog__fields textarea {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  background: var(--product-surface);
+  color: var(--product-text);
+  font: inherit;
+}
+.team-dialog__prompt { grid-column: 1 / -1; }
+
+.team-history { width: min(100%, 46rem); }
+.team-history__list { display: grid; gap: 0.8rem; padding: 1.2rem 1.5rem; }
+.team-history__empty { margin: 0; color: var(--product-text-muted); font-size: 0.84rem; }
+.team-history__decision { padding: 0.85rem 0.95rem; border: 1px solid var(--product-border); border-radius: 8px; }
+.team-history__decision header { display: flex; gap: 1rem; align-items: baseline; justify-content: space-between; }
+.team-history__decision code { font-size: 0.72rem; }
+.team-history__decision time { color: var(--product-text-muted); font-size: 0.7rem; }
+.team-history__decision ul { margin: 0.55rem 0 0; padding: 0; list-style: none; }
+.team-history__decision li { padding: 0.4rem 0; border-top: 1px solid var(--product-border); font-size: 0.78rem; }
+.team-history__decision li:first-child { border-top: 0; }
+.team-history__decision li em { display: block; color: var(--product-text-muted); font-size: 0.7rem; font-style: normal; }
+.team-history__decision li p { margin: 0.25rem 0 0; color: var(--product-text-muted); }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 64rem) {
+  .team-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .team-manager__row { grid-template-columns: 1fr; }
+  .team-dialog__fields { grid-template-columns: 1fr; }
+  .team-worker__overview { grid-template-columns: 1fr; }
+}

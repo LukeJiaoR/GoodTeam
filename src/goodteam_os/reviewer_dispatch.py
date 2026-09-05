@@ -153,6 +153,19 @@ def dispatch_reviewer_jobs_for_gate(
     if not profiles:
         return []
 
+    role = REVIEWER_ROLE_BY_PHASE.get(phase, "review")
+    resolution = None
+    if target is not None:
+        # Dispatch invariant, enforced backend-side: a disabled TeamRole or a
+        # TeamRole without an active runtime-eligible Worker can never
+        # dispatch, regardless of which surface asked for the review. The
+        # resolved Worker is the actual executor: its identity and runtime are
+        # bound to every job so provenance can always answer "which Worker
+        # executed this review, with which runtime".
+        from goodteam_os.team_control_plane import resolve_worker_for_role
+
+        resolution = resolve_worker_for_role(dict(target), role)
+
     run_id = str(getattr(state, "run_id", "") or "")
     artifact_version = artifact_version_for_path(artifact_path)
     dispatch_group_id = _dispatch_group_id(
@@ -164,7 +177,6 @@ def dispatch_reviewer_jobs_for_gate(
     )
     results: list[dict[str, Any]] = []
     for profile in profiles:
-        role = REVIEWER_ROLE_BY_PHASE.get(phase, "review")
         job, _created = store.create_or_reuse_job(
             **_reviewer_job_spec(
                 run_id=run_id,
@@ -176,8 +188,9 @@ def dispatch_reviewer_jobs_for_gate(
                 artifact_version=artifact_version,
                 dispatch_group_id=dispatch_group_id,
                 context=context,
+                resolution=resolution,
             ),
-            **_worker_type_job_settings(target, role=role, adapter=profile.adapter),
+            **_worker_type_job_settings(target, resolution, role=role, adapter=profile.adapter),
         )
         result = dict(job)
         result.setdefault("job_id", str(job.get("id", "")))
@@ -400,13 +413,28 @@ def _reviewer_job_spec(
     artifact_version: str,
     dispatch_group_id: str,
     context: str,
+    resolution: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     identity_key = "|".join((run_id, approval, artifact_key, artifact_path, artifact_version, profile.profile_id))
+    # Worker runtime is authoritative for team-state projects; the profile
+    # adapter/model remain only as the legacy fallback for unmigrated targets.
+    if resolution is not None:
+        adapter = str(resolution["adapter"])
+        model = str(resolution["model"] or "") or (profile.model or "")
+        worker_id = str(resolution["worker_id"])
+        worker_name = str(resolution["worker_name"])
+    else:
+        adapter = profile.adapter
+        model = profile.model or ""
+        worker_id = ""
+        worker_name = ""
     return {
         "run_id": run_id,
         "role": REVIEWER_ROLE_BY_PHASE.get(phase, "review"),
-        "adapter": profile.adapter,
-        "model": profile.model or "",
+        "adapter": adapter,
+        "model": model,
+        "worker_id": worker_id,
+        "worker_name": worker_name,
         "task": _reviewer_task(profile=profile, approval=approval, artifact_key=artifact_key, artifact_path=artifact_path),
         "context": context,
         "constraints": [
@@ -429,10 +457,24 @@ def _reviewer_job_spec(
 
 def _worker_type_job_settings(
     target: Mapping[str, object] | None,
+    resolution: Mapping[str, object] | None,
     *,
     role: str,
     adapter: str,
 ) -> dict[str, object]:
+    """Reasoning depth / prompt / instance count for reviewer jobs.
+
+    With a worker resolution, the settings come from the exact resolved
+    Worker — the same Worker whose identity and provider/model are bound to
+    the job. Legacy targets keep reading role-level YAML settings.
+    """
+    if resolution is not None:
+        return {
+            "reasoning_depth": str(resolution["reasoning_depth"]),
+            "additional_prompt": str(resolution["additional_prompt"]),
+            "desired_instances": int(resolution["desired_instances"]),
+            "pi_thinking_level": str(resolution["pi_thinking_level"]),
+        }
     raw_all = target.get("worker_type_settings", {}) if target is not None else {}
     raw = raw_all.get(role, {}) if isinstance(raw_all, Mapping) else {}
     if not isinstance(raw, Mapping):
@@ -507,6 +549,8 @@ def _retry_reviewer_job_spec(job: Mapping[str, object], *, retry_attempt: int) -
         "additional_prompt": _clean_text(job.get("additional_prompt")),
         "desired_instances": int(job.get("desired_instances", 1) or 1),
         "pi_thinking_level": _clean_text(job.get("pi_thinking_level")),
+        "worker_id": _clean_text(job.get("worker_id")),
+        "worker_name": _clean_text(job.get("worker_name")),
         "profile_id": profile_id,
         "approval": approval,
         "gate": approval,
