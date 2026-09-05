@@ -40,11 +40,14 @@ Use this order when sources disagree:
 
 A historical document can explain *why* a decision was made, but it must not silently override a stable contract.
 
+## Current orientation
+
+- [`status.md`](status.md): short-lived current product surface, current control-plane model, and active-design boundary. Update it when the current product shape changes; do not use it as an append-only progress log.
+
 ## Stable manuals
 
 ### Product and architecture
 
-- [`status.md`](status.md): current product surface, current control-plane model, and active-design boundary.
 - [`explainer.md`](explainer.md): concise visual introduction for new readers, contributors, and design partners.
 - [`architecture.md`](architecture.md): current system context, Task Assistant interaction layer, workflow/worker boundaries, approval/evidence model, memory/provenance, and current-vs-active-design boundary.
 
