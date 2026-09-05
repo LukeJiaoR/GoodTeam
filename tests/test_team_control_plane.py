@@ -785,8 +785,16 @@ def test_project_state_payload_includes_team_view(tmp_path):
     assert roles["implementation"]["capability"] in {"ready", "degraded", "unstaffed"}
 
 
-def test_legacy_settings_bridge_translates_onto_control_plane(tmp_path):
-    from goodteam_os import web
+def test_legacy_settings_bridge_translates_onto_control_plane(tmp_path, monkeypatch):
+    from goodteam_os import team_control_plane, web
+
+    # Capability readiness depends on host runtime availability (doctor);
+    # pin it so the assertion is deterministic on runners without CLIs.
+    monkeypatch.setattr(
+        team_control_plane,
+        "worker_backend_doctor",
+        lambda mode: {"mode": mode, "ready": True},
+    )
 
     _api_project(tmp_path, key="BRIDGE")
     payload = web.update_project_worker_backend_settings(
