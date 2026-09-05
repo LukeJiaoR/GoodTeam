@@ -986,3 +986,46 @@ def test_reviewer_dispatch_binds_resolved_worker_identity_and_runtime(tmp_path, 
     assert job["adapter"] == "fake"
     assert job["reasoning_depth"] == "high"
     assert job["additional_prompt"] == "Review carefully."
+
+
+def test_debate_dispatch_binds_team_worker_and_gates_disabled_roles(tmp_path, monkeypatch):
+    """Debate jobs run with the role's team Worker runtime and identity."""
+    from goodteam_os import team_control_plane
+    from goodteam_os.debate import default_debate_dispatch
+    from goodteam_os.workers import WorkerJobStore
+
+    config = make_project(
+        tmp_path,
+        extra_yaml=(
+            "worker_type_settings:\n"
+            "  code_review:\n"
+            "    reasoning_depth: low\n"
+            "    additional_prompt: Debate sharp.\n"
+        ),
+    )
+
+    def doctor(mode):
+        return {"mode": mode, "ready": True}
+
+    monkeypatch.setattr(team_control_plane, "worker_backend_doctor", doctor)
+    migrated_target(config)
+    workspace = config.parent.parent
+
+    dispatch = default_debate_dispatch(workspace, "demo", "run-debate")
+    dispatch(role="code_review", kind="challenge", gate="code_review")
+
+    store = WorkerJobStore(workspace)
+    job = next(item for item in store.list_jobs() if item["role"] == "code_review")
+    assert job["worker_id"] == "code_review-a"
+    assert job["worker_name"] == "Reviewer A"
+    assert job["adapter"] == "fake"
+    assert job["reasoning_depth"] == "low"
+    assert job["additional_prompt"] == "Debate sharp."
+
+    # A disabled role gates the debate: no job, no lines.
+    execute(config, [{"kind": "disable_role", "role": "code_review"}])
+    before = len([item for item in store.list_jobs() if item["role"] == "code_review"])
+    lines = dispatch(role="code_review", kind="challenge", gate="code_review")
+    assert lines == []
+    after = len([item for item in store.list_jobs() if item["role"] == "code_review"])
+    assert after == before

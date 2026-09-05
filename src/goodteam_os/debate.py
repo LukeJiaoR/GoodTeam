@@ -128,6 +128,65 @@ def run_gate_debate(
     return read_messages(workspace, project_key, run_id, gate=gate)
 
 
+class DebateGated(Exception):
+    """Raised internally when the team gates a debate role."""
+
+
+def _team_worker_runtime(
+    workspace: Path,
+    project_key: str,
+    role: str,
+    *,
+    fallback_adapter: str,
+) -> dict[str, str]:
+    """Runtime for a debate job: the role's team Worker when one is staffed.
+
+    Team states gate fail closed: a disabled or unstaffed/unready role raises
+    :class:`DebateGated`, and the dispatch produces no lines and no job.
+    Legacy projects without team state keep the explicit adapter.
+    """
+    from goodteam_os.team_control_plane import (
+        TeamControlPlaneError,
+        TeamControlPlaneStore,
+        resolve_worker_from_state,
+    )
+
+    try:
+        state = TeamControlPlaneStore(workspace, project_key).read()
+    except TeamControlPlaneError:
+        state = None
+    if state is None:
+        return {
+            "adapter": fallback_adapter,
+            "model": "",
+            "reasoning_depth": "",
+            "additional_prompt": "",
+            "worker_id": "",
+            "worker_name": "",
+        }
+    try:
+        resolution = resolve_worker_from_state(state, role)
+    except TeamControlPlaneError as exc:
+        raise DebateGated(str(exc)) from exc
+    if resolution is None:
+        return {
+            "adapter": fallback_adapter,
+            "model": "",
+            "reasoning_depth": "",
+            "additional_prompt": "",
+            "worker_id": "",
+            "worker_name": "",
+        }
+    return {
+        "adapter": str(resolution["adapter"]),
+        "model": str(resolution["model"] or ""),
+        "reasoning_depth": str(resolution["reasoning_depth"]),
+        "additional_prompt": str(resolution["additional_prompt"]),
+        "worker_id": str(resolution["worker_id"]),
+        "worker_name": str(resolution["worker_name"]),
+    }
+
+
 def default_debate_dispatch(
     workspace: Path,
     project_key: str,
@@ -153,10 +212,15 @@ def default_debate_dispatch(
                 challenges=challenges,
             )
             store = WorkerJobStore(workspace)
+            try:
+                worker_runtime = _team_worker_runtime(workspace, project_key, role, fallback_adapter=adapter)
+            except DebateGated:
+                return []
             job = store.create_job(
                 run_id=run_id,
                 role=role,
-                adapter=adapter,
+                adapter=worker_runtime["adapter"],
+                model=worker_runtime["model"],
                 task=task,
                 context=context,
                 constraints=[
@@ -164,6 +228,10 @@ def default_debate_dispatch(
                     "Output debate lines only",
                 ],
                 expected_artifacts=["result.md"],
+                reasoning_depth=worker_runtime["reasoning_depth"],
+                additional_prompt=worker_runtime["additional_prompt"],
+                worker_id=worker_runtime["worker_id"],
+                worker_name=worker_runtime["worker_name"],
             )
             status = store.run_job(str(job["id"]))
             if status.get("status") != "completed":

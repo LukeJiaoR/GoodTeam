@@ -1302,6 +1302,11 @@ def resolve_worker_for_role(target: dict[str, object], role: str) -> dict[str, o
     state = attached_team_state(target)
     if state is None:
         return None
+    return resolve_worker_from_state(state, role)
+
+
+def resolve_worker_from_state(state: dict[str, object], role: str) -> dict[str, object] | None:
+    """Resolve a dispatching Worker directly from team state (gates included)."""
     if role == MANAGER_ROLE:
         # The Task Assistant is the single logical primary owner. It is not a
         # TeamRole and is never gated by role membership.
