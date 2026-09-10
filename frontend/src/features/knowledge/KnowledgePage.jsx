@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BookOpenCheck, BrainCircuit, Files, Search, ShieldCheck, TerminalSquare } from 'lucide-react';
 import { useOutletContext, useParams, useSearchParams } from 'react-router-dom';
-import MarkdownView from '../../components/ui/MarkdownView';
+import KnowledgeArtifacts from './KnowledgeArtifacts';
 import ProductError from '../../components/ui/ProductError';
 import RepositoryOverview from '../projects/RepositoryOverview';
 import useProjectState from '../runs/useProjectState';
 import { knowledgeApi } from './knowledgeApi';
+
+function updatedLabel(value, language) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
 
 const VIEWS = [
   ['overview', BookOpenCheck],
@@ -26,7 +33,7 @@ function OverviewView({ home, language, overview, t }) {
     <div className="knowledge-overview">
       <section className="knowledge-intro">
         <header><div><p className="product-eyebrow">{t('knowledge.workspace.context')}</p><h2>{t('knowledge.overview.title')}</h2><p>{t('knowledge.overview.description')}</p></div><span aria-hidden="true"><BookOpenCheck size={21} /></span></header>
-        <dl><div><dt>{t('knowledge.overview.mode')}</dt><dd>{readiness.project_mode || '—'}</dd></div><div><dt>{t('knowledge.overview.updated')}</dt><dd>{readiness.updated_at || '—'}</dd></div><div><dt>{t('knowledge.overview.provenance')}</dt><dd>{overview ? t('knowledge.overview.persisted') : t('knowledge.overview.missing')}</dd></div></dl>
+        <dl><div><dt>{t('knowledge.overview.mode')}</dt><dd>{readiness.project_mode === 'existing_project' ? t('assistant.existingProject') : readiness.project_mode === 'new_project' ? t('assistant.newProject') : readiness.project_mode || '—'}</dd></div><div><dt>{t('knowledge.overview.updated')}</dt><dd>{updatedLabel(readiness.updated_at, language)}</dd></div><div><dt>{t('knowledge.overview.provenance')}</dt><dd>{overview ? t('knowledge.overview.persisted') : t('knowledge.overview.missing')}</dd></div></dl>
       </section>
       <section className="knowledge-confirmed-facts">
         <header><span aria-hidden="true"><ShieldCheck size={19} /></span><div><h2>{t('knowledge.overview.confirmedTitle')}</h2><p>{t('knowledge.overview.confirmedDescription')}</p></div></header>
@@ -36,37 +43,6 @@ function OverviewView({ home, language, overview, t }) {
         </div>
       </section>
       {overview ? <RepositoryOverview artifact={overview} language={language} /> : <p className="product-empty-copy">{t('knowledge.overview.empty')}</p>}
-    </div>
-  );
-}
-
-function ArtifactsView({ data, projectKey, search, setSearch, t }) {
-  const entries = artifactEntries(data);
-  const selectedKey = search.get('artifact') || entries[0]?.[0] || '';
-  const [content, setContent] = useState('');
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    if (!selectedKey) { queueMicrotask(() => setContent('')); return undefined; }
-    const controller = new AbortController();
-    knowledgeApi.getKnowledgeArtifact(projectKey, selectedKey, { signal: controller.signal })
-      .then((payload) => { setContent(payload.content || ''); setError(null); })
-      .catch((caught) => { if (caught.name !== 'AbortError') setError(caught); });
-    return () => controller.abort();
-  }, [projectKey, selectedKey]);
-  if (!entries.length) return <p className="product-empty-copy">{t('knowledge.artifacts.empty')}</p>;
-  return (
-    <div className="knowledge-artifacts">
-      <aside><header><span aria-hidden="true"><Files size={17} /></span><div><h2>{t('knowledge.artifacts.title')}</h2><small>{entries.length}</small></div></header><ol>{entries.map(([key, path]) => <li key={key}><button aria-pressed={key === selectedKey} className={key === selectedKey ? 'is-active' : ''} onClick={() => setSearch({ view: 'artifacts', artifact: key })}><strong>{key}</strong><small>{path}</small></button></li>)}</ol></aside>
-      <article className="knowledge-document">
-        <header><p className="product-eyebrow">{t('knowledge.workspace.document')}</p><h2>{selectedKey}</h2></header>
-        {error ? (
-          <ProductError error={error} t={t} />
-        ) : (
-          <div className="knowledge-artifact-rendered-wrap" tabIndex={0}>
-            <MarkdownView content={content} />
-          </div>
-        )}
-      </article>
     </div>
   );
 }
@@ -178,7 +154,7 @@ export default function KnowledgePage() {
       <header className="knowledge-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('knowledge.title')}</h1><p>{t('knowledge.description')}</p></div><div className="knowledge-page-count"><strong>{artifactCount}</strong><span>{t('knowledge.workspace.artifacts')}</span></div></header>
       <nav className="knowledge-view-switcher" aria-label={t('knowledge.views.label')}>{VIEWS.map(([item, Icon]) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => setSearch({ view: item })}><Icon aria-hidden="true" size={17} /><span>{t(`knowledge.views.${item}`)}</span></button>)}</nav>
       {view === 'overview' ? <OverviewView home={home} language={language} overview={overview} t={t} /> : null}
-      {view === 'artifacts' ? <ArtifactsView data={data} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
+      {view === 'artifacts' ? <KnowledgeArtifacts entries={artifactEntries(data)} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
       {view === 'memory' ? <MemoryView projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
     </main>
   );

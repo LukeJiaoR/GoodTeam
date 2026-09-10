@@ -1,0 +1,22 @@
+/* 阅读区使用当前主题，覆盖旧 Markdown 渲染器固定的深色调色板。 */
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-renderer { min-width: 0; color: var(--product-text); font-size: 0.9375rem; line-height: 1.8; gap: 0.9rem; }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-renderer :is(h1, h2, h3, h4, h5, h6, .md-bold, p, .md-list-item, .md-task-item, .md-italic) { color: var(--product-text); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-renderer :is(h1, .md-hr) { border-color: var(--product-border); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-renderer h1 { font-size: 1.5rem; line-height: 1.35; letter-spacing: -0.025em; }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-renderer h2 { margin-top: 1.25rem; font-size: 1.2rem; line-height: 1.4; }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-inline-code { color: var(--product-accent-strong); background: var(--product-surface-muted); border-color: var(--product-border); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-link { color: var(--product-accent-strong); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-blockquote { color: var(--product-text-muted); background: var(--product-surface-muted); border-left-color: var(--product-accent); border-radius: 0 10px 10px 0; }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-task-done { color: var(--product-text-muted); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-code-block { background: var(--product-surface-muted); border-color: var(--product-border); border-radius: 12px; }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-code-header { background: var(--product-surface-muted); border-color: var(--product-border); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) :is(.md-code-lang, .md-code-copy-btn) { color: var(--product-text-muted); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-code-copy-btn { min-height: 36px; transition: color 140ms ease, background-color 140ms ease; }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-code-copy-btn:hover { color: var(--product-text); background: var(--product-accent-soft); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-code-content { color: var(--product-text); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-table :is(th, td) { color: var(--product-text); border-color: var(--product-border); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-table th { background: var(--product-surface-muted); }
+.product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-table tr:nth-child(even) td { background: var(--product-surface-muted); }
+@media (prefers-reduced-motion: reduce) {
+  .product-shell--neumorphic :is(.product-review-page, .product-knowledge-page) .md-code-copy-btn { transition: none; }
+}

@@ -5,6 +5,10 @@ import '@fontsource-variable/geist'
 import '@fontsource-variable/geist-mono'
 import './index.css'
 import './styles/product.css'
+import './styles/neumorphic.css'
+import './styles/neumorphicPages.css'
+import './styles/neumorphicDocuments.css'
+import './features/team/teamNeumorphic.css'
 import { createProductRoutes } from './app/AppRouter.jsx'
 
 const router = createBrowserRouter(createProductRoutes())

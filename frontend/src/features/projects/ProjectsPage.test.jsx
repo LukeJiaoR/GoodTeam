@@ -665,3 +665,33 @@ test('renders no first-slice dead navigation', async () => {
   expect(screen.queryByRole('link', { name: /settings/i })).not.toBeInTheDocument();
   expect(screen.queryAllByRole('link')).toHaveLength(0);
 });
+
+test('combines project search with attention filtering and recovers from empty results', async () => {
+  const user = userEvent.setup();
+  const api = { listProjects: vi.fn().mockResolvedValue({ projects: [
+    project({ key: 'ALPHA', name: 'Alpha', lifecycle: 'ready', activeRun: { run_id: 'run-a', next_node: 'implementation' } }),
+    project({ key: 'BETA', name: 'Beta', lifecycle: 'attention_required', attentionCount: 1, activeRun: { run_id: 'run-b', next_node: 'implementation' } }),
+  ] }) };
+  const { navigate } = renderProjects({ api });
+  await user.click(await screen.findByRole('button', { name: 'Needs attention', exact: true }));
+  expect(screen.getByRole('button', { name: 'Enter workspace: Beta' })).toHaveTextContent('Needs attention');
+  expect(screen.queryByRole('button', { name: 'Enter workspace: Alpha' })).not.toBeInTheDocument();
+  await user.type(screen.getByRole('searchbox', { name: 'Search projects by name or path' }), ' /work/alpha ');
+  expect(screen.getByText('No matches. Try another search or clear your filters.')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+  expect(screen.getAllByRole('button', { name: /Enter workspace:/ })).toHaveLength(2);
+  await user.click(screen.getByRole('button', { name: 'Active run', exact: true }));
+  expect(screen.getAllByRole('button', { name: /Enter workspace:/ })).toHaveLength(2);
+  expect(navigate).not.toHaveBeenCalled();
+});
+
+test('shows a short folder label and reveals the full project path without entering Work', async () => {
+  const user = userEvent.setup();
+  const api = { listProjects: vi.fn().mockResolvedValue({ projects: [project({ key: 'DEMO', name: 'Demo', lifecycle: 'ready' })] }) };
+  const { navigate } = renderProjects({ api });
+  expect(await screen.findByText('Local folder · demo')).toBeVisible();
+  expect(screen.getByText('/work/demo')).not.toBeVisible();
+  await user.click(screen.getByText('File location'));
+  expect(screen.getByText('/work/demo')).toBeVisible();
+  expect(navigate).not.toHaveBeenCalled();
+});

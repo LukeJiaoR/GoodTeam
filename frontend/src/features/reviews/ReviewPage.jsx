@@ -162,7 +162,7 @@ function TakeoverRecovery({ busy, error, onRecover, review, t }) {
 
 function ArtifactPanel({ onChange, review, t, value }) {
   const isBrief = review.approval === 'takeover';
-  const [view, setView] = useState(isBrief || !review.is_actionable ? 'preview' : 'edit');
+  const [view, setView] = useState('preview');
   const baseline = typeof review.content === 'string' ? review.content : '';
   return (
     <article className="review-artifact">

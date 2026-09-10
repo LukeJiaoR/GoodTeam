@@ -1,6 +1,10 @@
 import { ArrowRight, FolderGit2, FolderPlus, Play, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
+import FileLocation from '../../components/ui/FileLocation';
+import { fileName } from '../../lib/presentation/filePresentation';
+import CollectionToolbar from '../../components/ui/CollectionToolbar';
+import { browseProjects, projectActivity } from './projectBrowse';
 import Button from '../../components/ui/Button';
 import PageState from '../../components/ui/PageState';
 import { translate } from '../../i18n';
@@ -39,6 +43,9 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
   const [status, setStatus] = useState('loading');
   const [listRequest, setListRequest] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const visibleProjects = browseProjects(projects, { query, filter });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -95,6 +102,14 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
           ) : null}
         </header>
 
+        {status === 'ready' && projects.length > 0 ? (
+          <CollectionToolbar label={t('projects.search')} query={query} onQueryChange={setQuery}
+            filters={['all', 'attention_required', 'active'].map((key) => [key, t(key === 'all' ? 'collection.all' : `projects.lifecycle.${key}`)])}
+            selected={filter} onSelect={setFilter} count={visibleProjects.length} t={t} />
+        ) : null}
+        {status === 'ready' && projects.length > 0 && !visibleProjects.length ? (
+          <div className="collection-empty"><p>{t('collection.noResults')}</p><Button variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>{t('collection.reset')}</Button></div>
+        ) : null}
         {status === 'loading' ? <ProjectsSkeleton title={t('projects.list.loading')} /> : null}
         {status === 'error' ? (
           <PageState
@@ -123,13 +138,13 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
         ) : null}
         {status === 'ready' && projects.length > 0 ? (
           <div className="projects-launcher-list">
-            {projects.map((item) => {
+            {visibleProjects.map((item) => {
               const project = item.project;
               return (
+                <div className="project-launcher-entry" key={project.project_key}>
                 <button
                   type="button"
                   className="project-launcher-row"
-                  key={project.project_key}
                   onClick={() => enterProject(project.project_key)}
                   aria-label={`${t('projects.launcher.enter')}: ${project.display_name || project.project_key}`}
                 >
@@ -138,18 +153,19 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
                   </span>
                   <span className="project-launcher-row__copy">
                     <strong>{project.display_name || project.project_key}</strong>
-                    <code>{project.root}</code>
+                    <small>{t('projects.folderLabel', { name: fileName(project.root) })}</small>
                   </span>
-                  <span className="project-launcher-row__activity">
-                    {item.active_run ? (
-                      <><Play aria-hidden="true" size={13} />{t('projects.launcher.active')}</>
-                    ) : t('projects.launcher.ready')}
+                  <span className="project-launcher-row__activity" data-state={projectActivity(item)}>
+                    {projectActivity(item) === 'active' ? <Play aria-hidden="true" size={13} /> : null}
+                    {t(projectActivity(item) === 'active' ? 'projects.launcher.active' : `projects.lifecycle.${projectActivity(item)}`)}
                   </span>
                   <span className="project-launcher-row__action">
                     {t('projects.launcher.enter')}
                     <ArrowRight aria-hidden="true" size={16} />
                   </span>
                 </button>
+                <FileLocation path={project.root} t={t} />
+                </div>
               );
             })}
           </div>

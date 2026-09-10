@@ -1,0 +1,151 @@
+/* 新 UI 共享材质；Work 的工作区布局继续由其自身样式负责。 */
+.product-shell.product-shell--neumorphic {
+  --product-bg: #edf2f8;
+  --product-surface: #edf2f8;
+  --product-surface-muted: #e8eef6;
+  --product-border: #ced8e5;
+  --product-text: #102044;
+  --product-text-muted: #5d6b85;
+  --product-accent: #315efb;
+  --product-accent-strong: #284dcc;
+  --product-accent-soft: #e0e8fc;
+  --product-focus: #315efb;
+  --product-radius: 16px;
+  --neo-raised: 9px 9px 24px #cfd8e6, -9px -9px 24px #ffffff;
+  --neo-soft: 4px 4px 12px #d0dae7, -4px -4px 12px #ffffff;
+  --neo-inset: inset 3px 3px 7px #cdd7e5, inset -3px -3px 7px #ffffff;
+  --neo-ease: cubic-bezier(0.23, 1, 0.32, 1);
+}
+.dark .product-shell.product-shell--neumorphic {
+  --product-bg: #182231;
+  --product-surface: #182231;
+  --product-surface-muted: #141d2b;
+  --product-border: #344155;
+  --product-text: #f2f6ff;
+  --product-text-muted: #a9b5c7;
+  --product-accent: #86a1ff;
+  --product-accent-strong: #a6baff;
+  --product-accent-soft: #263859;
+  --product-focus: #86a1ff;
+  --neo-raised: 9px 9px 24px #101722, -9px -9px 24px #222f42;
+  --neo-soft: 4px 4px 12px #101722, -4px -4px 12px #222f42;
+  --neo-inset: inset 3px 3px 7px #0d1520, inset -3px -3px 7px #253247;
+}
+.product-shell.product-shell--neumorphic .product-chrome {
+  background: var(--product-bg);
+  border-bottom-color: color-mix(in srgb, var(--product-border) 55%, transparent);
+  backdrop-filter: none;
+  padding: 0;
+  box-shadow: none;
+}
+.product-shell.product-shell--neumorphic .product-chrome__inner {
+  width: min(100% - 3rem, 1680px);
+  min-height: 82px;
+  gap: 1.5rem;
+}
+.product-shell.product-shell--neumorphic .product-brand__mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  color: var(--product-accent-strong);
+  background: var(--product-surface);
+  box-shadow: var(--neo-soft);
+}
+.product-shell.product-shell--neumorphic .product-work-navigation {
+  justify-self: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: var(--product-surface-muted);
+  box-shadow: var(--neo-inset);
+}
+.product-shell.product-shell--neumorphic .product-work-navigation__link {
+  min-height: 42px;
+  padding: 0 1.15rem;
+  border-radius: 12px;
+  color: var(--product-text-muted);
+  transition: color 140ms ease, background-color 140ms ease, transform 140ms var(--neo-ease);
+}
+.product-shell.product-shell--neumorphic .product-work-navigation__link.is-active {
+  color: var(--product-accent-strong);
+  background: var(--product-surface);
+  box-shadow: var(--neo-soft);
+}
+.product-shell.product-shell--neumorphic :is(.product-language-control select, .product-appearance-control) {
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--product-surface);
+  box-shadow: var(--neo-soft);
+}
+.product-shell.product-shell--neumorphic .product-button {
+  min-height: 42px;
+  border-radius: 13px;
+  transition: transform 140ms var(--neo-ease), background-color 140ms ease, color 140ms ease;
+}
+.product-shell.product-shell--neumorphic .product-button--secondary {
+  color: var(--product-text);
+  background: var(--product-surface);
+  border-color: transparent;
+  box-shadow: var(--neo-soft);
+}
+.product-shell.product-shell--neumorphic :is(.projects-import-dialog, .team-dialog, .team-history) {
+  border-radius: 24px;
+  border-color: var(--product-border);
+}
+.product-shell.product-shell--neumorphic :is(.projects-import-dialog, .team-dialog) :is(input, select, textarea) {
+  min-height: 44px;
+  border-radius: 12px;
+  color: var(--product-text);
+  background: var(--product-surface-muted);
+  box-shadow: var(--neo-inset);
+  border-color: transparent;
+}
+.product-shell.product-shell--neumorphic :is(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--product-focus);
+  outline-offset: 4px;
+}
+.product-shell.product-shell--neumorphic :is(button, a):focus-visible { transform: none; }
+.product-shell.product-shell--neumorphic :is(.product-button, .product-appearance-control, .product-work-navigation__link, .collection-filters button, .team-icon-button):active:not(:disabled):not(:focus-visible) {
+  transform: translateY(1px) scale(0.98);
+  transition-duration: 80ms;
+}
+.collection-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin: 1.25rem 0; }
+.collection-search { display: flex; gap: 0.65rem; align-items: center; flex: 1 1 16rem; max-width: 30rem; min-width: 0; min-height: 46px; padding: 0 0.85rem; color: var(--product-text-muted); background: var(--product-surface-muted); border-radius: 14px; box-shadow: var(--neo-inset); }
+.collection-search:focus-within { outline: 2px solid var(--product-focus); outline-offset: 3px; }
+.collection-search input { width: 100%; min-width: 0; min-height: 44px; background: transparent; border: 0; box-shadow: none; color: var(--product-text); font: inherit; font-size: 0.88rem; }
+.collection-search input::-webkit-search-cancel-button { display: none; }
+.collection-search input::placeholder { color: var(--product-text-muted); opacity: 1; }
+.product-shell.product-shell--neumorphic .collection-search input:focus-visible { outline: 0; }
+.collection-search button { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border: 0; border-radius: 10px; background: transparent; color: var(--product-text-muted); cursor: pointer; }
+.collection-filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 14px; background: var(--product-surface-muted); box-shadow: var(--neo-inset); }
+.collection-filters button { min-height: 38px; padding: 0 0.85rem; border: 0; border-radius: 10px; background: transparent; color: var(--product-text-muted); font: inherit; font-size: 0.8rem; cursor: pointer; transition: color 140ms ease, background-color 140ms ease, transform 140ms var(--neo-ease); }
+.collection-filters button[aria-pressed="true"] { color: var(--product-accent-strong); background: var(--product-surface); box-shadow: var(--neo-soft); }
+.collection-count { margin-left: auto; font-size: 0.78rem; color: var(--product-text-muted); font-variant-numeric: tabular-nums; }
+.collection-empty { display: grid; gap: 0.7rem; justify-items: center; padding: 3rem 1rem; text-align: center; color: var(--product-text-muted); }
+@media (hover: hover) and (pointer: fine) {
+  .product-shell.product-shell--neumorphic :is(.product-button, .product-appearance-control):hover:not(:disabled):not(:focus-visible) { transform: translateY(-1px); }
+  .collection-filters button:hover, .collection-search button:hover { color: var(--product-accent-strong); }
+}
+@media (max-width: 760px) {
+  .product-shell.product-shell--neumorphic .product-chrome__inner { width: calc(100% - 2rem); grid-template-columns: 1fr auto; gap: 0.85rem; padding: 0.85rem 0; }
+  .product-shell.product-shell--neumorphic .product-work-navigation { grid-row: 2; grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; box-sizing: border-box; gap: 2px; }
+  .product-shell.product-shell--neumorphic .product-work-navigation__link { justify-content: center; gap: 0.3rem; padding: 0 0.35rem; font-size: 0.78rem; }
+  .product-shell.product-shell--neumorphic .product-preferences { grid-row: 1; grid-column: 2; }
+  .product-shell.product-shell--neumorphic .product-appearance-control span { display: none; }
+  .product-shell.product-shell--neumorphic .product-chrome__spacer { display: none; }
+  .collection-toolbar { gap: 0.85rem; }
+  .collection-search { flex-basis: 100%; max-width: none; }
+  .collection-filters { max-width: 100%; }
+  .collection-filters button { min-height: 42px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .product-shell.product-shell--neumorphic *, .product-shell.product-shell--neumorphic *::before, .product-shell.product-shell--neumorphic *::after {
+    animation: none !important;
+    transition-property: color, background-color, opacity !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+  .product-shell.product-shell--neumorphic :is(button, a):is(:hover, :active) { transform: none !important; }
+}

@@ -99,7 +99,7 @@ test('Execution LEDs use semantic Work tokens and stop for reduced motion', () =
   expect(reducedMotionRule).toMatchObject({ animation: 'none' });
 });
 
-test('Manager workspace uses flat operational hierarchy and reserves elevation for attention', () => {
+test('Manager workspace shares a neumorphic material with raised panels and inset controls', () => {
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-workspace')).toMatchObject({
     'grid-template-areas': '"execution manager outcomes"',
     background: 'transparent',
@@ -108,10 +108,8 @@ test('Manager workspace uses flat operational hierarchy and reserves elevation f
     'box-shadow': 'none',
   });
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-pane')).toMatchObject({
-    background: 'var(--work-surface)',
-    border: '1px solid var(--work-border)',
-    'border-radius': '12px',
-    'box-shadow': 'none',
+    background: 'var(--work-material)',
+    'box-shadow': 'var(--work-shadow-raised)',
   });
   expect(declarationsFor(workspaceRoot, '.work-workspace-shell .team-pane--manager')['border-color'])
     .toContain('var(--work-accent)');
@@ -149,21 +147,21 @@ test('desktop Work header keeps mission context and actions on one compact row',
   expect(selectableContext['grid-template-areas']).toContain('"facts selector"');
 });
 
-test('Work context behaves as a top drawer without reserving closed space', () => {
-  expect(declarationsFor(
+test('Work context overlays the workspace without animating layout dimensions', () => {
+  const drawer = declarationsFor(
     workspaceRoot,
     '.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer',
-  )).toMatchObject({
-    'max-height': '15rem',
-    overflow: 'clip',
+  );
+  expect(drawer).toMatchObject({
+    position: 'absolute',
+    overflow: 'auto',
     'transform-origin': 'top',
   });
+  expect(drawer.transition).not.toMatch(/height|width|margin|padding/);
   expect(declarationsFor(
     workspaceRoot,
     '.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer[data-open="false"]',
   )).toMatchObject({
-    'max-height': '0',
-    'margin-bottom': '0',
     visibility: 'hidden',
     opacity: '0',
     'pointer-events': 'none',
@@ -206,21 +204,17 @@ test('Outcomes cards keep their natural height inside the scrolling pane', () =>
     .toBe('0 0 auto');
 });
 
-test('Outcomes cards progressively disclose owner and full details', () => {
+test('Outcomes keep owners visible without hover resizing and disclose full details on demand', () => {
   expect(declarationsFor(
     workspaceRoot,
     '.work-workspace-shell .team-outcome-card__owner',
   )).toMatchObject({
-    'max-height': '0',
-    opacity: '0',
+    opacity: '1',
   });
   expect(declarationsFor(
     workspaceRoot,
     '.work-workspace-shell .team-outcome-list > li:hover .team-outcome-card__owner',
-  )).toMatchObject({
-    'max-height': '3rem',
-    opacity: '1',
-  });
+  )).toEqual({});
   expect(declarationsFor(
     workspaceRoot,
     '.work-workspace-shell .team-outcome-card__details[hidden]',
@@ -236,4 +230,9 @@ test('historical runs retain the full-width three-pane workspace', () => {
     workspaceRoot,
     '.work-workspace-shell .work-historical-view',
   )).not.toHaveProperty('max-width');
+});
+
+test('keyboard focus suppresses movement even when the pointer remains over a button', () => {
+  expect(declarationsFor(workspaceRoot, '.work-workspace-shell button:focus-visible'))
+    .toMatchObject({ transform: 'none' });
 });

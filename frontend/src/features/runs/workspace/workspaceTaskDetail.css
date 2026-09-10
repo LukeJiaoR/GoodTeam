@@ -95,7 +95,8 @@
   background: transparent;
   color: var(--work-text-muted, #a1a1aa);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: color 140ms ease, background-color 140ms ease,
+    transform var(--work-motion-press) var(--work-ease);
   flex-shrink: 0;
 }
 
@@ -309,7 +310,7 @@
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: color 140ms ease, border-color 140ms ease;
   position: relative;
 }
 
@@ -335,7 +336,6 @@
   border-radius: 50%;
   background: #fbbf24;
   box-shadow: 0 0 6px #fbbf24;
-  animation: work-task-detail-pulse 1.5s infinite;
 }
 
 .work-workspace-shell .task-detail-preview-section {
@@ -392,7 +392,8 @@
   font-size: 0.75rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: color 140ms ease, background-color 140ms ease,
+    transform var(--work-motion-press) var(--work-ease);
 }
 
 .work-workspace-shell .task-detail-icon-btn:hover {
@@ -438,7 +439,7 @@
   font-size: 0.74rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: color 140ms ease, background-color 140ms ease;
 }
 
 .work-workspace-shell .task-detail-preview-toggle-btn:hover {
@@ -1006,7 +1007,6 @@
 .work-workspace-shell .task-detail-tab-dot-action {
   background: var(--work-warning);
   box-shadow: 0 0 6px color-mix(in srgb, var(--work-warning) 70%, transparent);
-  animation: work-task-detail-pulse 1.5s infinite;
 }
 
 .work-workspace-shell .task-detail-preview-header {
@@ -1371,10 +1371,6 @@
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-@keyframes work-task-detail-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(1.2); }
-}
 
 @media (max-width: 640px) {
   .work-workspace-shell .task-detail-backdrop {
@@ -1407,5 +1403,14 @@
   .work-workspace-shell .task-detail-dialog,
   .work-workspace-shell .task-detail-tab-dot-action {
     animation: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .work-workspace-shell .task-detail-close-btn:active:not(:focus-visible),
+  .work-workspace-shell .task-detail-icon-btn:active:not(:focus-visible) {
+    transform: translateY(1px) scale(0.97);
+    box-shadow: var(--work-shadow-inset);
+    transition-duration: 80ms;
   }
 }

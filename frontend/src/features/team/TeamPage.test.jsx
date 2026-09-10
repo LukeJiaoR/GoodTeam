@@ -315,3 +315,21 @@ test('worker edit commands diff identity, role, runtime, and lifecycle', () => {
     { kind: 'activate_worker', worker_id: 'implementation-a' },
   ]));
 });
+
+test('finds roles by worker runtime and filters setup needs without changing the team', async () => {
+  const user = userEvent.setup();
+  renderTeam();
+  await user.type(screen.getByRole('searchbox', { name: 'Find a role, worker or model' }), 'gpt-5.4');
+  expect(screen.getByRole('heading', { name: 'Implementation' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'QA' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Needs setup' }));
+  expect(screen.getByText('No matches. Try another search or clear your filters.')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Clear search' }));
+  expect(screen.getByRole('heading', { name: 'QA' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Research' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'Implementation' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Planner' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Disabled', exact: true }));
+  expect(screen.getByRole('heading', { name: 'Planner' })).toBeVisible();
+  expect(mocks.sendTeamCommands).not.toHaveBeenCalled();
+});

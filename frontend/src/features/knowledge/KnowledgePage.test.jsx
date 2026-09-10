@@ -68,11 +68,50 @@ test('switches between artifact documents and role memory in the same workspace'
   renderKnowledge();
 
   await user.click(await screen.findByRole('button', { name: 'Artifacts and docs' }));
-  expect(await screen.findByRole('heading', { name: 'prd' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Requirements (PRD)' })).toBeVisible();
   expect(await screen.findByText('Product requirements.')).toBeVisible();
 
   await user.click(screen.getByRole('button', { name: 'Memory' }));
   expect(await screen.findByRole('heading', { name: 'Role memory' })).toBeVisible();
   expect(screen.getByRole('button', { name: /architect/ })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('searchbox', { name: 'Search this role’s memory' })).toBeVisible();
+});
+
+test('keeps the selected title and document together while another artifact loads', async () => {
+  const user = userEvent.setup();
+  renderKnowledge('/projects/DEMO/knowledge?view=artifacts');
+  expect(await screen.findByText('Product requirements.')).toBeVisible();
+  let resolveRfc;
+  mocks.getKnowledgeArtifact.mockImplementationOnce(() => new Promise((resolve) => { resolveRfc = resolve; }));
+  await user.click(screen.getByRole('button', { name: /Technical design \(RFC\)/ }));
+  expect(screen.getByRole('heading', { name: 'Technical design (RFC)' })).toBeVisible();
+  expect(screen.queryByText('Product requirements.')).not.toBeInTheDocument();
+  expect(screen.getByText('Loading document…')).toBeVisible();
+  resolveRfc({ content: '# RFC\nArchitecture decisions.' });
+  expect(await screen.findByText('Architecture decisions.')).toBeVisible();
+});
+
+test('searches document paths without changing the open document and can clear search', async () => {
+  const user = userEvent.setup();
+  renderKnowledge('/projects/DEMO/knowledge?view=artifacts');
+  expect(await screen.findByText('Product requirements.')).toBeVisible();
+  await user.type(screen.getByRole('searchbox', { name: 'Find a document' }), 'rfc.md');
+  expect(screen.queryByRole('button', { name: /Requirements \(PRD\)/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Technical design \(RFC\)/ })).toBeVisible();
+  expect(screen.getByText('Product requirements.')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Clear search' }));
+  expect(screen.getByRole('button', { name: /Requirements \(PRD\)/ })).toBeVisible();
+  expect(screen.getByRole('searchbox', { name: 'Find a document' })).toHaveFocus();
+});
+
+test('uses readable document names, hides full paths by default, and searches the display name', async () => {
+  const user = userEvent.setup();
+  renderKnowledge('/projects/DEMO/knowledge?view=artifacts');
+  expect(await screen.findByRole('heading', { name: 'Requirements (PRD)' })).toBeVisible();
+  expect(screen.getByText('/runs/demo/prd.md')).not.toBeVisible();
+  await user.type(screen.getByRole('searchbox', { name: 'Find a document' }), 'Requirements');
+  expect(screen.getByRole('button', { name: /Requirements \(PRD\)/ })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /Technical design \(RFC\)/ })).not.toBeInTheDocument();
+  await user.click(screen.getByText('File location'));
+  expect(screen.getByText('/runs/demo/prd.md')).toBeVisible();
 });
