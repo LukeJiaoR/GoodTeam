@@ -698,7 +698,7 @@ def test_task_assistant_confirm_action_starts_exact_proposal_once_ready(tmp_path
     status, payload = web.handle_project_api_post(
         tmp_path,
         "/api/projects/TEAM/task-assistant/actions",
-        {"action": "confirm_task", "proposal_id": proposal["id"]},
+        {"action": "confirm_task", "proposal_id": proposal["id"], "expected_revision": proposal["revision"]},
     )
 
     assert status == 200
@@ -711,7 +711,7 @@ def test_task_assistant_confirm_action_starts_exact_proposal_once_ready(tmp_path
     repeated_status, repeated_payload = web.handle_project_api_post(
         tmp_path,
         "/api/projects/TEAM/task-assistant/actions",
-        {"action": "confirm_task", "proposal_id": proposal["id"]},
+        {"action": "confirm_task", "proposal_id": proposal["id"], "expected_revision": proposal["revision"]},
     )
 
     assert repeated_status == 200
@@ -751,7 +751,7 @@ def test_concurrent_task_confirmations_start_workflow_only_once(tmp_path: Path, 
             first_result["value"] = web.handle_project_api_post(
                 tmp_path,
                 "/api/projects/TEAM/task-assistant/actions",
-                {"action": "confirm_task", "proposal_id": proposal_id},
+                {"action": "confirm_task", "proposal_id": proposal_id, "expected_revision": 1},
             )
         except BaseException as exc:
             first_result["error"] = exc
@@ -766,7 +766,7 @@ def test_concurrent_task_confirmations_start_workflow_only_once(tmp_path: Path, 
     second_status, second_payload = web.handle_project_api_post(
         tmp_path,
         "/api/projects/TEAM/task-assistant/actions",
-        {"action": "confirm_task", "proposal_id": proposal_id},
+        {"action": "confirm_task", "proposal_id": proposal_id, "expected_revision": 1},
     )
     release.set()
     thread.join(timeout=5)
@@ -811,7 +811,7 @@ def test_task_confirmation_reconciles_persisted_start_after_interruption(tmp_pat
     status, payload = web.handle_project_api_post(
         tmp_path,
         "/api/projects/TEAM/task-assistant/actions",
-        {"action": "confirm_task", "proposal_id": proposal["id"]},
+        {"action": "confirm_task", "proposal_id": proposal["id"], "expected_revision": proposal["revision"]},
     )
 
     assert status == 200
@@ -847,14 +847,14 @@ def test_task_confirmation_does_not_retry_an_indeterminate_start(tmp_path: Path,
         web.handle_project_api_post(
             tmp_path,
             "/api/projects/TEAM/task-assistant/actions",
-            {"action": "confirm_task", "proposal_id": proposal["id"]},
+            {"action": "confirm_task", "proposal_id": proposal["id"], "expected_revision": proposal["revision"]},
         )
 
     with pytest.raises(web.ProjectApiError) as captured:
         web.handle_project_api_post(
             tmp_path,
             "/api/projects/TEAM/task-assistant/actions",
-            {"action": "confirm_task", "proposal_id": proposal["id"]},
+            {"action": "confirm_task", "proposal_id": proposal["id"], "expected_revision": proposal["revision"]},
         )
 
     assert captured.value.code == "workflow_start_indeterminate"
@@ -881,7 +881,7 @@ def test_task_assistant_confirm_action_keeps_preparing_without_exposing_readines
             pass
 
         def status(self, key, root):
-            return {"lifecycle": "preparing"}
+            return {"lifecycle": "preparing", "execution": {"id": "prep-1", "status": "running"}}
 
     monkeypatch.setattr(web, "ProjectReadinessExecutor", PreparingExecutor)
     monkeypatch.setattr(web, "build_capabilities", lambda state: {"start_workflow": False})
@@ -889,7 +889,7 @@ def test_task_assistant_confirm_action_keeps_preparing_without_exposing_readines
     status, payload = web.handle_project_api_post(
         tmp_path,
         "/api/projects/TEAM/task-assistant/actions",
-        {"action": "confirm_task", "proposal_id": proposal["id"]},
+        {"action": "confirm_task", "proposal_id": proposal["id"], "expected_revision": proposal["revision"]},
     )
 
     assert status == 202

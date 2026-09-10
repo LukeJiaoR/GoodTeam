@@ -19,6 +19,8 @@ import {
   WORK_VIEWS,
 } from './presentationUtils';
 import WorkTaskDetailDialog from './WorkTaskDetailDialog';
+import AssistantControls from './AssistantControls';
+import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
 const MOBILE_TEAM_QUERY = '(max-width: 767px)';
@@ -106,11 +108,12 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 
 function ManagerMissionEntry({ busy, embedded = true, error, onStart, suggestions = [], t }) {
   const [goal, setGoal] = useState('');
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
-    if (!goal.trim()) return;
-    onStart(goal.trim());
-    setGoal('');
+    if (busy || !goal.trim()) return;
+    const sent = goal;
+    const result = await onStart(sent);
+    if (result !== false) setGoal((current) => current === sent ? '' : current);
   };
   return (
     <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
@@ -201,7 +204,7 @@ function TimelineItem({ item, language, t }) {
           {formatted ? <time dateTime={itemTimestamp}>{formatted}</time> : null}
         </div>
         <p>{copy}</p>
-        {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
+        {item.content && !['mission_requested', 'team_decision_proposed', 'task_proposed'].includes(item.event) && copy !== item.content ? (
           <blockquote>{item.content}</blockquote>
         ) : null}
       </div>
@@ -471,6 +474,8 @@ function isNearBottom(element) {
 }
 
 function ManagerPane({
+  assistantState,
+  onAssistantAction,
   attention,
   busy,
   capabilities,
@@ -502,7 +507,13 @@ function ManagerPane({
       : mission
         ? tone(mission.status)
         : 'neutral';
-  const managerStatus = mission?.source === 'task_assistant'
+  const requestStatus = Object.values(assistantState?.assistant_requests || {}).find((request) => request.status !== 'succeeded')?.status;
+  const assistantStatus = busy === 'message' || busy === 'retry_message' ? 'running' : requestStatus || assistantState?.runtime?.status;
+  const managerStatus = assistantState?.pending_team_decision?.status === 'pending' || proposedTask?.pending_change || attention
+    ? t('work.manager.needsYou')
+    : mission?.source === 'task_assistant' && assistantStatus && !['verified', 'simulated'].includes(assistantStatus)
+    ? t(`assistant.status.${assistantStatus}`)
+    : mission?.source === 'task_assistant'
     ? mission.status === 'preparing_to_start'
       ? t('work.taskAssistant.preparing')
       : t('work.taskAssistant.available')
@@ -537,6 +548,12 @@ function ManagerPane({
     }
   }, [attention, attentionKey, timeline?.length]);
 
+  useEffect(() => {
+    const node = conversationRef.current;
+    const target = node?.querySelector('.assistant-team-decision, .assistant-request');
+    if (target) node.scrollTop += target.getBoundingClientRect().top - node.getBoundingClientRect().top - 16;
+  }, [assistantState?.pending_team_decision?.id, requestStatus]);
+
   const handleConversationScroll = (event) => {
     const node = event.currentTarget;
     wasNearBottomRef.current = isNearBottom(node);
@@ -564,25 +581,34 @@ function ManagerPane({
                 <strong>{mission.objective}</strong>
               </p>
             ) : null}
-            {error ? <ProductError error={error} t={t} /> : null}
+            {error && !(error.code === 'manager_execution_failed' && requestStatus) ? <ProductError error={error} t={t} /> : null}
             <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
               {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t} />)}
             </ol>
-            {proposedTask && !proposedTask.run_id ? (
-              <section className="team-task-proposal" aria-label={t('work.taskAssistant.proposal')}>
-                <span>{t('work.taskAssistant.proposal')}</span>
-                <p>{proposedTask.exact_request}</p>
-                <Button
-                  busy={busy === 'task-confirm'}
-                  disabled={Boolean(proposedTask.confirmed)}
-                  onClick={() => onConfirmTask?.(proposedTask.id)}
-                >
-                  {proposedTask.confirmed
-                    ? t('work.taskAssistant.preparing')
-                    : t('work.taskAssistant.startTask')}
-                </Button>
-              </section>
+            <AssistantControls
+              runtime={assistantState?.runtime}
+              requests={assistantState?.assistant_requests}
+              pending={assistantState?.pending_team_decision}
+              busy={busy}
+              readOnly={mission?.read_only}
+              onAction={onAssistantAction}
+              projectKey={projectKey}
+              t={t}
+            />
+            {attention?.kind === 'project_mode' && !mission?.read_only ? (
+              <ProjectModeControl busy={busy} onAction={onAssistantAction} t={t} />
             ) : null}
+            <TaskDraftControls
+              key={`${proposedTask?.id}:${proposedTask?.revision}`}
+              draft={proposedTask}
+              busy={busy || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
+              modeRequired={attention?.kind === 'project_mode'}
+              resumeReady={attention?.kind === 'task_start_resume'}
+              readOnly={mission?.read_only}
+              onAction={onAssistantAction}
+              onConfirm={onConfirmTask}
+              t={t}
+            />
             {attention?.kind === 'project_preparation' ? (
               <ProjectPreparationAttention
                 attention={attention}
@@ -591,7 +617,7 @@ function ManagerPane({
                 onContinue={onContinuePreparation}
                 t={t}
               />
-            ) : <ManagerAttention
+            ) : !['project_mode', 'task_start_resume'].includes(attention?.kind) ? <ManagerAttention
               attention={attention}
               busy={busy}
               key={`${attention?.id || 'none'}:${attention?.intent_commit?.id || 'direct'}:${attention?.intent_commit?.status || 'idle'}`}
@@ -604,13 +630,13 @@ function ManagerPane({
               onStartChangeIntent={onStartChangeIntent}
               projectKey={projectKey}
               t={t}
-            />}
+            /> : null}
         </>
       </div>
       {!mission?.read_only ? (
         <footer className="team-manager-dock">
           <ManagerMissionEntry
-            busy={busy === 'message'}
+            busy={Boolean(busy || proposedTask?.pending_change) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
             onStart={onStart}
             suggestions={suggestions}
             t={t}
@@ -830,6 +856,7 @@ function AdvancedInspector({
 }
 
 function TeamWorkspace({
+  onAssistantAction,
   busy,
   data,
   error,
@@ -1003,6 +1030,8 @@ function TeamWorkspace({
         data-read-only={readOnly ? 'true' : undefined}
       >
         <ManagerPane
+          assistantState={workspace}
+          onAssistantAction={onAssistantAction}
           attention={workspace.attention_request}
           busy={busy}
           capabilities={workspace.capabilities || []}

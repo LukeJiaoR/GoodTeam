@@ -50,6 +50,7 @@ from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
 from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
 from goodteam_os.task_assistant import TaskAssistantService
+from goodteam_os.assistant_drafts import confirm_and_prepare, handle_draft_action
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.team_control_plane import (
     TeamControlPlaneError,
@@ -2344,7 +2345,7 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
     state = resolve_dashboard_state(workspace, project_key=project_key)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
     task_assistant_session = (
-        TaskAssistantService(workspace).session(project_key, project_root)
+        TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root)
         if project_root is not None
         else None
     )
@@ -5763,6 +5764,8 @@ def handle_project_api_post(
             )
         except ManagerExecutionError as exc:
             raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
+        except ValueError as exc:
+            raise ProjectApiError("invalid_request", str(exc), 409) from exc
     task_assistant_action_match = re.fullmatch(
         r"/api/projects/([^/]+)/task-assistant/actions",
         path,
@@ -5771,6 +5774,27 @@ def handle_project_api_post(
         key = _decode_project_api_key(task_assistant_action_match.group(1))
         key, target, root = _project_target_and_root(workspace, key)
         action = str(request.get("action", ""))
+        if action in {"edit_task", "resolve_draft", "confirm_project_mode"}:
+            service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
+            try:
+                return 200, handle_draft_action(service, project_key=key, root=root, request=request)
+            except ValueError as exc:
+                raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
+        if action in {"retry_message", "check_runtime"}:
+            service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
+            try:
+                if action == "check_runtime":
+                    if request.get("confirmed") is not True:
+                        raise ValueError("Confirm the potentially billable runtime check first.")
+                    return 200, service.check_runtime(project_key=key, root=root, message_id=str(request.get("message_id", "")))
+                return 200, service.retry_message(
+                    project_key=key, root=root, message_id=str(request.get("message_id", "")),
+                    expected_attempt=request.get("expected_attempt"),
+                )
+            except ManagerExecutionError as exc:
+                raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
+            except ValueError as exc:
+                raise ProjectApiError("invalid_request", str(exc), 409) from exc
         if action in {"confirm_team_decision", "dismiss_team_decision"}:
             proposal_id = str(request.get("proposal_id", ""))
             service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
@@ -5802,8 +5826,12 @@ def handle_project_api_post(
         executor = ProjectReadinessExecutor(workspace)
         proposal_id = str(request.get("proposal_id", ""))
         if action == "confirm_task":
-            session = store.confirm_task(proposal_id)
-            readiness = executor.status(key, root)
+            service = TaskAssistantService(workspace, readiness_executor=executor,
+                                           project_config=_project_config_for_key(workspace, key))
+            try:
+                session, readiness = confirm_and_prepare(service, project_key=key, root=root, request=request)
+            except ValueError as exc:
+                raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
         else:
             raw_values = request.get("values", {})
             if not isinstance(raw_values, dict):

@@ -841,6 +841,9 @@ export default function WorkPage() {
       return result;
     } catch (caught) {
       setMutationError(caught);
+      if (['message', 'retry_message', 'check_runtime', 'confirm_team_decision', 'dismiss_team_decision', 'edit_task', 'resolve_draft', 'confirm_project_mode', 'task-confirm'].includes(name)) {
+        await refresh().catch(() => {});
+      }
       throw caught;
     } finally {
       setBusy('');
@@ -934,10 +937,14 @@ export default function WorkPage() {
   const sendTaskAssistantMessage = (text) => mutate('message', () => runApi.sendTaskAssistantMessage(
     projectKey,
     { message_id: globalThis.crypto?.randomUUID?.() || `message-${Date.now()}`, text },
-  )).catch(() => {});
+  )).catch(() => false);
 
-  const confirmTaskAssistantProposal = (proposalId) => mutate('task-confirm', () => (
-    runApi.taskAssistantAction(projectKey, { action: 'confirm_task', proposal_id: proposalId })
+  const handleAssistantAction = (request) => mutate(request.action, () => (
+    runApi.taskAssistantAction(projectKey, request)
+  )).catch(() => false);
+
+  const confirmTaskAssistantProposal = (proposalId, revision) => mutate('task-confirm', () => (
+    runApi.taskAssistantAction(projectKey, { action: 'confirm_task', proposal_id: proposalId, expected_revision: revision })
   )).catch(() => {});
 
   const continueProjectPreparation = (stepId, values) => mutate('preparation', () => (
@@ -1083,6 +1090,7 @@ export default function WorkPage() {
             onKeepDiscussingChangeIntent={handleKeepDiscussingChangeIntent}
             onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
             onStart={sendTaskAssistantMessage}
+            onAssistantAction={handleAssistantAction}
             onConfirmTask={confirmTaskAssistantProposal}
             onContinuePreparation={continueProjectPreparation}
             onStartChangeIntent={handleStartChangeIntent}

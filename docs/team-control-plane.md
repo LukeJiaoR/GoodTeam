@@ -84,13 +84,16 @@ change_manager_runtime
 
 Authorization contract:
 
-> Explicit user intent may mutate Team directly. Agent-initiated Team
-> mutation requires approval.
+> Conversational Team commands always require a separate user confirmation.
+> A model cannot grant itself authorization by labelling intent as user-authorized.
 
-An explicit user utterance (“加个 Researcher”, “把 Research 关掉”) authorizes
-the corresponding commands without an extra confirmation. Manager-proposed
-changes are stored as `pending_team_decision` in the Task Assistant session
-and execute only after the user confirms. A preference scoped to the current
+An explicit user utterance (“加个 Researcher”, “把 Research 关掉”) produces
+a proposal, just like a Manager suggestion. Changes are stored as
+`pending_team_decision` with the Team revision observed before interpretation.
+They execute only after user confirmation and an atomic revision check; a stale
+proposal must be regenerated. Repeated confirmation does not execute twice.
+Direct Team UI commands retain their existing explicit-action authorization.
+A preference scoped to the current
 task (“这次不要做 Research”) is never persisted as a Team mutation; it is
 traceable as a `team_preference_recorded` timeline event.
 

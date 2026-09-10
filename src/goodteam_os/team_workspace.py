@@ -341,6 +341,9 @@ def _build_task_assistant_workspace(session: Mapping[str, object]) -> dict[str, 
         "capabilities": [],
         "suggestions": list(session.get("suggestions", []) or []),
         "proposed_task": session.get("proposed_task"),
+        "assistant_requests": session.get("assistant_requests", {}),
+        "runtime": session.get("runtime"),
+        "pending_team_decision": session.get("pending_team_decision"),
     }
 
 
@@ -362,6 +365,9 @@ def _merge_task_assistant_session(
         "manager_timeline": _dedupe_timeline([*prior, *projection["manager_timeline"]]),
         "suggestions": [],
         "proposed_task": session.get("proposed_task"),
+        "assistant_requests": session.get("assistant_requests", {}),
+        "runtime": session.get("runtime"),
+        "pending_team_decision": session.get("pending_team_decision"),
     }
 
 
