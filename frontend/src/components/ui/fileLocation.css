@@ -1,0 +1,29 @@
+.product-shell .file-location { position: relative; min-width: 0; margin: 0.5rem 0 0; color: var(--product-text-muted); font-size: 0.78rem; }
+.product-shell .file-location > summary { display: inline-flex; align-items: center; gap: 0.45rem; min-height: 36px; max-width: 100%; padding: 0.25rem 0.5rem; border-radius: 10px; cursor: pointer; list-style: none; font-weight: 500; }
+.product-shell .file-location > summary::-webkit-details-marker { display: none; }
+.product-shell .file-location > summary > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.product-shell .file-location > summary > svg { flex: none; }
+.product-shell .file-location > summary > svg:last-child { transition: transform 140ms ease-out; }
+.product-shell .file-location[open] > summary > svg:last-child { transform: rotate(180deg); }
+.product-shell .file-location > summary:hover { color: var(--product-accent-strong); background: var(--product-surface-muted); }
+.product-shell .file-location__content { display: grid; justify-items: start; gap: 0.65rem; margin-top: 0.45rem; padding: 1rem; border-radius: 14px; background: var(--product-surface-muted); box-shadow: var(--neo-inset); }
+.product-shell .file-location__label { font-size: 0.7rem; }
+.product-shell .file-location__content > code { display: block; width: 100%; color: var(--product-text); font-size: 0.76rem; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.product-shell .file-location__content > button { display: inline-flex; width: auto; min-height: 36px; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.35rem 0.65rem; color: var(--product-accent-strong); background: var(--product-surface); border: 1px solid var(--product-border); border-radius: 10px; font: inherit; cursor: pointer; }
+.product-shell .file-location__content > p { margin: 0; color: var(--product-danger); font-size: 0.78rem; }
+.product-shell .file-location :is(summary, button):focus-visible { outline: 2px solid var(--product-focus); outline-offset: 3px; }
+.product-shell .project-launcher-entry { border-radius: 18px; background: var(--product-surface); box-shadow: var(--neo-soft); }
+.product-shell.product-shell--neumorphic .project-launcher-entry > .project-launcher-row { box-shadow: none; }
+.product-shell .project-launcher-row__copy small { overflow: hidden; color: var(--product-text-muted); font-size: 0.76rem; text-overflow: ellipsis; white-space: nowrap; }
+.product-shell .file-location > summary:focus-visible > svg:last-child { transition: none; }
+.product-shell .project-launcher-entry > .file-location { margin: -0.75rem 1.15rem 0; padding: 0 0 0.6rem 3.65rem; }
+.product-shell .project-launcher-entry .file-location__content { margin-bottom: 0.5rem; }
+.product-shell .knowledge-document .file-location { width: 100%; }
+.product-shell .knowledge-artifacts aside li button small { margin-top: 0.3rem; }
+@media (max-width: 760px) {
+  .product-shell .project-launcher-entry > .file-location { margin: -0.5rem 1rem 0; padding-left: 3.5rem; }
+  .product-shell .file-location > summary, .product-shell .file-location__content > button { min-height: 42px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .product-shell .file-location > summary > svg:last-child { transition: none; }
+}

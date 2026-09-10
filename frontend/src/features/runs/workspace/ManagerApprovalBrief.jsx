@@ -1,3 +1,5 @@
+import FileLocation from '../../../components/ui/FileLocation';
+import { fileName, isAbsoluteFilePath } from '../../../lib/presentation/filePresentation';
 import {
   recommendationReasonText,
   reviewGateName,
@@ -42,6 +44,7 @@ function briefStatusLabel(status, t) {
 
 function shortEvidenceRef(value) {
   const text = String(value || '');
+  if (isAbsoluteFilePath(text)) return fileName(text);
   if (text.startsWith('sha256:') && text.length > 22) return `${text.slice(0, 19)}…`;
   if (/^[a-f0-9]{20,}$/i.test(text)) return `${text.slice(0, 12)}…`;
   return text;
@@ -155,7 +158,7 @@ function ManagerApprovalBrief({ brief, t }) {
                   </div>
                   {item.detail ? (
                     item.kind === 'artifact' ? (
-                      <code title={item.detail}>{shortEvidenceRef(item.detail)}</code>
+                      isAbsoluteFilePath(item.detail) ? <FileLocation path={item.detail} t={t} /> : <code title={item.detail}>{shortEvidenceRef(item.detail)}</code>
                     ) : <p>{item.detail}</p>
                   ) : null}
                   {deliveryRefs.length ? <code>{deliveryRefs.join(' · ')}</code> : null}

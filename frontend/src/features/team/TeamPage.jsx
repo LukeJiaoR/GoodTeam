@@ -1,6 +1,7 @@
 import { AlertTriangle, Bot, History, Pause, Play, Plus, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
+import CollectionToolbar from '../../components/ui/CollectionToolbar';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -278,6 +279,8 @@ export default function TeamPage({ api = settingsApi }) {
   const [mutationError, setMutationError] = useState(null);
   const [dialog, setDialog] = useState(null); // {type: 'worker'|'create'|'manager'|'history', roleEntry?, worker?}
   const [events, setEvents] = useState([]);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
   const addWorkerButtonRef = useRef(null);
 
   useEffect(() => {
@@ -339,6 +342,13 @@ export default function TeamPage({ api = settingsApi }) {
 
   const counts = capabilityCounts(team.roles);
   const workers = rosteredWorkerCount(team.roles);
+  const visibleRoles = team.roles.filter((role) => {
+    const matches = [role.role, role.label, ...role.workers.flatMap((worker) => [worker.name, worker.runtimeLabel])]
+      .join(' ').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+    const ready = role.state === 'enabled' && role.capability === 'ready';
+    const needsSetup = role.state === 'enabled' && role.capability !== 'ready';
+    return matches && (filter === 'all' || (filter === 'ready' ? ready : filter === 'disabled' ? role.state === 'disabled' : needsSetup));
+  });
 
   return (
     <main id="main-content" className="team-page">
@@ -398,12 +408,17 @@ export default function TeamPage({ api = settingsApi }) {
             <h2 id="team-roster-title">{t('team.rolesTitle')}</h2>
             <p>{t('team.rolesDescription')}</p>
           </div>
-          <div className="team-roster__columns" aria-hidden="true">
-            <span>{t('team.columns.workers')}</span><span>{t('team.columns.runtime')}</span><span>{t('team.columns.capability')}</span>
-          </div>
+
         </div>
+        <CollectionToolbar label={t('team.search')} query={query} onQueryChange={setQuery}
+          filters={['all', 'attention', 'ready', 'disabled'].map((key) => [key, t(key === 'all' ? 'collection.all' : key === 'disabled' ? 'team.state.disabled' : `team.filter.${key}`)])}
+          selected={filter} onSelect={setFilter} count={visibleRoles.length} t={t} />
+        <div className="team-roster__columns" aria-hidden="true">
+          <span>{t('team.columns.role')}</span><span>{t('team.columns.workers')} · {t('team.columns.runtime')}</span><span>{t('team.columns.capability')}</span>
+        </div>
+        {!visibleRoles.length ? <div className="collection-empty"><p>{t('collection.noResults')}</p><Button variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>{t('collection.reset')}</Button></div> : null}
         <div className="team-worker-list">
-          {team.roles.map((role) => (
+          {visibleRoles.map((role) => (
             <article className="team-worker" data-role-state={role.state} key={role.role}>
               <div className="team-worker__overview">
                 <div className="team-worker__identity">

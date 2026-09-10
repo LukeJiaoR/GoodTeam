@@ -111,7 +111,8 @@ describe('ReviewPage workflow and navigation', () => {
     const user = userEvent.setup();
     const router = renderReview();
 
-    const editor = await screen.findByRole('textbox', { name: t('review.artifact.content') });
+    await user.click(await screen.findByRole('button', { name: t('review.artifact.edit') }));
+    const editor = screen.getByRole('textbox', { name: t('review.artifact.content') });
     await user.type(editor, ' + extra edit');
 
     expect(screen.getByRole('link', { name: /PRD/ })).toHaveAttribute('aria-current', 'true');
@@ -298,4 +299,15 @@ on:
     expect(screen.getByText('Build')).toBeVisible();
     expect(screen.getByText('Compile and test')).toBeVisible();
   });
+});
+
+test('opens actionable material in reading mode and exposes editing on request', async () => {
+  const user = userEvent.setup();
+  render(<RouterProvider router={routerFor('/projects/DEMO/review/prd')} />);
+  expect(await screen.findByText('Initial plan.')).toBeVisible();
+  expect(screen.queryByRole('textbox', { name: 'Artifact content' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: translate('en', 'review.artifact.edit') }));
+  expect(screen.getByRole('textbox', { name: translate('en', 'review.artifact.content') })).toHaveValue('# PRD\nInitial plan.');
+  expect(mocks.saveArtifact).not.toHaveBeenCalled();
+  expect(mocks.decideReview).not.toHaveBeenCalled();
 });

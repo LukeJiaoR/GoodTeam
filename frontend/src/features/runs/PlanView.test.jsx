@@ -293,6 +293,8 @@ describe('WorkTaskDetailDialog', () => {
     // Check rendered markdown header and text
     expect(screen.getByRole('heading', { level: 1, name: /Product Requirement Document/ })).toBeVisible();
     expect(screen.getByText(/Build github actions deploy workflow\./)).toBeVisible();
+    expect(screen.getByText('/tmp/artifacts/prd/prd.md')).not.toBeVisible();
+    fireEvent.click(screen.getByText(t('files.location')));
     expect(screen.getByText('/tmp/artifacts/prd/prd.md')).toBeVisible();
 
     // Toggle to raw markdown source
@@ -394,4 +396,18 @@ describe('WorkTaskDetailDialog', () => {
     expect(screen.getAllByText('GT-1').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Draft and approve PRD').length).toBeGreaterThanOrEqual(1);
   });
+});
+
+test('Escape closes an expanded artifact location before closing the task dialog', () => {
+  const onClose = vi.fn();
+  render(<MemoryRouter><TaskDetailModal task={sampleBoard.columns.backlog[0]} reviews={sampleReviews} onClose={onClose} t={t} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: /产物预览|Artifact Preview/i }));
+  const summary = screen.getByText(t('files.location')).closest('summary');
+  fireEvent.click(summary);
+  expect(screen.getByText('/tmp/artifacts/prd/prd.md')).toBeVisible();
+  fireEvent.keyDown(summary, { key: 'Escape' });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByText('/tmp/artifacts/prd/prd.md')).not.toBeVisible();
+  fireEvent.keyDown(summary, { key: 'Escape' });
+  expect(onClose).toHaveBeenCalledOnce();
 });

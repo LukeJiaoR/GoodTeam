@@ -51,7 +51,7 @@ export default function ProductLayout() {
 
   return (
     <ToastProvider>
-      <div className={`product-shell${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
+      <div className={`product-shell${isWorkRoute || isProjectsRoute ? ' product-shell--neumorphic' : ''}${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
         <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
         <header className={`product-chrome${isWorkRoute ? ' product-work-chrome' : ''}`}>
           <div className="product-chrome__inner">

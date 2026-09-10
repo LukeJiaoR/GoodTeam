@@ -1,4 +1,6 @@
 import MarkdownView from '../../components/ui/MarkdownView';
+import FileLocation from '../../components/ui/FileLocation';
+import { fileName, isAbsoluteFilePath } from '../../lib/presentation/filePresentation';
 import { translate } from '../../i18n';
 
 const OVERVIEW_FIELDS = [
@@ -136,6 +138,10 @@ export default function RepositoryOverview({ artifact, language = 'en' }) {
             <ul>
               {items.map((item, index) => {
                 const text = itemText(item);
+                const path = typeof item === 'object' ? item?.path : text;
+                if (isAbsoluteFilePath(path)) {
+                  return <li key={`${path}-${index}`}><FileLocation path={path} label={item?.name || item?.title || fileName(path)} t={t} /></li>;
+                }
                 return text ? <li key={`${text}-${index}`}>{text}</li> : null;
               })}
             </ul>

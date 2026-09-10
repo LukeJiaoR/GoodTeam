@@ -521,6 +521,9 @@
   --work-on-accent: #ffffff;
   --work-focus: #315efb;
   --work-radius: 12px;
+  --work-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --work-motion-press: 140ms;
+  --work-motion-reveal: 220ms;
   --work-led-working: #315efb;
   --work-led-reviewing: #2147c8;
   --work-led-fixing: #315efb;
@@ -530,17 +533,17 @@
   --work-led-completed: #157347;
   --work-led-stopped: #7d899c;
   --work-shadow-raised:
-    -10px -10px 24px color-mix(in srgb, var(--work-highlight) 86%, transparent),
-    10px 12px 28px color-mix(in srgb, var(--work-shadow) 23%, transparent);
+    -8px -8px 22px color-mix(in srgb, var(--work-highlight) 88%, transparent),
+    8px 10px 24px color-mix(in srgb, var(--work-shadow) 22%, transparent);
   --work-shadow-soft:
-    -6px -6px 14px color-mix(in srgb, var(--work-highlight) 78%, transparent),
-    6px 7px 17px color-mix(in srgb, var(--work-shadow) 20%, transparent);
+    -4px -4px 12px color-mix(in srgb, var(--work-highlight) 82%, transparent),
+    4px 5px 12px color-mix(in srgb, var(--work-shadow) 18%, transparent);
   --work-shadow-compact:
     -3px -3px 7px color-mix(in srgb, var(--work-highlight) 74%, transparent),
     3px 4px 8px color-mix(in srgb, var(--work-shadow) 18%, transparent);
   --work-shadow-inset:
-    inset 4px 4px 9px color-mix(in srgb, var(--work-shadow) 22%, transparent),
-    inset -4px -4px 9px color-mix(in srgb, var(--work-highlight) 82%, transparent);
+    inset 3px 3px 7px color-mix(in srgb, var(--work-shadow) 20%, transparent),
+    inset -3px -3px 7px color-mix(in srgb, var(--work-highlight) 82%, transparent);
   min-width: 0;
   color: var(--work-text);
   background: var(--work-material);
@@ -590,9 +593,10 @@
 }
 
 .work-workspace-shell .product-work-page {
-  width: min(100% - 1rem, 1680px);
+  position: relative;
+  width: min(100% - 3rem, 1680px);
   margin-inline: auto;
-  padding: 0 0 1.5rem;
+  padding: 1.5rem 0 2rem;
   color: var(--work-text);
   background: transparent;
 }
@@ -617,30 +621,32 @@
 }
 
 .work-workspace-shell .product-work-page > .product-page-header.work-context-drawer {
-  max-height: 15rem;
-  overflow: clip;
+  position: absolute;
+  z-index: 12;
+  top: 0.5rem;
+  inset-inline: 0;
+  max-height: min(24rem, calc(100dvh - 8rem));
+  margin: 0;
+  padding: 1.2rem;
+  overflow: auto;
+  background: var(--work-material);
+  border: 1px solid var(--work-border);
+  border-radius: 20px;
+  box-shadow: var(--work-shadow-raised);
   transform-origin: top;
   transition:
-    max-height 220ms ease,
-    margin 220ms ease,
-    padding 220ms ease,
-    border-color 160ms ease,
-    opacity 160ms ease,
-    transform 220ms ease,
+    opacity 160ms ease-out,
+    transform var(--work-motion-reveal) var(--work-ease),
     visibility 0s linear 0s;
 }
 
 .work-workspace-shell .product-work-page > .product-page-header.work-context-drawer[data-open="false"] {
-  max-height: 0;
-  margin-bottom: 0;
-  padding-top: 0;
-  padding-bottom: 0;
   visibility: hidden;
-  border-color: transparent;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-0.75rem);
-  transition-delay: 0s, 0s, 0s, 0s, 0s, 0s, 220ms;
+  transform: translateY(-0.35rem) scale(0.99);
+  transition-duration: 140ms, 140ms, 0s;
+  transition-delay: 0s, 0s, 140ms;
 }
 
 .work-workspace-shell .product-page-header__meta {
@@ -780,6 +786,9 @@
   border-color: transparent;
   border-radius: 13px;
   box-shadow: var(--work-shadow-compact);
+  min-height: 2.65rem;
+  transition: color 140ms ease, background-color 140ms ease,
+    transform var(--work-motion-press) var(--work-ease);
 }
 
 .work-workspace-shell .product-button:hover:not(:disabled) {
@@ -790,7 +799,8 @@
 
 .work-workspace-shell .product-button:active:not(:disabled) {
   box-shadow: var(--work-shadow-inset);
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.98);
+  transition-duration: 80ms;
 }
 
 .work-workspace-shell .product-button--primary {
@@ -806,6 +816,10 @@
 
 .work-workspace-shell .product-button--danger {
   color: var(--work-danger);
+}
+
+.work-workspace-shell button:focus-visible {
+  transform: none !important;
 }
 
 .work-workspace-shell .product-status-badge {
@@ -1496,7 +1510,7 @@
 
 .work-workspace-shell .team-workspace {
   grid-template-columns: minmax(15rem, 0.78fr) minmax(28rem, 1.3fr) minmax(19rem, 1fr);
-  height: max(40rem, calc(100dvh - 15rem));
+  height: max(40rem, calc(100dvh - 10rem));
   min-height: 40rem;
   gap: 1rem;
   padding: 1rem;
@@ -2126,7 +2140,7 @@
   opacity: 0;
   pointer-events: none;
   transform: translateY(-0.2rem);
-  transition: opacity 140ms ease, transform 140ms ease;
+  transition: opacity 140ms ease-out, transform 160ms var(--work-ease);
 }
 
 .work-workspace-shell .team-status-led-tooltip[data-open="true"] {
@@ -2193,19 +2207,8 @@
 }
 
 .work-workspace-shell .team-outcome-card__owner {
-  max-height: 0;
-  overflow: hidden;
-  opacity: 0;
-  transform: translateY(-0.25rem);
-  transition: max-height 180ms ease, opacity 150ms ease, transform 180ms ease;
-}
-
-.work-workspace-shell .team-outcome-list > li:hover .team-outcome-card__owner,
-.work-workspace-shell .team-outcome-list > li:focus-within .team-outcome-card__owner,
-.work-workspace-shell .team-outcome-list > li[data-expanded="true"] .team-outcome-card__owner {
-  max-height: 3rem;
+  min-height: 1.8rem;
   opacity: 1;
-  transform: translateY(0);
 }
 
 .work-workspace-shell .team-outcome-card__details {
@@ -2234,76 +2237,78 @@
   transform: rotate(90deg);
 }
 
-/* The workspace is an operational surface: hierarchy comes from structure and
-   state, while elevation is reserved for dialogs and active attention. */
+/* 新拟物材质：统一左上光源，浮起表示容器，下沉表示输入或选中。 */
 .work-workspace-shell .team-workspace {
   padding: 0;
+  gap: clamp(1.1rem, 1.8vw, 2rem);
   background: transparent;
   border-radius: 0;
   box-shadow: none;
 }
 
 .work-workspace-shell .team-pane {
-  background: var(--work-surface);
-  border: 1px solid var(--work-border);
-  border-radius: 12px;
-  box-shadow: none;
+  background: var(--work-material);
+  border: 1px solid color-mix(in srgb, var(--work-highlight) 32%, transparent);
+  border-radius: 24px;
+  box-shadow: var(--work-shadow-raised);
 }
 
 .work-workspace-shell .team-pane--manager {
-  border-color: color-mix(in srgb, var(--work-accent) 30%, var(--work-border));
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--work-shadow) 10%, transparent);
+  border-color: color-mix(in srgb, var(--work-accent) 16%, var(--work-material));
 }
 
 .work-workspace-shell .team-pane__header,
 .work-workspace-shell .team-pane--manager .team-pane__header,
 .work-workspace-shell .team-manager-dock {
-  background: var(--work-surface);
-  border-bottom: 1px solid var(--work-border);
+  background: var(--work-material);
+  border-bottom: 1px solid color-mix(in srgb, var(--work-border) 64%, transparent);
 }
 
 .work-workspace-shell .team-manager-dock {
-  border-top: 1px solid var(--work-border);
+  padding: 1.2rem;
+  border-top: 1px solid color-mix(in srgb, var(--work-border) 64%, transparent);
   border-bottom: 0;
 }
 
-.work-workspace-shell .team-pane__count,
-.work-workspace-shell .team-avatar,
-.work-workspace-shell .team-avatar--manager,
-.work-workspace-shell .team-manager-event__bubble,
-.work-workspace-shell .team-manager-event[data-actor="user"] .team-manager-event__bubble,
-.work-workspace-shell .team-actor-list li,
-.work-workspace-shell .team-outcome-list > li,
-.work-workspace-shell .team-outcome-card__index,
-.work-workspace-shell .team-outcome-card__details-button {
-  box-shadow: none;
+.work-workspace-shell .team-pane__header {
+  min-height: 5rem;
+  padding: 1.25rem;
 }
 
 .work-workspace-shell .team-pane__count,
 .work-workspace-shell .team-outcome-card__index {
-  border: 1px solid var(--work-border);
+  border: 1px solid color-mix(in srgb, var(--work-border) 45%, transparent);
+  box-shadow: var(--work-shadow-inset);
+  font-variant-numeric: tabular-nums;
 }
 
 .work-workspace-shell .team-avatar {
-  background: var(--work-surface-muted);
-  border: 1px solid var(--work-border);
+  background: var(--work-material);
+  border: 1px solid color-mix(in srgb, var(--work-highlight) 35%, transparent);
+  box-shadow: var(--work-shadow-compact);
 }
 
 .work-workspace-shell .team-avatar--manager {
   color: var(--work-on-accent);
   background: var(--work-accent);
   border-color: transparent;
+  box-shadow: 3px 4px 10px color-mix(in srgb, var(--work-accent) 20%, transparent),
+    inset 1px 1px 1px color-mix(in srgb, var(--work-highlight) 24%, transparent);
 }
 
 .work-workspace-shell .team-manager-event__bubble {
-  background: var(--work-surface-muted);
-  border: 1px solid var(--work-border);
-  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  background: var(--work-material);
+  border: 1px solid color-mix(in srgb, var(--work-highlight) 28%, transparent);
+  border-radius: 18px;
+  box-shadow: var(--work-shadow-soft);
 }
 
 .work-workspace-shell .team-manager-event[data-actor="user"] .team-manager-event__bubble {
-  background: var(--work-accent-soft);
-  border-color: color-mix(in srgb, var(--work-accent) 24%, var(--work-border));
+  color: var(--work-text);
+  background: color-mix(in srgb, var(--work-accent-soft) 48%, var(--work-material));
+  border-color: color-mix(in srgb, var(--work-accent) 12%, transparent);
+  box-shadow: var(--work-shadow-inset);
 }
 
 .work-workspace-shell .team-manager-system-chip {
@@ -2315,32 +2320,128 @@
 
 .work-workspace-shell .team-actor-list,
 .work-workspace-shell .team-outcome-list {
-  gap: 0;
+  gap: 0.9rem;
+  padding-bottom: 1.25rem;
 }
 
 .work-workspace-shell .team-actor-list li,
 .work-workspace-shell .team-outcome-list > li {
-  margin-bottom: 0;
-  background: transparent;
-  border: 0;
-  border-top: 1px solid var(--work-border);
-  border-radius: 0;
+  margin: 0 1rem;
+  background: var(--work-material);
+  border: 1px solid color-mix(in srgb, var(--work-border) 46%, transparent);
+  border-radius: 16px;
+  box-shadow: var(--work-shadow-soft);
+  transition: background-color 160ms ease;
 }
 
 .work-workspace-shell .team-actor-list li:first-child,
 .work-workspace-shell .team-outcome-list > li:first-child {
-  border-top: 0;
+  border-top: 1px solid color-mix(in srgb, var(--work-border) 46%, transparent);
 }
 
 .work-workspace-shell .team-actor-list li[data-state="working"],
 .work-workspace-shell .team-actor-list li[data-state="reviewing"],
 .work-workspace-shell .team-actor-list li[data-state="fixing"],
 .work-workspace-shell .team-outcome-list > li[data-attention="true"] {
-  background: color-mix(in srgb, var(--work-accent-soft) 42%, transparent);
-  box-shadow: inset 3px 0 0 var(--work-accent);
+  background: color-mix(in srgb, var(--work-accent-soft) 28%, var(--work-material));
+  border-color: color-mix(in srgb, var(--work-accent) 26%, var(--work-border));
+  box-shadow: inset 3px 0 0 var(--work-accent), var(--work-shadow-soft);
 }
 
 .work-workspace-shell .team-outcome-list > li[data-active-review="true"] {
-  background: var(--work-surface-muted);
-  box-shadow: inset 3px 0 0 var(--work-accent-strong);
+  background: var(--work-material-deep);
+  border-color: color-mix(in srgb, var(--work-accent) 30%, var(--work-border));
+  box-shadow: var(--work-shadow-inset);
+}
+
+.work-workspace-shell .team-outcome-list .team-outcome-card__toggle {
+  padding: 1rem 2.1rem 1rem 1rem;
+  border-radius: 16px;
+  transition: background-color 140ms ease, transform var(--work-motion-press) var(--work-ease);
+}
+
+.work-workspace-shell .team-outcome-card__details {
+  padding: 0.25rem 1rem 1.1rem;
+  opacity: 1;
+  transform: none;
+  transition: opacity 180ms ease-out, transform 180ms var(--work-ease);
+}
+
+@starting-style {
+  .work-workspace-shell .team-outcome-card__details:not([hidden]) {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.work-workspace-shell .team-outcome-card__details-button {
+  min-height: 2.5rem;
+  padding-inline: 0.8rem;
+  background: var(--work-material);
+  border: 1px solid color-mix(in srgb, var(--work-border) 45%, transparent);
+  border-radius: 10px;
+  font-size: 0.8rem;
+  transition: color 140ms ease, transform var(--work-motion-press) var(--work-ease);
+}
+
+.work-workspace-shell .team-outcome-card__owner > span:last-child {
+  display: grid;
+  gap: 0.1rem;
+  line-height: 1.4;
+}
+
+.work-workspace-shell .team-manager-entry textarea {
+  min-height: 6rem;
+  padding: 1rem;
+  border-radius: 16px;
+  background: var(--work-material-deep);
+  box-shadow: var(--work-shadow-inset);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.work-workspace-shell .team-manager-suggestions button {
+  min-height: 2.5rem;
+  padding: 0.45rem 0.75rem;
+  background: var(--work-material);
+  border: 1px solid color-mix(in srgb, var(--work-border) 55%, transparent);
+  border-radius: 11px;
+  box-shadow: var(--work-shadow-compact);
+  transition: color 140ms ease, transform var(--work-motion-press) var(--work-ease);
+}
+
+.work-workspace-shell .team-pane__eyebrow,
+.work-workspace-shell .team-manager-heading__title .product-status-badge {
+  font-size: 0.78rem;
+}
+
+.work-workspace-shell .team-manager-event__bubble p {
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+
+.work-workspace-shell .team-manager-event__bubble time {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.work-workspace-shell .team-task-proposal {
+  padding: 1.15rem;
+  background: var(--work-material);
+  border-radius: 18px;
+  box-shadow: var(--work-shadow-soft);
+}
+
+.work-workspace-shell .team-attention {
+  background: var(--work-material);
+  border-radius: 20px;
+  box-shadow: var(--work-shadow-raised);
+}
+
+.work-workspace-shell .team-manager-conversation,
+.work-workspace-shell .team-actor-list,
+.work-workspace-shell .team-outcome-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--work-border-strong) transparent;
+  scrollbar-gutter: stable;
 }

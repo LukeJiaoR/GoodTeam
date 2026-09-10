@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import EvidenceSummary from '../../../components/EvidenceSummary';
 import Button from '../../../components/ui/Button';
+import FileLocation from '../../../components/ui/FileLocation';
+import { documentTitle } from '../../../lib/presentation/filePresentation';
 import MarkdownView from '../../../components/ui/MarkdownView';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
@@ -251,6 +253,7 @@ export default function WorkTaskDetailDialog({
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
+        if (event.target?.closest?.('.file-location[open]')) return;
         event.stopPropagation();
         onClose();
         return;
@@ -548,13 +551,8 @@ export default function WorkTaskDetailDialog({
                 <div>
                   <h3 className="task-detail-preview-title">
                     <FileCode size={15} />
-                    {review?.artifact ? `${review.artifact.toUpperCase()}` : t('work.plan.artifact.title')}
+                    {review?.artifact ? documentTitle(review.artifact, t) : t('work.plan.artifact.title')}
                   </h3>
-                  {review?.artifact_path ? (
-                    <p className="task-detail-preview-path" title={review.artifact_path}>
-                      {review.artifact_path}
-                    </p>
-                  ) : null}
                 </div>
                 <div className="task-detail-preview-actions">
                   {hasArtifact ? (
@@ -601,6 +599,7 @@ export default function WorkTaskDetailDialog({
                   ) : null}
                 </div>
               </div>
+              {review?.artifact_path ? <FileLocation key={review.artifact_path} path={review.artifact_path} t={t} /> : null}
 
               {hasArtifact ? (
                 previewMode === 'rendered' ? (
