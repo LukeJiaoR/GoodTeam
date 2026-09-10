@@ -279,6 +279,7 @@ export default function ReviewPage() {
     || reviews.find((item) => item.is_actionable)
     || reviews[0];
   const [content, setContent] = useState('');
+  const [loadedArtifactVersion, setLoadedArtifactVersion] = useState('');
   const [baseline, setBaseline] = useState('');
   const [answers, setAnswers] = useState({});
   const [busy, setBusy] = useState('');
@@ -327,17 +328,25 @@ export default function ReviewPage() {
   useEffect(() => {
     if (!selected) { queueMicrotask(() => { setContent(''); setBaseline(''); }); return undefined; }
     if (selected.recovery?.available) { queueMicrotask(() => { setContent(''); setBaseline(''); }); return undefined; }
-    if (typeof selected.content === 'string') {
+    if (typeof selected.content === 'string' && !selected.content_truncated) {
       queueMicrotask(() => { setContent(selected.content); setBaseline(selected.content); });
       return undefined;
     }
     if (!selected.artifact) return undefined;
     const controller = new AbortController();
     reviewApi.getArtifact(projectKey, selected.artifact, { signal: controller.signal })
-      .then((payload) => { setContent(payload.content || ''); setBaseline(payload.content || ''); })
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        if (selected.content_truncated && (payload.artifact_version !== selected.artifact_version || payload.run_id !== data?.state?.run_id)) {
+          setMutationError(new Error('The artifact changed. Reload before reviewing or editing.'));
+          return;
+        }
+        setContent(payload.content || ''); setBaseline(payload.content || '');
+        setLoadedArtifactVersion(`${projectKey}:${selected.approval}:${selected.artifact_version}`);
+      })
       .catch((caught) => { if (caught.name !== 'AbortError') setMutationError(caught); });
     return () => controller.abort();
-  }, [projectKey, selected]);
+  }, [projectKey, selected, data?.state?.run_id]);
 
   useEffect(() => {
     if (selected?.recovery?.available) { queueMicrotask(() => setQuestions([])); return undefined; }
@@ -439,6 +448,9 @@ export default function ReviewPage() {
     navigate(runId ? routes.projectRun(projectKey, runId) : routes.projectWork(projectKey));
   };
 
+  if (selected?.content_truncated && loadedArtifactVersion !== `${projectKey}:${selected.approval}:${selected.artifact_version}`) {
+    return <main id="main-content" className="product-page">{mutationError ? <ProductError error={mutationError} onRetry={() => refresh()} t={t} /> : <div className="product-workspace-skeleton" role="status"><span /><span /><span /></div>}</main>;
+  }
   if (status === 'loading') return <main id="main-content" className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></main>;
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
   const steps = data?.workflow_steps || [];
@@ -464,7 +476,7 @@ export default function ReviewPage() {
           {selected.recovery?.available ? <TakeoverRecovery key={selected.approval} busy={busy} error={mutationError} review={selected} t={t}
             onRecover={(note) => mutate('recover', () => reviewApi.recoverTakeoverBrief(projectKey, note))}
           /> : <>
-            <ArtifactPanel key={selected.approval} review={selected} value={content} onChange={setContent} t={t} />
+            <ArtifactPanel key={selected.approval} review={{ ...selected, content: baseline }} value={content} onChange={setContent} t={t} />
             <Inspector answers={answers} busy={busy} decisionNote={decisionNote} error={mutationError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} submittedCount={submittedCount} t={t}
               projectKey={projectKey}
               onSave={save}

@@ -18,3 +18,11 @@
 .assistant-draft-change { padding: 12px 0; }
 .assistant-draft-change blockquote { margin: 8px 0; }
 .team-task-proposal small { font-size: 12px; font-weight: 400; }
+.team-preparation-facts {
+  max-height: 240px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding-inline-start: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+}
