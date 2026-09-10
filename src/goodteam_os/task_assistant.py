@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from goodteam_os import assistant_requests
+from goodteam_os.assistant_drafts import is_conversation_only, stage_draft
+from goodteam_os.assistant_runtime import runtime_view
 from goodteam_os.manager_execution import run_manager_chat_turn
 from goodteam_os.project_import import confirm_project_mode, import_project
 from goodteam_os.project_readiness import assess_project_mode
@@ -13,6 +16,7 @@ from goodteam_os.project_readiness_executor import ProjectReadinessExecutor
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore, initial_task_assistant_session
 from goodteam_os.team_control_plane import (
     MANAGER_ROLE,
+    TeamControlPlaneStore,
     TeamControlPlaneError,
     execute_team_commands,
     role_label,
@@ -69,9 +73,12 @@ class TaskAssistantService:
 
     def session(self, project_key: str, root: Path) -> dict[str, object]:
         store = TaskAssistantSessionStore(self.workspace, project_key)
+        assistant_requests.recover_interrupted(store)
         session = store.read()
         if not session["timeline"]:
-            session = initial_task_assistant_session(project_key, assess_project_mode(root))
+            opening = initial_task_assistant_session(project_key, assess_project_mode(root))
+            session.update({key: opening[key] for key in ("timeline", "status", "project_mode_hint", "suggestions")})
+        session["runtime"] = runtime_view(self.project_config, session)
         try:
             readiness = self.readiness.status(project_key, root)
         except ValueError as exc:
@@ -85,15 +92,32 @@ class TaskAssistantService:
             project_key,
             root,
         )
+        session["runtime"] = runtime_view(self.project_config, session)
         return self._with_readiness_attention(session, readiness)
 
     def send_message(
+        self, *, project_key: str, root: Path, text: str, message_id: str,
+    ) -> dict[str, object]:
+        return assistant_requests.execute_message(
+            self, project_key=project_key, root=root, text=text, message_id=message_id,
+        )
+
+    def retry_message(self, *, project_key, root, message_id, expected_attempt):
+        return assistant_requests.retry_message(
+            self, project_key=project_key, root=root, message_id=message_id, expected_attempt=expected_attempt,
+        )
+
+    def check_runtime(self, *, project_key, root, message_id):
+        return assistant_requests.check_runtime(self, project_key=project_key, root=root, message_id=message_id)
+
+    def _send_message(
         self,
         *,
         project_key: str,
         root: Path,
         text: str,
         message_id: str,
+        attempt_id: str,
     ) -> dict[str, object]:
         if not str(text).strip():
             raise ValueError("Task Assistant message must not be blank")
@@ -111,7 +135,7 @@ class TaskAssistantService:
             turn = self.manager_turn(
                 project_config=self.project_config,
                 project_key=project_key,
-                message_id=message_id,
+                message_id=attempt_id,
                 text=str(text),
                 context=_manager_chat_context(state, mode_hint, store.read(), team_view=team_view),
             )
@@ -133,6 +157,11 @@ class TaskAssistantService:
             else:
                 intent = classify_task_assistant_intent(text)
 
+        assistant_requests.update_request(store, message_id, phase="applying", interpretation={
+            "intent": intent, "response": manager_response, "manager_execution": manager_execution,
+        })
+        if is_conversation_only(text):
+            intent, team_commands = "work_request", []
         if intent == "team_management" and team_commands:
             session = self._handle_team_management(
                 store,
@@ -143,6 +172,7 @@ class TaskAssistantService:
                 authorization=team_authorization,
                 manager_response=manager_response,
                 manager_execution=manager_execution,
+                expected_team_revision=(team_view or {}).get("revision", -1),
             )
             return {
                 "task_assistant_session": session,
@@ -167,6 +197,12 @@ class TaskAssistantService:
 
         if intent == "project_understanding":
             state = self._resolve_confident_mode(project_key, root, state, mode_hint)
+            if state.get("project_mode") == "unconfirmed":
+                store._mutate(lambda session: {**session, "pending_inspection": {
+                    "message_id": message_id, "manager_execution": manager_execution,
+                }})
+                store.append_event(f"reply:{message_id}", "project_mode_requested")
+                return assistant_requests.response(self, project_key, root, intent=intent)
             if str(state.get("lifecycle")) != "ready" and not isinstance(state.get("execution"), dict):
                 state = self.readiness.start(
                     project_key,
@@ -191,27 +227,12 @@ class TaskAssistantService:
                 root,
             )
         elif intent == "work_request":
-            state = self._resolve_confident_mode(project_key, root, state, mode_hint)
-            if str(state.get("lifecycle")) != "ready" and not isinstance(state.get("execution"), dict):
-                inputs = (
-                    {"goal": str(text).strip(), "brief": str(text).strip()}
-                    if state.get("project_mode") == "new_project"
-                    else {}
-                )
-                self.readiness.start(
-                    project_key,
-                    root,
-                    inputs,
-                    idempotency_key=f"task-assistant:{message_id}",
-                )
+            event = stage_draft(store, text=str(text), message_id=message_id)
             session = store.read()
-            proposal = dict(session.get("proposed_task") or {})
-            if message_id not in list(proposal.get("source_message_ids") or []):
-                session = store.propose_task([message_id], str(text))
             session = store.append_event(
                 f"reply:{message_id}",
-                "task_proposed",
-                content=manager_response,
+                event,
+                content=manager_response if event == "task_proposed" else "",
                 details={
                     "proposal_id": str(dict(session.get("proposed_task") or {}).get("id", "")),
                     "manager_execution": manager_execution,
@@ -281,62 +302,23 @@ class TaskAssistantService:
         authorization: str,
         manager_response: str,
         manager_execution: dict[str, object],
+        expected_team_revision: int,
     ) -> dict[str, object]:
-        """Apply or stage one team decision, per the authorization contract.
-
-        Explicit user intent mutates the Team directly. A Manager-proposed
-        change waits for explicit user approval and never mutates on its own.
-        """
-        if authorization == "user_authorized":
-            try:
-                outcome = execute_team_commands(
-                    self.workspace,
-                    project_key,
-                    commands,
-                    actor="user",
-                    surface="manager_conversation",
-                    reason=str(text)[:300],
-                    source_ref={"message_id": message_id},
-                    command_key=f"team:{message_id}",
-                    config_path=self.project_config,
-                )
-            except TeamControlPlaneError as exc:
-                session = store.append_event(
-                    f"team-decision:{message_id}",
-                    "team_decision_failed",
-                    content=manager_response,
-                    details={
-                        "commands": commands,
-                        "error": str(exc),
-                        "manager_execution": manager_execution,
-                    },
-                )
-                return session
-            if outcome.get("replayed"):
-                # Idempotent conversation retry: the applied decision event is
-                # already on the timeline; never append a divergent duplicate.
-                return store.read()
-            return store.append_event(
-                f"team-decision:{message_id}",
-                "team_decision_applied",
-                content=manager_response,
-                details={
-                    "decision_id": outcome["decision_id"],
-                    "team_revision": outcome["team_revision"],
-                    "commands": commands,
-                    "manager_execution": manager_execution,
-                },
-            )
+        """Model output proposes commands; only the confirmation endpoint authorizes them."""
+        team = TeamControlPlaneStore(self.workspace, project_key).read()
+        if team is None:
+            raise ValueError("Team state is unavailable")
         session = store.propose_team_decision(
             commands=commands,
             reason=str(text)[:300],
             source_message_id=message_id,
+            expected_team_revision=expected_team_revision,
         )
         pending = dict(session.get("pending_team_decision") or {})
         return store.append_event(
             f"team-decision:{message_id}",
             "team_decision_proposed",
-            content=manager_response,
+            content="Team change awaiting your confirmation. No changes have been applied.",
             details={
                 "proposal_id": str(pending.get("id", "")),
                 "commands": commands,
@@ -344,6 +326,7 @@ class TaskAssistantService:
             },
         )
 
+    @assistant_requests.serialized_decision
     def confirm_pending_team_decision(
         self,
         *,
@@ -353,9 +336,17 @@ class TaskAssistantService:
         """Execute a Manager-proposed team decision after explicit approval."""
         store = TaskAssistantSessionStore(self.workspace, project_key)
         session = store.read()
+        if any(item.get("event") == "team_decision_applied" and
+               dict(item.get("details") or {}).get("proposal_id") == proposal_id for item in session["timeline"]):
+            if dict(session.get("pending_team_decision") or {}).get("id") == proposal_id:
+                return store.take_pending_team_decision(proposal_id)
+            return session
         pending = dict(session.get("pending_team_decision") or {})
         if pending.get("id") != str(proposal_id) or pending.get("status") != "pending":
             raise ValueError("Team decision proposal is unavailable")
+        if type(pending.get("expected_team_revision")) is not int:
+            store.set_pending_team_decision_status(str(proposal_id), "failed")
+            raise ValueError("Team proposal is stale. Request a new proposal.")
         commands = [dict(item) for item in pending.get("commands") or []]
         reason = str(pending.get("reason", ""))
         try:
@@ -369,35 +360,25 @@ class TaskAssistantService:
                 source_ref={"proposal_id": str(proposal_id), "source_message_id": str(pending.get("source_message_id", ""))},
                 command_key=f"team-confirm:{proposal_id}",
                 config_path=self.project_config,
+                expected_revision=pending.get("expected_team_revision", -1),
             )
         except TeamControlPlaneError as exc:
             session = store.set_pending_team_decision_status(str(proposal_id), "failed")
             session = store.append_event(
-                f"team-decision-result:{proposal_id}",
+                f"team-decision-failed:{proposal_id}",
                 "team_decision_failed",
                 content=str(exc),
                 details={"proposal_id": str(proposal_id), "commands": commands},
             )
             raise ValueError(str(exc)) from exc
-        store.take_pending_team_decision(str(proposal_id))
-        return store.append_event(
-            f"team-decision-result:{proposal_id}",
-            "team_decision_applied",
-            content="",
-            details={
-                "proposal_id": str(proposal_id),
-                "decision_id": outcome["decision_id"],
-                "team_revision": outcome["team_revision"],
-                "commands": commands,
-                "confirmed_by_user": True,
-            },
-        )
+        return _complete_team_decision(store, pending, outcome)
 
+    @assistant_requests.serialized_decision
     def dismiss_pending_team_decision(self, *, project_key: str, proposal_id: str) -> dict[str, object]:
         store = TaskAssistantSessionStore(self.workspace, project_key)
         session = store.read()
         pending = dict(session.get("pending_team_decision") or {})
-        if pending.get("id") != str(proposal_id) or pending.get("status") != "pending":
+        if pending.get("id") != str(proposal_id) or pending.get("status") not in {"pending", "failed"}:
             raise ValueError("Team decision proposal is unavailable")
         store.take_pending_team_decision(str(proposal_id))
         return store.append_event(
@@ -490,7 +471,16 @@ class TaskAssistantService:
         session: dict[str, object],
         readiness: dict[str, object],
     ) -> dict[str, object]:
+        proposal = session.get("proposed_task") or {}
+        if session.get("pending_inspection") or (
+            readiness.get("project_mode") == "unconfirmed" and proposal and proposal.get("status") != "cancelled"
+        ):
+            return {**session, "attention_request": {"id": "project-mode", "kind": "project_mode"}}
         execution = readiness.get("execution")
+        if proposal.get("confirmed") and not proposal.get("run_id") and (
+            readiness.get("lifecycle") == "ready" or not isinstance(execution, dict)
+        ):
+            return {**session, "attention_request": {"id": "task-start-resume", "kind": "task_start_resume"}}
         if not isinstance(execution, dict) or execution.get("status") != "needs_input":
             return session
         step_id = str(execution.get("current_step_id", ""))
@@ -623,19 +613,28 @@ def _match_role_strict(target: str) -> str:
     return ""
 
 
+def _complete_team_decision(store, pending, outcome):
+    proposal_id = str(pending["id"])
+    store.append_event(
+        f"team-decision-result:{proposal_id}", "team_decision_applied",
+        details={
+            "proposal_id": proposal_id, "decision_id": outcome["decision_id"],
+            "team_revision": outcome["team_revision"], "commands": pending["commands"], "confirmed_by_user": True,
+        },
+    )
+    return store.take_pending_team_decision(proposal_id)
+
+
 def _match_worker_name(target: str, team_view: dict[str, object] | None) -> dict[str, object] | None:
     if team_view is None:
         return None
     cleaned = str(target or "").strip().lower()
     if not cleaned:
         return None
-    for role_entry in list(team_view.get("roles") or []):
-        for worker in list(dict(role_entry).get("workers") or []):
-            name = str(dict(worker).get("name", "")).lower()
-            identifier = str(dict(worker).get("id", "")).lower()
-            if cleaned and (cleaned in name or cleaned == identifier):
-                return dict(worker)
-    return None
+    workers = [dict(worker) for role in team_view.get("roles") or [] for worker in dict(role).get("workers") or []]
+    exact = [worker for worker in workers if cleaned == str(worker.get("id", "")).lower()]
+    matches = exact or [worker for worker in workers if cleaned in str(worker.get("name", "")).lower()]
+    return matches[0] if len(matches) == 1 else None
 
 
 def detect_team_commands(text: str, team_view: dict[str, object] | None) -> TeamCommandDetection | None:

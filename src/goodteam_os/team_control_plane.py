@@ -352,6 +352,7 @@ class TeamControlPlaneStore:
         decision_id: str | None = None,
         command_key: str = "",
         config_path: Path | None = None,
+        expected_revision: int | None = None,
     ) -> dict[str, object]:
         """Execute one authorized decision (one or more commands).
 
@@ -383,6 +384,8 @@ class TeamControlPlaneStore:
                         "events": [],
                         "team": build_team_capability_view(state),
                     }
+            if expected_revision is not None and expected_revision != state["revision"]:
+                raise TeamControlPlaneError("Team changed since this proposal. Request a new proposal.")
             decision = decision_id or _new_id("dec")
             events: list[dict[str, object]] = []
             for raw_command in commands:
@@ -1429,6 +1432,7 @@ def execute_team_commands(
     decision_id: str | None = None,
     command_key: str = "",
     config_path: Path | None = None,
+    expected_revision: int | None = None,
 ) -> dict[str, object]:
     """Execute one authorized team decision through the control plane.
 
@@ -1448,6 +1452,7 @@ def execute_team_commands(
         decision_id=decision_id,
         command_key=command_key,
         config_path=config_path,
+        expected_revision=expected_revision,
     )
 
 

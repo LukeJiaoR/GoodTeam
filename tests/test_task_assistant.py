@@ -89,7 +89,7 @@ def test_actionable_request_becomes_editable_proposal_without_auto_start(tmp_pat
     assert result["session"]["timeline"][-1]["event"] == "task_proposed"
 
 
-def test_actionable_request_prepares_project_while_waiting_for_confirmation(tmp_path):
+def test_actionable_request_defers_preparation_until_confirmation(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     (root / "package.json").write_text("{}", encoding="utf-8")
@@ -103,9 +103,7 @@ def test_actionable_request_prepares_project_while_waiting_for_confirmation(tmp_
         message_id="message-prepare",
     )
 
-    assert executor.started == [
-        ("DEMO", root, {}, "task-assistant:message-prepare"),
-    ]
+    assert executor.started == []
 
 
 def test_ambiguous_message_gets_follow_up_instead_of_consequential_action(tmp_path):
@@ -160,7 +158,9 @@ def test_configured_task_assistant_model_drives_primary_chat_intent(tmp_path):
     assert result["session"]["proposed_task"]["exact_request"] == "登录"
     assert result["session"]["timeline"][-1]["content"] == "我会把它整理成一个待确认任务。"
     assert calls[0]["project_config"] == config
-    assert calls[0]["message_id"] == "message-model"
+    from goodteam_os.assistant_requests import worker_attempt_id
+
+    assert calls[0]["message_id"] == worker_attempt_id("DEMO", "message-model", 1)
     assert "existing_project" in calls[0]["context"]
 
 

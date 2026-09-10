@@ -688,7 +688,7 @@ test('requires explicit confirmation of a Task Assistant proposal before startin
         mission: { id: 'task-assistant:DEMO', source: 'task_assistant', status: 'waiting_for_human' },
         manager_timeline: [], attention_request: null, execution_actors: [], outcome_tasks: [], capabilities: [],
         suggestions: [],
-        proposed_task: { id: 'proposal-1', exact_request: 'Fix login and add a regression test', confirmed: false },
+        proposed_task: { id: 'proposal-1', revision: 2, exact_request: 'Fix login and add a regression test', confirmed: false },
       },
     }, error: null, refresh, status: 'ready',
   });
@@ -701,8 +701,33 @@ test('requires explicit confirmation of a Task Assistant proposal before startin
   await userEvent.click(screen.getByRole('button', { name: 'Start this task' }));
 
   expect(mocks.taskAssistantAction).toHaveBeenCalledWith('DEMO', {
-    action: 'confirm_task', proposal_id: 'proposal-1',
+    action: 'confirm_task', proposal_id: 'proposal-1', expected_revision: 2,
   });
+});
+
+test('wires durable request retry through Work and refreshes failed attempts', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: null, state: null, agile_board: { columns: {}, counts: {} }, approval_reviews: [],
+      start_context: { project_name: 'Demo project' }, workflow_steps: [], worker_jobs: [],
+      team_workspace: {
+        schema_version: 'team_workspace.v1',
+        mission: { id: 'task-assistant:DEMO', source: 'task_assistant', status: 'ready' },
+        manager_timeline: [], execution_actors: [], outcome_tasks: [], capabilities: [],
+        assistant_requests: { original: { status: 'failed', attempt: 1, text: 'Original request', error: { code: 'model_unavailable' } } },
+      },
+    }, refresh, status: 'ready', error: null,
+  });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [] });
+  mocks.taskAssistantAction.mockRejectedValue({ code: 'manager_execution_failed', message: 'Failed' });
+  renderWorkPage('/projects/DEMO/work');
+  await userEvent.click(screen.getByRole('button', { name: 'Retry request' }));
+  expect(mocks.taskAssistantAction).toHaveBeenCalledWith('DEMO', {
+    action: 'retry_message', message_id: 'original', expected_attempt: 1,
+  });
+  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  expect(screen.getByText('Original request')).toBeVisible();
 });
 
 test('keeps an active Operator mission on Work when workflow history has a stale run id', async () => {

@@ -79,7 +79,7 @@ class TaskAssistantSessionStore:
         def mutate(session: dict[str, object]) -> dict[str, object]:
             if session["timeline"]:
                 return session
-            return initial_task_assistant_session(self.project_key, mode_hint, created_at=_now())
+            return {**session, **initial_task_assistant_session(self.project_key, mode_hint, created_at=_now())}
 
         return self._mutate(mutate)
 
@@ -127,6 +127,7 @@ class TaskAssistantSessionStore:
         commands: list[dict[str, object]],
         reason: str,
         source_message_id: str,
+        expected_team_revision: int | None = None,
     ) -> dict[str, object]:
         """Record a Manager-proposed team decision awaiting user approval.
 
@@ -145,6 +146,7 @@ class TaskAssistantSessionStore:
                     "commands": cleaned_commands,
                     "reason": str(reason),
                     "source_message_id": str(source_message_id),
+                    "expected_team_revision": expected_team_revision,
                     "status": "pending",
                     "created_at": _now(),
                 },
@@ -157,7 +159,7 @@ class TaskAssistantSessionStore:
 
         def mutate(session: dict[str, object]) -> dict[str, object]:
             pending = dict(session.get("pending_team_decision") or {})
-            if pending.get("id") != str(proposal_id) or pending.get("status") != "pending":
+            if pending.get("id") != str(proposal_id) or pending.get("status") not in {"pending", "failed"}:
                 raise ValueError("Team decision proposal is unavailable")
             session["pending_team_decision"] = None
             return session
@@ -205,15 +207,22 @@ class TaskAssistantSessionStore:
 
         return self._mutate(mutate)
 
-    def revise_task(self, proposal_id: str, exact_request: str) -> dict[str, object]:
+    def revise_task(self, proposal_id: str, exact_request: str, *, expected_revision=None, source_message_ids=None) -> dict[str, object]:
         request = str(exact_request)
         if not request.strip():
             raise ValueError("Task proposal request must not be blank")
 
         def mutate(session: dict[str, object]) -> dict[str, object]:
             proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or proposal.get("run_id") or proposal.get("confirmed"):
+            if proposal.get("id") != proposal_id or proposal.get("run_id") or proposal.get("confirmed") or proposal.get("status") == "cancelled":
                 raise ValueError("Task proposal is unavailable")
+            if expected_revision is not None and (type(expected_revision) is not int or proposal.get("revision") != expected_revision):
+                raise ValueError("Task proposal changed. Reload the latest draft.")
+            if source_message_ids is not None:
+                known = {item.get("message_id") for item in session["timeline"] if item.get("actor") == "user"}
+                if not source_message_ids or any(item not in known for item in source_message_ids):
+                    raise ValueError("Task proposal references an unknown user message")
+                proposal["source_message_ids"] = list(source_message_ids)
             proposal["exact_request"] = request
             proposal["revision"] = int(proposal.get("revision", 0)) + 1
             session["proposed_task"] = proposal
@@ -221,11 +230,15 @@ class TaskAssistantSessionStore:
 
         return self._mutate(mutate)
 
-    def confirm_task(self, proposal_id: str) -> dict[str, object]:
+    def confirm_task(self, proposal_id: str, *, expected_revision=None) -> dict[str, object]:
         def mutate(session: dict[str, object]) -> dict[str, object]:
             proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id:
+            if proposal.get("id") != proposal_id or proposal.get("status") == "cancelled":
                 raise ValueError("Task proposal is unavailable")
+            if expected_revision is not None and (type(expected_revision) is not int or proposal.get("revision") != expected_revision):
+                raise ValueError("Task proposal changed. Reload the latest draft before confirming.")
+            if proposal.get("pending_change"):
+                raise ValueError("Resolve the pending draft change before confirming.")
             if proposal.get("run_id") or proposal.get("confirmed"):
                 return session
             proposal["confirmed"] = True

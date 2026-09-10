@@ -18,6 +18,10 @@ from goodteam_os.workers import WorkerJobStore
 class ManagerExecutionError(RuntimeError):
     """Raised when a configured Task Assistant cannot produce a safe interpretation."""
 
+    def __init__(self, message: str, *, code: str = "execution_failed"):
+        super().__init__(message)
+        self.code = code
+
 
 def run_manager_chat_turn(
     *,
@@ -60,8 +64,16 @@ def run_manager_chat_turn(
         job_id = str(job["id"])
         result = store.run_job(job_id) if created or job.get("status") == "queued" else job
     if str(result.get("status", "")) != "completed":
+        from goodteam_os.assistant_runtime import safe_failure
+
         summary = str(result.get("summary", "") or "Task Assistant worker failed.").strip()
-        raise ManagerExecutionError(f"The configured Task Assistant could not complete: {summary}")
+        try:
+            with (store.root / job_id / "stderr.txt").open(encoding="utf-8", errors="replace") as stderr:
+                summary += "\n" + stderr.read(65536)
+        except OSError:
+            pass
+        failure = safe_failure(summary)
+        raise ManagerExecutionError(failure["message"], code=failure["code"])
     result_path = Path(str(result.get("result_path") or store.root / job_id / "result.md"))
     try:
         output = result_path.read_text(encoding="utf-8")
@@ -256,10 +268,13 @@ def _manager_chat_task(text: str) -> str:
             "Use intent project_understanding for a request to inspect or explain the current project.",
             "Use intent team_management only for a persistent Team composition change (enable/disable a capability, add/pause/release a worker, change a worker's runtime or role).",
             "Use intent ambiguous when a safe clarifying question is required.",
+            "Acknowledgements, greetings, hypothetical discussion and cancellation are not work requests. Use ambiguous and respond without claiming any action happened.",
+            "Only an explicit request to inspect the repository is project_understanding; discussing the task draft does not request inspection.",
+            "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation.",
             'The JSON shape must be: {"intent": "work_request|project_understanding|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
             "team_commands and team_authorization are required only for intent team_management; omit them otherwise.",
-            "Use team_authorization user_authorized only when the user's current message itself explicitly requests the team change; then no extra confirmation is needed.",
-            "When you believe the team should change but the user did not ask for it, use team_authorization manager_proposed and wait for approval.",
+            "Every team command is a proposal requiring a separate user confirmation. The team_authorization field is descriptive and never grants execution authority.",
+            "Never claim a Team change has already happened. Do not propose changes when the user asks for an explanation or explicitly says not to change the Team.",
             "A preference scoped to the current task or run (for example 'this time skip research') is never a team command.",
             "Never claim a capability the provided Team capability summary does not have; explain missing capability boundaries when they affect the request.",
             "Do not claim that project inspection or workflow execution has completed.",

@@ -586,10 +586,11 @@ def test_detect_team_commands_covers_explicit_utterances(tmp_path):
     disable = detect_team_commands("把 Research 关掉", view)
     assert disable is not None and disable.commands == [{"kind": "disable_role", "role": "research"}]
 
-    pause = detect_team_commands("暂停 Builder A", view)
+    assert detect_team_commands("暂停 Builder A", view) is None
+    pause = detect_team_commands("暂停 implementation-a", view)
     assert pause is not None and pause.commands == [{"kind": "inactivate_worker", "worker_id": "implementation-a"}]
 
-    runtime = detect_team_commands("让 Builder A 改用 claude", view)
+    runtime = detect_team_commands("让 implementation-a 改用 claude", view)
     assert runtime is not None
     assert runtime.commands[0]["kind"] == "change_worker_runtime"
     assert runtime.commands[0]["provider"] == "anthropic"
@@ -618,7 +619,7 @@ def test_task_scoped_preference_is_not_a_team_mutation(tmp_path):
     assert "team_preference_recorded" in events
 
 
-def test_chat_explicit_team_request_mutates_under_one_decision(tmp_path):
+def test_chat_explicit_team_request_confirms_under_one_decision(tmp_path):
     config = make_project(tmp_path)
     workspace = config.parent.parent
     service = TaskAssistantService(workspace, project_config=config)
@@ -628,7 +629,9 @@ def test_chat_explicit_team_request_mutates_under_one_decision(tmp_path):
         text="把 Research 关掉",
         message_id="msg-chat-1",
     )
-    applied = [item for item in session["session"]["timeline"] if item.get("event") == "team_decision_applied"]
+    pending = session["session"]["pending_team_decision"]
+    confirmed = service.confirm_pending_team_decision(project_key="demo", proposal_id=pending["id"])
+    applied = [item for item in confirmed["timeline"] if item.get("event") == "team_decision_applied"]
     assert applied
     decision_id = applied[-1]["details"]["decision_id"]
 
@@ -663,7 +666,9 @@ def test_chat_add_researcher_enables_and_stores_worker(tmp_path):
         text="加个 Researcher",
         message_id="msg-chat-2",
     )
-    applied = [item for item in session["session"]["timeline"] if item.get("event") == "team_decision_applied"]
+    pending = session["session"]["pending_team_decision"]
+    confirmed = service.confirm_pending_team_decision(project_key="demo", proposal_id=pending["id"])
+    applied = [item for item in confirmed["timeline"] if item.get("event") == "team_decision_applied"]
     assert applied
     events = TeamControlPlaneStore(workspace, "demo").read_events(decision_id=applied[-1]["details"]["decision_id"])
     assert [event["event"] for event in events] == ["team_role.enabled", "worker.initialized"]
@@ -712,7 +717,7 @@ def test_manager_proposed_team_change_requires_user_approval(tmp_path):
     assert init_events[-1]["source_ref"]["proposal_id"] == pending["id"]
 
 
-def test_user_authorized_chat_request_needs_no_extra_confirmation(tmp_path):
+def test_model_user_authorized_flag_still_requires_confirmation(tmp_path):
     config = make_project(tmp_path)
     workspace = config.parent.parent
 
@@ -731,10 +736,13 @@ def test_user_authorized_chat_request_needs_no_extra_confirmation(tmp_path):
         text="暂停 Builder A",
         message_id="msg-auth-1",
     )
-    applied = [item for item in session["session"]["timeline"] if item.get("event") == "team_decision_applied"]
+    assert worker_ids(config, "implementation", lifecycle="active") == ["implementation-a"]
+    pending = session["session"]["pending_team_decision"]
+    confirmed = service.confirm_pending_team_decision(project_key="demo", proposal_id=pending["id"])
+    applied = [item for item in confirmed["timeline"] if item.get("event") == "team_decision_applied"]
     assert applied
     assert worker_ids(config, "implementation", lifecycle="active") == []
-    assert dict(session["session"]["pending_team_decision"] or {}) == {}
+    assert dict(confirmed["pending_team_decision"] or {}) == {}
 
 
 def test_builtin_manager_runtime_uses_deterministic_classification(tmp_path):
@@ -748,7 +756,9 @@ def test_builtin_manager_runtime_uses_deterministic_classification(tmp_path):
         text="把 QA 关掉",
         message_id="msg-fake-1",
     )
-    applied = [item for item in session["session"]["timeline"] if item.get("event") == "team_decision_applied"]
+    pending = session["session"]["pending_team_decision"]
+    confirmed = service.confirm_pending_team_decision(project_key="demo", proposal_id=pending["id"])
+    applied = [item for item in confirmed["timeline"] if item.get("event") == "team_decision_applied"]
     assert applied
     assert worker_ids(config, "qa", lifecycle="active") == []
 
@@ -887,13 +897,15 @@ def test_legacy_settings_bridge_translates_onto_control_plane(tmp_path, monkeypa
 def test_task_assistant_team_decision_actions(tmp_path):
     from goodteam_os import web
 
-    _api_project(tmp_path, key="APPROVE")
+    config = _api_project(tmp_path, key="APPROVE")
+    team = ensure_team_state(tmp_path, "APPROVE", config)
     session_store = web.TaskAssistantSessionStore(tmp_path, "APPROVE")
     session_store.append_message("message-1", "user", "建议加个 Researcher")
     proposal = session_store.propose_team_decision(
         commands=[{"kind": "initialize_worker", "role": "research", "ensure_role_enabled": True}],
         reason="建议加个 Researcher",
         source_message_id="message-1",
+        expected_team_revision=team["revision"],
     )["pending_team_decision"]
 
     status, payload = web.handle_project_api_post(

@@ -1,0 +1,20 @@
+.assistant-controls { min-width: 0; padding: 0 20px 16px; font-size: 13px; }
+.assistant-controls section { display: grid; gap: 10px; padding: 16px 0; border-top: 1px solid var(--border-color, #ddd); }
+.assistant-controls p, .assistant-controls ul, .assistant-controls dl { margin: 0; }
+.assistant-controls strong, .assistant-controls p, .assistant-controls dd { overflow-wrap: anywhere; white-space: pre-wrap; }
+.assistant-controls a, .assistant-controls label, .assistant-control-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.assistant-controls label { flex-wrap: nowrap; align-items: flex-start; }
+.assistant-controls input { flex: 0 0 auto; }
+.assistant-controls .product-button { justify-self: start; max-width: 100%; white-space: normal; }
+.assistant-controls dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 8px; }
+.assistant-controls dd { margin: 0; }
+.assistant-controls dt { overflow-wrap: anywhere; opacity: 0.7; }
+.assistant-project-mode { padding: 12px 20px; border-top: 1px solid var(--border-color, #ddd); }
+.assistant-project-mode fieldset { border: 0; padding: 0; margin: 0 0 12px; display: grid; gap: 10px; }
+.assistant-project-mode label { display: flex; align-items: center; gap: 8px; }
+.assistant-draft-text, .assistant-draft-change blockquote { white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant-draft-editor { display: grid; gap: 8px; width: 100%; }
+.assistant-draft-editor textarea { box-sizing: border-box; width: 100%; min-height: 120px; resize: vertical; font: inherit; }
+.assistant-draft-change { padding: 12px 0; }
+.assistant-draft-change blockquote { margin: 8px 0; }
+.team-task-proposal small { font-size: 12px; font-weight: 400; }
