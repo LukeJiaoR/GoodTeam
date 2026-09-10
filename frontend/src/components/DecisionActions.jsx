@@ -61,7 +61,7 @@ export default function DecisionActions({ busy = '', error, onDecision, onReques
         busy={busy === 'changes_requested'}
         disabled={!onRequestChanges && !note.trim()}
         onClick={() => (
-          onRequestChanges ? onRequestChanges() : onDecision('changes_requested', note)
+          onRequestChanges ? onRequestChanges(note) : onDecision('changes_requested', note)
         )}
       >
         {t('review.decision.changes')}

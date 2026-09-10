@@ -3695,7 +3695,7 @@ def decide_approval(
         artifact_path=state.artifacts.get(_approval_artifact_for_gate(approval), ""),
         artifact_version=str(approval_target["artifact_version"]),
         debate_ref=debate_ref,
-        note=note.strip(),
+        note=note if decision_origin == "manager_intent_commit" else note.strip(),
         decision_origin=decision_origin,
         actor_ref=resolved_actor_ref,
         review_mode=review_mode,
@@ -3771,7 +3771,7 @@ def decide_approval(
             artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
         )
     elif approval == "takeover" and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        revision_note = note.strip()
+        revision_note = note if decision_origin == "manager_intent_commit" else note.strip()
         regenerate_before_node = state.next_node
         state.change_requests[approval] = revision_note
         state.approvals[approval] = ApprovalDecision.PENDING
@@ -3796,7 +3796,7 @@ def decide_approval(
             note=revision_note,
         )
     elif approval in {"prd", "rfc"} and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        revision_note = note.strip()
+        revision_note = note if decision_origin == "manager_intent_commit" else note.strip()
         regenerate_before_node = state.next_node
         state.change_requests[approval] = revision_note
         state.approvals[approval] = ApprovalDecision.PENDING
@@ -3923,6 +3923,7 @@ def start_request_changes_intent(
     expected_artifact_version: str,
     expected_task_id: str = "",
     expected_head_sha: str = "",
+    initial_text: str = "",
 ) -> dict[str, object]:
     """Open a durable Manager discussion without deciding the approval."""
 
@@ -3956,6 +3957,7 @@ def start_request_changes_intent(
                 "source": "workflow",
             },
             target=target,
+            initial_text=initial_text,
         )
     except IntentCommitError as exc:
         raise ProjectApiError("intent_commit_invalid", str(exc), 409) from exc
@@ -4101,7 +4103,7 @@ def confirm_request_changes_intent(
             return _committed_intent_response(confirming, idempotent=True)
 
         interpretation = dict(confirming.get("confirmed_interpretation") or {})
-        instruction = str(confirming.get("draft_text", "") or "").strip()
+        instruction = str(confirming.get("draft_text", "") or "")
         target = dict(confirming.get("target") or {})
         manager_execution = dict(interpretation.get("manager_execution") or {})
         try:
@@ -8173,6 +8175,7 @@ def serve(
                         expected_artifact_version=str(request.get("expected_artifact_version", "") or ""),
                         expected_task_id=str(request.get("expected_task_id", "") or ""),
                         expected_head_sha=str(request.get("expected_head_sha", "") or ""),
+                        initial_text=request.get("initial_text", ""),
                     )
                 elif normalized_path == "/intent-commit/discuss":
                     result = discuss_request_changes_intent(

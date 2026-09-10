@@ -335,7 +335,7 @@ export default function WorkTaskDetailDialog({
     setBusy('changes_requested');
     setMutationError(null);
     try {
-      await onRequestChanges(review.approval);
+      await onRequestChanges(review.approval, null, note);
       onClose();
     } catch (err) {
       setMutationError(err);

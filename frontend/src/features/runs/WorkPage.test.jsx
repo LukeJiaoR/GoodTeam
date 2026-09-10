@@ -838,6 +838,7 @@ test('routes the detail canvas Request changes into Task Assistant Intent Commit
   const inspector = document.querySelector('.team-inspector');
   await userEvent.click(within(inspector).getByRole('button', { name: /Security/ }));
   const stageDialog = within(inspector).getByRole('dialog', { name: 'Stage details' });
+  await userEvent.type(within(stageDialog).getByRole('textbox'), 'Preserve the API boundary.');
   await userEvent.click(within(stageDialog).getByRole('button', { name: 'Request changes' }));
 
   expect(mocks.startChangeIntent).toHaveBeenCalledWith('DEMO', 'security', {
@@ -846,7 +847,7 @@ test('routes the detail canvas Request changes into Task Assistant Intent Commit
     target_id: 'security',
     artifact_key: 'rfc',
     artifact_version: 'sha256:1234567890abcdef1234567890abcdef',
-  });
+  }, { initialText: 'Preserve the API boundary.' });
   expect(mocks.decideReview).not.toHaveBeenCalled();
   await waitFor(() => {
     expect(screen.getByTestId('location-search')).toHaveTextContent('');
@@ -884,6 +885,7 @@ test('routes the detail plan task Request changes into Task Assistant Intent Com
   const taskDialog = within(inspector).getByRole('dialog', {
     name: 'Review RFC security boundaries',
   });
+  await userEvent.type(within(taskDialog).getByRole('textbox'), 'Add regression coverage.');
   await userEvent.click(within(taskDialog).getByRole('button', { name: 'Request changes' }));
 
   expect(mocks.startChangeIntent).toHaveBeenCalledWith('DEMO', 'security', {
@@ -892,7 +894,7 @@ test('routes the detail plan task Request changes into Task Assistant Intent Com
     target_id: 'security',
     artifact_key: 'rfc',
     artifact_version: 'sha256:1234567890abcdef1234567890abcdef',
-  });
+  }, { initialText: 'Add regression coverage.' });
   expect(mocks.decideReview).not.toHaveBeenCalled();
   await waitFor(() => {
     expect(screen.getByTestId('location-search')).toHaveTextContent('');
@@ -955,6 +957,21 @@ test('Keep discussing returns the confirmed interpretation to discussion without
   expect(mocks.keepDiscussingChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1');
   expect(mocks.confirmChangeIntent).not.toHaveBeenCalled();
   expect(mocks.decideReview).not.toHaveBeenCalled();
+});
+
+test('restores accepted review feedback and submits it without trimming or re-entry', async () => {
+  const draft = '  Preserve formatting.  \n\n    keep_indentation()\n';
+  const data = managerIntentData('discussing', draft);
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.discussChangeIntent.mockResolvedValue({ intent_commit: { id: 'intent-change-1' } });
+  renderWorkPage();
+
+  expect(screen.getByLabelText('What should change?')).toHaveValue(draft);
+  expect(screen.queryByText('What would you like changed?')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Review Task Assistant interpretation' }));
+  expect(mocks.discussChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1', draft);
+  expect(mocks.confirmChangeIntent).not.toHaveBeenCalled();
 });
 
 test('offers restart recovery for a durable committing intent', async () => {
@@ -1350,12 +1367,15 @@ test('routes Request changes from exact Outcome details back into the Task Assis
   renderWorkPage();
   await user.click(screen.getByRole('button', { name: 'Inspect details →' }));
   const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
+  const note = '  Fix the security boundary.  \n\nKeep the existing API.\n';
+  await user.type(within(dialog).getByRole('textbox'), note);
   await user.click(within(dialog).getByRole('button', { name: 'Request changes' }));
 
   expect(mocks.startChangeIntent).toHaveBeenCalledWith(
     'DEMO',
     'security',
     data.team_workspace.attention_request.approval_brief.approval_target,
+    { initialText: note },
   );
   expect(mocks.decideReview).not.toHaveBeenCalled();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

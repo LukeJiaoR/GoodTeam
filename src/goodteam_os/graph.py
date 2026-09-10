@@ -2816,12 +2816,12 @@ def takeover_brief_worker_task(
 ) -> str:
     """Ask the existing intake worker for a review brief written for a person."""
 
-    requested_changes = state.change_requests.get("takeover", "").strip()
+    requested_changes = state.change_requests.get("takeover", "")
     revision_instruction = (
         "\n\nA reviewer requested changes to the previous brief. Write an updated brief that directly "
         "addresses this feedback; do not merely repeat the feedback:\n"
         f"{requested_changes}\n"
-        if requested_changes
+        if requested_changes.strip()
         else ""
     )
     return (
@@ -2854,8 +2854,8 @@ def prd_worker_task(state: AgileDevState) -> str:
         "risks & open questions. Ground it in the project context provided. "
         "Output the PRD as markdown only - no preamble."
     )
-    note = state.change_requests.get("prd", "").strip()
-    if note:
+    note = state.change_requests.get("prd", "")
+    if note.strip():
         task += (
             "\n\nA reviewer requested changes to the current PRD. Revise it to ADDRESS this feedback, "
             f"preserving what is fine: {note}"
@@ -2871,8 +2871,8 @@ def rfc_worker_task(state: AgileDevState) -> str:
         "Ensure the generated document includes a dedicated '## Security Assessment & Risk Posture' section. "
         "Output markdown only."
     )
-    note = state.change_requests.get("rfc", "").strip()
-    if note:
+    note = state.change_requests.get("rfc", "")
+    if note.strip():
         task += (
             "\n\nA reviewer requested changes to the current RFC. Revise it to ADDRESS this feedback, "
             f"preserving what is fine: {note}"

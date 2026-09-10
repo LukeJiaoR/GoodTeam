@@ -251,7 +251,7 @@ function ManagerAttention({
     event.preventDefault();
     if (!intent?.id || !note.trim()) return;
     Promise.resolve()
-      .then(() => onDiscussChangeIntent?.(intent.id, note.trim()))
+      .then(() => onDiscussChangeIntent?.(intent.id, note))
       .catch(() => {});
   };
   const startChangeDiscussion = () => Promise.resolve()
@@ -309,10 +309,10 @@ function ManagerAttention({
       {intent?.status === 'discussing' ? (
         <div className="team-intent-commit" data-status="discussing">
           <div className="team-intent-commit__heading">
-            <strong>{t('work.manager.intent.question')}</strong>
+            <strong>{t(intent.draft_text ? 'work.manager.intent.savedDraft' : 'work.manager.intent.question')}</strong>
             <StatusBadge tone="pending">{t('work.manager.intent.discussing')}</StatusBadge>
           </div>
-          <p>{t('work.manager.intent.restate')}</p>
+          {!intent.draft_text ? <p>{t('work.manager.intent.restate')}</p> : null}
           <form className="team-attention__form" onSubmit={submitChanges}>
             <label>
               <span>{t('work.manager.changeReason')}</span>
@@ -1083,10 +1083,11 @@ function TeamWorkspace({
           projectKey={projectKey}
           onDecide={onDecide}
           onClose={closeTaskModal}
-          onRequestChanges={activeReviewTargetId && attention?.approval_brief ? async () => {
+          onRequestChanges={activeReviewTargetId && attention?.approval_brief ? async (_approval, _target, note) => {
             await onStartChangeIntent?.(
               attention.target_id,
               attention.approval_brief.approval_target,
+              note,
             );
             setMobileTab('manager');
           } : undefined}
