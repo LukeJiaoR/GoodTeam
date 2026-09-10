@@ -19,7 +19,11 @@ change, or modification of active real project data is authorized by this batch.
   Resume explicitly requested inspection after mode selection using saved intent.
 - [x] Add focused stale/replay/reload/cancel tests and desktop/mobile acceptance.
 - [x] Run Tier 4 verification and review the complete diff.
-- [ ] Commit, push, and create PR (explicitly authorized; no automatic merge).
+- [x] Commit, push, and create PR (explicitly authorized; no automatic merge).
+
+Delivery: implementation commit `04060d2` on `codex/m0-runtime-recovery`;
+[PR #421](https://github.com/LukeJiaoR/GoodTeam/pull/421) targets `main`.
+The PR is open, not merged. Product acceptance issues remain open for review.
 
 This supersedes the earlier auto-preparation approach: a model interpretation
 alone must not start task preparation. Existing interrupted records without a
