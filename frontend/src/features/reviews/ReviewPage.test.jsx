@@ -176,10 +176,42 @@ describe('ReviewPage workflow and navigation', () => {
         artifact_key: 'prd',
         artifact_version: 'sha256:prd-v1',
       },
+      { initialText: '' },
     );
     expect(mocks.decideReview).not.toHaveBeenCalled();
     expect(router.state.location.pathname).toBe('/projects/DEMO/work/runs/run-1');
     expect(await screen.findByText('Manager Intent Commit')).toBeVisible();
+  });
+
+  test('carries the exact review note to the version-bound draft before navigating', async () => {
+    const user = userEvent.setup();
+    const note = '  Keep Markdown breaks.  \n\n    keep_indentation()\n';
+    mocks.startChangeIntent.mockResolvedValue({ intent_commit: { id: 'intent-feedback' } });
+    const router = renderReview();
+    await user.type(await screen.findByRole('textbox', { name: t('review.decision.rationale') }), note);
+    await user.click(screen.getByRole('button', { name: t('review.decision.changes') }));
+
+    expect(mocks.startChangeIntent).toHaveBeenCalledWith(
+      'DEMO', 'prd', expect.objectContaining({ artifact_version: 'sha256:prd-v1' }),
+      { initialText: note },
+    );
+    expect(router.state.location.pathname).toBe('/projects/DEMO/work/runs/run-1');
+    expect(mocks.decideReview).not.toHaveBeenCalled();
+  });
+
+  test('keeps feedback and stays in Review when draft creation conflicts', async () => {
+    const user = userEvent.setup();
+    const note = 'Do not overwrite the existing change draft.';
+    mocks.startChangeIntent.mockRejectedValue(new Error('A different change draft already exists.'));
+    const router = renderReview();
+    const editor = await screen.findByRole('textbox', { name: t('review.decision.rationale') });
+    await user.type(editor, note);
+    await user.click(screen.getByRole('button', { name: t('review.decision.changes') }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('A different change draft already exists.');
+    expect(editor).toHaveValue(note);
+    expect(router.state.location.pathname).toBe('/projects/DEMO/review/prd');
+    expect(mocks.decideReview).not.toHaveBeenCalled();
   });
 
   test('renders the evidence summary badges from the snapshot', async () => {

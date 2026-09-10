@@ -881,7 +881,7 @@ export default function WorkPage() {
     throw caught;
   };
 
-  const handleStartChangeIntent = async (approval, approvalTarget = null) => {
+  const handleStartChangeIntent = async (approval, approvalTarget = null, initialText) => {
     const currentReview = (data?.approval_reviews || []).find(
       (review) => review.approval === approval && review.is_actionable,
     );
@@ -889,15 +889,17 @@ export default function WorkPage() {
       || approvalTargetForReview(currentReview, data?.state?.run_id || '');
     try {
       return await mutate('intent-start', () => (
-        runApi.startChangeIntent(projectKey, approval, expectedTarget)
+        initialText === undefined
+          ? runApi.startChangeIntent(projectKey, approval, expectedTarget)
+          : runApi.startChangeIntent(projectKey, approval, expectedTarget, { initialText })
       ));
     } catch (caught) {
       return refreshStaleIntent(caught);
     }
   };
 
-  const handleRequestChanges = async (approval, approvalTarget = null) => {
-    const result = await handleStartChangeIntent(approval, approvalTarget);
+  const handleRequestChanges = async (approval, approvalTarget = null, initialText) => {
+    const result = await handleStartChangeIntent(approval, approvalTarget, initialText);
     closeInspector();
     return result;
   };

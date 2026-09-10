@@ -423,7 +423,7 @@ export default function ReviewPage() {
       nextLabel: decisionNodeLabel(latest?.after_node || latest?.node_transition || '', t),
     });
   };
-  const requestChanges = async () => {
+  const requestChanges = async (note = '') => {
     const runId = data?.state?.run_id || '';
     const expectedTarget = {
       run_id: runId,
@@ -433,7 +433,7 @@ export default function ReviewPage() {
       artifact_version: selected.artifact_version || '',
     };
     const result = await mutate('changes_requested', () => (
-      runApi.startChangeIntent(projectKey, selected.approval, expectedTarget)
+      runApi.startChangeIntent(projectKey, selected.approval, expectedTarget, { initialText: note })
     ));
     if (!result) return;
     navigate(runId ? routes.projectRun(projectKey, runId) : routes.projectWork(projectKey));

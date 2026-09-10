@@ -61,3 +61,15 @@ test('posts the durable Intent Commit conversation steps with exact target bindi
     intent_id: 'intent-1',
   });
 });
+
+test('includes raw initial feedback without dropping request cancellation', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' });
+  vi.stubGlobal('fetch', fetch);
+  const signal = new AbortController().signal;
+  const initialText = '  Retain whitespace.  \n\n    code()\n';
+  await startChangeIntent('DEMO', 'prd', { artifact_version: 'v1' }, { initialText, signal });
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    project_key: 'DEMO', approval: 'prd', expected_artifact_version: 'v1', initial_text: initialText,
+  });
+  expect(fetch.mock.calls[0][1].signal).toBe(signal);
+});

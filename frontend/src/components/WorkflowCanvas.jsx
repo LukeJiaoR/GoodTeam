@@ -186,7 +186,7 @@ function CanvasInner({ fallback, onDecided, onRequestChanges, projectKey, review
     }
   };
 
-  const requestChanges = async () => {
+  const requestChanges = async (note) => {
     if (!actionableReview || !onRequestChanges) return;
     setBusy('changes_requested');
     setError(null);
@@ -197,7 +197,7 @@ function CanvasInner({ fallback, onDecided, onRequestChanges, projectKey, review
         target_id: actionableReview.approval || '',
         artifact_key: actionableReview.artifact || '',
         artifact_version: actionableReview.artifact_version || '',
-      });
+      }, note);
       setExpanded(null);
     } catch (caught) {
       setError(caught);

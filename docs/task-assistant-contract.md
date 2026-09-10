@@ -57,6 +57,26 @@ The bounded language rules are conveniences, not an authorization system or a
 general semantic diff engine. Ambiguous relations require an explicit UI decision.
 All task execution still requires confirmation even if the model misclassifies.
 
+## Review Feedback Handoff
+
+`POST /api/intent-commit/start` accepts optional `initial_text` together with its
+existing exact run, gate, artifact and version binding. Nonblank feedback is
+persisted verbatim as an editable discussion draft before navigation; opening it
+does not invoke a model or decide the approval. Blank feedback opens the existing
+empty-discussion flow. Requests over 8,000 characters or non-text input are rejected.
+
+Same-target/same-text replay returns the existing draft without appending events.
+An empty discussing draft can accept feedback once. Different nonempty drafts
+return HTTP 409 and remain unchanged; the caller retains its input. Legacy clients
+that omit `initial_text` can still resume the existing discussion.
+
+The user reviews an interpretation and explicitly confirms before the existing
+revision flow runs. Raw draft text, not the model summary, is the revision
+instruction. Persistence, Work projection and revision prompts retain Markdown
+whitespace. Model failure does not erase feedback accepted by the start request.
+
+See [the handoff execution record](plans/2026-09-10-review-feedback-handoff.md).
+
 ## Verification And Remaining Scope
 
 Tier 4: focused concurrency/replay/revision tests, full backend suite, frontend

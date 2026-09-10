@@ -1567,7 +1567,7 @@ def _project_intent_commit(
         "id": _text(intent.get("id")),
         "kind": "request_changes",
         "status": projected_status,
-        "draft_text": _text(intent.get("draft_text")),
+        "draft_text": str(intent.get("draft_text") or ""),
         "interpretation": dict(interpretation) if isinstance(interpretation, Mapping) else None,
         "target": dict(target),
         "created_at": _text(intent.get("created_at")),

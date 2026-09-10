@@ -88,7 +88,9 @@ class IntentCommitStore:
         *,
         mission: Mapping[str, object],
         target: Mapping[str, object],
+        initial_text: str = "",
     ) -> tuple[dict[str, object], bool]:
+        feedback = _raw_change_request(initial_text, allow_empty=True)
         normalized_mission = _normalize_mission(mission)
         normalized_target = _normalize_target(target)
         if normalized_mission["run_id"] != normalized_target["run_id"]:
@@ -105,6 +107,8 @@ class IntentCommitStore:
                     and _same_mission(_mapping(record.get("mission")), normalized_mission)
                     and _same_target(_mapping(record.get("target")), normalized_target)
                 ):
+                    if _seed_initial_feedback(record, feedback):
+                        self._write_payload(payload)
                     return deepcopy(record), False
 
             timestamp = _now()
@@ -157,6 +161,7 @@ class IntentCommitStore:
                 "updated_at": timestamp,
             }
             records[intent_id] = record
+            _seed_initial_feedback(record, feedback)
             self._write_payload(payload)
             return deepcopy(record), True
 
@@ -167,7 +172,7 @@ class IntentCommitStore:
         *,
         interpretation: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
-        change_request = _normalize_change_request(text)
+        change_request = _raw_change_request(text)
         resolved_interpretation = (
             _normalize_manager_interpretation(interpretation, change_request)
             if interpretation is not None
@@ -224,24 +229,21 @@ class IntentCommitStore:
                 raise IntentCommitError("This confirmed change request is already being committed.")
             _require_status(record, "ready_to_confirm")
             interpretation = _mapping(record.get("interpretation"))
+            request = str(record.get("draft_text") or "")
             summary = _text(interpretation.get("summary"))
             source = _text(interpretation.get("source"))
             if source == "manager_worker":
                 try:
                     expected_interpretation = _normalize_manager_interpretation(
                         interpretation,
-                        _text(record.get("draft_text")),
+                        request,
                     )
                 except IntentCommitError:
                     expected_interpretation = {}
             else:
-                expected_interpretation = deterministic_interpretation(summary) if summary else {}
+                expected_interpretation = deterministic_interpretation(request) if request.strip() else {}
             if (
                 not summary
-                or (
-                    source != "manager_worker"
-                    and _text(record.get("draft_text")) != summary
-                )
                 or dict(interpretation) != expected_interpretation
             ):
                 raise IntentCommitError("The Task Assistant does not have a safe interpretation to confirm.")
@@ -457,11 +459,11 @@ def _normalize_manager_interpretation(
     interpretation: Mapping[str, object],
     change_request: str,
 ) -> dict[str, object]:
-    request = _normalize_change_request(change_request)
+    request = _raw_change_request(change_request)
     if (
         _text(interpretation.get("schema_version")) != INTENT_INTERPRETATION_SCHEMA_VERSION
         or _text(interpretation.get("source")) != "manager_worker"
-        or _text(interpretation.get("request")) != request
+        or interpretation.get("request") != request
     ):
         raise IntentCommitError("The Task Assistant returned an interpretation for a different request.")
     summary = _text(interpretation.get("summary"))
@@ -507,6 +509,38 @@ def _normalize_change_request(text: str) -> str:
             f"Change requests must be {MAX_CHANGE_REQUEST_LENGTH} characters or fewer."
         )
     return normalized
+
+
+def _raw_change_request(text: str, *, allow_empty: bool = False) -> str:
+    if not isinstance(text, str):
+        raise IntentCommitError("Change requests must be text.")
+    if len(text) > MAX_CHANGE_REQUEST_LENGTH:
+        raise IntentCommitError(
+            f"Change requests must be {MAX_CHANGE_REQUEST_LENGTH} characters or fewer."
+        )
+    if not text.strip():
+        if allow_empty:
+            return ""
+        raise IntentCommitError("Describe the change you want the Task Assistant to interpret.")
+    return text
+
+
+def _seed_initial_feedback(record: dict[str, object], feedback: str) -> bool:
+    if not feedback or record.get("draft_text") == feedback:
+        return False
+    if record.get("draft_text") or record.get("status") != "discussing":
+        raise IntentCommitError(
+            "A different change draft already exists. Open Work to review it; "
+            "your new feedback has not replaced the existing draft."
+        )
+    timestamp = _now()
+    record["draft_text"] = feedback
+    record["updated_at"] = timestamp
+    _append_event(
+        record, actor="user", event="change_request_shared",
+        timestamp=timestamp, content=feedback,
+    )
+    return True
 
 
 def _normalize_mission(mission: Mapping[str, object]) -> dict[str, str]:

@@ -61,6 +61,7 @@ export const startChangeIntent = (projectKey, approval, expectedTarget = {}, opt
     expected_artifact_key: expectedTarget.artifact_key,
     expected_artifact_version: expectedTarget.artifact_version,
     expected_head_sha: expectedTarget.head_sha,
+    initial_text: options?.initialText,
   },
   options,
 );
