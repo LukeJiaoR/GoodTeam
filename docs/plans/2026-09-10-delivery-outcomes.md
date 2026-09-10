@@ -127,3 +127,19 @@ closing their acceptance gates. Independent review remains outstanding.
 The isolated target's #424 test patch and generated PRD/RFC/documents are excluded
 from this PR. They remain local, interrupted and unaccepted. Keep the application
 worktree and evidence directory until review and follow-up are complete.
+
+## PR CI Follow-Up
+
+Draft PR #426 at `8d777b1` ran CI automatically. Frontend passed; backend
+reported 1 failed and 2158 passed in 415.30s, so `CI / gate` failed. The failing
+`test_intake_uses_research_identity_and_preserves_capability_gate` used the real
+host backend doctor and raised `team_worker_unavailable` before checking mapping.
+Its local pass therefore did not establish runner-independent test isolation.
+
+The follow-up pins only that test's backend doctor to ready, matching existing
+Team tests. Production runtime eligibility and the disabled-role assertion are
+unchanged. This is a test-fixture correction, not evidence of a live-capable
+Worker on CI. Only diff review and `git diff --check` are repeated locally;
+tests, build and live acceptance remain paused. Earlier pass counts predate this
+fixture correction. The updated head still needs CI confirmation and the PR
+remains draft with the acceptance gaps above.

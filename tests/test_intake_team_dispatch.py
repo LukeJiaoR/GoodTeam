@@ -6,7 +6,12 @@ from goodteam_os.state import create_initial_state
 from goodteam_os.team_control_plane import ensure_team_state, execute_team_commands, TeamDispatchBlocked
 
 
-def test_intake_uses_research_identity_and_preserves_capability_gate(tmp_path):
+def test_intake_uses_research_identity_and_preserves_capability_gate(tmp_path, monkeypatch):
+    # Isolate dispatch mapping from the host's installed/authenticated Codex CLI.
+    monkeypatch.setattr(
+        "goodteam_os.team_control_plane.worker_backend_doctor",
+        lambda mode: {"mode": mode, "ready": True},
+    )
     root = tmp_path / "repo"
     root.mkdir()
     config = write_project_config(tmp_path / "projects", "DEMO", "Demo", repo_path=str(root), worker_mode="codex")
