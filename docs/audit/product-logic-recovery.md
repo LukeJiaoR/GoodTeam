@@ -69,3 +69,11 @@ discussion does not decide an approval; separate confirmation remains required.
 The builtin regression and full browser loop are executed only in CI, as
 requested. The implementation retains PR #427 as its dependency until that PR
 is merged; neither PR is automatically merged.
+
+The CI browser run also exposed a UI projection gap: after completion, the
+current project Work page was treated as read-only history, hiding the message
+composer even though the API accepted another task. The current project now
+returns to the Task Assistant conversation when no workflow/operator mission is
+active. Explicit historical run views remain read-only and retain their original
+run identity. Projection regressions and the second-task browser step protect
+both sides of that boundary.
