@@ -148,7 +148,7 @@ jobs:
       - run: npm run build
         working-directory: frontend
 
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install chromium
         working-directory: frontend
 
       - name: Verify isolated business loop twice

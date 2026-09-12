@@ -288,6 +288,10 @@ use independent projects and no longer depend on test ordering. No business API
 is mocked. Each CI invocation uses a unique temporary directory and loopback
 port; the server refuses reuse and cleans only its owned directory on shutdown.
 
+The runner must provide the Chromium system libraries. CI downloads the pinned
+Playwright browser into the runner user cache with `npx playwright install chromium`;
+it does not require sudo or change system packages. Missing libraries fail the job.
+
 CI runs `npm run test:e2e -- --repeat-each=2` with retries disabled. The
 `browser-acceptance-<run>-<attempt>` artifact contains the HTML/JSON report,
 business-state/ledger snapshots, and screenshots/traces on failure. This is

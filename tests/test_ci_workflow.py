@@ -117,7 +117,7 @@ def test_browser_acceptance_is_required_for_either_changed_stack_and_uploads_evi
     assert "python3.12 -m venv" in browser
     assert "GOODTEAM_E2E_PYTHON=" in browser
     assert "npm ci" in browser and "npm run build" in browser
-    assert "npx playwright install --with-deps chromium" in browser
+    assert "npx playwright install chromium" in browser
     assert "npm run test:e2e -- --repeat-each=2" in browser
     assert 'GOODTEAM_DISABLE_TG_NETWORK: "1"' in browser
     assert "continue-on-error" not in browser

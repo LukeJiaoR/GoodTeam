@@ -4,7 +4,7 @@ import process from 'node:process';
 import { test as base, expect } from '@playwright/test';
 
 export const test = base.extend({
-  fixture: async ({ page }, use, testInfo) => {
+  fixture: async ({ page }, provide, testInfo) => {
     const name = `project-${testInfo.testId.replace(/[^a-zA-Z0-9]/g, '').slice(-12)}-${testInfo.repeatEachIndex}`;
     const root = path.join(process.env.GOODTEAM_E2E_ROOT, 'targets', name);
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
@@ -18,7 +18,7 @@ export const test = base.extend({
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
     await page.addInitScript(() => localStorage.setItem('gt-language', 'en'));
-    await use({ root, name, key: name.toUpperCase().replaceAll('-', '_'), errors });
+    await provide({ root, name, key: name.toUpperCase().replaceAll('-', '_'), errors });
     expect(errors, 'Browser console and unhandled errors').toEqual([]);
   },
 });
