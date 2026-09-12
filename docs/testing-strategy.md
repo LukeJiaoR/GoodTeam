@@ -305,3 +305,37 @@ For the initial implementation, the user explicitly prohibited all local tests,
 builds and smoke runs. Only static source review and `git diff --check` were
 performed locally; CI is the execution owner. Review the CI run for the exact
 PR head rather than reusing a prior PR's result.
+
+## Recovery Acceptance
+
+The browser CI job first runs `tests/test_workflow_http_recovery.py` with a
+dedicated pytest temporary root, then runs Playwright. Both must pass before
+the full backend/frontend jobs and final gate can succeed. The backend full
+suite also includes the recovery tests.
+
+| Scenario | Observed contract |
+| --- | --- |
+| Kill after decision persistence, before ledger append | Restart exposes an interrupted transition; explicit Retry publishes the original operation ID once and advances to release review. |
+| Kill after ledger append, before execution | Restart retains the original decision; GET does not dispatch work; Retry and repeated bound approval cannot add a second decision/execution. |
+| Two server processes share one workspace | A live holder prevents another process from approving or retrying; GET preserves the live transition; a repeated completed approval replays. |
+| Worker subprocess timeout | The existing timeout handler produces failed evidence and a blocked workflow; GET does not retry; explicit Retry keeps failed job evidence and the original approval. |
+| Two browser tabs approve the same evidence | Both requests reach the real API; exactly one implementation job and one security decision result; refreshed tabs cannot approve the old gate. |
+
+`tests/fixtures/workflow_recovery_server.py` hosts the real HTTP server in a
+separate process. Its fault barriers and fake-only Worker guard exist only in
+test code. All setup and workflow advancement use HTTP; tests never seed an
+approval state. Process termination targets only that fixture's child. The
+timeout uses a bounded Python sleeper through the existing Worker subprocess
+handler, with no provider/real Worker invocation. The tab test delays forwarding
+both requests until both have arrived; it never replaces an API response.
+
+Workspaces, registry and Operator state all use temporary paths. CI uploads
+`http-recovery-<run>-<attempt>` with JUnit results, server logs, current state,
+approval logs and fake Worker evidence for 14 days. Playwright retains its
+separate browser artifact with concurrency state snapshots.
+
+These cases verify the recorded interruption boundaries and explicit retry
+contract. They do not promise exactly-once external side effects after an
+arbitrary provider process crash, and do not exercise real GitHub, Telegram,
+deployment or model adapters. Local tests/builds/smoke remain unexecuted under
+the user's CI-only validation instruction.
