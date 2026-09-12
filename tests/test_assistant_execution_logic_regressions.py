@@ -1,6 +1,5 @@
 import pytest
 
-from goodteam_os.execution.api import ExecutionAPI
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.models import (
     ExecutionActor,
