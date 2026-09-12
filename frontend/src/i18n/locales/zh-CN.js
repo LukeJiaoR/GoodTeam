@@ -317,6 +317,7 @@ export const zhCN = {
   'projects.errors.same_origin_required': '请从 GoodTeam 应用中打开此操作。',
   'projects.errors.approval_binding_required': '批准该决策前，请重新加载审批简报。',
   'projects.errors.stale_approval': '审批简报载入后，当前审批已发生变化。请先审阅最新版本。',
+  'projects.errors.stale_artifact': '文档已发生变化。请重新载入当前版本后再保存编辑。',
   'projects.errors.intent_binding_required': '讨论修改前，请重新加载审批简报。',
   'projects.errors.intent_mission_not_found': '该 任务助手 任务已不再处于活动状态。',
   'projects.errors.intent_commit_not_found': '该修改讨论已不存在。',

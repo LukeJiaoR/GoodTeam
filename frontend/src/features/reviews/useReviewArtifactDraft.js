@@ -12,14 +12,19 @@ export default function useReviewArtifactDraft(projectKey, runId, review, { getA
   const preview = typeof review?.content === 'string' ? review.content : '';
   const version = String(review?.artifact_version || '');
   const needsFull = reviewNeedsFullArtifact(review);
+  const serverReview = useMemo(() => ({
+    artifact, content: preview, artifact_version: version, content_truncated: needsFull,
+  }), [artifact, needsFull, preview, version]);
   const [draft, dispatch] = useReducer(
     reviewDraftReducer,
-    { identity, runId, review },
+    { identity, runId, review: serverReview },
     ({ identity: initialIdentity, runId: initialRunId, review: initialReview }) => (
       createReviewDraft(initialIdentity, initialRunId, initialReview)
     ),
   );
-  const current = draft.identity === identity ? draft : createReviewDraft(identity, runId, review);
+  const current = draft.identity === identity ? draft : createReviewDraft(identity, runId, serverReview);
+  const visibleVersionConflict = Boolean(current.artifactVersion && version
+    && current.artifactVersion !== version && current.content !== current.baseline);
   const [retryKey, setRetryKey] = useState(0);
   const requestSequence = useRef(0);
   const lastForcedRead = useRef(0);
@@ -27,10 +32,10 @@ export default function useReviewArtifactDraft(projectKey, runId, review, { getA
   useEffect(() => {
     let active = true;
     queueMicrotask(() => {
-      if (active) dispatch({ type: 'receive', identity, runId, review });
+      if (active) dispatch({ type: 'receive', identity, runId, review: serverReview });
     });
     return () => { active = false; };
-  }, [identity, needsFull, preview, review, runId, version]);
+  }, [identity, runId, serverReview]);
 
   useEffect(() => {
     const forcedRead = retryKey > lastForcedRead.current;
@@ -74,9 +79,9 @@ export default function useReviewArtifactDraft(projectKey, runId, review, { getA
     dispatch({ type: 'error', identity, error });
   }, [identity]);
   const reload = useCallback(() => {
-    dispatch({ type: 'reload', identity, runId, review });
+    dispatch({ type: 'reload', identity, runId, review: serverReview });
     setRetryKey((value) => value + 1);
-  }, [identity, review, runId]);
+  }, [identity, runId, serverReview]);
   const retryFullRead = useCallback(() => {
     dispatch({ type: 'retry', identity });
     setRetryKey((value) => value + 1);
@@ -86,7 +91,7 @@ export default function useReviewArtifactDraft(projectKey, runId, review, { getA
     acceptSavedArtifact,
     beginSavedReadback,
     artifactVersion: current.artifactVersion,
-    conflict: current.conflict,
+    conflict: current.conflict || visibleVersionConflict,
     content: current.content,
     error: current.error,
     full: current.full,
