@@ -10,7 +10,7 @@ from goodteam_os.execution.models import (
 from goodteam_os.execution.review_workbench_contract import stable_hash
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
-from test_task_assistant import send, setup_service
+from test_assistant_drafts import send, setup_service
 from tests.review_workbench_helpers import full_lifecycle
 
 
