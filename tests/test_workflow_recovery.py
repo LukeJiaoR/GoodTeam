@@ -94,6 +94,8 @@ def test_execution_exception_preserves_approval_and_retry_does_not_redecide(tmp_
     assert [] == result["blockers"]
     actions = web.build_action_items(tmp_path, "RECOVERY")
     assert 1 == sum(item["action"] == "approval_decided" for item in actions)
+    decision = next(item for item in actions if item["action"] == "approval_decided")
+    assert result["pending_transition"]["id"] == decision["workflow_operation_id"]
 
 
 def test_restart_recovers_recorded_decision_without_requiring_another_approval(tmp_path):

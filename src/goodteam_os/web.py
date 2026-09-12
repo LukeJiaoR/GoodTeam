@@ -252,6 +252,7 @@ def append_action(
     evidence_snapshot: dict[str, object] | None = None,
     reviewer_evidence_snapshot: dict[str, object] | None = None,
     review_items: list[dict[str, object]] | None = None,
+    workflow_operation_id: str = "",
 ) -> None:
     action_log = _action_log_path(workspace, project_key)
     action_log.parent.mkdir(parents=True, exist_ok=True)
@@ -269,6 +270,8 @@ def append_action(
     }
     if artifact_version:
         event["artifact_version"] = artifact_version
+    if workflow_operation_id:
+        event["workflow_operation_id"] = workflow_operation_id
     if debate_ref:
         event["debate_ref"] = debate_ref
     if note:

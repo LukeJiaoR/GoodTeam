@@ -1418,7 +1418,7 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "goodteam_os.web.refine_artifact",
-        lambda workspace, project_key, artifact_key, content: {
+        lambda workspace, project_key, artifact_key, content, expected_run_id="", expected_artifact_version="": {
             "artifact": artifact_key,
             "base_path": "/tmp/prd.md",
             "proposed_path": "/tmp/prd.proposed.md",

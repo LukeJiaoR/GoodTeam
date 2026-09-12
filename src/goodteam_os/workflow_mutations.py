@@ -66,9 +66,7 @@ def serialized_workflow(operation):
 
 def begin_transition(workspace, state, action):
     identifier = uuid4().hex
-    action = {**action, "client_context": {
-        **(action.get("client_context") or {}), "workflow_operation_id": identifier,
-    }}
+    action = {**action, "workflow_operation_id": identifier}
     state.pending_transition = {
         "id": identifier, "status": "recording", "action": action,
         "current_node": state.current_node, "next_node": state.next_node,
@@ -90,7 +88,8 @@ def publish_decision(workspace, state):
             if not line.strip():
                 continue
             event = json.loads(line)
-            if dict(event.get("client_context") or {}).get("workflow_operation_id") == identifier:
+            operation_id = event.get("workflow_operation_id") or dict(event.get("client_context") or {}).get("workflow_operation_id")
+            if operation_id == identifier:
                 recorded = True
                 break
     if not recorded:
