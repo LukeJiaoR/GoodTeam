@@ -52,3 +52,20 @@ The repository CI owns the backend/frontend checks selected by its risk
 classifier. Its frontend job now runs `npm test` before build and lint, so the
 new React regression cases execute remotely. Live worker/Telegram/GitHub smoke remains unexecuted; this PR does
 not change remote production projects or merge itself.
+
+## Follow-up: CI Business-loop Acceptance
+
+The follow-up adds `frontend/e2e/business-loop.spec.js` and a required CI browser
+job. It uses the real UI/API and durable state with isolated fake Workers to
+cover import, request, explicit confirmation, preparation, execution, security
+revision back to RFC, reapproval, completion, and a second task with preserved
+history. See [the testing strategy](../testing-strategy.md#business-loop-browser-acceptance)
+for evidence locations and the limits of this fixture.
+
+Static review of that path found that change discussions still tried to parse
+model JSON from built-in fake/noop/human runtimes. They now use the existing
+explicit-request interpretation, consistent with Task Assistant chat. The
+discussion does not decide an approval; separate confirmation remains required.
+The builtin regression and full browser loop are executed only in CI, as
+requested. The implementation retains PR #427 as its dependency until that PR
+is merged; neither PR is automatically merged.

@@ -2,8 +2,6 @@ name: CI
 
 on:
   pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -116,9 +114,61 @@ jobs:
 
       - run: npm run lint
 
+  browser:
+    needs: classify
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && (needs.classify.outputs.backend != 'none' || needs.classify.outputs.frontend != 'none')
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 15
+    env:
+      GOODTEAM_DISABLE_TG_NETWORK: "1"
+      GOODTEAM_TG_BOT_TOKEN: ""
+      GOODTEAM_TG_CHAT_ID: ""
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create isolated browser backend environment
+        shell: bash
+        run: |
+          python3.12 -m venv "$RUNNER_TEMP/goodteam-e2e-venv"
+          echo "$RUNNER_TEMP/goodteam-e2e-venv/bin" >> "$GITHUB_PATH"
+          echo "GOODTEAM_E2E_PYTHON=$RUNNER_TEMP/goodteam-e2e-venv/bin/python" >> "$GITHUB_ENV"
+
+      - run: pip install -e ".[dev]"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - run: npm ci
+        working-directory: frontend
+
+      - run: npm run build
+        working-directory: frontend
+
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Verify isolated business loop twice
+        run: npm run test:e2e -- --repeat-each=2
+        working-directory: frontend
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 14
+          if-no-files-found: warn
+
   gate:
     name: CI / gate
-    needs: [classify, backend, frontend]
+    needs: [classify, backend, frontend, browser]
     if: >-
       always()
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -129,6 +179,7 @@ jobs:
       BACKEND_RESULT: ${{ needs.backend.result }}
       FRONTEND_MODE: ${{ needs.classify.outputs.frontend }}
       FRONTEND_RESULT: ${{ needs.frontend.result }}
+      BROWSER_RESULT: ${{ needs.browser.result }}
       TIER: ${{ needs.classify.outputs.tier }}
       LIVE_SMOKE_REQUIRED: ${{ needs.classify.outputs.live_smoke_evidence_required }}
 
@@ -159,6 +210,15 @@ jobs:
             exit 1
           fi
 
+          if [[ "$BACKEND_MODE" == "none" && "$FRONTEND_MODE" == "none" && "$BROWSER_RESULT" == "skipped" ]]; then
+            echo "Browser acceptance was intentionally skipped for documentation."
+          elif [[ ( "$BACKEND_MODE" != "none" || "$FRONTEND_MODE" != "none" ) && "$BROWSER_RESULT" == "success" ]]; then
+            echo "Isolated browser acceptance succeeded twice."
+          else
+            echo "Browser result $BROWSER_RESULT does not match the verification plan." >&2
+            exit 1
+          fi
+
       - name: Summarize gate
         shell: bash
         run: |
@@ -168,9 +228,10 @@ jobs:
             echo "- Tier: **$TIER**"
             echo "- Backend: \`$BACKEND_MODE\` ($BACKEND_RESULT)"
             echo "- Frontend: \`$FRONTEND_MODE\` ($FRONTEND_RESULT)"
+            echo "- Browser acceptance: $BROWSER_RESULT (isolated workspace, fake Worker, two repetitions)"
             echo "- Live smoke evidence required: \`$LIVE_SMOKE_REQUIRED\`"
             if [[ "$LIVE_SMOKE_REQUIRED" == "true" ]]; then
               echo
-              echo "> Reviewer action: verify isolated live smoke evidence in the pull request."
+              echo "> Reviewer action: inspect the browser-acceptance artifact; adapter-specific live evidence may still be required."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
