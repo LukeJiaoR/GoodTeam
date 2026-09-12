@@ -132,3 +132,13 @@ def test_ci_also_covers_stacked_prs_without_enabling_external_forks():
     trigger = _workflow_text().split("permissions:", 1)[0]
     assert "pull_request:" in trigger
     assert "branches:" not in trigger
+
+
+def test_single_runner_runs_browser_acceptance_before_full_stacks():
+    workflow = _workflow_text()
+    backend = workflow.split("  backend:", 1)[1].split("  frontend:", 1)[0]
+    frontend = workflow.split("  frontend:", 1)[1].split("  browser:", 1)[0]
+    browser = workflow.split("  browser:", 1)[1].split("  gate:", 1)[0]
+    assert "needs: [classify, browser]" in backend
+    assert "needs: [classify, browser]" in frontend
+    assert "needs: classify" in browser

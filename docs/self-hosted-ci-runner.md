@@ -24,7 +24,8 @@ has only `contents: read`, does not select a GitHub Environment, and has no
 automatic GitHub-hosted fallback.
 
 The first self-hosted job accepts a pull request only when its head repository
-is the current repository. Backend and frontend depend on that guarded job, and
+is the current repository. Browser acceptance depends on that guarded job; backend and frontend wait for
+browser acceptance before using the single runner, and
 the always-running gate repeats the same-repository guard. A fork PR therefore
 cannot schedule code on this persistent host; a maintainer must first put the
 reviewed patch on a same-repository branch. The workflow does not use
@@ -48,8 +49,10 @@ This bounds unsafe cross-repository concurrency while allowing either idle
 runner's capacity to be used by the other. Do not install a second GoodTeam
 runner service or raise these limits without measuring simultaneous YUVA and
 GoodTeam jobs. The host's system Docker daemon is not available to the
-GoodTeam account; GoodTeam CI does not require Docker, a database, or browser
-infrastructure.
+GoodTeam account; GoodTeam CI does not require Docker or a database. The browser job runs
+headless Chromium against an isolated temporary workspace with fake Workers.
+The full backend/frontend jobs start only after browser acceptance succeeds,
+so a browser failure is visible before spending time on the full suites.
 
 ## Dependencies and caches
 
@@ -60,6 +63,13 @@ Node 20 in the runner tool cache. The PR job logs are the runtime-version proof.
 GitHub-backed dependency caches are disabled. Persistent runner-local pip and
 npm caches remain available while reproducibility stays anchored by
 `pip install -e ".[dev]"` and `npm ci`.
+
+Browser jobs create their own Python environment and use the lockfile-pinned
+Playwright version to download Chromium into the unprivileged runner cache.
+Chromium system libraries must be available on the host; CI does not run sudo
+or install system packages. The browser suite refuses an existing server, uses
+a fresh workspace/registry/port, runs every case twice without automatic
+retries, and uploads report/state/trace evidence for 14 days.
 
 The start/completion hook removes only the current runner's job-temp children
 and expires pip/npm cache files unused for 30 days. `actions/checkout` cleans
