@@ -53,10 +53,9 @@ export async function sendTask(page, fixture, text) {
 }
 
 export async function prepareFirstTask(page, fixture, evidence) {
-  // 项目类型与任务确认是不同的授权边界。
-  await page.getByRole('radio', { name: 'Existing project', exact: true }).check();
+  const imported = await getJson(page, `/api/projects/${fixture.key}/home`);
+  expect(imported.readiness.project_mode).toBe('existing_project');
   const endpoint = `/api/projects/${fixture.key}/task-assistant/actions`;
-  await clickMutation(page, page.getByRole('button', { name: 'Confirm project type' }), endpoint);
   const started = await clickMutation(page, page.getByRole('button', { name: 'Start this task' }), endpoint);
   expect(started.workflow_started).toBe(false);
   expect(started.task_assistant_session.proposed_task.confirmed).toBe(true);

@@ -276,7 +276,7 @@ removal or consolidation.
 ## Business-loop Browser Acceptance
 
 `frontend/e2e/business-loop.spec.js` exercises project import, task drafting,
-explicit project/task confirmation, command and constraint preparation, and
+existing-project detection, explicit task confirmation, command and constraint preparation, and
 fake Worker execution. It approves takeover/PRD/RFC, requests changes at the security
 gate, confirms the change discussion, reapproves RFC/security/release, completes
 the run, and submits and starts a second task in the same project.
