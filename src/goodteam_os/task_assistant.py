@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from goodteam_os import assistant_requests
-from goodteam_os.assistant_drafts import is_conversation_only, stage_draft
+from goodteam_os.assistant_drafts import archive_terminal_proposal, is_conversation_only, stage_draft
 from goodteam_os.assistant_runtime import runtime_view
 from goodteam_os.manager_execution import run_manager_chat_turn
 from goodteam_os.project_import import confirm_project_mode, import_project
@@ -122,6 +122,7 @@ class TaskAssistantService:
         if not str(text).strip():
             raise ValueError("Task Assistant message must not be blank")
         store = TaskAssistantSessionStore(self.workspace, project_key)
+        archive_terminal_proposal(store, workspace=self.workspace)
         mode_hint = assess_project_mode(root)
         store.initialize_context(mode_hint)
         store.append_message(message_id, "user", str(text))

@@ -38,6 +38,7 @@ class TaskAssistantSessionStore:
             return _upgrade_session_v1(payload)
         if version != SCHEMA_VERSION:
             raise ValueError("Task Assistant session is invalid")
+        payload.setdefault("archived_task_proposals", [])
         return payload
 
     def append_message(
@@ -204,6 +205,52 @@ class TaskAssistantSessionStore:
                 },
                 "status": "waiting_for_human",
             }
+
+        return self._mutate(mutate)
+
+    def archive_task_proposal(
+        self,
+        proposal_id: str,
+        run_id: str,
+        terminal_status: str,
+    ) -> dict[str, object]:
+        if terminal_status not in {"complete", "rejected", "archived"}:
+            raise ValueError("Task proposal can only be archived with terminal run evidence")
+        if not str(run_id).strip():
+            raise ValueError("Task proposal archive requires a run ID")
+
+        def mutate(session: dict[str, object]) -> dict[str, object]:
+            proposal = dict(session.get("proposed_task") or {})
+            if proposal.get("id") != str(proposal_id) or proposal.get("run_id") != str(run_id):
+                return session
+
+            archived = {
+                **proposal,
+                "status": "archived",
+                "terminal_status": terminal_status,
+                "archived_at": _now(),
+            }
+            history = list(session.get("archived_task_proposals") or [])
+            if not any(item.get("id") == archived["id"] for item in history):
+                history.append(archived)
+            session["archived_task_proposals"] = history
+            session["proposed_task"] = None
+            session["status"] = "ready_for_request"
+            event_id = f"task-proposal-archived:{proposal_id}"
+            if not any(item.get("message_id") == event_id for item in session["timeline"]):
+                session["timeline"].append({
+                    "message_id": event_id,
+                    "actor": "system",
+                    "event": "task_proposal_archived",
+                    "content": "",
+                    "run_id": str(run_id),
+                    "created_at": _now(),
+                    "details": {
+                        "proposal_id": str(proposal_id),
+                        "terminal_status": terminal_status,
+                    },
+                })
+            return session
 
         return self._mutate(mutate)
 
@@ -398,6 +445,7 @@ class TaskAssistantSessionStore:
             "timeline": [],
             "attention_request": None,
             "proposed_task": None,
+            "archived_task_proposals": [],
             "pending_team_decision": None,
             "project_mode_hint": None,
             "suggestions": [],
@@ -409,6 +457,7 @@ def _upgrade_session_v1(payload: dict[str, object]) -> dict[str, object]:
     return {
         **payload,
         "schema_version": SCHEMA_VERSION,
+        "archived_task_proposals": list(payload.get("archived_task_proposals") or []),
         "pending_team_decision": payload.get("pending_team_decision"),
     }
 
@@ -477,6 +526,7 @@ def initial_task_assistant_session(
         ],
         "attention_request": None,
         "proposed_task": None,
+        "archived_task_proposals": [],
         "pending_team_decision": None,
         "project_mode_hint": dict(mode_hint),
         "suggestions": [{"id": item} for item in suggestions],

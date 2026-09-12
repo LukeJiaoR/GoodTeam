@@ -40,6 +40,7 @@ from goodteam_os.workflow_table import (
     workflow_node,
 )
 from goodteam_os.workers import BUILTIN_WORKER_MODES, SESSION_BACKENDS, WorkerJobStore
+from goodteam_os.workflow_mutations import serialized_workflow
 
 
 # Bounds for single-root `docs/` context gathering. The cap is generous so
@@ -1370,6 +1371,9 @@ def _workflow_runners() -> dict[str, object]:
         "run_release_until_gate": run_release_until_gate,
         "run_retro_until_complete": run_retro_until_complete,
         "noop_security_gate": noop_security_gate,
+        "run_fix_implementation": run_fix_implementation,
+        "run_fix_qa": run_fix_qa,
+        "run_fix_close": run_fix_close,
     }
 
 
@@ -1379,7 +1383,10 @@ def advance_approved_workflow_topology(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    plan = workflow_execution_plan_v2()
+    profile = resolve_profile(state.load_profile or "greenfield")
+    plan = workflow_execution_plan_v2() if profile.name == "greenfield" else workflow_execution_plan_v2(
+        profile.nodes, gate_transitions=profile.gate_transitions,
+    )
     validation_errors = [str(error) for error in plan.get("validation_errors", [])]
     if plan.get("valid") is not True:
         state.current_node = state.next_node
@@ -1413,7 +1420,7 @@ def advance_approved_workflow_topology(
             state.next_node = gate_next_node(
                 state,
                 gate=blocked_gate,
-                approved_next=approved_next_for_gate(blocked_gate),
+                approved_next=profile.approved_next_for_gate(blocked_gate),
             )
             return state
         run_guard_gate = str(node.get("gate", ""))
@@ -1422,7 +1429,7 @@ def advance_approved_workflow_topology(
             state.next_node = gate_next_node(
                 state,
                 gate=run_guard_gate,
-                approved_next=approved_next_for_gate(run_guard_gate),
+                approved_next=profile.approved_next_for_gate(run_guard_gate),
             )
             return state
         runner_name = str(node.get("runner", ""))
@@ -2355,7 +2362,7 @@ def implementation_task(state: AgileDevState, delivery_mode: str = "init_project
 
 def worker_context(state: AgileDevState) -> str:
     artifacts = "\n".join(f"- {name}: {path}" for name, path in sorted(state.artifacts.items()))
-    return "\n".join(
+    context = "\n".join(
         [
             f"Run: {state.run_id}",
             f"Project: {state.project_key}",
@@ -2364,6 +2371,10 @@ def worker_context(state: AgileDevState) -> str:
             artifacts or "- none",
         ]
     )
+    if state.change_requests:
+        changes = "\n".join(f"- {gate}: {note}" for gate, note in state.change_requests.items())
+        context += f"\nRequested changes:\n{changes}"
+    return context
 
 
 def worker_context_for_role(
@@ -2722,6 +2733,9 @@ def run_fix_implementation(
 ) -> AgileDevState:
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     worker_results = run_implementation_workers(state, project_config, workspace=workspace)
+    if not worker_results:
+        worker_results = [{"role": "implementation", "status": "failed",
+                           "summary": "No worker execution evidence is available. Configure the project before retrying."}]
     handoff_path = store.write_markdown(
         state.run_id,
         "implementation_handoff",
@@ -2734,6 +2748,15 @@ def run_fix_implementation(
         ),
     )
     _register_written_markdown(state, "implementation_handoff", handoff_path)
+    failed = [result for result in worker_results if worker_result_reports_failure(result)]
+    if failed:
+        state.current_node, state.next_node = "fix_implement", "blocked"
+        state.blockers = [worker_blocker_message(result) for result in failed]
+        sync_project_stage_tasks(state, project_config)
+        return state
+    qa_path = store.write_markdown(state.run_id, "qa_report", _artifact_filename("qa_report"),
+                                   render_fix_qa_report_markdown(state, worker_results))
+    _register_written_markdown(state, "qa_report", qa_path)
     state.approvals["code_review"] = state.approvals.get("code_review", "pending")
     state.current_node = "code_review_review_gate"
     state.next_node = gate_next_node(state, gate="code_review", approved_next="fix_qa")
@@ -2754,11 +2777,13 @@ def run_fix_qa(
     project_config: Path | None = None,
 ) -> AgileDevState:
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    prior_qa = Path(state.artifacts["qa_report"]) if state.artifacts.get("qa_report") else None
+    content = prior_qa.read_text(encoding="utf-8") if prior_qa and prior_qa.is_file() else render_fix_qa_report_markdown(state)
     qa_path = store.write_markdown(
         state.run_id,
         "qa_report",
         _artifact_filename("qa_report"),
-        render_fix_qa_report_markdown(state),
+        content,
     )
     _register_written_markdown(state, "qa_report", qa_path)
     state.approvals["qa"] = state.approvals.get("qa", "pending")
@@ -2999,6 +3024,7 @@ def generate_artifact_via_worker(
         return None
 
 
+@serialized_workflow
 def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
@@ -3045,6 +3071,7 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
     return asdict(state)
 
 
+@serialized_workflow
 def refine_artifact(
     *,
     workspace: Path,
@@ -3052,6 +3079,8 @@ def refine_artifact(
     artifact_key: str,
     content: str,
     guidance: str = "",
+    expected_run_id: str = "",
+    expected_artifact_version: str = "",
 ) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
@@ -3059,6 +3088,13 @@ def refine_artifact(
     if state is None:
         raise ValueError(f"No active run for project: {key}")
 
+    from goodteam_os.reviewer_dispatch import artifact_version_for_path
+
+    if (expected_run_id and expected_run_id != state.run_id) or (
+        expected_artifact_version != artifact_version_for_path(state.artifacts.get(artifact_key, ""))
+        and expected_artifact_version
+    ):
+        raise ValueError("This artifact changed. Reload it before refining your edits.")
     project_config = _resolve_state_project_config(workspace, state, key)
     target = load_project_target(project_config)
     if resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
@@ -3140,6 +3176,7 @@ def refine_artifact(
     }
 
 
+@serialized_workflow
 def accept_refinement(
     *,
     workspace: Path,
@@ -3192,6 +3229,7 @@ def accept_refinement(
     return payload
 
 
+@serialized_workflow
 def discard_refinement(
     *,
     workspace: Path,
@@ -3245,6 +3283,7 @@ def _artifact_diff_summary(base: str, proposed: str, artifact_key: str) -> dict[
     }
 
 
+@serialized_workflow
 def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
