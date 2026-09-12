@@ -71,6 +71,7 @@ def test_ci_jobs_follow_classifier_outputs():
     assert "ruff check src/goodteam_os/ tests/ scripts/ci/" in workflow
     assert "npm ci" in workflow
     assert "npm run build" in workflow
+    assert "npm test" in workflow
     assert "npm run lint" in workflow
 
 

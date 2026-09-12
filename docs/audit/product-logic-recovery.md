@@ -49,5 +49,6 @@ correctness. The earlier audit's passing tests and defect reproductions are not
 verification of this patch.
 
 The repository CI owns the backend/frontend checks selected by its risk
-classifier. Live worker/Telegram/GitHub smoke remains unexecuted; this PR does
+classifier. Its frontend job now runs `npm test` before build and lint, so the
+new React regression cases execute remotely. Live worker/Telegram/GitHub smoke remains unexecuted; this PR does
 not change remote production projects or merge itself.
