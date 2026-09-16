@@ -317,6 +317,7 @@ export const en = {
   'projects.errors.same_origin_required': 'Open this action from the GoodTeam application.',
   'projects.errors.approval_binding_required': 'Reload the approval brief before approving this decision.',
   'projects.errors.stale_approval': 'This approval changed after the brief was loaded. Review the current version before approving.',
+  'projects.errors.stale_artifact': 'This document changed. Reload the current version before saving your edits.',
   'projects.errors.intent_binding_required': 'Reload the approval brief before discussing changes.',
   'projects.errors.intent_mission_not_found': 'This Task Assistant mission is no longer active.',
   'projects.errors.intent_commit_not_found': 'This change discussion no longer exists.',

@@ -1,37 +1,71 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { runApi } from './runApi';
 
 const POLL_MS = 5_000;
 
 export default function useProjectState(projectKey, { api = runApi, poll = true } = {}) {
-  const [data, setData] = useState(null);
-  const [status, setStatus] = useState('loading');
-  const [error, setError] = useState(null);
+  const [snapshot, setSnapshot] = useState({ projectKey: '', data: null, error: null, status: 'loading' });
   const generation = useRef(0);
+  const activeProjectKey = useRef(projectKey);
+  const apiRef = useRef(api);
+  useLayoutEffect(() => {
+    if (activeProjectKey.current !== projectKey) generation.current += 1;
+    activeProjectKey.current = projectKey;
+    apiRef.current = api;
+  }, [api, projectKey]);
+  const data = snapshot.projectKey === projectKey ? snapshot.data : null;
+  const error = snapshot.projectKey === projectKey ? snapshot.error : null;
+  const status = snapshot.projectKey === projectKey ? snapshot.status : 'loading';
 
   const refresh = useCallback(async ({ signal, quiet = false } = {}) => {
+    const requestProjectKey = projectKey;
+    if (requestProjectKey !== activeProjectKey.current) return null;
     const requestGeneration = ++generation.current;
-    if (!quiet) setStatus((current) => (data ? current : 'loading'));
+    if (!quiet) {
+      setSnapshot((current) => {
+        const sameProject = current.projectKey === requestProjectKey;
+        const currentData = sameProject ? current.data : null;
+        return {
+          projectKey: requestProjectKey,
+          data: currentData,
+          error: sameProject ? current.error : null,
+          status: currentData ? current.status : 'loading',
+        };
+      });
+    }
     try {
-      const payload = await api.getProjectState(projectKey, { signal });
-      if (signal?.aborted || requestGeneration !== generation.current) return null;
-      setData(payload);
-      setError(null);
-      setStatus('ready');
+      const payload = await apiRef.current.getProjectState(requestProjectKey, { signal });
+      if (
+        signal?.aborted
+        || requestGeneration !== generation.current
+        || requestProjectKey !== activeProjectKey.current
+      ) return null;
+      setSnapshot({ projectKey: requestProjectKey, data: payload, error: null, status: 'ready' });
       return payload;
     } catch (caught) {
       if (signal?.aborted || caught?.name === 'AbortError') return null;
-      if (requestGeneration !== generation.current) return null;
-      setError(caught);
-      setStatus(data ? 'stale' : 'error');
+      if (requestGeneration !== generation.current || requestProjectKey !== activeProjectKey.current) return null;
+      setSnapshot((current) => {
+        const currentData = current.projectKey === requestProjectKey ? current.data : null;
+        return {
+          projectKey: requestProjectKey,
+          data: currentData,
+          error: caught,
+          status: currentData ? 'stale' : 'error',
+        };
+      });
       return null;
     }
-  }, [api, data, projectKey]);
+  }, [projectKey]);
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => void refresh({ signal: controller.signal }));
+    let active = true;
+    queueMicrotask(() => {
+      if (active) void refresh({ signal: controller.signal });
+    });
     return () => {
+      active = false;
       generation.current += 1;
       controller.abort();
     };

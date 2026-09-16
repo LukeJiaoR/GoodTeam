@@ -1418,7 +1418,7 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "goodteam_os.web.refine_artifact",
-        lambda workspace, project_key, artifact_key, content: {
+        lambda workspace, project_key, artifact_key, content, expected_run_id="", expected_artifact_version="": {
             "artifact": artifact_key,
             "base_path": "/tmp/prd.md",
             "proposed_path": "/tmp/prd.proposed.md",
@@ -1461,13 +1461,16 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
 
     seen = {}
 
-    def fake_refine_artifact(workspace, project_key, artifact_key, content, guidance=""):
+    def fake_refine_artifact(workspace, project_key, artifact_key, content, guidance="",
+                             expected_run_id="", expected_artifact_version=""):
         seen.update(
             {
                 "project_key": project_key,
                 "artifact_key": artifact_key,
                 "content": content,
                 "guidance": guidance,
+                "expected_run_id": expected_run_id,
+                "expected_artifact_version": expected_artifact_version,
             }
         )
         return {
@@ -1496,6 +1499,8 @@ def test_api_handler_do_post_routing(tmp_path, monkeypatch):
     assert "What retention period is required?" not in seen["guidance"]
     assert "Launch in the US first." in seen["guidance"]
     assert seen["content"] == prd.read_text(encoding="utf-8")
+    assert state.run_id == seen["expected_run_id"]
+    assert seen["expected_artifact_version"].startswith("sha256:")
 
     monkeypatch.setattr(
         "goodteam_os.web.accept_refinement",

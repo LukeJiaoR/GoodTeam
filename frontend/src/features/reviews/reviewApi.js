@@ -6,6 +6,16 @@ const post = (path, body, { signal } = {}) => requestJson(path, {
   body: JSON.stringify(body), signal,
 });
 
+function expectedArtifactFields(options = {}) {
+  const expected = options.expectedArtifact || {};
+  const runId = expected.runId || options.expectedRunId || '';
+  const artifactVersion = expected.artifactVersion || options.expectedArtifactVersion || '';
+  return {
+    ...(runId ? { expected_run_id: runId } : {}),
+    ...(artifactVersion ? { expected_artifact_version: artifactVersion } : {}),
+  };
+}
+
 export const getReviewState = getProjectState;
 export const getArtifact = (projectKey, key, { signal } = {}) => requestJson(
   `/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(key)}`,
@@ -15,8 +25,24 @@ export const getOpenQuestions = (projectKey, artifact, { signal } = {}) => reque
   `/api/open-questions?project=${encodeURIComponent(projectKey)}&artifact=${encodeURIComponent(artifact)}`,
   { signal },
 );
-export const saveArtifact = (projectKey, artifact, content, options) => post('/api/artifact', { project_key: projectKey, artifact, content }, options);
-export const refineArtifact = (projectKey, artifact, content, options) => post('/api/refine-artifact', { project_key: projectKey, artifact, content }, options);
+export const saveArtifact = (projectKey, artifact, content, options = {}) => {
+  const { signal } = options || {};
+  return post('/api/artifact', {
+    project_key: projectKey,
+    artifact,
+    content,
+    ...expectedArtifactFields(options || {}),
+  }, { signal });
+};
+export const refineArtifact = (projectKey, artifact, content, options = {}) => {
+  const { signal } = options || {};
+  return post('/api/refine-artifact', {
+    project_key: projectKey,
+    artifact,
+    content,
+    ...expectedArtifactFields(options || {}),
+  }, { signal });
+};
 export const acceptRefinement = (projectKey, artifact, options) => post('/api/accept-refinement', { project_key: projectKey, artifact }, options);
 export const discardRefinement = (projectKey, artifact, options) => post('/api/discard-refinement', { project_key: projectKey, artifact }, options);
 export const decideReview = (projectKey, approval, decision, note = '', options = {}) => {
