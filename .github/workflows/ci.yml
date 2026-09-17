@@ -138,6 +138,23 @@ jobs:
 
       - run: pip install -e ".[dev]"
 
+      - name: Verify HTTP crash and timeout recovery
+        run: |
+          mkdir -p "$RUNNER_TEMP/goodteam-http-recovery"
+          PYTHONPATH=src python -m pytest tests/test_workflow_http_recovery.py -q \
+            --basetemp="$RUNNER_TEMP/goodteam-http-recovery/workspaces" \
+            --junitxml="$RUNNER_TEMP/goodteam-http-recovery/results.xml"
+
+      - name: Upload HTTP recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: http-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/goodteam-http-recovery/
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+
       - uses: actions/setup-node@v5
         with:
           node-version: "20"

@@ -20,6 +20,7 @@ const child = spawn(process.env.GOODTEAM_E2E_PYTHON || '../.venv/bin/python', [
   env: {
     ...process.env,
     GOODTEAM_HOME: isolatedHome,
+    GOODTEAM_STATE_DIR: path.join(root, 'operator-state'),
     GOODTEAM_PROJECTS_REGISTRY: path.join(isolatedHome, 'projects.json'),
     GOODTEAM_FRONTEND_DIST: path.resolve('dist'),
     GOODTEAM_DISABLE_TG_NETWORK: '1',

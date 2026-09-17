@@ -77,3 +77,18 @@ returns to the Task Assistant conversation when no workflow/operator mission is
 active. Explicit historical run views remain read-only and retain their original
 run identity. Projection regressions and the second-task browser step protect
 both sides of that boundary.
+
+## Follow-up: Process and Concurrent Approval Recovery
+
+Recovery acceptance now drives the real HTTP server through two persisted
+approval interruption windows, kills and restarts its owned process, checks
+cross-process authority locks, triggers the actual Worker subprocess timeout
+handler with a fake sleeper, and exercises two browser tabs approving the same
+evidence. Assertions retain the original decision operation ID and failed job
+evidence while rejecting duplicate execution and implicit GET retries.
+
+The browser fixture also explicitly isolates `GOODTEAM_STATE_DIR`; Operator
+state uses this setting rather than `GOODTEAM_HOME`. See the testing strategy's
+[recovery acceptance](../testing-strategy.md#recovery-acceptance) for the scenario
+matrix, CI evidence, and fault-injection boundary. This increment depends on
+PR #428 and leaves #427/#428 unmerged. Runtime validation runs only in CI.

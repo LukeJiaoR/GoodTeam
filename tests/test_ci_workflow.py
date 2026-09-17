@@ -116,6 +116,8 @@ def test_browser_acceptance_is_required_for_either_changed_stack_and_uploads_evi
     assert "needs.classify.outputs.backend != 'none' || needs.classify.outputs.frontend != 'none'" in browser
     assert "python3.12 -m venv" in browser
     assert "GOODTEAM_E2E_PYTHON=" in browser
+    assert "python -m pytest tests/test_workflow_http_recovery.py -q" in browser
+    assert "http-recovery-${{ github.run_id }}-${{ github.run_attempt }}" in browser
     assert "npm ci" in browser and "npm run build" in browser
     assert "npx playwright install chromium" in browser
     assert "npm run test:e2e -- --repeat-each=2" in browser
