@@ -40,6 +40,7 @@ from goodteam_os.graph import (
     refine_artifact,
     render_downstream_artifact_markdown,
     resolve_project_runtime_root,
+    resolve_role_adapter,
     run_architecture_until_gate,
     run_adoption_until_next_gate,
     run_fix_until_next_gate,
@@ -4014,7 +4015,8 @@ def discuss_request_changes_intent(
         else None
     )
     interpretation = None
-    if project_config is not None and project_config.is_file():
+    if (project_config is not None and project_config.is_file()
+            and resolve_role_adapter(load_project_target(project_config), "orchestrator") not in BUILTIN_WORKER_MODES):
         target = dict(intent.get("target") or {})
         try:
             interpretation = run_manager_interpretation(

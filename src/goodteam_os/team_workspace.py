@@ -301,6 +301,8 @@ def build_team_workspace(
                 run=run,
                 events=events,
             )
+    if not read_only and task_assistant_session:
+        return _build_task_assistant_workspace(task_assistant_session)
     if state is not None:
         return _build_workflow_workspace(
             state=state,
