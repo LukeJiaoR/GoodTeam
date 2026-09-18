@@ -44,6 +44,14 @@ describe('conversation delivery, not execution authority', () => {
     expect(recorded[1].delivery_status).toBeUndefined();
   });
 
+  it('reconciles an unconfirmed delivery after a durable retry reply arrives', () => {
+    const timeline = [
+      { id: 'm1', actor: 'user', content: message.text },
+      { id: 'reply:m1', actor: 'task_assistant', content: 'The original request is preserved.' },
+    ];
+    expect(conversationTimeline(timeline, { ...message, status: 'unconfirmed' }, scope)).toBe(timeline);
+  });
+
   it('never leaks a delivery into another project, run or read-only history', () => {
     const timeline = [];
     for (const patch of [{ projectKey: 'OTHER' }, { runId: 'r2' }, { readOnly: true }]) {

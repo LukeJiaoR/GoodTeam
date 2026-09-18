@@ -1,7 +1,7 @@
 import { test, expect, importProject } from './fixtures.js';
 import { workState } from './business-loop-helpers.js';
 
-test('Enter shows immediate feedback; a transport failure preserves text and resend identity', async ({ page, fixture }) => {
+test('Enter shows immediate feedback; a transport failure preserves text and resend identity', async ({ page, fixture }, testInfo) => {
   await importProject(page, fixture);
   const endpoint = `/api/projects/${fixture.key}/task-assistant/messages`;
   let release;
@@ -34,6 +34,14 @@ test('Enter shows immediate feedback; a transport failure preserves text and res
     await page.unroute(`**${endpoint}`);
   }
 
+  // This test deliberately causes exactly one transport error. Assert its
+  // request identity and console output before consuming it; the shared fixture
+  // still rejects every other console/unhandled error.
+  const expectedError = 'Failed to load resource: net::ERR_FAILED';
+  expect(fixture.errors).toEqual([]);
+  const failedRequest = page.waitForEvent('requestfailed', (request) => (
+    request.method() === 'POST' && new URL(request.url()).pathname === endpoint
+  ));
   let failed;
   await page.route(`**${endpoint}`, async (route) => {
     failed = route.request().postDataJSON();
@@ -45,6 +53,14 @@ test('Enter shows immediate feedback; a transport failure preserves text and res
   await input.press('Enter');
   await expect(page.locator('.team-manager-timeline')).toContainText('Request not confirmed');
   await expect(input).toHaveValue(question);
+  const failure = await failedRequest;
+  expect(failure.failure()?.errorText).toBe('net::ERR_FAILED');
+  await expect.poll(() => [...fixture.errors]).toEqual([expectedError]);
+  await testInfo.attach('intentional-transport-error', {
+    body: JSON.stringify({ url: failure.url(), messageId: failed.message_id, errors: [...fixture.errors] }),
+    contentType: 'application/json',
+  });
+  fixture.errors.splice(0, 1);
   await expect(page.locator('.team-manager-timeline [data-delivery="sending"]')).toHaveCount(0);
   await page.unroute(`**${endpoint}`);
   let retried;

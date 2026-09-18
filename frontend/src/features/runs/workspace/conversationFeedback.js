@@ -38,7 +38,12 @@ export function conversationTimeline(timeline, delivery, { projectKey, runId = '
   const serverId = delivery.serverMessageId || delivery.id;
   const found = timeline.some((item) => item.id === serverId || item.message_id === serverId);
   if (found) {
-    if (delivery.status === 'recorded') return timeline;
+    // A delayed response or explicit server-side retry may record its reply
+    // after the transport already failed. Durable receipt wins over local UI.
+    const hasReply = !delivery.intentId && timeline.some((item) => (
+      item.actor !== 'user' && (item.id === `reply:${delivery.id}` || item.message_id === `reply:${delivery.id}`)
+    ));
+    if (delivery.status === 'recorded' || hasReply) return timeline;
     return timeline.map((item) => item.id === serverId || item.message_id === serverId
       ? { ...item, delivery_status: delivery.status } : item);
   }
