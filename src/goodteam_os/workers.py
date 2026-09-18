@@ -19,6 +19,7 @@ from uuid import uuid4
 from goodteam_os.memory import RoleMemoryStore, default_embedder
 from goodteam_os.roles import role_definition, stable_role_prompt
 from goodteam_os.pi_rpc import PiRpcError
+from goodteam_os.worker_capabilities import BACKEND_REASONING_DEPTHS, REASONING_DEPTHS
 from goodteam_os.session_runtimes import (
     SESSION_BACKENDS,
     PiSessionRuntime,
@@ -298,7 +299,7 @@ def _codex_build_command(binary: str, model: str, project_root: Path, result_pat
     ]
 
 
-def _query_codex_models(command_path: str) -> tuple[str, ...] | None:
+def _query_codex_models(command_path: str) -> dict[str, dict[str, Any]] | None:
     try:
         completed = subprocess.run(
             [command_path, "debug", "models"],
@@ -316,18 +317,30 @@ def _query_codex_models(command_path: str) -> tuple[str, ...] | None:
     except json.JSONDecodeError:
         return None
 
-    models = payload.get("models")
+    models = payload.get("models") if isinstance(payload, dict) else None
     if not isinstance(models, list):
         return None
 
-    slugs: list[str] = []
+    catalog: dict[str, dict[str, Any]] = {}
     for model in models:
         if not isinstance(model, dict) or model.get("visibility") != "list":
             continue
         slug = model.get("slug")
-        if isinstance(slug, str) and slug:
-            slugs.append(slug)
-    return tuple(slugs) or None
+        if not isinstance(slug, str) or not slug.strip():
+            continue
+        levels = model.get("supported_reasoning_levels")
+        capabilities: dict[str, Any] = {}
+        if isinstance(levels, list):
+            capabilities["reasoning_depths"] = list(dict.fromkeys(
+                level["effort"] for level in levels
+                if isinstance(level, dict) and isinstance(level.get("effort"), str)
+                and level["effort"] in REASONING_DEPTHS and level["effort"] != "default"
+            ))
+        default = model.get("default_reasoning_level")
+        if isinstance(default, str) and default in capabilities.get("reasoning_depths", []):
+            capabilities["reasoning_default"] = default
+        catalog[slug.strip()] = capabilities
+    return catalog or None
 
 
 def _query_agy_models(command_path: str) -> tuple[str, ...] | None:
@@ -376,7 +389,7 @@ def _query_agy_models(command_path: str) -> tuple[str, ...] | None:
 def _query_opencode_models(command_path: str) -> tuple[str, ...] | None:
     try:
         completed = subprocess.run(
-            [command_path, "models"],
+            [command_path, "models", "--refresh"],
             check=False,
             capture_output=True,
             text=True,
@@ -451,7 +464,7 @@ def _command_with_reasoning_depth(
     reasoning_depth: str,
 ) -> list[str]:
     depth = str(reasoning_depth or "default").strip().lower()
-    if depth not in {"low", "medium", "high"}:
+    if depth == "default" or depth not in REASONING_DEPTHS:
         return list(command)
     normalized_adapter = {
         "anthropic": "claude",
@@ -2978,22 +2991,33 @@ def discover_installed_agents() -> list[dict[str, Any]]:
         aliases = sorted(aliases_by_spec[spec_id])
         canonical = canonical_by_spec[spec_id]
         report = worker_backend_doctor(canonical)
-        models = spec.models
-        models_source = "static"
-        if spec.which_name == "codex" and report.get("available"):
+        # Always query the installed agent. A failed probe must not masquerade
+        # as a successful catalog using bundled or previously returned names.
+        models: tuple[str, ...] = ()
+        models_source = "unavailable" if spec.which_name in {"codex", "agy", "opencode"} else "unsupported"
+        model_capabilities: dict[str, dict[str, Any]] = {}
+        if spec.which_name == "claude" and report.get("available"):
+            # Claude Code does not expose a stable non-interactive model-list
+            # command. Its documented aliases and current full model names are
+            # safe to offer once the CLI itself is present; dispatch still lets
+            # Claude validate the selected model at runtime.
+            models = spec.models
+            models_source = "static"
+        elif spec.which_name == "codex" and report.get("available"):
             live_models = _query_codex_models(str(report.get("command_path", "")))
             if live_models:
-                models = live_models
+                models = tuple(live_models)
+                model_capabilities = live_models
                 models_source = "live"
         elif spec.which_name == "agy" and report.get("available"):
             live_models = _query_agy_models(str(report.get("command_path", "")))
             if live_models:
-                models = tuple(dict.fromkeys((*spec.models, *live_models)))
+                models = live_models
                 models_source = "live"
         elif spec.which_name == "opencode" and report.get("available"):
             live_models = _query_opencode_models(str(report.get("command_path", "")))
             if live_models:
-                models = tuple(dict.fromkeys((*spec.models, *live_models)))
+                models = live_models
                 models_source = "live"
         discovered.append(
             {
@@ -3007,6 +3031,8 @@ def discover_installed_agents() -> list[dict[str, Any]]:
                 "models": list(dict.fromkeys(models)),
                 "models_source": models_source,
                 "model_default": spec.model_default,
+                "model_capabilities": model_capabilities,
+                "reasoning_depths": list(BACKEND_REASONING_DEPTHS.get(canonical, ())),
             }
         )
     pi_report = worker_backend_doctor("pi")
@@ -3019,9 +3045,10 @@ def discover_installed_agents() -> list[dict[str, Any]]:
             "command": "pi",
             "command_path": str(pi_report.get("command_path") or ""),
             "hint": str(pi_report.get("hint") or ""),
-            "models": [str(pi_report.get("model") or "auto")],
-            "models_source": "configured",
+            "models": [],
+            "models_source": "unsupported",
             "model_default": "auto",
+            "reasoning_depths": list(BACKEND_REASONING_DEPTHS["pi"]),
             "runtime_kind": "persistent_session",
             "capabilities": list(capabilities_dict()),
         }

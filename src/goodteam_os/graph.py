@@ -7,6 +7,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.failure_patterns import FailurePatternLibrary, canary_routing_decision
 from goodteam_os.memory import ProjectMemoryStore, RoleMemoryStore, summarize_markdown
@@ -1709,7 +1710,7 @@ def worker_type_settings_for_role(target: dict[object, object], role: str) -> di
     if not isinstance(raw_settings, dict):
         raw_settings = {}
     reasoning_depth = str(raw_settings.get("reasoning_depth", "default") or "default").strip().lower()
-    if reasoning_depth not in {"default", "low", "medium", "high"}:
+    if reasoning_depth not in REASONING_DEPTHS:
         reasoning_depth = "default"
     additional_prompt = str(raw_settings.get("additional_prompt", "") or "").strip()
     try:

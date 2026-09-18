@@ -31,6 +31,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
+from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.state import normalize_project_key
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, worker_backend_doctor
 
@@ -91,7 +92,6 @@ DISPATCHABLE_LIFECYCLES = ("active",)
 ROSTERED_LIFECYCLES = ("active", "inactive")
 CAPABILITY_STATES = ("disabled", "unstaffed", "ready", "degraded")
 
-REASONING_DEPTHS = ("default", "low", "medium", "high")
 ADDITIONAL_PROMPT_MAX_CHARS = 4000
 WORKER_NAME_MAX_CHARS = 80
 

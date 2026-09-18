@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getAgents: vi.fn(),
   sendTeamCommands: vi.fn(),
   getTeamEvents: vi.fn(),
+  taskAssistantAction: vi.fn(),
   projectState: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -81,6 +82,7 @@ function renderTeam(api = {
   getProjectSettings: mocks.projectState,
   sendTeamCommands: mocks.sendTeamCommands,
   getTeamEvents: mocks.getTeamEvents,
+  taskAssistantAction: mocks.taskAssistantAction,
 }) {
   return render(
     <MemoryRouter initialEntries={['/projects/DEMO/team']}>
@@ -98,8 +100,8 @@ afterEach(() => {
   mocks.projectState.mockReturnValue(stateFixture());
   mocks.getAgents.mockResolvedValue({
     agents: [
-      { backend: 'codex', available: true, ready: true, models: ['gpt-5.4'], model_default: 'gpt-5.4' },
-      { backend: 'claude', available: true, ready: false, models: ['claude-opus-4-5'], model_default: 'claude-opus-4-5' },
+      { backend: 'codex', available: true, ready: true, models: ['gpt-5.4'], model_default: 'gpt-5.4', reasoning_depths: ['low', 'medium', 'high', 'xhigh'] },
+      { backend: 'claude', available: true, ready: false, models: ['claude-opus-4-5'], model_default: 'claude-opus-4-5', reasoning_depths: ['low', 'medium', 'high'] },
     ],
   });
   mocks.sendTeamCommands.mockResolvedValue({ ok: true, decision_id: 'dec-1', team: teamFixture() });
@@ -109,6 +111,39 @@ afterEach(() => {
 
 mocks.projectState.mockReturnValue(stateFixture());
 mocks.getAgents.mockResolvedValue({ agents: [] });
+
+test('saves and checks the assistant connection inside runtime configuration', async () => {
+  const user = userEvent.setup();
+  const state = stateFixture();
+  state.task_assistant_session = {
+    runtime: { provider: 'codex', model: 'gpt-5.4', reasoning_depth: 'high', status: 'unverified' },
+  };
+  mocks.projectState.mockReturnValue(state);
+  let completeCheck;
+  mocks.taskAssistantAction.mockImplementation(() => new Promise((resolve) => { completeCheck = resolve; }));
+  renderTeam();
+  const configuration = screen.getByRole('region', { name: 'Task Assistant' });
+  expect(within(configuration).queryByRole('button', { name: 'Check connection' })).not.toBeInTheDocument();
+  expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
+  mocks.sendTeamCommands.mockResolvedValue({ ok: true });
+  await user.click(within(configuration).getByRole('button', { name: 'Runtime' }));
+  const dialog = screen.getByRole('dialog');
+  const check = within(dialog).getByRole('button', { name: 'Save and check connection' });
+  expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+  await user.click(check);
+  expect(mocks.sendTeamCommands).toHaveBeenCalledOnce();
+  expect(mocks.taskAssistantAction).toHaveBeenCalledExactlyOnceWith('DEMO', {
+    action: 'check_runtime', confirmed: true, message_id: expect.any(String),
+  });
+  expect(check).toBeDisabled();
+  expect(within(dialog).getByLabelText('Model')).toBeDisabled();
+  expect(within(dialog).getByText('Checking connection')).toBeVisible();
+  completeCheck({ task_assistant_session: { runtime: { ...state.task_assistant_session.runtime, status: 'verified' } } });
+  await waitFor(() => expect(within(dialog).getByText('Connection verified')).toBeVisible());
+  expect(mocks.refresh).toHaveBeenCalledOnce();
+  expect(dialog).toBeVisible();
+  expect(check).toBeEnabled();
+});
 
 test('builds a layered team model with roles, capability, and workers', () => {
   const team = buildTeamModel(stateFixture());
@@ -226,8 +261,79 @@ test('adds a worker with an explicit role and runtime', async () => {
   ));
 });
 
+test('loads the inherited agent models and follows each model effort catalog', async () => {
+  mocks.getAgents.mockResolvedValue({ agents: [{
+    backend: 'codex', available: true, models_source: 'live',
+    model_default: 'model-deep', models: ['model-deep', 'model-light', 'model-plain'],
+    reasoning_depths: ['low', 'medium', 'high', 'xhigh'],
+    model_capabilities: {
+      'model-deep': { reasoning_depths: ['high', 'xhigh', 'max', 'ultra'] },
+      'model-light': { reasoning_depths: ['none'] },
+      'model-plain': { reasoning_depths: [] },
+    },
+  }] });
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Add worker' }));
+  const dialog = screen.getByRole('dialog');
+  const model = within(dialog).getByLabelText('Model');
+  const reasoning = within(dialog).getByLabelText('Reasoning depth');
+  expect(within(model).getByRole('option', { name: 'Inherit model (model-deep)' })).toBeInTheDocument();
+  expect(within(model).getByRole('option', { name: 'model-deep', exact: true })).toBeInTheDocument();
+  await user.selectOptions(reasoning, 'ultra');
+  await user.selectOptions(model, 'model-light');
+  expect(reasoning).toHaveValue('default');
+  expect([...reasoning.options].map((item) => item.value)).toEqual(['default', 'none']);
+  await user.selectOptions(model, 'model-plain');
+  expect(reasoning).toBeDisabled();
+  await user.selectOptions(model, 'model-deep');
+  await user.selectOptions(reasoning, 'ultra');
+  await user.selectOptions(within(dialog).getByLabelText('Role'), 'research');
+  await user.click(within(dialog).getByRole('button', { name: 'Add worker' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith('DEMO', [{
+    kind: 'initialize_worker', role: 'research', ensure_role_enabled: true,
+    runtime: { model: 'model-deep', reasoning_depth: 'ultra' },
+  }], expect.anything()));
+});
+
+test('refreshes model discovery and resets unsupported effort on provider changes', async () => {
+  mocks.getAgents.mockResolvedValue({ agents: [
+    { backend: 'codex', aliases: ['codex'], models: ['gpt-5.4'], model_default: 'gpt-5.4', reasoning_depths: ['high', 'xhigh'] },
+    { backend: 'gemini', aliases: ['gemini'], models: ['auto'], model_default: 'auto', reasoning_depths: [] },
+  ] });
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(await screen.findByRole('button', { name: 'Refresh models' }));
+  await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));
+  await user.click(screen.getByRole('button', { name: 'Edit Builder A' }));
+  const dialog = screen.getByRole('dialog');
+  await user.selectOptions(within(dialog).getByLabelText('Reasoning depth'), 'xhigh');
+  await user.selectOptions(within(dialog).getByLabelText('Runtime / provider'), 'gemini');
+  expect(within(dialog).getByLabelText('Reasoning depth')).toHaveValue('default');
+  expect(within(dialog).getByLabelText('Reasoning depth')).toBeDisabled();
+});
+
+test('failed refresh drops the previous catalog instead of serving stale models', async () => {
+  mocks.getAgents.mockResolvedValueOnce({ agents: [{
+    backend: 'codex', available: true, models: ['live-only-model'], model_default: 'live-only-model',
+    model_capabilities: { 'live-only-model': { reasoning_depths: ['ultra'] } },
+  }] }).mockResolvedValue({ agents: [{
+    backend: 'codex', available: true, models: [], models_source: 'unavailable', model_capabilities: {},
+  }] });
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(await screen.findByRole('button', { name: 'Refresh models' }));
+  await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));
+  await user.click(screen.getByRole('button', { name: 'Add worker' }));
+  const dialog = screen.getByRole('dialog');
+  expect([...within(dialog).getByLabelText('Model').options].map((item) => item.value)).toEqual(['']);
+  expect(within(dialog).getByText('Could not fetch models from this agent. Try Refresh models.')).toBeInTheDocument();
+  expect(within(dialog).getByLabelText('Reasoning depth')).toBeDisabled();
+});
+
 test('edits the Task Assistant runtime without making it a role', async () => {
   const user = userEvent.setup();
+  mocks.taskAssistantAction.mockResolvedValue({ task_assistant_session: { runtime: { status: 'verified' } } });
   renderTeam();
 
   const managerSection = screen.getByRole('heading', { name: 'Task Assistant' }).closest('section');
@@ -235,7 +341,7 @@ test('edits the Task Assistant runtime without making it a role', async () => {
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).queryByLabelText('Role')).not.toBeInTheDocument();
   await user.selectOptions(within(dialog).getByLabelText('Runtime / provider'), 'claude');
-  await user.click(within(dialog).getByRole('button', { name: 'Save runtime' }));
+  await user.click(within(dialog).getByRole('button', { name: 'Save and check connection' }));
 
   await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
     'DEMO',
