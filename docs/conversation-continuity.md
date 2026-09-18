@@ -46,6 +46,6 @@ recorded state; they are not evidence of real-model comprehension or verified de
 
 This is Tier 4 browser-visible behavior with Tier 3 message/state boundaries. Focused coverage:
 `tests/test_assistant_conversation.py`, the existing draft/execution regression tests,
-`ConversationComposer.test.jsx`, `conversationRouting.test.js`, and the Work business-loop
+`ConversationComposer.test.jsx`, `conversationRouting.vitest.js`, and the Work business-loop
 browser acceptance. Full backend, frontend lint/build/tests and isolated browser evidence are
 required before merge. No real project workspace or deployment is used by this change.

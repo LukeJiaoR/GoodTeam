@@ -16,7 +16,9 @@ export default function ConversationComposer({
   const editableIntent = isChangeDiscussion(changeIntent);
   const changing = editableIntent && modes[changeIntent.id] !== 'message';
   const scopeKey = changing ? `change:${changeIntent.id}` : 'message';
-  const seed = changing && !changeIntent.interpretation ? changeIntent.draft_text || '' : '';
+  // Keep discussing retains the previous interpretation. Restore the exact
+  // durable draft by discussion status, not by whether an interpretation exists.
+  const seed = changing && changeIntent.status === 'discussing' ? changeIntent.draft_text || '' : '';
   const goal = drafts[scopeKey] ?? seed;
   const blocked = Boolean(busy || sending);
   const setGoal = (value) => setDrafts((current) => ({ ...current, [scopeKey]: value }));

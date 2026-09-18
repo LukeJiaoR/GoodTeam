@@ -61,4 +61,25 @@ describe('persistent conversation composer', () => {
     expect(screen.getAllByRole('textbox')).toHaveLength(1);
     expect(screen.getByRole('textbox', { name: change })).toHaveValue('Saved before reload.');
   });
+
+  it('restores an interpreted discussion and follows durable updates before local editing', async () => {
+    const original = '  Preserve formatting.  \n\n    keep_indentation()\n';
+    const onStart = vi.fn();
+    const onDiscussChangeIntent = vi.fn().mockResolvedValue({});
+    const props = { t, onStart, onDiscussChangeIntent };
+    const intent = {
+      id: 'restored-intent', status: 'discussing', draft_text: original,
+      interpretation: { summary: 'Previous interpretation', items: [] },
+    };
+    const { rerender } = render(<ConversationComposer {...props} changeIntent={intent} />);
+    expect(screen.getByRole('textbox', { name: change })).toHaveValue(original);
+    const updated = `${original}\nKeep the provider boundary.`;
+    rerender(<ConversationComposer {...props} changeIntent={{ ...intent, draft_text: updated }} />);
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(screen.getByRole('textbox', { name: change })).toHaveValue(updated);
+    fireEvent.click(screen.getByRole('button', { name: submitChange }));
+    await waitFor(() => expect(onDiscussChangeIntent).toHaveBeenCalledWith('restored-intent', updated));
+    expect(onDiscussChangeIntent).toHaveBeenCalledTimes(1);
+    expect(onStart).not.toHaveBeenCalled();
+  });
 });
