@@ -11,6 +11,7 @@ import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
+import { createConversationDelivery, trackConversationDelivery } from './workspace/conversationFeedback';
 import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
 import {
   recommendationReasonText,
@@ -742,6 +743,7 @@ export default function WorkPage() {
   const { data, error, refresh, status } = useProjectState(projectKey);
   const [mutationError, setMutationError] = useState(null);
   const [busy, setBusy] = useState('');
+  const [conversationDelivery, setConversationDelivery] = useState(null);
   const [runHistory, setRunHistory] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('loading');
   const [historyError, setHistoryError] = useState(null);
@@ -904,15 +906,37 @@ export default function WorkPage() {
     return result;
   };
 
-  const handleDiscussChangeIntent = async (intentId, text) => {
+  // Track API acknowledgement separately from refreshing the view. A failed
+  // refresh after a successful POST must not invite submitting the request twice.
+  const deliverConversation = async (name, text, operation, intentId = '') => {
+    const delivery = createConversationDelivery({
+      projectKey, runId: data?.state?.run_id || '', text, intentId,
+      previous: conversationDelivery,
+    });
+    let acknowledged;
     try {
-      return await mutate('intent-discuss', () => (
-        runApi.discussChangeIntent(projectKey, intentId, text)
-      ));
+      return await mutate(name, () => trackConversationDelivery({
+        delivery,
+        operation: async () => {
+          const result = await operation(delivery.id);
+          if (result !== false) acknowledged = result;
+          return result;
+        },
+        onUpdate: (next) => setConversationDelivery((current) => (
+          next.status === 'sending' || current?.id === next.id ? next : current
+        )),
+      }));
     } catch (caught) {
-      return refreshStaleIntent(caught);
+      if (acknowledged !== undefined) return acknowledged;
+      if (intentId) return refreshStaleIntent(caught);
+      return false;
     }
   };
+
+  const handleDiscussChangeIntent = (intentId, text) => deliverConversation(
+    'intent-discuss', text,
+    () => runApi.discussChangeIntent(projectKey, intentId, text), intentId,
+  );
 
   const handleKeepDiscussingChangeIntent = async (intentId) => {
     try {
@@ -936,10 +960,10 @@ export default function WorkPage() {
     }
   };
 
-  const sendTaskAssistantMessage = (text) => mutate('message', () => runApi.sendTaskAssistantMessage(
-    projectKey,
-    { message_id: globalThis.crypto?.randomUUID?.() || `message-${Date.now()}`, text },
-  )).catch(() => false);
+  const sendTaskAssistantMessage = (text) => deliverConversation(
+    'message', text,
+    (messageId) => runApi.sendTaskAssistantMessage(projectKey, { message_id: messageId, text }),
+  );
 
   const handleAssistantAction = (request) => mutate(request.action, () => (
     runApi.taskAssistantAction(projectKey, request)
@@ -1079,6 +1103,7 @@ export default function WorkPage() {
       {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} language={language} projectKey={projectKey} reducedMotion={reducedMotion} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
         <>
           <TeamWorkspace
+            conversationDelivery={conversationDelivery}
             busy={busy}
             data={data}
             error={mutationError}
