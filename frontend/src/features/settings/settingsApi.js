@@ -1,6 +1,6 @@
 import { requestJson } from '../../lib/api/client';
 import { getAgents } from '../../lib/api/globalApi';
-import { getProjectState } from '../runs/runApi';
+import { getProjectState, taskAssistantAction } from '../runs/runApi';
 
 export const getSettingsAgents = getAgents;
 export const getProjectSettings = getProjectState;
@@ -17,4 +17,4 @@ export const getTeamEvents = (projectKey, { signal } = {}) => requestJson(
   { signal },
 );
 
-export const settingsApi = { getProjectSettings, getSettingsAgents, sendTeamCommands, getTeamEvents };
+export const settingsApi = { getProjectSettings, getSettingsAgents, sendTeamCommands, getTeamEvents, taskAssistantAction };

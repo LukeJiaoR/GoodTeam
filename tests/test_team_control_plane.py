@@ -73,6 +73,25 @@ def execute(config_path: Path, commands, **kwargs):
     )
 
 
+@pytest.mark.parametrize("depth", ["none", "minimal", "xhigh", "max", "ultra"])
+def test_model_effort_survives_team_persistence_snapshot_and_resolution(tmp_path, monkeypatch, depth):
+    monkeypatch.setattr("goodteam_os.workers.worker_backend_doctor", lambda _: {"ready": True})
+    config = make_project(tmp_path, worker_mode="codex")
+    execute(config, [
+        {"kind": "change_worker_runtime", "worker_id": "implementation-a", "model": "model-deep", "reasoning_depth": depth},
+        {"kind": "change_manager_runtime", "reasoning_depth": depth},
+    ])
+    target = load_project_target(config)
+    snapshot = build_team_execution_snapshot(target[TEAM_STATE_TARGET_KEY])
+    assert snapshot["workers"]["implementation-a"]["reasoning_depth"] == depth
+    assert snapshot["manager"]["runtime"]["reasoning_depth"] == depth
+    assert resolve_worker_for_role(target, "implementation")["reasoning_depth"] == depth
+    assert _manager_settings(target)["reasoning_depth"] == depth
+    from goodteam_os.web import normalize_worker_type_settings
+    assert normalize_worker_type_settings({"implementation": {"reasoning_depth": depth}})["implementation"]["reasoning_depth"] == depth
+    assert worker_type_settings_for_role({"worker_type_settings": {"implementation": {"reasoning_depth": depth}}}, "implementation")["reasoning_depth"] == depth
+
+
 def worker_ids(config_path: Path, role: str, *, lifecycle: str | None = None) -> list[str]:
     workspace = config_path.parent.parent
     state = TeamControlPlaneStore(workspace, "demo").read()

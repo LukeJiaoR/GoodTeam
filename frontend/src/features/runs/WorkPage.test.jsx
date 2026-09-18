@@ -672,6 +672,52 @@ test('opens empty Work as a Task Assistant conversation and keeps suggestions su
   );
 });
 
+test('shows a sent message immediately and supports Enter to send', async () => {
+  let resolveMessage;
+  const refresh = vi.fn().mockResolvedValue({});
+  mocks.useProjectState.mockReturnValue({
+    data: {
+      active_run: null,
+      state: null,
+      agile_board: { columns: {}, counts: {} },
+      approval_reviews: [],
+      start_context: { project_name: 'Demo project' },
+      workflow_steps: [],
+      worker_jobs: [],
+      team_workspace: {
+        schema_version: 'team_workspace.v1',
+        mission: { id: 'task-assistant:DEMO', source: 'task_assistant', status: 'ready' },
+        manager_timeline: [],
+        attention_request: null,
+        execution_actors: [],
+        outcome_tasks: [],
+        capabilities: [],
+        suggestions: [],
+      },
+    },
+    error: null,
+    refresh,
+    status: 'ready',
+  });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [] });
+  mocks.sendTaskAssistantMessage.mockReturnValue(new Promise((resolve) => { resolveMessage = resolve; }));
+
+  renderWorkPage('/projects/DEMO/work');
+  const input = screen.getByLabelText('Message');
+  await userEvent.type(input, 'Investigate the login flow');
+  await userEvent.keyboard('{Enter}');
+
+  expect(screen.getByText('Investigate the login flow')).toBeVisible();
+  expect(input).toBeDisabled();
+  expect(mocks.sendTaskAssistantMessage).toHaveBeenCalledWith(
+    'DEMO',
+    expect.objectContaining({ text: 'Investigate the login flow' }),
+  );
+
+  resolveMessage({ intent: 'ambiguous' });
+  await waitFor(() => expect(input).not.toBeDisabled());
+});
+
 test('requires explicit confirmation of a Task Assistant proposal before starting', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   mocks.useProjectState.mockReturnValue({
@@ -803,7 +849,7 @@ test('opens Request changes as a durable Task Assistant discussion without revie
 
   renderWorkPage();
 
-  expect(screen.getByText('A decision is ready')).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Awaiting approval' })).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Request changes' }));
 
   expect(mocks.startChangeIntent).toHaveBeenCalledWith(
@@ -901,7 +947,7 @@ test('routes the detail plan task Request changes into Task Assistant Intent Com
   });
 });
 
-test('durably summarizes change text, supports Keep discussing, and commits only on confirm', async () => {
+test('routes change discussion through the Task Assistant composer and commits only on confirm', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const draft = 'Implement Google only while preserving a generic provider interface.';
   const data = managerIntentData('discussing');
@@ -914,8 +960,11 @@ test('durably summarizes change text, supports Keep discussing, and commits only
   const view = renderWorkPage();
   expect(screen.getByText('What would you like changed?')).toBeVisible();
   expect(screen.getByText('Discussing · not committed')).toBeVisible();
-  await userEvent.type(screen.getByLabelText('What should change?'), draft);
-  await userEvent.click(screen.getByRole('button', { name: 'Review Task Assistant interpretation' }));
+  expect(screen.queryByLabelText('What should change?')).not.toBeInTheDocument();
+  const composer = screen.getByPlaceholderText('Tell the Task Assistant what should change…');
+  expect(composer).toHaveFocus();
+  await userEvent.type(composer, draft);
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
 
   expect(mocks.discussChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1', draft);
   expect(mocks.decideReview).not.toHaveBeenCalled();
@@ -942,24 +991,31 @@ test('durably summarizes change text, supports Keep discussing, and commits only
   expect(mocks.decideReview).not.toHaveBeenCalled();
 });
 
-test('Keep discussing returns the confirmed interpretation to discussion without commit', async () => {
+test('continues a ready change discussion from the Task Assistant composer', async () => {
   const draft = 'Preserve a generic provider boundary.';
+  const followUp = 'Also keep the existing session model.';
   const data = managerIntentData('ready_to_confirm', draft);
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
   mocks.keepDiscussingChangeIntent.mockResolvedValue({
     intent_commit: { id: 'intent-change-1', status: 'discussing' },
   });
+  mocks.discussChangeIntent.mockResolvedValue({
+    intent_commit: { id: 'intent-change-1', status: 'ready_to_confirm' },
+  });
 
   renderWorkPage();
-  await userEvent.click(screen.getByRole('button', { name: 'Keep discussing' }));
+  const composer = screen.getByPlaceholderText('Tell the Task Assistant what should change…');
+  await userEvent.type(composer, followUp);
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
 
   expect(mocks.keepDiscussingChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1');
+  expect(mocks.discussChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1', followUp);
   expect(mocks.confirmChangeIntent).not.toHaveBeenCalled();
   expect(mocks.decideReview).not.toHaveBeenCalled();
 });
 
-test('restores accepted review feedback and submits it without trimming or re-entry', async () => {
+test('keeps the Task Assistant composer available for follow-up discussion', async () => {
   const draft = '  Preserve formatting.  \n\n    keep_indentation()\n';
   const data = managerIntentData('discussing', draft);
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
@@ -967,10 +1023,12 @@ test('restores accepted review feedback and submits it without trimming or re-en
   mocks.discussChangeIntent.mockResolvedValue({ intent_commit: { id: 'intent-change-1' } });
   renderWorkPage();
 
-  expect(screen.getByLabelText('What should change?')).toHaveValue(draft);
-  expect(screen.queryByText('What would you like changed?')).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Review Task Assistant interpretation' }));
-  expect(mocks.discussChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1', draft);
+  expect(screen.getByText('Change request draft')).toBeVisible();
+  expect(screen.queryByLabelText('What should change?')).not.toBeInTheDocument();
+  const composer = screen.getByPlaceholderText('Tell the Task Assistant what should change…');
+  await userEvent.type(composer, 'Keep the same request.');
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(mocks.discussChangeIntent).toHaveBeenCalledWith('DEMO', 'intent-change-1', 'Keep the same request.');
   expect(mocks.confirmChangeIntent).not.toHaveBeenCalled();
 });
 
@@ -1015,8 +1073,7 @@ test('restores a persisted discussion on re-entry and fails closed when it is st
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
 
   const view = renderWorkPage();
-  expect(screen.getByLabelText('What should change?'))
-    .toHaveValue('Keep this persisted draft after navigation.');
+  expect(screen.getByPlaceholderText('Tell the Task Assistant what should change…')).toHaveValue('');
 
   const updated = managerIntentData('discussing', 'Use the newer durable draft.');
   mocks.useProjectState.mockReturnValue({ data: updated, error: null, refresh: vi.fn(), status: 'ready' });
@@ -1029,7 +1086,7 @@ test('restores a persisted discussion on re-entry and fails closed when it is st
       </Routes>
     </MemoryRouter>,
   );
-  expect(screen.getByLabelText('What should change?')).toHaveValue('Use the newer durable draft.');
+  expect(screen.getByPlaceholderText('Tell the Task Assistant what should change…')).toHaveValue('');
 
   const stale = managerIntentData('stale', 'Old request.');
   mocks.useProjectState.mockReturnValue({ data: stale, error: null, refresh: vi.fn(), status: 'ready' });
@@ -1080,6 +1137,26 @@ test('renders compact system event chips for machine state and deliverable updat
   const systemChip = manager.querySelector('.team-manager-event--system .team-manager-system-chip');
   expect(systemChip).toBeInTheDocument();
   expect(within(systemChip).getByText('prd.md is ready.')).toBeVisible();
+});
+
+test('keeps the Task Assistant response attached to the conversation event', () => {
+  const data = projectedWorkData();
+  data.team_workspace.manager_timeline = [
+    {
+      id: 'task-proposed',
+      actor: 'task_assistant',
+      event: 'task_proposed',
+      timestamp: '2026-08-30T10:00:02Z',
+      content: 'I will keep the exact request as a draft until you confirm it.',
+      details: {},
+    },
+  ];
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+
+  renderWorkPage();
+
+  expect(screen.getByText('I will keep the exact request as a draft until you confirm it.')).toBeVisible();
 });
 
 test('smart auto-scroll follows timeline when near bottom, preserves position when scrolled up, and focuses new attention', async () => {
@@ -1208,16 +1285,11 @@ test('renders a decision-ready Task Assistant approval brief and keeps exact app
 
   const manager = screen.getByRole('region', { name: 'Task Assistant' });
   const attention = manager.querySelector('.team-attention');
-  expect(within(attention).getByText('You are approving')).toBeVisible();
+  expect(within(attention).getByRole('heading', { name: 'Awaiting approval' })).toBeVisible();
+  expect(within(attention).queryByText('You are approving')).not.toBeInTheDocument();
   expect(within(attention).getByText(
     'Accept the recorded security posture for Architecture security review and let Planning / Implementation begin.',
   )).toBeVisible();
-  expect(within(attention).getByText('Google login in this iteration.')).toBeVisible();
-  expect(within(attention).getByText('GitHub login is not implemented yet.')).toBeVisible();
-  expect(within(attention).getByText('Security review')).toBeVisible();
-  expect(within(attention).getByText('Verified')).toBeVisible();
-  expect(within(attention).getByText('CI')).toBeVisible();
-  expect(within(attention).getByText('Passed')).toBeVisible();
   expect(within(attention).getByText('Mission blockers')).toBeVisible();
   expect(within(attention).getByText(
     'These affect the run but are not attributed to this approval decision.',
@@ -1228,6 +1300,15 @@ test('renders a decision-ready Task Assistant approval brief and keeps exact app
   expect(within(attention).getByText(
     'The provider abstraction adds a small amount of initial complexity.',
   )).toBeVisible();
+  expect(within(attention).getByText('Google login in this iteration.')).not.toBeVisible();
+  expect(within(attention).getByRole('button', { name: 'Approve and continue' })).toBeVisible();
+  await user.click(within(attention).getByText('Decision details'));
+  expect(within(attention).getByText('Google login in this iteration.')).toBeVisible();
+  expect(within(attention).getByText('GitHub login is not implemented yet.')).toBeVisible();
+  expect(within(attention).getByText('Security review')).toBeVisible();
+  expect(within(attention).getByText('Verified')).toBeVisible();
+  expect(within(attention).getByText('CI')).toBeVisible();
+  expect(within(attention).getByText('Passed')).toBeVisible();
   expect(within(attention).getByText(
     'Planning and implementation begin against the approved architecture and security posture.',
   )).toBeVisible();
@@ -1238,6 +1319,8 @@ test('renders a decision-ready Task Assistant approval brief and keeps exact app
     'Review the current evidence and decide whether the team should continue.',
   )).not.toBeInTheDocument();
 
+  await user.click(within(attention).getByText('Decision details'));
+  expect(within(attention).getByText('Google login in this iteration.')).not.toBeVisible();
   await user.click(within(attention).getByRole('button', { name: 'Approve and continue' }));
 
   expect(mocks.decideReview).toHaveBeenCalledWith(
@@ -1488,7 +1571,7 @@ test('uses a Task Assistant-default mobile tab workspace with keyboard navigatio
   expect(outcomesPanel).not.toBeVisible();
   expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
 
-  const draft = within(managerPanel).getByLabelText('What should change?');
+  const draft = within(managerPanel).getByPlaceholderText('Tell the Task Assistant what should change…');
   await user.type(draft, 'Keep this draft while switching panes.');
 
   managerTab.focus();
@@ -1502,7 +1585,7 @@ test('uses a Task Assistant-default mobile tab workspace with keyboard navigatio
   expect(managerTab).toHaveFocus();
   expect(managerTab).toHaveAttribute('aria-selected', 'true');
   expect(managerPanel).toBeVisible();
-  expect(within(managerPanel).getByLabelText('What should change?'))
+  expect(within(managerPanel).getByPlaceholderText('Tell the Task Assistant what should change…'))
     .toHaveValue('Keep this draft while switching panes.');
 
   await user.keyboard('{ArrowRight}');

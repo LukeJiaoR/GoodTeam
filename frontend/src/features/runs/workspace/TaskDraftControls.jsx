@@ -6,13 +6,27 @@ import './assistantControls.css';
 export function ProjectModeControl({ busy, onAction, t }) {
   const [mode, setMode] = useState('');
   return <section className="assistant-project-mode" aria-label={t('assistant.projectType')}>
-    <fieldset disabled={Boolean(busy)}>
-      <legend>{t('assistant.projectType')}</legend>
-      <label><input type="radio" name="project-mode" checked={mode === 'new_project'} onChange={() => setMode('new_project')} />
-        <FilePlus size={16} aria-hidden="true" />{t('assistant.newProject')}</label>
-      <label><input type="radio" name="project-mode" checked={mode === 'existing_project'} onChange={() => setMode('existing_project')} />
-        <FolderOpen size={16} aria-hidden="true" />{t('assistant.existingProject')}</label>
-    </fieldset>
+    <p className="assistant-project-mode__label">{t('assistant.projectType')}</p>
+    <div className="assistant-project-mode__choices" role="group" aria-label={t('assistant.projectType')}>
+      <button
+        aria-pressed={mode === 'new_project'}
+        className="assistant-project-mode__choice"
+        disabled={Boolean(busy)}
+        onClick={() => setMode('new_project')}
+        type="button"
+      >
+        <FilePlus size={16} aria-hidden="true" />{t('assistant.newProject')}
+      </button>
+      <button
+        aria-pressed={mode === 'existing_project'}
+        className="assistant-project-mode__choice"
+        disabled={Boolean(busy)}
+        onClick={() => setMode('existing_project')}
+        type="button"
+      >
+        <FolderOpen size={16} aria-hidden="true" />{t('assistant.existingProject')}
+      </button>
+    </div>
     <Button disabled={!mode || Boolean(busy)} onClick={() => onAction?.({ action: 'confirm_project_mode', mode })}>
       <Check size={14} aria-hidden="true" />{t('assistant.confirmMode')}
     </Button>

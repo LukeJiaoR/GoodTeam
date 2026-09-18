@@ -742,6 +742,7 @@ export default function WorkPage() {
   const { data, error, refresh, status } = useProjectState(projectKey);
   const [mutationError, setMutationError] = useState(null);
   const [busy, setBusy] = useState('');
+  const [pendingMessage, setPendingMessage] = useState(null);
   const [runHistory, setRunHistory] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('loading');
   const [historyError, setHistoryError] = useState(null);
@@ -905,11 +906,16 @@ export default function WorkPage() {
   };
 
   const handleDiscussChangeIntent = async (intentId, text) => {
+    const messageId = `intent:${intentId}:${Date.now()}`;
+    setPendingMessage({ id: messageId, text, timestamp: new Date().toISOString() });
     try {
-      return await mutate('intent-discuss', () => (
+      const result = await mutate('intent-discuss', () => (
         runApi.discussChangeIntent(projectKey, intentId, text)
       ));
+      setPendingMessage(null);
+      return result;
     } catch (caught) {
+      setPendingMessage(null);
       return refreshStaleIntent(caught);
     }
   };
@@ -936,10 +942,20 @@ export default function WorkPage() {
     }
   };
 
-  const sendTaskAssistantMessage = (text) => mutate('message', () => runApi.sendTaskAssistantMessage(
-    projectKey,
-    { message_id: globalThis.crypto?.randomUUID?.() || `message-${Date.now()}`, text },
-  )).catch(() => false);
+  const sendTaskAssistantMessage = async (text) => {
+    const messageId = globalThis.crypto?.randomUUID?.() || `message-${Date.now()}`;
+    setPendingMessage({ id: messageId, text, timestamp: new Date().toISOString() });
+    try {
+      const result = await mutate('message', () => runApi.sendTaskAssistantMessage(
+        projectKey,
+        { message_id: messageId, text },
+      ));
+      setPendingMessage(null);
+      return result;
+    } catch {
+      return false;
+    }
+  };
 
   const handleAssistantAction = (request) => mutate(request.action, () => (
     runApi.taskAssistantAction(projectKey, request)
@@ -1097,6 +1113,7 @@ export default function WorkPage() {
             onContinuePreparation={continueProjectPreparation}
             onStartChangeIntent={handleStartChangeIntent}
             onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
+            pendingMessage={pendingMessage}
             projectKey={projectKey}
             reducedMotion={reducedMotion}
             t={t}

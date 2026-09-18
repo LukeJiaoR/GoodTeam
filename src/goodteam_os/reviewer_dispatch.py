@@ -3,6 +3,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.project_reviewer_profiles import REVIEWER_PROFILE_PHASES, normalize_reviewer_profile_config
 from goodteam_os.review_provenance import reviewer_phase_for_approval
 from goodteam_os.reviewer_profiles import ReviewerProfile, get_reviewer_profile
@@ -480,7 +481,7 @@ def _worker_type_job_settings(
     if not isinstance(raw, Mapping):
         raw = {}
     reasoning = str(raw.get("reasoning_depth", "default") or "default").strip().lower()
-    if reasoning not in {"default", "low", "medium", "high"}:
+    if reasoning not in REASONING_DEPTHS:
         reasoning = "default"
     try:
         desired_instances = min(max(int(raw.get("desired_instances", 1) or 1), 1), 8)

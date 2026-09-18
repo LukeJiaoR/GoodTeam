@@ -32,15 +32,16 @@ required_checks:
 
 # Default worker backend for any role not listed under `workers:` below.
 # `fake` needs no credentials and is great for a first end-to-end run. For real
-# runs, use `anthropic` (drives the `claude` CLI, set ANTHROPIC_API_KEY) or
-# `codex` (drives the `codex` CLI). With `anthropic`, pick model_profile:
+# runs, use `claude` (the Claude Code CLI; set ANTHROPIC_API_KEY or run `claude login`)
+# or `codex` (the Codex CLI). The legacy `anthropic` backend name remains
+# accepted as a compatibility alias. With `claude`, pick model_profile:
 # anthropic above so the role models match the backend.
 worker_backend:
-  mode: fake                     # fake | anthropic | codex | noop (global default)
+  mode: fake                     # fake | claude | codex | noop (global default)
 
 # Per-role backend overrides. Each role picks its own CLI; anything omitted
-# falls back to worker_backend.mode. e.g. run implementation on claude and QA on
-# codex by setting `implementation: anthropic` and `qa: codex`. `doctor` reports
+# falls back to worker_backend.mode. e.g. run implementation on Claude and QA on
+# Codex by setting `implementation: claude` and `qa: codex`. `doctor` reports
 # readiness for every backend you reference here.
 workers:
   ui: fake

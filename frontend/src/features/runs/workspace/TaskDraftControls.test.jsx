@@ -49,7 +49,7 @@ describe('Task draft controls', () => {
     const onAction = vi.fn();
     render(<ProjectModeControl onAction={onAction} t={t} />);
     expect(screen.getByRole('button', { name: 'Confirm project type' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('radio', { name: 'Existing project' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Existing project' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm project type' }));
     expect(onAction).toHaveBeenCalledWith({ action: 'confirm_project_mode', mode: 'existing_project' });
   });

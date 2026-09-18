@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, History, Pause, Play, Plus, Trash2, UserRoundCog, X } from 'lucide-react';
+import { AlertTriangle, Bot, History, Pause, Play, Plus, RefreshCw, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
@@ -8,7 +8,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import useProjectState from '../runs/useProjectState';
 import { settingsApi } from '../settings/settingsApi';
 import './team.css';
-import { buildTeamModel, capabilityCounts, rosteredWorkerCount, workerCreateCommand, workerEditCommands } from './teamModel';
+import { buildTeamModel, capabilityCounts, changeRuntimeSelection, rosteredWorkerCount, runtimeOptions, workerCreateCommand, workerEditCommands } from './teamModel';
 
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -64,32 +64,34 @@ function draftFromWorker(worker) {
   };
 }
 
-function RuntimeFields({ draft, setDraft, backendOptions, agents, models, t }) {
-  const backend = agents.find((agent) => agent.backend === draft.provider);
-  const modelOptions = [...new Set([draft.model, ...(backend?.models || models || [])].filter(Boolean))];
+function RuntimeFields({ draft, setDraft, backendOptions, agents, defaultProvider, t }) {
+  const options = runtimeOptions(agents, draft.provider, draft.model, defaultProvider);
+  const changeSelection = (patch) => setDraft(changeRuntimeSelection(draft, patch, agents, defaultProvider));
+  const effortLabel = (value) => t(`team.dialog.reasoning${value[0].toUpperCase()}${value.slice(1)}`);
+  const currentUnsupported = draft.reasoningDepth !== 'default' && !options.reasoningDepths.includes(draft.reasoningDepth);
   return (
     <>
       <label>
         <span>{t('team.dialog.provider')}</span>
-        <select aria-label={t('team.dialog.provider')} value={draft.provider} onChange={(event) => setDraft({ ...draft, provider: event.target.value, model: '' })}>
-          <option value="">{t('team.dialog.inheritProvider')}</option>
+        <select aria-label={t('team.dialog.provider')} value={draft.provider} onChange={(event) => changeSelection({ provider: event.target.value, model: '' })}>
+          <option value="">{t('team.dialog.inheritProvider')} ({defaultProvider})</option>
           {backendOptions.map((option) => <option key={option} value={option}>{option}</option>)}
         </select>
       </label>
       <label>
         <span>{t('team.dialog.model')}</span>
-        <select aria-label={t('team.dialog.model')} value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })}>
-          <option value="">{t('team.dialog.inheritModel')}</option>
-          {modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
+        <select aria-label={t('team.dialog.model')} value={draft.model} onChange={(event) => changeSelection({ model: event.target.value })}>
+          <option value="">{t('team.dialog.inheritModel')}{options.agent?.model_default ? ` (${options.agent.model_default})` : ''}</option>
+          {options.models.map((model) => <option key={model} value={model}>{model}</option>)}
         </select>
+        {['unavailable', 'unsupported'].includes(options.agent?.models_source) ? <small role="status">{t(`team.dialog.catalog${options.agent.models_source === 'unsupported' ? 'Unsupported' : 'Unavailable'}`)}</small> : null}
       </label>
       <label>
         <span>{t('team.dialog.reasoning')}</span>
-        <select aria-label={t('team.dialog.reasoning')} value={draft.reasoningDepth} onChange={(event) => setDraft({ ...draft, reasoningDepth: event.target.value })}>
+        <select aria-label={t('team.dialog.reasoning')} disabled={!options.reasoningDepths.length && !currentUnsupported} value={draft.reasoningDepth} onChange={(event) => setDraft({ ...draft, reasoningDepth: event.target.value })}>
           <option value="default">{t('team.dialog.reasoningDefault')}</option>
-          <option value="low">{t('team.dialog.reasoningLow')}</option>
-          <option value="medium">{t('team.dialog.reasoningMedium')}</option>
-          <option value="high">{t('team.dialog.reasoningHigh')}</option>
+          {currentUnsupported ? <option value={draft.reasoningDepth} disabled>{effortLabel(draft.reasoningDepth)} · {t('team.dialog.reasoningUnavailable')}</option> : null}
+          {options.reasoningDepths.map((depth) => <option key={depth} value={depth}>{effortLabel(depth)}</option>)}
         </select>
       </label>
       <label className="team-dialog__prompt">
@@ -107,22 +109,53 @@ function RuntimeFields({ draft, setDraft, backendOptions, agents, models, t }) {
   );
 }
 
-function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, roles, manager, managerRuntime, saving, t, worker }) {
+function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, roles, manager, managerRuntime, assistantSession, saving, t, worker }) {
   const titleId = useId();
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
   const handleKeyDown = useDialogAccessibility(dialogRef, closeRef, onClose);
   const editing = Boolean(worker);
+  const submitting = useRef(false);
+  const [verification, setVerification] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
   const [draft, setDraft] = useState(() => {
     if (worker) return draftFromWorker(worker);
     if (manager) return { ...EMPTY_DRAFT, provider: managerRuntime?.provider || '', model: managerRuntime?.model || '', reasoningDepth: managerRuntime?.reasoningDepth || 'default', additionalPrompt: managerRuntime?.additionalPrompt || '' };
     return { ...EMPTY_DRAFT, role: roleEntry?.role || '' };
   });
 
-  const submit = (event) => {
+  const runtimeBusy = manager && (assistantSession?.runtime?.status === 'checking'
+    || Object.values(assistantSession?.assistant_requests || {}).some((request) => request.status === 'running'));
+  const locked = saving || Boolean(runtimeBusy);
+  const runtimeMatches = manager && draft.provider === (managerRuntime?.provider || '')
+    && draft.model === (managerRuntime?.model || '')
+    && draft.reasoningDepth === (managerRuntime?.reasoningDepth || 'default')
+    && draft.additionalPrompt.trim() === (managerRuntime?.additionalPrompt || '');
+  const verificationStatus = saving ? 'checking'
+    : verification?.error || submitError ? 'failed'
+      : verification?.runtime?.status || (runtimeMatches ? assistantSession?.runtime?.status : 'unverified') || 'unverified';
+  const runtimeError = verification?.runtime?.error || (runtimeMatches ? assistantSession?.runtime?.error : null);
+  const changeDraft = (value) => {
+    setDraft(value);
+    setVerification(null);
+    setSubmitError(null);
+  };
+
+  const submit = async (event) => {
     event.preventDefault();
+    if (locked || submitting.current) return;
     if (manager) {
-      onSubmit([{ kind: 'change_manager_runtime', provider: draft.provider, model: draft.model, reasoning_depth: draft.reasoningDepth, additional_prompt: draft.additionalPrompt.trim() }]);
+      submitting.current = true;
+      setVerification(null);
+      setSubmitError(null);
+      try {
+        const result = await onSubmit([{ kind: 'change_manager_runtime', provider: draft.provider || managerRuntime?.provider || 'codex', model: draft.model, reasoning_depth: draft.reasoningDepth, additional_prompt: draft.additionalPrompt.trim() }]);
+        setVerification(result);
+      } catch (caught) {
+        setSubmitError(caught);
+      } finally {
+        submitting.current = false;
+      }
       return;
     }
     if (editing) {
@@ -154,7 +187,7 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
           </button>
         </header>
 
-        <div className="team-dialog__fields">
+        <fieldset className="team-dialog__fields" disabled={locked}>
           {!manager && editing ? (
             <label>
               <span>{t('team.dialog.name')}</span>
@@ -178,12 +211,20 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
               </label>
             </>
           ) : null}
-          <RuntimeFields draft={draft} setDraft={setDraft} agents={agents} backendOptions={backendOptions} t={t} />
-        </div>
+          <RuntimeFields draft={draft} setDraft={changeDraft} agents={agents} backendOptions={backendOptions} defaultProvider={worker?.provider || managerRuntime?.provider || 'codex'} t={t} />
+        </fieldset>
+
+        {manager ? <section className="team-runtime-check" aria-label={t('assistant.runtime')}>
+          <span role="status">{t(`assistant.status.${verificationStatus}`)}</span>
+          <p>{t('team.dialog.saveAndCheckHint')}</p>
+          {verification?.saved && verification?.error ? <p>{t('team.dialog.savedCheckFailed')}</p> : null}
+          {runtimeError ? <p role="alert">{t(`assistant.error.${runtimeError.code}`)}</p>
+            : verification?.error || submitError ? <ProductError error={verification?.error || submitError} t={t} /> : null}
+        </section> : null}
 
         <footer className="team-dialog__footer">
-          <Button variant="secondary" onClick={onClose}>{t('team.dialog.cancel')}</Button>
-          <Button type="submit" busy={saving}>{manager ? t('team.dialog.saveManager') : editing ? t('team.dialog.saveWorker') : t('team.dialog.createWorker')}</Button>
+          <Button variant="secondary" onClick={onClose}>{t(manager && verification?.saved ? 'team.dialog.close' : 'team.dialog.cancel')}</Button>
+          <Button type="submit" busy={saving} disabled={locked}>{manager ? t('team.dialog.saveAndCheck') : editing ? t('team.dialog.saveWorker') : t('team.dialog.createWorker')}</Button>
         </footer>
       </form>
     </div>
@@ -274,6 +315,8 @@ export default function TeamPage({ api = settingsApi }) {
   const { t } = useOutletContext();
   const { data, error, refresh, status } = useProjectState(projectKey, { api: { getProjectState: api.getProjectSettings }, poll: true });
   const [agents, setAgents] = useState([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [agentsRevision, setAgentsRevision] = useState(0);
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [mutationError, setMutationError] = useState(null);
@@ -286,10 +329,18 @@ export default function TeamPage({ api = settingsApi }) {
   useEffect(() => {
     const controller = new AbortController();
     api.getSettingsAgents({ signal: controller.signal })
-      .then((payload) => setAgents(Array.isArray(payload?.agents) ? payload.agents : []))
-      .catch((caught) => { if (caught?.name !== 'AbortError') setLoadError(caught); });
+      .then((payload) => { if (!controller.signal.aborted) setAgents(Array.isArray(payload?.agents) ? payload.agents : []); })
+      .catch((caught) => { if (!controller.signal.aborted) { setAgents([]); setLoadError(caught); } })
+      .finally(() => { if (!controller.signal.aborted) setAgentsLoading(false); });
     return () => controller.abort();
-  }, [api]);
+  }, [api, agentsRevision]);
+
+  const refreshAgents = () => {
+    setAgentsLoading(true);
+    setAgents([]);
+    setLoadError(null);
+    setAgentsRevision((revision) => revision + 1);
+  };
 
   const team = useMemo(() => buildTeamModel(data), [data]);
   const backendOptions = useMemo(() => [...new Set([
@@ -310,6 +361,27 @@ export default function TeamPage({ api = settingsApi }) {
       setDialog(null);
     } catch (caught) {
       setMutationError(caught);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveManagerRuntime = async (commands) => {
+    setSaving(true);
+    setMutationError(null);
+    let saved = false;
+    try {
+      await api.sendTeamCommands(projectKey, commands, { reason: 'Update Task Assistant runtime' });
+      saved = true;
+      const result = await api.taskAssistantAction(projectKey, {
+        action: 'check_runtime', confirmed: true,
+        message_id: globalThis.crypto?.randomUUID?.() || `check-${Date.now()}`,
+      });
+      await refresh();
+      return { saved, runtime: result.task_assistant_session?.runtime };
+    } catch (caught) {
+      const latest = await refresh().catch(() => null);
+      return { saved, error: caught, runtime: saved ? latest?.task_assistant_session?.runtime : null };
     } finally {
       setSaving(false);
     }
@@ -359,6 +431,10 @@ export default function TeamPage({ api = settingsApi }) {
           <p>{t('team.description')}</p>
         </div>
         <div className="team-page__actions">
+          <button type="button" className="product-button product-button--secondary" disabled={agentsLoading} onClick={refreshAgents}>
+            <RefreshCw aria-hidden="true" size={16} />
+            {t(agentsLoading ? 'team.modelsLoading' : 'team.refreshModels')}
+          </button>
           <button type="button" className="product-button product-button--secondary team-configure-button" onClick={openHistory}>
             <History aria-hidden="true" size={16} />
             {t('team.history.button')}
@@ -380,7 +456,7 @@ export default function TeamPage({ api = settingsApi }) {
       </section>
 
       {mutationError ? <ProductError error={mutationError} onRetry={() => setMutationError(null)} t={t} /> : null}
-      {loadError ? <ProductError error={loadError} onRetry={() => setLoadError(null)} t={t} /> : null}
+      {loadError ? <ProductError error={loadError} onRetry={refreshAgents} t={t} /> : null}
 
       <section className="team-manager" aria-labelledby="team-manager-title">
         <div className="team-manager__row">
@@ -516,12 +592,14 @@ export default function TeamPage({ api = settingsApi }) {
       ) : null}
       {dialog?.type === 'manager' ? (
         <WorkerDialog
+          key={projectKey}
           agents={agents}
           backendOptions={backendOptions}
           manager
           managerRuntime={team.manager}
+          assistantSession={data?.task_assistant_session}
           onClose={closeDialog}
-          onSubmit={(commands) => runCommands(commands, { reason: 'Update Task Assistant runtime' })}
+          onSubmit={saveManagerRuntime}
           saving={saving}
           t={t}
         />

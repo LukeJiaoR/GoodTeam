@@ -1,5 +1,28 @@
 const ROLE_FALLBACK_LABEL = (role) => String(role || '').replaceAll('_', ' ');
 
+export function runtimeOptions(agents, provider, model, defaultProvider = 'codex') {
+  const effectiveProvider = provider || defaultProvider;
+  const agent = agents.find((item) => item.backend === effectiveProvider || item.aliases?.includes(effectiveProvider));
+  const effectiveModel = model || agent?.model_default || '';
+  const capabilities = agent?.model_capabilities?.[effectiveModel];
+  return {
+    agent,
+    provider: effectiveProvider,
+    model: effectiveModel,
+    models: [...new Set([model, ...(agent?.models || [])].filter(Boolean))],
+    reasoningDepths: capabilities?.reasoning_depths ?? agent?.reasoning_depths ?? [],
+  };
+}
+
+export function changeRuntimeSelection(draft, patch, agents, defaultProvider) {
+  const next = { ...draft, ...patch };
+  const options = runtimeOptions(agents, next.provider, next.model, defaultProvider);
+  if (next.reasoningDepth !== 'default' && !options.reasoningDepths.includes(next.reasoningDepth)) {
+    next.reasoningDepth = 'default';
+  }
+  return next;
+}
+
 function capabilityTone(capability) {
   if (capability === 'ready') return 'active';
   if (capability === 'degraded') return 'danger';

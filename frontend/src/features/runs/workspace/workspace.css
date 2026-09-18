@@ -1007,6 +1007,23 @@
   margin-top: 0;
 }
 
+.work-workspace-shell .team-manager-entry__context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  color: var(--work-text-muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.work-workspace-shell .team-manager-entry__hint {
+  margin: -0.35rem 0 0;
+  color: var(--work-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
 .work-workspace-shell .team-manager-dock {
   padding: 0.75rem 1rem 1rem;
 }
@@ -1265,19 +1282,60 @@
 
 .work-workspace-shell .team-approval-brief {
   display: grid;
-  gap: 0.8rem;
+  gap: 0.55rem;
   min-width: 0;
 }
 
-.work-workspace-shell .team-approval-brief__decision,
+.work-workspace-shell .team-approval-brief__decision {
+  min-width: 0;
+}
+
 .work-workspace-shell .team-approval-brief__recommendation {
   display: grid;
   gap: 0.45rem;
   min-width: 0;
-  padding: 0.8rem;
-  background: var(--work-material-deep);
-  border-radius: 13px;
-  box-shadow: var(--work-shadow-inset);
+  padding-left: 0.65rem;
+}
+
+.work-workspace-shell .team-approval-brief__details > summary {
+  display: flex;
+  width: fit-content;
+  min-height: 1.75rem;
+  gap: 0.3rem;
+  align-items: center;
+  color: var(--work-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  list-style: none;
+}
+
+.work-workspace-shell .team-approval-brief__details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.work-workspace-shell .team-approval-brief__details > summary:hover {
+  color: var(--work-accent-strong);
+}
+
+.work-workspace-shell .team-approval-brief__details > summary:focus-visible {
+  outline: 2px solid var(--work-accent);
+  outline-offset: 3px;
+}
+
+.work-workspace-shell .team-approval-brief__details[open] > summary svg {
+  transform: rotate(90deg);
+}
+
+.work-workspace-shell .team-approval-brief__detail-content,
+.work-workspace-shell .team-approval-brief__context {
+  display: grid;
+  min-width: 0;
+  gap: 0.65rem;
+}
+
+.work-workspace-shell .team-approval-brief__detail-content {
+  padding-block: 0.65rem 0.3rem;
 }
 
 .work-workspace-shell .team-approval-brief__kicker,
@@ -1292,7 +1350,7 @@
 }
 
 .work-workspace-shell .team-approval-brief__decision > p,
-.work-workspace-shell .team-approval-brief__decision blockquote,
+.work-workspace-shell .team-approval-brief__context blockquote,
 .work-workspace-shell .team-approval-brief__section > p,
 .work-workspace-shell .team-approval-brief__recommendation > p,
 .work-workspace-shell .team-approval-brief__recommendation > small {
@@ -1301,12 +1359,12 @@
 
 .work-workspace-shell .team-approval-brief__decision > p {
   color: var(--work-text);
-  font-size: 0.9rem;
-  font-weight: 630;
-  line-height: 1.48;
+  font-size: 0.88rem;
+  font-weight: 450;
+  line-height: 1.65;
 }
 
-.work-workspace-shell .team-approval-brief__decision blockquote {
+.work-workspace-shell .team-approval-brief__context blockquote {
   margin-inline: 0;
   padding-left: 0.65rem;
   color: var(--work-text-muted);
@@ -1392,6 +1450,19 @@
   gap: 0.5rem;
   align-items: baseline;
   justify-content: space-between;
+}
+
+.work-workspace-shell .team-approval-brief .team-approval-brief__risk-list {
+  gap: 0.65rem;
+  padding-left: 1rem;
+  list-style: disc;
+}
+
+.work-workspace-shell .team-approval-brief__risk-list > li {
+  display: list-item;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
 }
 
 .work-workspace-shell .team-approval-brief__evidence-list strong {
@@ -1875,6 +1946,7 @@
   color: var(--work-text-muted);
   border-left: 2px solid var(--work-border);
   font-size: 0.84rem;
+  white-space: pre-wrap;
 }
 
 .work-workspace-shell .team-attention {
@@ -2045,6 +2117,8 @@
 .work-workspace-shell .team-actor-list {
   min-height: 0;
   flex: 1 1 auto;
+  align-content: start;
+  grid-auto-rows: max-content;
   padding-top: 0.72rem !important;
   overflow-y: auto;
 }
@@ -2311,6 +2385,15 @@
   box-shadow: var(--work-shadow-inset);
 }
 
+.work-workspace-shell .team-manager-event[data-pending="true"] {
+  opacity: 0.72;
+}
+
+.work-workspace-shell .team-manager-event__pending {
+  color: var(--work-text-muted);
+  font-size: 0.75rem;
+}
+
 .work-workspace-shell .team-manager-system-chip {
   background: transparent;
   border: 0;
@@ -2320,13 +2403,13 @@
 
 .work-workspace-shell .team-actor-list,
 .work-workspace-shell .team-outcome-list {
-  gap: 0.9rem;
+  gap: 0.65rem;
   padding-bottom: 1.25rem;
 }
 
 .work-workspace-shell .team-actor-list li,
 .work-workspace-shell .team-outcome-list > li {
-  margin: 0 1rem;
+  margin: 0;
   background: var(--work-material);
   border: 1px solid color-mix(in srgb, var(--work-border) 46%, transparent);
   border-radius: 16px;
@@ -2436,6 +2519,51 @@
   background: var(--work-material);
   border-radius: 20px;
   box-shadow: var(--work-shadow-raised);
+}
+
+.work-workspace-shell .team-attention.team-attention--approval {
+  gap: 0.4rem;
+  padding: 0.15rem 0 0.15rem 0.85rem;
+  background: transparent;
+  border-left: 2px solid var(--work-border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.work-workspace-shell .team-attention--approval .team-attention__label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  line-height: 1.5;
+}
+
+.work-workspace-shell .team-attention--approval .team-attention__label svg {
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.work-workspace-shell .team-attention--approval .team-attention__actions {
+  gap: 0.4rem;
+}
+
+.work-workspace-shell .team-attention--approval .team-attention__actions .product-button {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.65rem;
+  border-radius: 7px;
+  box-shadow: none;
+  font-size: 0.78rem;
+}
+
+.work-workspace-shell .team-attention--approval .team-attention__actions .product-button--secondary {
+  color: var(--work-text-muted);
+  background: transparent;
+}
+
+.work-workspace-shell .team-attention--approval .team-attention__actions .product-button--secondary:hover:not(:disabled) {
+  color: var(--work-text);
+  background: var(--work-material-deep);
 }
 
 .work-workspace-shell .team-manager-conversation,

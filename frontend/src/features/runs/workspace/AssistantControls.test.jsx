@@ -11,15 +11,14 @@ function mount(props = {}) {
 }
 
 describe('Assistant recovery and confirmation', () => {
-  it('requires cost consent and submits a read-only runtime check', () => {
+  it('keeps runtime configuration and connection checks out of the conversation', () => {
     const onAction = vi.fn();
     mount({ onAction });
-    const check = screen.getByRole('button', { name: 'Check connection' });
-    expect(check).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(check);
-    expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ action: 'check_runtime', confirmed: true }));
-    expect(screen.getByRole('link', { name: 'Configure runtime' })).toHaveAttribute('href', '/projects/DEMO/team');
+    expect(screen.queryByRole('button', { name: 'Check connection' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Configure runtime' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/gpt-example/)).not.toBeInTheDocument();
+    expect(onAction).not.toHaveBeenCalled();
   });
 
   it('retries the original request by identity and attempt, without resending text', () => {

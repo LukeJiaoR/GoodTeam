@@ -35,7 +35,7 @@ sequenceDiagram
 | Mode | Use for | Notes |
 | --- | --- | --- |
 | `fake` | First-run demos, deterministic smoke, credential-free local tests. | Good default for onboarding and docs examples. |
-| `anthropic` | Claude CLI-backed agent work. | Requires local CLI and credential readiness. |
+| `claude` | Claude Code CLI-backed agent work. (`anthropic` remains a compatibility alias.) | Requires local CLI and credential readiness. |
 | `codex` | Codex CLI-backed agent work. | Requires local CLI and credential readiness. |
 | `pi` | Pi RPC persistent-session agent work. | Optional; supports resume, steering, follow-up, abort, and incremental event replay. |
 | `human` | Human-performed or externally coordinated work. | Useful when GoodTeam should track the slot but not run an agent. |
@@ -72,7 +72,7 @@ worker_backend:
   mode: fake
 workers:
   ui: fake
-  implementation: codex
+  implementation: claude
   qa: fake
 ```
 
@@ -83,6 +83,29 @@ risk profiles. For example, implementation may use a coding backend while QA use
 a cheaper or deterministic backend for a narrow check.
 
 ## Readiness Checks
+
+### Model and reasoning discovery
+
+Team loads `/api/agents` on entry; **Refresh models** runs discovery again.
+Requests bypass the browser cache and GoodTeam does not retain a model catalog.
+Codex uses `codex debug models` (without `--bundled`), Agy uses `agy models`,
+and OpenCode uses `opencode models --refresh`. Claude Code has no stable
+non-interactive model-list command, so GoodTeam offers its documented aliases
+and current full model names when the `claude` CLI is installed. A failed query
+returns an empty list with `models_source: unavailable`; adapters without a
+discovery integration return `unsupported`. Neither case substitutes a stale
+remote catalog. An already configured model remains visible so editing another
+field does not silently change it.
+
+Codex's `supported_reasoning_levels` is exposed per model in
+`model_capabilities`, including `none`, `xhigh`, `max`, or `ultra` when the
+agent reports them. Model/provider changes reset an incompatible effort to
+`default`. Team persistence, execution snapshots, and CLI dispatch preserve
+explicit efforts; Codex receives `--config model_reasoning_effort="<effort>"`.
+The inherited model label shows the same backend default used at dispatch.
+
+Codex's model capability contract is also documented in the official
+[model discovery API](https://developers.openai.com/codex/app-server/#list-models-modellist).
 
 Before running real backends, use doctor-style readiness checks.
 

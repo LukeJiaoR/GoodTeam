@@ -230,6 +230,7 @@ export default function WorkTaskDetailDialog({
   reviews = [],
   projectKey = '',
   onDecide,
+  approvalTarget = null,
   onClose,
   onRequestChanges,
   t,
@@ -324,7 +325,12 @@ export default function WorkTaskDetailDialog({
     setBusy(decision);
     setMutationError(null);
     try {
-      await onDecide(review.approval, decision, note);
+      await onDecide(
+        review.approval,
+        decision,
+        note,
+        decision === 'approved' ? approvalTarget : null,
+      );
       onClose();
     } catch (err) {
       setMutationError(err);

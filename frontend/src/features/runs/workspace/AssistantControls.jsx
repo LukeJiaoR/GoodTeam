@@ -1,27 +1,6 @@
-import { useState } from 'react';
-import { Check, Plug, RotateCcw, Settings, X } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Check, RotateCcw, X } from 'lucide-react';
 import Button from '../../../components/ui/Button';
-import { routes } from '../../../lib/routing/routes';
 import './assistantControls.css';
-
-function RuntimeControls({ runtime, busy, onAction, projectKey, t }) {
-  const [consent, setConsent] = useState(false);
-  if (!runtime) return null;
-  return (
-    <section className="assistant-runtime" aria-label={t('assistant.runtime')}>
-      <strong>{t('assistant.runtime')}: {runtime.provider} / {runtime.model || 'builtin'} / {runtime.reasoning_depth}</strong>
-      <span role="status">{t(`assistant.status.${runtime.status}`)}</span>
-      {runtime.error ? <p>{t(`assistant.error.${runtime.error.code}`)}</p> : null}
-      <Link to={routes.projectTeam(projectKey)}><Settings size={14} aria-hidden="true" />{t('assistant.configure')}</Link>
-      <label><input type="checkbox" checked={consent} disabled={Boolean(busy)} onChange={(event) => setConsent(event.target.checked)} />{t('assistant.costConsent')}</label>
-      <Button disabled={!consent || Boolean(busy)} onClick={() => {
-        setConsent(false);
-        onAction?.({ action: 'check_runtime', confirmed: true, message_id: globalThis.crypto?.randomUUID?.() || `check-${Date.now()}` });
-      }}><Plug size={14} aria-hidden="true" />{t('assistant.check')}</Button>
-    </section>
-  );
-}
 
 function RequestRecovery({ requests = {}, busy, onAction, t }) {
   return Object.entries(requests).filter(([, request]) => request.status !== 'succeeded').map(([id, request]) => (
@@ -60,12 +39,11 @@ function TeamDecision({ pending, busy, onAction, t }) {
   );
 }
 
-export default function AssistantControls({ runtime, requests, pending, busy, readOnly, onAction, projectKey, t }) {
-  if (readOnly) return null;
+export default function AssistantControls({ runtime, requests, pending, busy, readOnly, onAction, t }) {
+  if (readOnly || (!pending && !Object.values(requests || {}).some((request) => request.status !== 'succeeded'))) return null;
   const locked = busy || Object.values(requests || {}).some((request) => request.status === 'running') || runtime?.status === 'checking';
   return <div className="assistant-controls">
     <RequestRecovery requests={requests} busy={locked} onAction={onAction} t={t} />
     <TeamDecision pending={pending} busy={locked} onAction={onAction} t={t} />
-    <RuntimeControls runtime={runtime} busy={locked} onAction={onAction} projectKey={projectKey} t={t} />
   </div>;
 }
