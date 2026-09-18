@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Button from '../../../components/ui/Button';
 import ProductError from '../../../components/ui/ProductError';
 import { isChangeDiscussion, sendConversationInput } from './conversationRouting';
+import { shouldSubmitConversationOnEnter } from './conversationFeedback';
 
 export default function ConversationComposer({
   busy, embedded = true, error, onStart, suggestions = [], t,
@@ -85,6 +86,12 @@ export default function ConversationComposer({
         <span className="sr-only">{t(changing ? 'work.manager.changeReason' : 'work.taskAssistant.message')}</span>
         <textarea
           ref={inputRef}
+          aria-keyshortcuts="Enter"
+          onKeyDown={(event) => {
+            if (!shouldSubmitConversationOnEnter(event)) return;
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }}
           placeholder={t(changing ? 'work.manager.intent.question' : 'work.taskAssistant.placeholder')}
           rows="3"
           required

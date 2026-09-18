@@ -21,6 +21,7 @@ import {
 import WorkTaskDetailDialog from './WorkTaskDetailDialog';
 import AssistantControls from './AssistantControls';
 import ManagerMissionEntry from './ConversationComposer';
+import { conversationTimeline, deliveryLabel } from './conversationFeedback';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
@@ -156,15 +157,16 @@ function TimelineItem({ item, language, t }) {
   }
 
   return (
-    <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind}>
+    <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind} data-delivery={item.delivery_status}>
       <TeamAvatar label={actorLabel} manager={item.actor !== 'user'} />
       <div className="team-manager-event__bubble">
         <div className="team-manager-event__meta">
           <strong>{actorLabel}</strong>
+          {item.delivery_status ? <span role="status">{deliveryLabel(language, item.delivery_status)}</span> : null}
           {formatted ? <time dateTime={itemTimestamp}>{formatted}</time> : null}
         </div>
         <p>{copy}</p>
-        {item.content && !['mission_requested', 'team_decision_proposed', 'task_proposed'].includes(item.event) && copy !== item.content ? (
+        {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
           <blockquote>{item.content}</blockquote>
         ) : null}
       </div>
@@ -456,10 +458,12 @@ function ManagerPane({
       ? statusText(mission.status, t)
       : t('work.manager.ready');
   const timelineHasMissionRequest = (timeline || []).some((item) => item.event === 'mission_requested');
+  const deliveryKey = (timeline || []).find((item) => item.delivery_status === 'sending')?.id || '';
   const conversationRef = useRef(null);
   const wasNearBottomRef = useRef(true);
   const prevAttentionKeyRef = useRef(null);
   const prevTimelineLengthRef = useRef(0);
+  const prevDeliveryKeyRef = useRef('');
 
   const attentionKey = `${attention?.id || ''}:${attention?.intent_commit?.status || ''}`;
 
@@ -469,17 +473,19 @@ function ManagerPane({
 
     const attentionChanged = prevAttentionKeyRef.current !== attentionKey;
     const timelineChanged = prevTimelineLengthRef.current !== (timeline?.length || 0);
+    const deliveryChanged = prevDeliveryKeyRef.current !== deliveryKey;
+    prevDeliveryKeyRef.current = deliveryKey;
 
     prevAttentionKeyRef.current = attentionKey;
     prevTimelineLengthRef.current = timeline?.length || 0;
 
-    if (attention && attentionChanged) {
+    if ((attention && attentionChanged) || (deliveryKey && deliveryChanged)) {
       node.scrollTop = node.scrollHeight;
       wasNearBottomRef.current = true;
     } else if (timelineChanged && wasNearBottomRef.current) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [attention, attentionKey, timeline?.length]);
+  }, [attention, attentionKey, deliveryKey, timeline?.length]);
 
   useEffect(() => {
     const node = conversationRef.current;
@@ -792,6 +798,7 @@ function AdvancedInspector({
 }
 
 function TeamWorkspace({
+  conversationDelivery = null,
   onAssistantAction,
   busy,
   data,
@@ -987,7 +994,9 @@ function TeamWorkspace({
           onTerminate={onTerminate}
           projectKey={projectKey}
           sectionProps={sectionProps('manager')}
-          timeline={workspace.manager_timeline || []}
+          timeline={conversationTimeline(workspace.manager_timeline || [], conversationDelivery, {
+            projectKey, runId: data.state?.run_id || '', readOnly,
+          })}
           t={t}
           suggestions={workspace.suggestions || []}
           proposedTask={workspace.proposed_task || null}
