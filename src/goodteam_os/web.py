@@ -19,6 +19,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from goodteam_os import context as project_context
+from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.debate import default_debate_dispatch, run_gate_debate
 from goodteam_os.dispatch import (
     dispatch_tracks,
@@ -162,7 +163,7 @@ WORKER_ROLES = [
     "release",
     "retro_memory",
 ]
-WORKER_REASONING_DEPTHS = ("default", "low", "medium", "high")
+WORKER_REASONING_DEPTHS = REASONING_DEPTHS
 WORKER_ADDITIONAL_PROMPT_MAX_CHARS = 4000
 WORKER_DESIRED_INSTANCES_MAX = 8
 PRE_REVIEW_REPORT_DIR = Path("/tmp")

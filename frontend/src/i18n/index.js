@@ -1,5 +1,6 @@
 import { en } from './locales/en';
 import { zhCN } from './locales/zh-CN';
+import { runtimeEn, runtimeZhCN } from './locales/runtimeCatalog';
 
 export const LANGUAGE_STORAGE_KEY = 'gt-language';
 export const LANGUAGE_PREFERENCE_AUTO = 'auto';
@@ -12,8 +13,8 @@ export const PRODUCT_I18N_PREFIXES = [
 ];
 
 const LOCALES = {
-  [LANGUAGE_EN]: en,
-  [LANGUAGE_ZH_CN]: zhCN,
+  [LANGUAGE_EN]: { ...en, ...runtimeEn },
+  [LANGUAGE_ZH_CN]: { ...zhCN, ...runtimeZhCN },
 };
 
 function isCatalogBranch(value) {
@@ -102,7 +103,7 @@ export function translate(language, key, params = {}) {
   return interpolate(template, params);
 }
 
-export function missingTranslationKeys(language, locales = LOCALES, requiredCatalog = en) {
+export function missingTranslationKeys(language, locales = LOCALES, requiredCatalog = LOCALES[LANGUAGE_EN]) {
   return catalogIntegrityIssues(requiredCatalog, locales[language] || {})
     .map(({ type, key }) => `${type}:${key}`);
 }
