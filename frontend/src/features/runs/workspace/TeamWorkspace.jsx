@@ -20,6 +20,7 @@ import {
 } from './presentationUtils';
 import WorkTaskDetailDialog from './WorkTaskDetailDialog';
 import AssistantControls from './AssistantControls';
+import ManagerMissionEntry from './ConversationComposer';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
@@ -106,47 +107,6 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 }
 
 
-function ManagerMissionEntry({ busy, embedded = true, error, onStart, suggestions = [], t }) {
-  const [goal, setGoal] = useState('');
-  const submit = async (event) => {
-    event.preventDefault();
-    if (busy || !goal.trim()) return;
-    const sent = goal;
-    const result = await onStart(sent);
-    if (result !== false) setGoal((current) => current === sent ? '' : current);
-  };
-  return (
-    <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
-      {suggestions.length ? (
-        <div className="team-manager-suggestions" aria-label={t('work.taskAssistant.suggestions')}>
-          {suggestions.map((suggestion) => (
-            <button
-              key={suggestion.id}
-              onClick={() => setGoal(t(`work.taskAssistant.suggestionDrafts.${suggestion.id}`))}
-              type="button"
-            >
-              {t(`work.taskAssistant.suggestionLabels.${suggestion.id}`)}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <label>
-        <span className="sr-only">{t('work.taskAssistant.message')}</span>
-        <textarea
-          placeholder={t('work.taskAssistant.placeholder')}
-          rows="3"
-          required
-          value={goal}
-          onChange={(event) => setGoal(event.target.value)}
-        />
-      </label>
-      {error ? <ProductError error={error} t={t} /> : null}
-      <Button busy={busy} disabled={!goal.trim()} type="submit">{t('work.taskAssistant.send')}</Button>
-    </form>
-  );
-}
-
-
 const SYSTEM_TIMELINE_EVENTS = new Set([
   'deliverable_ready',
   'verification_updated',
@@ -217,7 +177,6 @@ function ManagerAttention({
   busy,
   onConfirmChangeIntent,
   onDecide,
-  onDiscussChangeIntent,
   onKeepDiscussingChangeIntent,
   onReview,
   onRetry,
@@ -226,11 +185,6 @@ function ManagerAttention({
   t,
 }) {
   const intent = attention?.intent_commit || null;
-  const [note, setNote] = useState(intent?.draft_text || '');
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- durable intent state replaces any draft from the prior authoritative projection.
-    setNote(intent?.draft_text || '');
-  }, [intent?.draft_text, intent?.id]);
   if (!attention) return null;
   const actions = new Set(attention.actions || []);
   const gate = attention.target_id || '';
@@ -245,13 +199,6 @@ function ManagerAttention({
         decisionNote,
         decision === 'approved' ? approvalBrief?.approval_target : null,
       ))
-      .catch(() => {});
-  };
-  const submitChanges = (event) => {
-    event.preventDefault();
-    if (!intent?.id || !note.trim()) return;
-    Promise.resolve()
-      .then(() => onDiscussChangeIntent?.(intent.id, note))
       .catch(() => {});
   };
   const startChangeDiscussion = () => Promise.resolve()
@@ -313,21 +260,7 @@ function ManagerAttention({
             <StatusBadge tone="pending">{t('work.manager.intent.discussing')}</StatusBadge>
           </div>
           {!intent.draft_text ? <p>{t('work.manager.intent.restate')}</p> : null}
-          <form className="team-attention__form" onSubmit={submitChanges}>
-            <label>
-              <span>{t('work.manager.changeReason')}</span>
-              <textarea required rows="4" value={note} onChange={(event) => setNote(event.target.value)} />
-            </label>
-            <div>
-              <Button
-                busy={busy === 'intent-discuss'}
-                disabled={!note.trim()}
-                type="submit"
-              >
-                {t('work.manager.intent.reviewInterpretation')}
-              </Button>
-            </div>
-          </form>
+          {intent.draft_text ? <blockquote>{intent.draft_text}</blockquote> : null}
         </div>
       ) : null}
       {intent?.status === 'ready_to_confirm' ? (
@@ -623,7 +556,6 @@ function ManagerPane({
               key={`${attention?.id || 'none'}:${attention?.intent_commit?.id || 'direct'}:${attention?.intent_commit?.status || 'idle'}`}
               onConfirmChangeIntent={onConfirmChangeIntent}
               onDecide={onDecide}
-              onDiscussChangeIntent={onDiscussChangeIntent}
               onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
               onReview={onReview}
               onRetry={onRetry}
@@ -636,8 +568,12 @@ function ManagerPane({
       {!mission?.read_only ? (
         <footer className="team-manager-dock">
           <ManagerMissionEntry
-            busy={Boolean(busy || proposedTask?.pending_change) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
+            key={projectKey}
+            busy={Boolean(busy) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
             onStart={onStart}
+            changeIntent={attention?.intent_commit}
+            onDiscussChangeIntent={onDiscussChangeIntent}
+            onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
             suggestions={suggestions}
             t={t}
           />
