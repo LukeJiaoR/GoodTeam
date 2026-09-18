@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import wraps
 
+from goodteam_os.assistant_conversation import continue_conversation
 from goodteam_os.assistant_runtime import record_runtime, runtime_snapshot, safe_failure
 from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.project_readiness import assess_project_mode
@@ -82,16 +83,20 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         attempt = _next_attempt(previous, text, expected_attempt)
         if attempt is None:
             return response(service, project_key, root, intent=(previous or {}).get("intent", "ambiguous"))
-        if (store.read().get("proposed_task") or {}).get("pending_change"):
-            raise ValueError("Resolve the pending draft change before sending another message.")
         store.initialize_context(assess_project_mode(root))
         store.append_message(message_id, "user", text)
         update_request(store, message_id, text=text, attempt=attempt, status="running", phase="model", error=None)
         snapshot = None
         try:
             snapshot = runtime_snapshot(service.project_config)
-            result = service._send_message(project_key=project_key, root=root, text=text,
-                                           message_id=message_id, attempt_id=worker_attempt_id(project_key, message_id, attempt))
+            attempt_id = worker_attempt_id(project_key, message_id, attempt)
+            result = continue_conversation(
+                service, store=store, project_key=project_key, root=root,
+                text=text, message_id=message_id, attempt_id=attempt_id,
+            )
+            if result is None:
+                result = service._send_message(project_key=project_key, root=root, text=text,
+                                               message_id=message_id, attempt_id=attempt_id)
         except Exception as exc:
             retryable = _record_failure(store, message_id, exc)
             if snapshot is not None:

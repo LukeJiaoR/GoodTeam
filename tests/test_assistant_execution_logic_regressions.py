@@ -65,7 +65,8 @@ def test_missing_current_state_does_not_release_proposal_with_start_claim(tmp_pa
     assert result["proposed_task"]["start_claim_id"] == "claim-1"
     assert result["proposed_task"]["start_run_id"] == "run-starting"
     assert result["archived_task_proposals"] == []
-    assert result["timeline"][-1]["event"] == "task_draft_locked"
+    assert result["timeline"][-1]["event"] == "conversation_replied"
+    assert result["timeline"][-1]["details"]["actions_applied"] is False
     assert claimed["proposed_task"]["start_claim_id"] == "claim-1"
 
 
