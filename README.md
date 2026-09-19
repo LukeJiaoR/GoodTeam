@@ -24,6 +24,12 @@ Legacy Project Home, Inbox, Activity, and Settings product pages have been retir
 
 For the short current-state summary, see [`docs/status.md`](docs/status.md). For the canonical documentation map and authority rules, see [`docs/README.md`](docs/README.md).
 
+### Delivery acceptance boundary
+
+The first product-effect gate is deliberately narrow: desktop Web, an explicitly configured local Git repository, an explicitly verified real provider/model configuration, and one bounded coding task. Implemented UI and deterministic fake-Worker CI are not proof that real model execution, independent review/fix, and delivery have converged.
+
+[Issue #411](https://github.com/LukeJiaoR/GoodTeam/issues/411) remains the real-task acceptance owner. See [`docs/m0-product-acceptance.md`](docs/m0-product-acceptance.md) for the evidence matrix, safe run protocol and per-task scorecard. No complete real-model delivery acceptance is claimed by this README.
+
 ## Quick start
 
 Create a development environment:
@@ -76,9 +82,9 @@ See [`docs/config-reference.md`](docs/config-reference.md) for the implemented p
 
 GoodTeam supports bounded worker execution through replaceable backends. Current references include Codex, Claude/Anthropic, Pi persistent sessions, `fake`, `human`, and `noop` paths; backend readiness and exact capabilities vary by adapter.
 
-The currently implemented configuration model is still role-oriented: projects can declare a default worker backend plus per-role overrides. See [`docs/worker-backends.md`](docs/worker-backends.md) and [`docs/config-reference.md`](docs/config-reference.md).
+The implemented **Role → TeamRole → Worker** control plane separates capability definitions, project Team membership, and Worker identity/lifecycle/runtime. Team mutations use one command/event boundary; execution records preserve the selected Worker and runtime. The Task Assistant remains one logical owner, not a TeamRole. Legacy default/per-role configuration remains a compatibility path. See [`docs/worker-backends.md`](docs/worker-backends.md) and [`docs/config-reference.md`](docs/config-reference.md).
 
-The proposed **Role → TeamRole → Worker** separation is active design work tracked outside this README. Do not treat it as an implemented runtime contract until its domain model, persistence, migration, and invariant tests land.
+Team is still project-scoped. Workspace-wide Team reuse and migration are follow-up work in [#409](https://github.com/LukeJiaoR/GoodTeam/issues/409), not an implemented promise. Model catalog metadata or an installed CLI alone does not prove a particular account/model/reasoning combination works; use the explicit connection check and retain its configuration identity.
 
 ## Human authority and evidence
 
@@ -103,6 +109,8 @@ ledger + provenance + memory
 ```
 
 The same project conversation remains available across onboarding and workflow execution; starting a run does not replace the user's original request with a model rewrite.
+
+Ordinary running-task discussion does not change Worker instructions. A task change uses the current version-bound review and explicit Intent Commit confirmation. A recorded change decision, completed process, or readable delivery report is not by itself verified completion. See [`docs/conversation-change-status.md`](docs/conversation-change-status.md).
 
 ## Local-first state
 
