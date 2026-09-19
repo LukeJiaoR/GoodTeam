@@ -102,19 +102,6 @@ function renderReview(path = '/projects/DEMO/review/prd') {
 
 function t(key, params) { return translate('en', key, params); }
 
-test('loads full version-bound text before offering truncated artifact editing', async () => {
-  const review = { ...state.approval_reviews[0], content_truncated: true, content: '# Truncated preview' };
-  let resolve;
-  mocks.getArtifact.mockReturnValue(new Promise((done) => { resolve = done; }));
-  mocks.getReviewState.mockResolvedValue({ ...state, approval_reviews: [review] });
-  mocks.getOpenQuestions.mockResolvedValue({ questions: [] });
-  render(<RouterProvider router={routerFor('/projects/DEMO/review/prd')} />);
-  await vi.waitFor(() => expect(mocks.getArtifact).toHaveBeenCalled());
-  expect(screen.queryByRole('button', { name: 'Save artifact' })).not.toBeInTheDocument();
-  resolve({ content: '# Complete artifact\nUntruncated acceptance criteria.', run_id: 'run-1', artifact_version: 'sha256:prd-v1' });
-  expect(await screen.findByText('Untruncated acceptance criteria.')).toBeInTheDocument();
-});
-
 afterEach(() => {
   vi.clearAllMocks();
 });

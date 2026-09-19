@@ -13,6 +13,7 @@ import { routes } from '../../lib/routing/routes';
 import { runApi } from '../runs/runApi';
 import useProjectState from '../runs/useProjectState';
 import { reviewApi } from './reviewApi';
+import useReviewArtifactDraft from './useReviewArtifactDraft';
 
 function reviewTone(review) {
   if (review.is_actionable) return 'warning';
@@ -160,10 +161,9 @@ function TakeoverRecovery({ busy, error, onRecover, review, t }) {
   );
 }
 
-function ArtifactPanel({ onChange, review, t, value }) {
+function ArtifactPanel({ baseline, canEdit, onChange, review, t, value }) {
   const isBrief = review.approval === 'takeover';
   const [view, setView] = useState('preview');
-  const baseline = typeof review.content === 'string' ? review.content : '';
   return (
     <article className="review-artifact">
       <header className="review-artifact__header">
@@ -173,8 +173,8 @@ function ArtifactPanel({ onChange, review, t, value }) {
         </div>
         <div className="review-view-switcher" aria-label={t('review.artifact.view')}>
           <button type="button" aria-pressed={view === 'preview'} className={view === 'preview' ? 'is-active' : ''} onClick={() => setView('preview')}><FileText aria-hidden="true" size={15} />{t(isBrief ? 'review.artifact.read' : 'review.artifact.preview')}</button>
-          <button type="button" aria-pressed={view === 'edit'} className={view === 'edit' ? 'is-active' : ''} onClick={() => setView('edit')}><PencilLine aria-hidden="true" size={15} />{t('review.artifact.edit')}</button>
-          <button type="button" aria-pressed={view === 'diff'} className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}><FileDiff aria-hidden="true" size={15} />{t('review.artifact.diff')}</button>
+          <button type="button" disabled={!canEdit} aria-pressed={view === 'edit'} className={view === 'edit' ? 'is-active' : ''} onClick={() => setView('edit')}><PencilLine aria-hidden="true" size={15} />{t('review.artifact.edit')}</button>
+          <button type="button" disabled={!canEdit} aria-pressed={view === 'diff'} className={view === 'diff' ? 'is-active' : ''} onClick={() => setView('diff')}><FileDiff aria-hidden="true" size={15} />{t('review.artifact.diff')}</button>
         </div>
       </header>
       <MarkdownToc content={value} t={t} />
@@ -212,7 +212,7 @@ function DecisionResult({ decisionNote, projectKey, t }) {
   );
 }
 
-function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onRequestChanges, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
+function Inspector({ answers, approveDisabled, artifactConflict, artifactReady, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onReloadArtifact, onRequestChanges, onRetryError, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
   const evidence = asObject(review.evidence_snapshot);
   const provenance = asObject(review.reviewer_provenance);
   const recommendation = asObject(review.recommendation);
@@ -233,12 +233,14 @@ function Inspector({ answers, busy, decisionNote, error, onAccept, onAnswer, onD
         const text = typeof question === 'string' ? question : question.question || question.text;
         return <label key={text}><span>{text}</span><textarea rows="2" value={answers[text] || ''} onChange={(event) => setAnswers((current) => ({ ...current, [text]: event.target.value }))} /></label>;
       })}<Button busy={busy === 'answer'} disabled={!Object.values(answers).some((value) => value.trim())} onClick={() => onAnswer(Object.entries(answers).filter(([, value]) => value.trim()).map(([question, answer]) => ({ question, answer })))}>{t('review.questions.apply')}</Button>{submittedCount ? <p className="review-questions-submitted" role="status">{t('review.questions.submitted', { count: submittedCount, plural: submittedCount === 1 ? '' : 's' })}</p> : null}</div></details> : null}
-      {review.artifact_path ? <div className="review-editor-actions"><Button variant="secondary" busy={busy === 'save'} onClick={onSave}>{t('review.actions.save')}</Button><Button variant="secondary" busy={busy === 'refine'} onClick={onRefine}>{t('review.actions.refine')}</Button></div> : <p className="product-boundary-note">{t('review.artifact.notGenerated')}</p>}
+      {artifactConflict ? <div className="review-artifact-conflict" role="status"><p>{t('projects.errors.stale_approval')}</p><Button variant="secondary" onClick={onReloadArtifact}>{t('product.actions.reload')}</Button></div> : null}
+      {review.artifact_path ? <div className="review-editor-actions"><Button variant="secondary" busy={busy === 'save'} disabled={!artifactReady} onClick={onSave}>{t('review.actions.save')}</Button><Button variant="secondary" busy={busy === 'refine'} disabled={!artifactReady} onClick={onRefine}>{t('review.actions.refine')}</Button></div> : <p className="product-boundary-note">{t('review.artifact.notGenerated')}</p>}
       {proposed ? <section className="review-proposal"><h3>{t('review.refinement.title')}</h3><div className="review-proposal-content"><MarkdownView content={proposed.content} /></div><div className="review-editor-actions"><Button busy={busy === 'accept'} onClick={onAccept}>{t('review.refinement.accept')}</Button><Button variant="secondary" busy={busy === 'discard'} onClick={onDiscard}>{t('review.refinement.discard')}</Button></div></section> : null}
-      {error ? <ProductError error={error} t={t} /> : null}
+      {error ? <ProductError error={error} onRetry={onRetryError} t={t} /> : null}
       <DecisionResult decisionNote={decisionNote} projectKey={projectKey} t={t} />
       {review.is_actionable ? (
         <DecisionActions
+          approveDisabled={approveDisabled}
           busy={busy}
           onDecision={onDecision}
           onRequestChanges={onRequestChanges}
@@ -272,15 +274,16 @@ export default function ReviewPage() {
   const navigate = useNavigate();
   const api = useMemo(() => ({ getProjectState: reviewApi.getReviewState }), []);
   const { data, error, refresh, status } = useProjectState(projectKey, { api });
+  const runId = data?.state?.run_id || data?.active_run?.run_id || data?.team_workspace?.mission?.run_id || '';
   const reviews = (data?.approval_reviews || [])
     .filter((review) => review.is_actionable || review.artifact_path || review.content || !review.is_pending)
     .sort((left, right) => reviewPriority(left) - reviewPriority(right));
   const selected = reviews.find((item) => item.approval === reviewId)
     || reviews.find((item) => item.is_actionable)
     || reviews[0];
-  const [content, setContent] = useState('');
-  const [loadedArtifactVersion, setLoadedArtifactVersion] = useState('');
-  const [baseline, setBaseline] = useState('');
+  const artifactRunId = runId || selected?.run_id || '';
+  const artifactDraft = useReviewArtifactDraft(projectKey, artifactRunId, selected);
+  const { content, baseline, artifactVersion, full: artifactFull, identity: artifactIdentity } = artifactDraft;
   const [answers, setAnswers] = useState({});
   const [busy, setBusy] = useState('');
   const [mutationError, setMutationError] = useState(null);
@@ -289,6 +292,13 @@ export default function ReviewPage() {
   const [decisionNote, setDecisionNote] = useState(null);
   const [submittedCount, setSubmittedCount] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const approveDisabled = Boolean(busy)
+    || !artifactFull
+    || !artifactVersion
+    || !artifactDraft.runId
+    || artifactDraft.conflict
+    || artifactDraft.pendingReadback
+    || content !== baseline;
 
   const dirty = content !== baseline
     || Object.values(answers).some((value) => String(value || '').trim())
@@ -326,29 +336,6 @@ export default function ReviewPage() {
   }, [navigate, projectKey, reviewId, selected?.approval]);
 
   useEffect(() => {
-    if (!selected) { queueMicrotask(() => { setContent(''); setBaseline(''); }); return undefined; }
-    if (selected.recovery?.available) { queueMicrotask(() => { setContent(''); setBaseline(''); }); return undefined; }
-    if (typeof selected.content === 'string' && !selected.content_truncated) {
-      queueMicrotask(() => { setContent(selected.content); setBaseline(selected.content); });
-      return undefined;
-    }
-    if (!selected.artifact) return undefined;
-    const controller = new AbortController();
-    reviewApi.getArtifact(projectKey, selected.artifact, { signal: controller.signal })
-      .then((payload) => {
-        if (controller.signal.aborted) return;
-        if (selected.content_truncated && (payload.artifact_version !== selected.artifact_version || payload.run_id !== data?.state?.run_id)) {
-          setMutationError(new Error('The artifact changed. Reload before reviewing or editing.'));
-          return;
-        }
-        setContent(payload.content || ''); setBaseline(payload.content || '');
-        setLoadedArtifactVersion(`${projectKey}:${selected.approval}:${selected.artifact_version}`);
-      })
-      .catch((caught) => { if (caught.name !== 'AbortError') setMutationError(caught); });
-    return () => controller.abort();
-  }, [projectKey, selected, data?.state?.run_id]);
-
-  useEffect(() => {
     if (selected?.recovery?.available) { queueMicrotask(() => setQuestions([])); return undefined; }
     if (!selected?.artifact || !selected?.artifact_path) { queueMicrotask(() => setQuestions([])); return undefined; }
     const controller = new AbortController();
@@ -376,7 +363,13 @@ export default function ReviewPage() {
     }
   };
   const refine = async () => {
-    const result = await mutate('refine', () => reviewApi.refineArtifact(projectKey, selected.artifact, content));
+    if (!artifactFull || !artifactVersion || !artifactRunId) return;
+    const result = await mutate('refine', () => reviewApi.refineArtifact(
+      projectKey,
+      selected.artifact,
+      content,
+      { expectedArtifact: { runId: artifactRunId, artifactVersion } },
+    ));
     if (result?.proposed_path) {
       const artifact = await reviewApi.getArtifact(projectKey, result.proposed_path);
       setProposed({ ...result, content: artifact.content || '' });
@@ -397,24 +390,56 @@ export default function ReviewPage() {
     await loadProposal(result);
   };
   const accept = async () => {
+    if (!artifactFull) return;
+    const identity = artifactIdentity;
+    const originalContent = content;
+    const acceptedContent = proposed?.content || '';
     const result = await mutate('accept', () => reviewApi.acceptRefinement(projectKey, selected.artifact));
-    if (result) { setContent(proposed.content); setBaseline(proposed.content); setProposed(null); }
+    if (result) {
+      artifactDraft.beginSavedReadback(acceptedContent, identity, originalContent);
+      try {
+        const latest = await reviewApi.getArtifact(projectKey, selected.artifact);
+        artifactDraft.acceptSavedArtifact(latest, acceptedContent, identity, originalContent);
+        setProposed(null);
+      } catch (caught) {
+        artifactDraft.setError(caught);
+      }
+    }
   };
   const discard = async () => {
     const result = await mutate('discard', () => reviewApi.discardRefinement(projectKey, selected.artifact));
     if (result) setProposed(null);
   };
   const save = async () => {
-    const result = await mutate('save', () => reviewApi.saveArtifact(projectKey, selected.artifact, content));
-    if (result) setBaseline(content);
+    if (!artifactFull || !artifactVersion || !artifactRunId) return;
+    const identity = artifactIdentity;
+    const submittedContent = content;
+    const result = await mutate('save', async () => {
+      await reviewApi.saveArtifact(
+        projectKey,
+        selected.artifact,
+        submittedContent,
+        { expectedArtifact: { runId: artifactRunId, artifactVersion } },
+      );
+      return true;
+    });
+    if (!result) return;
+    artifactDraft.beginSavedReadback(submittedContent, identity, submittedContent);
+    try {
+      const latest = await reviewApi.getArtifact(projectKey, selected.artifact);
+      artifactDraft.acceptSavedArtifact(latest, submittedContent, identity);
+    } catch (caught) {
+      artifactDraft.setError(caught);
+    }
   };
   const decide = async (decision, note) => {
+    if (decision === 'approved' && approveDisabled) return;
     const expectedApproval = {
-      run_id: data?.state?.run_id || '',
+      run_id: artifactDraft.runId || '',
       target_type: 'review',
       target_id: selected.approval || '',
       artifact_key: selected.artifact || '',
-      artifact_version: selected.artifact_version || '',
+      artifact_version: artifactDraft.artifactVersion || '',
     };
     const result = await mutate(decision, () => (
       decision === 'approved'
@@ -448,11 +473,9 @@ export default function ReviewPage() {
     navigate(runId ? routes.projectRun(projectKey, runId) : routes.projectWork(projectKey));
   };
 
-  if (selected?.content_truncated && loadedArtifactVersion !== `${projectKey}:${selected.approval}:${selected.artifact_version}`) {
-    return <main id="main-content" className="product-page">{mutationError ? <ProductError error={mutationError} onRetry={() => refresh()} t={t} /> : <div className="product-workspace-skeleton" role="status"><span /><span /><span /></div>}</main>;
-  }
   if (status === 'loading') return <main id="main-content" className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></main>;
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
+  const displayedError = mutationError || artifactDraft.error;
   const steps = data?.workflow_steps || [];
   const stepIndex = steps.findIndex((step) => step.approval === selected?.approval);
   const actionableCount = reviews.filter((review) => review.is_actionable || review.recovery?.available).length;
@@ -476,11 +499,15 @@ export default function ReviewPage() {
           {selected.recovery?.available ? <TakeoverRecovery key={selected.approval} busy={busy} error={mutationError} review={selected} t={t}
             onRecover={(note) => mutate('recover', () => reviewApi.recoverTakeoverBrief(projectKey, note))}
           /> : <>
-            <ArtifactPanel key={selected.approval} review={{ ...selected, content: baseline }} value={content} onChange={setContent} t={t} />
-            <Inspector answers={answers} busy={busy} decisionNote={decisionNote} error={mutationError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} submittedCount={submittedCount} t={t}
+            <ArtifactPanel key={`${projectKey}:${runId}:${selected.approval}`} baseline={baseline} canEdit={artifactFull} review={selected} value={content} onChange={artifactDraft.setContent} t={t} />
+            <Inspector answers={answers} approveDisabled={approveDisabled} artifactConflict={artifactDraft.conflict} artifactReady={artifactFull && Boolean(artifactVersion && artifactRunId)} busy={busy} decisionNote={decisionNote} error={displayedError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} submittedCount={submittedCount} t={t}
               projectKey={projectKey}
               onSave={save}
               onRefine={refine}
+              onReloadArtifact={artifactDraft.reload}
+              onRetryError={() => (
+                artifactDraft.error ? artifactDraft.retryFullRead() : refresh()
+              )}
               onAnswer={answer}
               onAccept={accept}
               onDiscard={discard}
