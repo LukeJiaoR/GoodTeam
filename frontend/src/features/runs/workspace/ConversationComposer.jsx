@@ -3,10 +3,13 @@ import Button from '../../../components/ui/Button';
 import ProductError from '../../../components/ui/ProductError';
 import { isChangeDiscussion, sendConversationInput } from './conversationRouting';
 import { shouldSubmitConversationOnEnter } from './conversationFeedback';
+import ConversationChangeContext from './ConversationChangeContext';
+import { matchesSavedChange } from './conversationChangeContext';
 
 export default function ConversationComposer({
   busy, embedded = true, error, onStart, suggestions = [], t,
   changeIntent, onDiscussChangeIntent, onKeepDiscussingChangeIntent,
+  activeTask = false, changeTarget = null, recordedChange, onStartChangeIntent,
 }) {
   const [drafts, setDrafts] = useState({});
   const [modes, setModes] = useState({});
@@ -56,8 +59,35 @@ export default function ConversationComposer({
     }
   };
 
+  const beginChange = async () => {
+    if (blocked || submitting.current || !changeTarget || changeIntent || !onStartChangeIntent) return;
+    submitting.current = true;
+    setSending(true);
+    setSubmitError(null);
+    const sent = goal;
+    try {
+      // Creating a draft does not interpret, confirm, approve, retry or dispatch.
+      const result = await onStartChangeIntent(changeTarget.approval, changeTarget, sent);
+      if (result === false) return;
+      if (!matchesSavedChange(result, changeTarget, sent)) {
+        throw new Error(t('work.changeContext.unconfirmed'));
+      }
+      setModes((current) => ({ ...current, [result.intent_commit.id]: 'changes' }));
+      setDrafts((current) => (current[scopeKey] ?? seed) === sent
+        ? { ...current, [scopeKey]: '' } : current);
+    } catch (caught) {
+      // An uncertain response is not permission to retry automatically or lose text.
+      setSubmitError(caught);
+    } finally {
+      submitting.current = false;
+      setSending(false);
+    }
+  };
+
   return (
     <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
+      <ConversationChangeContext active={activeTask} intent={changeIntent} target={changeTarget}
+        recordedChange={recordedChange} busy={blocked} onBegin={beginChange} t={t} />
       {editableIntent ? (
         <div className="team-manager-suggestions" aria-label={t('work.manager.intent.question')}>
           <button type="button" aria-pressed={!changing} onClick={() => setModes((current) => ({ ...current, [changeIntent.id]: 'message' }))}>

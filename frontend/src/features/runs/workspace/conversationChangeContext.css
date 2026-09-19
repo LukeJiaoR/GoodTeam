@@ -1,0 +1,12 @@
+.team-change-context {
+  border-inline-start: 3px solid var(--work-border);
+  padding: .45rem .7rem;
+  color: var(--work-text);
+  font-size: .78rem;
+  line-height: 1.45;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.team-change-context p { margin: .2rem 0; }
+.team-change-context small { color: var(--work-text-muted); }
+.team-change-context button { margin-top: .4rem; white-space: normal; }
