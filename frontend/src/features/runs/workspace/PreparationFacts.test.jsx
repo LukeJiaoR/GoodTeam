@@ -14,3 +14,18 @@ describe('Preparation confirmation facts', () => {
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
   });
 });
+
+it('shows the exact preflight message, with an honest fallback for malformed input', () => {
+  const view = render(<PreparationFacts requirements={{ kind: 'worker_preflight_confirmation', message: 'Codex is not authenticated.' }} t={t} />);
+  expect(screen.getByRole('status')).toHaveTextContent('Codex is not authenticated.');
+  view.rerender(<PreparationFacts requirements={{ kind: 'worker_preflight_confirmation', message: {} }} t={t} />);
+  expect(screen.getByRole('status')).toHaveTextContent('work.taskAssistant.unknownPreflight');
+});
+
+it('handles absent requirements and ignores non-text constraint entries', () => {
+  const view = render(<PreparationFacts requirements={null} t={t} />);
+  expect(screen.queryByRole('list')).not.toBeInTheDocument();
+  view.rerender(<PreparationFacts requirements={{ kind: 'constraint_confirmation', constraints: [null, {}, '', 'AGENTS.md: Keep the schema.'] }} t={t} />);
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+  expect(screen.getByRole('listitem').textContent).toBe('AGENTS.md: Keep the schema.');
+});

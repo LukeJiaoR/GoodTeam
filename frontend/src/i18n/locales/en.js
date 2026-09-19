@@ -1,4 +1,6 @@
 export const en = {
+  'work.deliverySummary.readMismatch': 'This report does not match the selected project, task or version. Reload Work before opening it again.',
+  'work.deliverySummary.loading': 'Loading the selected report…',
   'work.deliverySummary.title': 'Delivery reports',
   'work.deliverySummary.unverified': 'Reports and process results are not proof that this code version passed verification or acceptance.',
   'work.deliverySummary.simulated': 'Simulated Worker output is included. This is not real-delivery evidence.',

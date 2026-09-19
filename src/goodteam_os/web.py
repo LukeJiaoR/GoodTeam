@@ -742,14 +742,18 @@ def build_approval_recommendation(
         if release_stage and unknown_count:
             reasons.append({"kind": "missing_evidence", "text": "Release-stage gate has unknown CI, smoke, or QA evidence."})
 
-        provenance = review_dict.get("reviewer_provenance", {})
-        badge = provenance.get("badge", {}) if isinstance(provenance, dict) else {}
-        evidence_policy = review_dict.get("review_evidence_policy", {})
-        unproven_policy = isinstance(evidence_policy, dict) and evidence_policy.get("state") in {
-            "missing_evidence", "fallback_evidence", "non_provider_evidence", "failed_invocation",
-        }
-        if unproven_policy or (isinstance(badge, dict) and badge.get("kind") in {"missing", "builtin", "failed", "fallback"}):
-            reasons.append({"kind": "missing_evidence", "text": "Reviewer evidence is missing, simulated or unsuccessful. Human review is required."})
+        if "reviewer_provenance" in review_dict or "review_evidence_policy" in review_dict:
+            provenance = review_dict.get("reviewer_provenance")
+            provenance = provenance if isinstance(provenance, dict) else {}
+            derived_policy = evaluate_review_evidence_policy(provenance, gate=approval)
+            policy = review_dict.get("review_evidence_policy")
+            policy_state = policy.get("state") if isinstance(policy, dict) else None
+            unproven_policy = (
+                derived_policy["state"] != "ok"
+                or ("review_evidence_policy" in review_dict and policy_state != "ok")
+            )
+            if unproven_policy:
+                reasons.append({"kind": "missing_evidence", "text": "Reviewer evidence is missing, simulated or unsuccessful. Human review is required."})
 
         messages = {}
         raw_messages = {}

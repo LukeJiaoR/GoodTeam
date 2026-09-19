@@ -1,4 +1,6 @@
 export const zhCN = {
+  'work.deliverySummary.readMismatch': '报告与当前项目、任务或版本不一致。请刷新工作区后重新打开。',
+  'work.deliverySummary.loading': '正在读取所选报告…',
   'work.deliverySummary.title': '交付报告',
   'work.deliverySummary.unverified': '报告和进程结果不代表当前代码版本已通过验证或验收。',
   'work.deliverySummary.simulated': '包含模拟 Worker 产出，不能作为真实交付证据。',
