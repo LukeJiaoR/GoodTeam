@@ -1,0 +1,57 @@
+name: Prepare isolated task-draft assertion fix
+on:
+  push:
+    branches: [codex/work-context-417-test-fix]
+    paths: ['.github/workflows/gt417-test-scope.yml']
+permissions:
+  contents: write
+jobs:
+  prepare:
+    if: github.repository == 'LukeJiaoR/GoodTeam' && github.ref == 'refs/heads/codex/work-context-417-test-fix'
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Scope assertion to the exact proposal and retain authorization checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          base = 'e525a3d3e27ce33631ee942f43c2c8bf476b2ed0'
+          branch = 'refs/heads/codex/work-context-417-test-fix'
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          def run(*args):
+              subprocess.run(['git', *args], check=True)
+          head = os.environ['GITHUB_SHA']
+          if git('rev-parse', 'HEAD') != head or git('rev-parse', 'HEAD^') != base or os.environ['GITHUB_REF'] != branch:
+              raise SystemExit('Unexpected checkout')
+          if git('status', '--porcelain'):
+              raise SystemExit('Dirty checkout')
+          p = pathlib.Path('frontend/src/features/runs/WorkPage.test.jsx')
+          if git('hash-object', str(p)) != '35229c13d5578fac87f0b1a7cdf980f5eb963620':
+              raise SystemExit('Unexpected source version')
+          old = "  expect(screen.getByText('Fix login and add a regression test')).toBeVisible();"
+          new = "  expect(within(screen.getByRole('region', { name: 'Proposed task' })).getByText('Fix login and add a regression test')).toBeVisible();\n  const context = screen.getByRole('region', { name: 'Current task and next step' });\n  expect(within(context).getByText('Fix login and add a regression test')).toBeVisible();\n  await userEvent.click(within(context).getByRole('button', { name: 'Review task draft' }));"
+          source = p.read_text()
+          if source.count(old) != 1 or 'within' not in source.splitlines()[0]:
+              raise SystemExit('Assertion or import mismatch')
+          p.write_text(source.replace(old, new))
+          run('add', '--', str(p))
+          run('rm', '--', '.github/workflows/gt417-test-scope.yml')
+          if git('diff', '--cached', '--name-only', base) != str(p):
+              raise SystemExit('Unexpected final files')
+          run('diff', '--cached', '--check')
+          run('config', 'user.name', 'GoodTeam implementation')
+          run('config', 'user.email', 'noreply@users.noreply.github.com')
+          run('commit', '-m', 'test(work): bind confirmation assertion to the exact task draft', '-m', 'Preserve the exact proposal/revision and zero-before-confirmation checks. Also assert the persistent title and that locating the draft does not start it. Fix the duplicate-text locator exposed by CI #903; no production or gate changes.')
+          if git('ls-remote', '--exit-code', 'origin', branch).split()[0] != head:
+              raise SystemExit('Branch moved')
+          run('push', 'origin', 'HEAD:' + branch)
+          print('PRODUCT_HEAD=' + git('rev-parse', 'HEAD'))
+          print('PRODUCT_TREE=' + git('rev-parse', 'HEAD^{tree}'))
+          print('TEST_BLOB=' + git('hash-object', str(p)))
+          PY
