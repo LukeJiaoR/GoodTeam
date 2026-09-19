@@ -100,16 +100,18 @@ class ReviewWorkbenchService:
         if replay["run"] is None and not replay["events"]:
             raise ValueError(f"Execution not found: {execution_id}")
 
+        evidence = self.evidence_service.get_evidence(execution_id)
+        decision_evidence_hash = _decision_evidence_hash(evidence)
         existing = matching_decision_event(
             replay["events"],
             decision=normalized_decision,
             reviewer=normalized_reviewer,
             reason=normalized_reason,
+            decision_evidence_hash=decision_evidence_hash,
         )
         if existing is not None:
             return {"status": "deduped", "event": json_ready(existing)}
 
-        evidence = self.evidence_service.get_evidence(execution_id)
         event = self._decision_event(
             execution_id,
             task_id=str(evidence.get("task_id") or execution_id),
@@ -189,8 +191,33 @@ def _decision_payload(
         "evidence_ref": f"evidence/{execution_id}.json",
         "evidence_schema_version": str(evidence.get("schema_version", "")),
         "evidence_hash": stable_hash(evidence),
+        "decision_evidence_hash": _decision_evidence_hash(evidence),
         "reviewed_at": reviewed_at,
     }
+
+
+def _decision_evidence_hash(evidence: dict[str, Any]) -> str:
+    stable_evidence = dict(evidence)
+    stable_evidence.pop("execution_replay_graph", None)
+    events = stable_evidence.get("ledger_events")
+    if isinstance(events, list):
+        stable_evidence["ledger_events"] = [
+            event
+            for event in events
+            if not _is_workbench_decision_event(event)
+        ]
+    return stable_hash(stable_evidence)
+
+
+def _is_workbench_decision_event(event: Any) -> bool:
+    if not isinstance(event, dict):
+        return False
+    payload = event.get("payload")
+    return (
+        isinstance(payload, dict)
+        and payload.get("transition") == REVIEW_DECISION_TRANSITION
+        and payload.get("source") == "review_workbench"
+    )
 
 
 def _decision_event_id(execution_id: str, event_number: int) -> str:

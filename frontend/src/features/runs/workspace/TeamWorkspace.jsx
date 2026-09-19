@@ -20,6 +20,8 @@ import {
 } from './presentationUtils';
 import WorkTaskDetailDialog from './WorkTaskDetailDialog';
 import AssistantControls from './AssistantControls';
+import ManagerMissionEntry from './ConversationComposer';
+import { conversationTimeline, deliveryLabel } from './conversationFeedback';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 import PreparationFacts from './PreparationFacts';
 import DeliverySummary from './DeliverySummary';
@@ -108,47 +110,6 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 }
 
 
-function ManagerMissionEntry({ busy, embedded = true, error, onStart, suggestions = [], t }) {
-  const [goal, setGoal] = useState('');
-  const submit = async (event) => {
-    event.preventDefault();
-    if (busy || !goal.trim()) return;
-    const sent = goal;
-    const result = await onStart(sent);
-    if (result !== false) setGoal((current) => current === sent ? '' : current);
-  };
-  return (
-    <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
-      {suggestions.length ? (
-        <div className="team-manager-suggestions" aria-label={t('work.taskAssistant.suggestions')}>
-          {suggestions.map((suggestion) => (
-            <button
-              key={suggestion.id}
-              onClick={() => setGoal(t(`work.taskAssistant.suggestionDrafts.${suggestion.id}`))}
-              type="button"
-            >
-              {t(`work.taskAssistant.suggestionLabels.${suggestion.id}`)}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <label>
-        <span className="sr-only">{t('work.taskAssistant.message')}</span>
-        <textarea
-          placeholder={t('work.taskAssistant.placeholder')}
-          rows="3"
-          required
-          value={goal}
-          onChange={(event) => setGoal(event.target.value)}
-        />
-      </label>
-      {error ? <ProductError error={error} t={t} /> : null}
-      <Button busy={busy} disabled={!goal.trim()} type="submit">{t('work.taskAssistant.send')}</Button>
-    </form>
-  );
-}
-
-
 const SYSTEM_TIMELINE_EVENTS = new Set([
   'deliverable_ready',
   'verification_updated',
@@ -198,15 +159,16 @@ function TimelineItem({ item, language, t }) {
   }
 
   return (
-    <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind}>
+    <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind} data-delivery={item.delivery_status}>
       <TeamAvatar label={actorLabel} manager={item.actor !== 'user'} />
       <div className="team-manager-event__bubble">
         <div className="team-manager-event__meta">
           <strong>{actorLabel}</strong>
+          {item.delivery_status ? <span role="status">{deliveryLabel(language, item.delivery_status)}</span> : null}
           {formatted ? <time dateTime={itemTimestamp}>{formatted}</time> : null}
         </div>
         <p>{copy}</p>
-        {item.content && !['mission_requested', 'team_decision_proposed', 'task_proposed'].includes(item.event) && copy !== item.content ? (
+        {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
           <blockquote>{item.content}</blockquote>
         ) : null}
       </div>
@@ -219,7 +181,6 @@ function ManagerAttention({
   busy,
   onConfirmChangeIntent,
   onDecide,
-  onDiscussChangeIntent,
   onKeepDiscussingChangeIntent,
   onReview,
   onRetry,
@@ -228,11 +189,6 @@ function ManagerAttention({
   t,
 }) {
   const intent = attention?.intent_commit || null;
-  const [note, setNote] = useState(intent?.draft_text || '');
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- durable intent state replaces any draft from the prior authoritative projection.
-    setNote(intent?.draft_text || '');
-  }, [intent?.draft_text, intent?.id]);
   if (!attention) return null;
   const actions = new Set(attention.actions || []);
   const gate = attention.target_id || '';
@@ -247,13 +203,6 @@ function ManagerAttention({
         decisionNote,
         decision === 'approved' ? approvalBrief?.approval_target : null,
       ))
-      .catch(() => {});
-  };
-  const submitChanges = (event) => {
-    event.preventDefault();
-    if (!intent?.id || !note.trim()) return;
-    Promise.resolve()
-      .then(() => onDiscussChangeIntent?.(intent.id, note))
       .catch(() => {});
   };
   const startChangeDiscussion = () => Promise.resolve()
@@ -315,21 +264,7 @@ function ManagerAttention({
             <StatusBadge tone="pending">{t('work.manager.intent.discussing')}</StatusBadge>
           </div>
           {!intent.draft_text ? <p>{t('work.manager.intent.restate')}</p> : null}
-          <form className="team-attention__form" onSubmit={submitChanges}>
-            <label>
-              <span>{t('work.manager.changeReason')}</span>
-              <textarea required rows="4" value={note} onChange={(event) => setNote(event.target.value)} />
-            </label>
-            <div>
-              <Button
-                busy={busy === 'intent-discuss'}
-                disabled={!note.trim()}
-                type="submit"
-              >
-                {t('work.manager.intent.reviewInterpretation')}
-              </Button>
-            </div>
-          </form>
+          {intent.draft_text ? <blockquote>{intent.draft_text}</blockquote> : null}
         </div>
       ) : null}
       {intent?.status === 'ready_to_confirm' ? (
@@ -526,10 +461,12 @@ function ManagerPane({
       ? statusText(mission.status, t)
       : t('work.manager.ready');
   const timelineHasMissionRequest = (timeline || []).some((item) => item.event === 'mission_requested');
+  const deliveryKey = (timeline || []).find((item) => item.delivery_status === 'sending')?.id || '';
   const conversationRef = useRef(null);
   const wasNearBottomRef = useRef(true);
   const prevAttentionKeyRef = useRef(null);
   const prevTimelineLengthRef = useRef(0);
+  const prevDeliveryKeyRef = useRef('');
 
   const attentionKey = `${attention?.id || ''}:${attention?.intent_commit?.status || ''}`;
 
@@ -539,17 +476,19 @@ function ManagerPane({
 
     const attentionChanged = prevAttentionKeyRef.current !== attentionKey;
     const timelineChanged = prevTimelineLengthRef.current !== (timeline?.length || 0);
+    const deliveryChanged = prevDeliveryKeyRef.current !== deliveryKey;
+    prevDeliveryKeyRef.current = deliveryKey;
 
     prevAttentionKeyRef.current = attentionKey;
     prevTimelineLengthRef.current = timeline?.length || 0;
 
-    if (attention && attentionChanged) {
+    if ((attention && attentionChanged) || (deliveryKey && deliveryChanged)) {
       node.scrollTop = node.scrollHeight;
       wasNearBottomRef.current = true;
     } else if (timelineChanged && wasNearBottomRef.current) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [attention, attentionKey, timeline?.length]);
+  }, [attention, attentionKey, deliveryKey, timeline?.length]);
 
   useEffect(() => {
     const node = conversationRef.current;
@@ -626,7 +565,6 @@ function ManagerPane({
               key={`${attention?.id || 'none'}:${attention?.intent_commit?.id || 'direct'}:${attention?.intent_commit?.status || 'idle'}`}
               onConfirmChangeIntent={onConfirmChangeIntent}
               onDecide={onDecide}
-              onDiscussChangeIntent={onDiscussChangeIntent}
               onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
               onReview={onReview}
               onRetry={onRetry}
@@ -639,8 +577,12 @@ function ManagerPane({
       {!mission?.read_only ? (
         <footer className="team-manager-dock">
           <ManagerMissionEntry
-            busy={Boolean(busy || proposedTask?.pending_change) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
+            key={projectKey}
+            busy={Boolean(busy) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
             onStart={onStart}
+            changeIntent={attention?.intent_commit}
+            onDiscussChangeIntent={onDiscussChangeIntent}
+            onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
             suggestions={suggestions}
             t={t}
           />
@@ -861,6 +803,7 @@ function AdvancedInspector({
 }
 
 function TeamWorkspace({
+  conversationDelivery = null,
   onAssistantAction,
   busy,
   data,
@@ -1056,7 +999,9 @@ function TeamWorkspace({
           onTerminate={onTerminate}
           projectKey={projectKey}
           sectionProps={sectionProps('manager')}
-          timeline={workspace.manager_timeline || []}
+          timeline={conversationTimeline(workspace.manager_timeline || [], conversationDelivery, {
+            projectKey, runId: data.state?.run_id || '', readOnly,
+          })}
           t={t}
           suggestions={workspace.suggestions || []}
           proposedTask={workspace.proposed_task || null}

@@ -74,7 +74,8 @@ def test_confirmed_request_is_not_replaced_by_later_message(tmp_path):
     before = store.read()["proposed_task"]
     result = send(service, root, "Also add authentication.", "m2")
     assert before == result["proposed_task"]
-    assert "task_draft_locked" == result["timeline"][-1]["event"]
+    assert "conversation_replied" == result["timeline"][-1]["event"]
+    assert result["timeline"][-1]["details"]["actions_applied"] is False
 
 
 @pytest.mark.parametrize("text", [

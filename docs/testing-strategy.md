@@ -238,9 +238,11 @@ The automated contract is:
 - Tier 2 ordinary application contracts run maintained contract test groups.
 - Tier 3 control-plane, security, dependency, build, and CI-authority changes run
   the applicable full backend and/or frontend checks.
-- Tier 4 live and browser-visible changes run the applicable Tier 3 automation
-  and require isolated live smoke evidence in the PR. GitHub-hosted runners do
-  not start a live GoodTeam environment.
+- Every change affecting either stack also runs the `browser` job on the guarded
+  `goodteam-ci` runner. It builds the frontend and runs the real HTTP/browser
+  acceptance suite twice against a fresh temporary workspace with fake Workers.
+  Tier 4 changes require reviewing this evidence and any additional smoke needed
+  for adapters outside that suite.
 
 Unknown paths, empty diffs, unsafe test target names, and ambiguous ownership
 fail closed to Tier 3 full backend and frontend verification. Changes to the
@@ -248,9 +250,11 @@ classifier or workflow also run both full stacks.
 
 `CI / gate` is the stable required status check. It succeeds only when
 classification passes, every planned job succeeds, and every skipped stack was
-explicitly classified as unaffected. A manual `workflow_dispatch` bypasses
-changed-file selection and always runs full backend and frontend verification.
+explicitly classified as unaffected. Browser acceptance may be skipped only
+when both stacks are unaffected. A manual `workflow_dispatch` bypasses
+changed-file selection and always runs full backend, frontend, and browser verification.
 
+The workflow also covers stacked pull requests targeting another feature branch.
 The workflow runs before merge on pull requests and does not rerun after merge
 to `main`. This is safe only while the repository ruleset requires pull requests
 for `main` and requires `CI / gate`; the workflow and required check must exist
@@ -268,3 +272,70 @@ Do not delete tests as part of applying this policy. First collect evidence:
 
 A future cleanup PR should name the contract that remains protected after any
 removal or consolidation.
+
+## Business-loop Browser Acceptance
+
+`frontend/e2e/business-loop.spec.js` exercises project import, task drafting,
+existing-project detection, explicit task confirmation, command and constraint preparation, and
+fake Worker execution. It approves takeover/PRD/RFC, requests changes at the security
+gate, confirms the change discussion, reapproves RFC/security/release, completes
+the run, and submits and starts a second task in the same project.
+
+Assertions compare the UI and real API with persisted current state, approval
+operation IDs, proposal history, and the archived first run. The old run must
+remain read-only after the second task starts. Existing navigation/import tests
+use independent projects and no longer depend on test ordering. No business API
+is mocked. Each CI invocation uses a unique temporary directory and loopback
+port; the server refuses reuse and cleans only its owned directory on shutdown.
+
+The runner must provide the Chromium system libraries. CI downloads the pinned
+Playwright browser into the runner user cache with `npx playwright install chromium`;
+it does not require sudo or change system packages. Missing libraries fail the job.
+
+On the single runner, browser acceptance precedes backend/frontend jobs so
+setup or workflow failures surface first. The final gate still requires every
+planned stack to pass. CI runs `npm run test:e2e -- --repeat-each=2` with retries disabled. The
+`browser-acceptance-<run>-<attempt>` artifact contains the HTML/JSON report,
+business-state/ledger snapshots, and screenshots/traces on failure. This is
+evidence for the built-in fake workflow; it does not verify real model output,
+deployment, GitHub or Telegram adapters. Staging deployment is disabled in the
+fixture's default configuration.
+
+For the initial implementation, the user explicitly prohibited all local tests,
+builds and smoke runs. Only static source review and `git diff --check` were
+performed locally; CI is the execution owner. Review the CI run for the exact
+PR head rather than reusing a prior PR's result.
+
+## Recovery Acceptance
+
+The browser CI job first runs `tests/test_workflow_http_recovery.py` with a
+dedicated pytest temporary root, then runs Playwright. Both must pass before
+the full backend/frontend jobs and final gate can succeed. The backend full
+suite also includes the recovery tests.
+
+| Scenario | Observed contract |
+| --- | --- |
+| Kill after decision persistence, before ledger append | Restart exposes an interrupted transition; explicit Retry publishes the original operation ID once and advances to release review. |
+| Kill after ledger append, before execution | Restart retains the original decision; GET does not dispatch work; Retry and repeated bound approval cannot add a second decision/execution. |
+| Two server processes share one workspace | A live holder prevents another process from approving or retrying; GET preserves the live transition; a repeated completed approval replays. |
+| Worker subprocess timeout | The existing timeout handler produces failed evidence and a blocked workflow; GET does not retry; explicit Retry keeps failed job evidence and the original approval. |
+| Two browser tabs approve the same evidence | Both requests reach the real API; exactly one implementation job and one security decision result; refreshed tabs cannot approve the old gate. |
+
+`tests/fixtures/workflow_recovery_server.py` hosts the real HTTP server in a
+separate process. Its fault barriers and fake-only Worker guard exist only in
+test code. All setup and workflow advancement use HTTP; tests never seed an
+approval state. Process termination targets only that fixture's child. The
+timeout uses a bounded Python sleeper through the existing Worker subprocess
+handler, with no provider/real Worker invocation. The tab test delays forwarding
+both requests until both have arrived; it never replaces an API response.
+
+Workspaces, registry and Operator state all use temporary paths. CI uploads
+`http-recovery-<run>-<attempt>` with JUnit results, server logs, current state,
+approval logs and fake Worker evidence for 14 days. Playwright retains its
+separate browser artifact with concurrency state snapshots.
+
+These cases verify the recorded interruption boundaries and explicit retry
+contract. They do not promise exactly-once external side effects after an
+arbitrary provider process crash, and do not exercise real GitHub, Telegram,
+deployment or model adapters. Local tests/builds/smoke remain unexecuted under
+the user's CI-only validation instruction.

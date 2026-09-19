@@ -1,6 +1,7 @@
 import ipaddress
 import json
 import hmac
+import hashlib
 import logging
 import os
 import re
@@ -18,6 +19,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from goodteam_os import context as project_context
+from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.debate import default_debate_dispatch, run_gate_debate
 from goodteam_os.dispatch import (
     dispatch_tracks,
@@ -39,6 +41,7 @@ from goodteam_os.graph import (
     refine_artifact,
     render_downstream_artifact_markdown,
     resolve_project_runtime_root,
+    resolve_role_adapter,
     run_architecture_until_gate,
     run_adoption_until_next_gate,
     run_fix_until_next_gate,
@@ -127,6 +130,9 @@ from goodteam_os.workflow_table import (
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
+from goodteam_os.workflow_mutations import (
+    begin_transition, finish_transition, recover_transition, replay_approval, serialized_workflow,
+)
 
 PRD_REVIEW_ROLES = [
     "Product / Requirement",
@@ -157,13 +163,14 @@ WORKER_ROLES = [
     "release",
     "retro_memory",
 ]
-WORKER_REASONING_DEPTHS = ("default", "low", "medium", "high")
+WORKER_REASONING_DEPTHS = REASONING_DEPTHS
 WORKER_ADDITIONAL_PROMPT_MAX_CHARS = 4000
 WORKER_DESIRED_INSTANCES_MAX = 8
 PRE_REVIEW_REPORT_DIR = Path("/tmp")
 DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS = 10
 SERVER_ACTION_TIMEOUT_SECONDS = 600
 FS_LIST_MAX_ENTRIES = 500
+ARTIFACT_PREVIEW_MAX_CHARS = 8000
 FS_LIST_IGNORED_NAMES = {".git", ".github", ".venv", "__pycache__", "node_modules", ".next", "dist", "build"}
 DISPATCH_TRACK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -247,6 +254,7 @@ def append_action(
     evidence_snapshot: dict[str, object] | None = None,
     reviewer_evidence_snapshot: dict[str, object] | None = None,
     review_items: list[dict[str, object]] | None = None,
+    workflow_operation_id: str = "",
 ) -> None:
     action_log = _action_log_path(workspace, project_key)
     action_log.parent.mkdir(parents=True, exist_ok=True)
@@ -264,6 +272,8 @@ def append_action(
     }
     if artifact_version:
         event["artifact_version"] = artifact_version
+    if workflow_operation_id:
+        event["workflow_operation_id"] = workflow_operation_id
     if debate_ref:
         event["debate_ref"] = debate_ref
     if note:
@@ -731,6 +741,7 @@ def build_approval_recommendation(
             reasons.append({"kind": "missing_evidence", "text": "Evidence snapshot reports blockers without blocker details."})
         if release_stage and unknown_count:
             reasons.append({"kind": "missing_evidence", "text": "Release-stage gate has unknown CI, smoke, or QA evidence."})
+
         provenance = review_dict.get("reviewer_provenance", {})
         badge = provenance.get("badge", {}) if isinstance(provenance, dict) else {}
         evidence_policy = review_dict.get("review_evidence_policy", {})
@@ -2349,6 +2360,7 @@ def build_team_events_payload(workspace: Path, project_key: str) -> dict[str, ob
 
 def build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
     from goodteam_os.delivery_outcomes import build_delivery_summary
+
     project_config = _project_config_for_key(workspace, project_key)
     start_context = build_start_console_context(workspace, project_config=project_config)
     state = resolve_dashboard_state(workspace, project_key=project_key)
@@ -3079,7 +3091,12 @@ def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]
 def resolve_dashboard_state(workspace: Path, project_key: str = "") -> AgileDevState | None:
     store = StateStore(workspace)
     if project_key:
-        return store.read_project_current(project_key)
+        state = store.read_project_current(project_key)
+        if state is not None and state.pending_transition.get("status") in {"recording", "executing"}:
+            return recover_transition(workspace, project_key)
+        if state is not None and state.next_node.startswith("revise_") and not state.blockers:
+            state.blockers = ["Changes requested; retry to apply the recorded revision."]
+        return state
     return store.read_current()
 
 
@@ -3186,7 +3203,7 @@ def _workflow_execution_plan_v2_payload() -> dict[str, object]:
 
 
 def is_active_run(state: AgileDevState | None) -> bool:
-    return state is not None and bool(state.next_node)
+    return state is not None and bool(state.next_node) and state.next_node != "rejected"
 
 
 _DASHBOARD_STEPPER_PRESENTATION: dict[str, tuple[dict[str, str], ...]] = {
@@ -3307,6 +3324,7 @@ def build_project_run_detail(
     run_id: str,
 ) -> dict[str, object]:
     from goodteam_os.delivery_outcomes import build_delivery_summary
+
     key = normalize_project_key(project_key)
     store = StateStore(workspace)
     current = store.read_project_current(key)
@@ -3385,8 +3403,9 @@ def build_project_run_detail(
         "agile_board": agile_board,
         "approval_reviews": approval_reviews,
         "team_workspace": team_workspace,
-        "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_jobs,
-                                                   historical_reason=str(summary.get("reason", ""))),
+        "delivery_summary": build_delivery_summary(
+            workspace, state=state, jobs=worker_jobs, historical_reason=str(summary.get("reason", "")),
+        ),
     }
 
 
@@ -3431,6 +3450,7 @@ def resolve_runtime_model_config(model_config: Path) -> Path:
     return repository_default.resolve() if repository_default.is_file() else candidate
 
 
+@serialized_workflow
 def start_workflow(
     *,
     workspace: Path,
@@ -3525,6 +3545,9 @@ def start_workflow(
         payload["planned_artifacts"] = planned_artifacts
         return payload
 
+    previous = StateStore(workspace).read_project_current(key)
+    if previous is not None and not is_active_run(previous):
+        StateStore(workspace).archive_project_current(key, reason="rejected" if previous.next_node == "rejected" else "complete")
     if source_type == "existing_project":
         result = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
     elif use_fix_profile:
@@ -3613,6 +3636,7 @@ def report_bug(
     return result
 
 
+@serialized_workflow
 def decide_approval(
     *,
     workspace: Path,
@@ -3662,6 +3686,12 @@ def decide_approval(
     if approval not in state.approvals:
         raise ValueError(f"Approval gate is not present in current state: {approval}")
     if state.next_node != f"await_{approval}_approval":
+        if replay_approval(state, approval=approval, decision=decision, expected={
+            "run_id": expected_run_id, "target_type": expected_target_type,
+            "target_id": expected_target_id, "artifact_key": expected_artifact_key,
+            "artifact_version": expected_artifact_version,
+        }):
+            return {**asdict(state), "decision": decision, "replayed": True}
         raise ValueError(f"Approval gate is not currently actionable: {approval}")
 
     approval_target = _validate_approval_target(
@@ -3694,8 +3724,9 @@ def decide_approval(
     state.approvals[approval] = approval_decision
     state.current_node = f"{approval}_review_gate"
     state.next_node = gate_next_node(state, gate=approval, approved_next=approved_next)
-    append_action(
-        workspace,
+    if approval_decision == ApprovalDecision.CHANGES_REQUESTED:
+        state.change_requests[approval] = note if decision_origin == "manager_intent_commit" else note.strip()
+    begin_transition(workspace, state, dict(
         run_id=state.run_id,
         actor="human",
         action="approval_decided",
@@ -3717,7 +3748,7 @@ def decide_approval(
         evidence_snapshot=evidence_snapshot,
         reviewer_evidence_snapshot=reviewer_evidence_snapshot,
         review_items=review_items,
-    )
+    ))
     if approval == "takeover" and approval_decision == ApprovalDecision.APPROVED:
         regenerate_before_node = state.next_node
         state_store.write_project_current(state, key)
@@ -3840,6 +3871,11 @@ def decide_approval(
             artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
             note=revision_note,
         )
+    elif approval_decision == ApprovalDecision.CHANGES_REQUESTED:
+        from goodteam_os.workflow_revisions import revise_workflow_gate
+
+        state = revise_workflow_gate(state, workspace, approval=approval)
+    finish_transition(state)
     project_config_for_sync = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
     if project_config_for_sync is None or not project_config_for_sync.is_file():
         try:
@@ -3997,7 +4033,8 @@ def discuss_request_changes_intent(
         else None
     )
     interpretation = None
-    if project_config is not None and project_config.is_file():
+    if (project_config is not None and project_config.is_file()
+            and resolve_role_adapter(load_project_target(project_config), "orchestrator") not in BUILTIN_WORKER_MODES):
         target = dict(intent.get("target") or {})
         try:
             interpretation = run_manager_interpretation(
@@ -4533,12 +4570,25 @@ def regenerate_rfc_review_gate(
     return state
 
 
+@serialized_workflow
 def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
     state = state_store.read_project_current(key)
     if state is None:
         raise ValueError(f"No active run for project: {key}")
+    if state.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
+        from goodteam_os.workflow_revisions import resume_transition
+
+        return resume_transition(state, workspace)
+    if state.next_node.startswith("revise_"):
+        from goodteam_os.workflow_revisions import retry_legacy_revision
+
+        return retry_legacy_revision(state, workspace)
+    if state.load_profile == "fix" and state.next_node == "blocked":
+        from goodteam_os.workflow_revisions import retry_fix_workflow
+
+        return retry_fix_workflow(state, workspace)
     if state.current_node != "implementation" or state.next_node != "blocked":
         raise ValueError(f"Current run is not blocked at implementation: {key}")
 
@@ -4643,6 +4693,7 @@ def worker_model_label(state: AgileDevState | None, start_context: dict[str, obj
     return DEFAULT_CODEX_MODEL
 
 
+@serialized_workflow
 def terminate_project_run(*, workspace: Path, project_key: str) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
@@ -4813,7 +4864,7 @@ def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
     return steps
 
 
-def read_artifact_preview(path: str, max_chars: int = 8000) -> str:
+def read_artifact_preview(path: str, max_chars: int = ARTIFACT_PREVIEW_MAX_CHARS) -> str:
     if not path:
         return ""
     artifact_path = Path(path)
@@ -4823,6 +4874,20 @@ def read_artifact_preview(path: str, max_chars: int = 8000) -> str:
     if len(content) <= max_chars:
         return content
     return content[:max_chars] + "\n\n[Preview truncated]"
+
+
+def _review_artifact_snapshot(path: str, max_chars: int = ARTIFACT_PREVIEW_MAX_CHARS) -> tuple[str, str, bool]:
+    artifact = Path(path).expanduser() if path else None
+    if artifact is None or not artifact.is_file():
+        return "", "missing", False
+    try:
+        raw_content = artifact.read_bytes()
+    except OSError:
+        return "", "missing", False
+    content = raw_content.decode("utf-8")
+    truncated = len(content) > max_chars
+    preview = content[:max_chars] + "\n\n[Preview truncated]" if truncated else content
+    return preview, f"sha256:{hashlib.sha256(raw_content).hexdigest()}", truncated
 
 
 def _slug_heading(value: str) -> str:
@@ -4964,16 +5029,15 @@ def build_resource_items(state: AgileDevState | None) -> list[dict[str, object]]
 
 
 def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    from hashlib import sha256
-
     state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
-    raw = path.read_bytes()
+    raw_content = path.read_bytes()
+    content = raw_content.decode("utf-8")
     return {
         "artifact": artifact_key,
         "path": str(path),
-        "content": raw.decode("utf-8"),
+        "content": content,
         "run_id": state.run_id,
-        "artifact_version": "sha256:" + sha256(raw).hexdigest(),
+        "artifact_version": f"sha256:{hashlib.sha256(raw_content).hexdigest()}",
         "resource": resource_to_dict(state.resources[artifact_key]) if artifact_key in state.resources else {},
     }
 
@@ -4993,7 +5057,7 @@ def answer_open_questions(
     artifact_key: str,
     answers: list[object],
 ) -> dict[str, object]:
-    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
     guidance_parts: list[str] = []
     for raw_answer in answers:
         if not isinstance(raw_answer, dict):
@@ -5007,13 +5071,21 @@ def answer_open_questions(
         workspace=workspace,
         project_key=project_key,
         artifact_key=artifact_key,
-        content=path.read_text(encoding="utf-8"),
+        content=artifact["content"],
         guidance="".join(guidance_parts),
+        expected_run_id=artifact["run_id"],
+        expected_artifact_version=artifact["artifact_version"],
     )
 
 
-def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_key: str = "") -> dict[str, object]:
+@serialized_workflow
+def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_key: str = "",
+                  expected_run_id: str = "", expected_artifact_version: str = "") -> dict[str, object]:
     state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    if (expected_run_id and expected_run_id != state.run_id) or (
+        expected_artifact_version and expected_artifact_version != artifact_version_for_path(str(path))
+    ):
+        raise ProjectApiError("stale_artifact", "This artifact changed. Reload it before saving your edits.", 409)
     path.write_text(content, encoding="utf-8")
 
     key = normalize_project_key(project_key or state.project_key)
@@ -5097,7 +5169,6 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
         return []
 
     reviews = []
-    approval_artifacts = approval_artifact_map()
     profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
     relevant_gates = None if profile.name == "greenfield" else set(profile.gate_names())
     reviewer_target = _reviewer_target_for_state(workspace=workspace, project_key=state.project_key)
@@ -5105,9 +5176,9 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
     for approval, decision in state.approvals.items():
         if relevant_gates is not None and approval not in relevant_gates:
             continue
-        artifact = approval_artifacts.get(approval, approval)
+        artifact = _approval_artifact_for_gate(approval)
         artifact_path = state.artifacts.get(artifact, "")
-        artifact_version = artifact_version_for_path(artifact_path)
+        preview, artifact_version, truncated = _review_artifact_snapshot(artifact_path)
         legacy_takeover_recovery = _is_legacy_takeover_change_request(state, approval)
         review = {
             "approval": approval,
@@ -5119,9 +5190,8 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             "artifact": artifact,
             "artifact_path": artifact_path,
             "artifact_version": artifact_version,
-            "content": "" if legacy_takeover_recovery else read_artifact_preview(artifact_path),
-            "content_truncated": bool(artifact_path and Path(artifact_path).is_file()
-                                      and Path(artifact_path).stat().st_size > 8000),
+            "content": "" if legacy_takeover_recovery else preview,
+            "content_truncated": truncated and not legacy_takeover_recovery,
             "presentation": "legacy_takeover_context" if legacy_takeover_recovery else "review_artifact",
             "recovery": {
                 "available": legacy_takeover_recovery,
@@ -8303,6 +8373,8 @@ def serve(
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
                         content=str(request.get("content", "")),
+                        expected_run_id=str(request.get("expected_run_id", "")),
+                        expected_artifact_version=str(request.get("expected_artifact_version", "")),
                     )
                 elif normalized_path == "/terminate":
                     result = terminate_project_run(
@@ -8335,6 +8407,8 @@ def serve(
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
                         content=str(request.get("content", "")),
+                        expected_run_id=str(request.get("expected_run_id", "")),
+                        expected_artifact_version=str(request.get("expected_artifact_version", "")),
                     )
                 elif normalized_path == "/answer-open-questions":
                     raw_answers = request.get("answers", [])

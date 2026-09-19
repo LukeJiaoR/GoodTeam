@@ -27,8 +27,8 @@ def test_all_routine_jobs_use_guarded_goodteam_runner_without_hosted_fallback():
         "|| github.event.pull_request.head.repo.full_name == github.repository"
     )
 
-    assert workflow.count(selector) == 4
-    assert workflow.count(same_repository_guard) == 4
+    assert workflow.count(selector) == 5
+    assert workflow.count(same_repository_guard) == 5
     assert "runs-on: ubuntu-latest" not in workflow
     assert "pull_request_target:" not in workflow
     assert "secrets." not in workflow
@@ -71,6 +71,7 @@ def test_ci_jobs_follow_classifier_outputs():
     assert "ruff check src/goodteam_os/ tests/ scripts/ci/" in workflow
     assert "npm ci" in workflow
     assert "npm run build" in workflow
+    assert "npm test" in workflow
     assert "npm run lint" in workflow
 
 
@@ -78,7 +79,7 @@ def test_ci_has_stable_aggregation_gate_that_validates_skips():
     workflow = _workflow_text()
 
     assert "name: CI / gate" in workflow
-    assert "needs: [classify, backend, frontend]" in workflow
+    assert "needs: [classify, backend, frontend, browser]" in workflow
     assert "always()" in workflow
     assert "CLASSIFY_RESULT: ${{ needs.classify.result }}" in workflow
     assert "BACKEND_RESULT: ${{ needs.backend.result }}" in workflow
@@ -105,3 +106,41 @@ def test_openwiki_remains_manual_only_and_github_hosted():
     assert "runs-on: ubuntu-latest" in workflow
     assert "OPENROUTER_API_KEY" in workflow
     assert "contents: write" in workflow
+
+
+def test_browser_acceptance_is_required_for_either_changed_stack_and_uploads_evidence():
+    workflow = _workflow_text()
+    browser = workflow.split("  browser:", 1)[1].split("  gate:", 1)[0]
+    gate = workflow.split("  gate:", 1)[1]
+
+    assert "needs.classify.outputs.backend != 'none' || needs.classify.outputs.frontend != 'none'" in browser
+    assert "python3.12 -m venv" in browser
+    assert "GOODTEAM_E2E_PYTHON=" in browser
+    assert "python -m pytest tests/test_workflow_http_recovery.py -q" in browser
+    assert "http-recovery-${{ github.run_id }}-${{ github.run_attempt }}" in browser
+    assert "npm ci" in browser and "npm run build" in browser
+    assert "npx playwright install chromium" in browser
+    assert "npm run test:e2e -- --repeat-each=2" in browser
+    assert 'GOODTEAM_DISABLE_TG_NETWORK: "1"' in browser
+    assert "continue-on-error" not in browser
+    assert "if: always()" in browser and "actions/upload-artifact@v4" in browser
+    assert "frontend/playwright-report/" in browser and "frontend/test-results/" in browser
+    assert "BROWSER_RESULT: ${{ needs.browser.result }}" in gate
+    assert '\"$BROWSER_RESULT\" == \"success\"' in gate
+    assert '\"$BROWSER_RESULT\" == \"skipped\"' in gate
+
+
+def test_ci_also_covers_stacked_prs_without_enabling_external_forks():
+    trigger = _workflow_text().split("permissions:", 1)[0]
+    assert "pull_request:" in trigger
+    assert "branches:" not in trigger
+
+
+def test_single_runner_runs_browser_acceptance_before_full_stacks():
+    workflow = _workflow_text()
+    backend = workflow.split("\n  backend:\n", 1)[1].split("\n  frontend:\n", 1)[0]
+    frontend = workflow.split("\n  frontend:\n", 1)[1].split("\n  browser:\n", 1)[0]
+    browser = workflow.split("  browser:", 1)[1].split("  gate:", 1)[0]
+    assert "needs: [classify, browser]" in backend
+    assert "needs: [classify, browser]" in frontend
+    assert "needs: classify" in browser

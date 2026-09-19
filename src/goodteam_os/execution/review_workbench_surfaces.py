@@ -229,18 +229,22 @@ def matching_decision_event(
     decision: str,
     reviewer: str,
     reason: str,
+    decision_evidence_hash: str,
 ) -> LedgerEvent | None:
-    for event in events:
+    for event in reversed(events):
         payload = event.payload
         if payload.get("transition") != REVIEW_DECISION_TRANSITION:
             continue
+        if payload.get("source") != "review_workbench":
+            return None
         if (
             payload.get("decision") == decision
             and payload.get("reviewer") == reviewer
             and payload.get("reason", "") == reason
-            and payload.get("source") == "review_workbench"
+            and payload.get("decision_evidence_hash", "") == decision_evidence_hash
         ):
             return event
+        return None
     return None
 
 

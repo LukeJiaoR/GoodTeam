@@ -7,13 +7,13 @@ const SNIPPET_KEYS = [
   'review.snippet.refine',
 ];
 
-export default function DecisionActions({ busy = '', error, onDecision, onRequestChanges, t }) {
+export default function DecisionActions({ approveDisabled = false, busy = '', error, onDecision, onRequestChanges, t }) {
   const [note, setNote] = useState('');
 
   const handleKeyDown = (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
       event.preventDefault();
-      onDecision('approved', note);
+      if (!approveDisabled) onDecision('approved', note);
     }
   };
 
@@ -51,6 +51,7 @@ export default function DecisionActions({ busy = '', error, onDecision, onReques
       </label>
       <Button
         busy={busy === 'approved'}
+        disabled={approveDisabled}
         onClick={() => onDecision('approved', note)}
       >
         {t('review.decision.approve')}

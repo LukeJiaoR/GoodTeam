@@ -3,6 +3,7 @@ import os
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from goodteam_os.resources import (
     ResourceDescriptor,
@@ -43,6 +44,7 @@ class AgileDevState:
     current_node: str = "start"
     next_node: str = "product_requirement"
     load_profile: str = "greenfield"
+    pending_transition: dict[str, object] = field(default_factory=dict)
 
 
 def create_initial_state(run_id: str, project_key: str, idea: str) -> AgileDevState:
@@ -67,10 +69,12 @@ class StateStore:
     def project_state_dir(self, project_key: str) -> Path:
         key = normalize_project_key(project_key)
         primary = self.root / "state" / "projects" / key
-        if (primary / "current.json").is_file() or (primary / "readiness.json").is_file():
+        if ((primary / "current.json").is_file() or (primary / "readiness.json").is_file()
+                or (primary / "archived").is_dir()):
             return primary
         for candidate in self._candidate_project_state_dirs(key):
-            if (candidate / "current.json").is_file() or (candidate / "readiness.json").is_file():
+            if ((candidate / "current.json").is_file() or (candidate / "readiness.json").is_file()
+                    or (candidate / "archived").is_dir()):
                 return candidate
         return primary
 
@@ -213,6 +217,7 @@ class StateStore:
         data.setdefault("role_models", {})
         data.setdefault("team_snapshot", {})
         data.setdefault("load_profile", "greenfield")
+        data.setdefault("pending_transition", {})
         return AgileDevState(**data)
 
     def _write(self, path: Path, state: AgileDevState) -> None:
@@ -220,7 +225,19 @@ class StateStore:
         payload = asdict(state)
         payload["resources"] = resources_to_json(state.resources)
         payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            try:
+                json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            except BaseException:
+                temporary.unlink(missing_ok=True)
+                raise
+        try:
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _write_checkpoint(self, directory: Path, state: AgileDevState) -> Path:
         directory.mkdir(parents=True, exist_ok=True)

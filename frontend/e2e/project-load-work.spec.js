@@ -1,9 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test, importProject } from './fixtures.js';
 
-const root = '/private/tmp/goodteam-project-load-e2e';
-const existingRoot = `${root}/targets/existing`;
 
 function targetSnapshot(directory) {
   const visit = (current, relative = '') => fs.readdirSync(current, { withFileTypes: true })
@@ -29,41 +27,25 @@ function targetSnapshot(directory) {
   return visit(directory);
 }
 
-test('project entry paths converge on Work without writing to the target', async ({ page }) => {
-  const consoleErrors = [];
-  const before = targetSnapshot(existingRoot);
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text());
-  });
-  await page.addInitScript(() => localStorage.setItem('gt-language', 'en'));
+test('project entry paths converge on Work without writing to the target', async ({ page, fixture }) => {
+  const before = targetSnapshot(fixture.root);
 
-  await page.goto('/projects');
-  await expect(page.getByRole('heading', { name: 'Add your first project' })).toBeVisible();
-  await page.getByRole('button', { name: 'Add project' }).first().click();
-  await page.getByLabel('Project directory').fill(existingRoot);
-  await page.getByRole('button', { name: 'Load project' }).click();
-  await expect(page).toHaveURL(/\/projects\/EXISTING\/work$/);
-  await expect(page.getByRole('heading', { name: 'Task Assistant' })).toBeVisible();
+  await importProject(page, fixture);
   await expect(page.getByRole('button', { name: 'Start understanding the codebase' })).toHaveCount(0);
 
   await page.goto('/projects');
-  await page.getByRole('button', { name: 'Enter workspace: existing' }).click();
-  await expect(page).toHaveURL(/\/projects\/EXISTING\/work$/);
+  await page.getByRole('button', { name: `Enter workspace: ${fixture.name}` }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/work$`));
 
-  await page.goto('/projects/EXISTING/home');
-  await expect(page).toHaveURL(/\/projects\/EXISTING\/work$/);
+  await page.goto(`/projects/${fixture.key}/home`);
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/work$`));
   await expect(page.getByRole('heading', { name: 'Task Assistant' })).toBeVisible();
 
-  expect(targetSnapshot(existingRoot)).toEqual(before);
-  expect(consoleErrors).toEqual([]);
+  expect(targetSnapshot(fixture.root)).toEqual(before);
 });
 
-test('legacy bookmarks redirect and the project shell reaches Team/Review/Knowledge', async ({ page }) => {
-  const consoleErrors = [];
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text());
-  });
-  await page.addInitScript(() => localStorage.setItem('gt-language', 'en'));
+test('legacy bookmarks redirect and the project shell reaches Team/Review/Knowledge', async ({ page, fixture }) => {
+  await importProject(page, fixture);
 
   for (const legacy of ['/inbox', '/activity', '/settings']) {
     await page.goto(legacy);
@@ -71,25 +53,24 @@ test('legacy bookmarks redirect and the project shell reaches Team/Review/Knowle
     await expect(page.getByRole('heading', { name: 'Choose a project' })).toBeVisible();
   }
 
-  await page.goto('/projects/EXISTING/settings/general');
-  await expect(page).toHaveURL(/\/projects\/EXISTING\/team$/);
+  await page.goto(`/projects/${fixture.key}/settings/general`);
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/team$`));
   await expect(page.getByRole('heading', { name: 'Team', exact: true })).toBeVisible();
 
-  await page.goto('/projects/EXISTING/home');
-  await expect(page).toHaveURL(/\/projects\/EXISTING\/work$/);
+  await page.goto(`/projects/${fixture.key}/home`);
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/work$`));
   await expect(page.getByRole('heading', { name: 'Task Assistant' })).toBeVisible();
 
   await page.getByRole('link', { name: 'Reviews', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects\/EXISTING\/review$/);
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/review$`));
   await expect(page.getByRole('heading', { name: 'Review', exact: true })).toBeVisible();
 
   await page.getByRole('link', { name: 'Knowledge base', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects\/EXISTING\/knowledge$/);
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/knowledge$`));
   await expect(page.getByRole('heading', { name: 'Knowledge', exact: true })).toBeVisible();
 
   await page.getByRole('link', { name: 'Team', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects\/EXISTING\/team$/);
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/team$`));
   await expect(page.getByRole('heading', { name: 'Team', exact: true })).toBeVisible();
 
-  expect(consoleErrors).toEqual([]);
 });

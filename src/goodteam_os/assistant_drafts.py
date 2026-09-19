@@ -4,6 +4,7 @@ import re
 from datetime import UTC, datetime
 
 from goodteam_os.assistant_requests import conversation_lock, response
+from goodteam_os.state import StateStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
@@ -17,6 +18,32 @@ _DISCUSSION = re.compile(
 
 def is_conversation_only(text):
     return bool(_CANCEL.search(text) or _DISCUSSION.search(text))
+
+
+def archive_terminal_proposal(store, *, workspace):
+    proposal = dict(store.read().get("proposed_task") or {})
+    run_id = str(proposal.get("run_id", "")).strip()
+    if not proposal or not run_id:
+        return False
+
+    terminal_status = _terminal_run_status(StateStore(workspace), store.project_key, run_id)
+    if not terminal_status:
+        return False
+    store.archive_task_proposal(proposal["id"], run_id, terminal_status)
+    return True
+
+
+def _terminal_run_status(state_store, project_key, run_id):
+    current = state_store.read_project_current(project_key)
+    if current is not None and current.run_id == run_id:
+        if current.current_node == "complete":
+            return "complete"
+        if current.current_node == "rejected" or current.next_node == "rejected":
+            return "rejected"
+        return ""
+    if any(state.run_id == run_id for _path, state in state_store.list_project_archived(project_key)):
+        return "archived"
+    return ""
 
 
 def stage_draft(store, *, text, message_id):
