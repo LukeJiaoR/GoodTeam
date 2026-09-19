@@ -11,6 +11,7 @@ import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
+import CurrentWorkContext from './workspace/CurrentWorkContext';
 import { createConversationDelivery, trackConversationDelivery } from './workspace/conversationFeedback';
 import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
 import {
@@ -747,7 +748,10 @@ export default function WorkPage() {
   const [runHistory, setRunHistory] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('loading');
   const [historyError, setHistoryError] = useState(null);
-  const [historicalDetail, setHistoricalDetail] = useState(null);
+  const [historicalSnapshot, setHistoricalSnapshot] = useState(null);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const historicalDetail = historicalSnapshot?.projectKey === projectKey && historicalSnapshot?.runId === runId
+    ? historicalSnapshot.detail : null;
   const projectedWorkspace = data?.team_workspace?.schema_version === 'team_workspace.v1'
     ? data.team_workspace
     : null;
@@ -762,13 +766,21 @@ export default function WorkPage() {
   const selectedSummary = runHistory.find((item) => item.run_id === runId);
   const isHistorical = Boolean(runId && selectedSummary && selectedSummary.status !== 'active');
   const selectedKnown = !runId || historyStatus !== 'ready' || Boolean(selectedSummary);
-  const workflowSteps = data?.workflow_steps || [];
+  const workflowSteps = (isHistorical ? historicalDetail?.workflow_steps : data?.workflow_steps) || [];
+  const contextMission = isHistorical ? historicalDetail?.team_workspace?.mission : projectedMission;
+  const contextTitle = isHistorical ? runTitle(selectedSummary, t) : currentRunTitle;
+  const contextIsLoading = (isHistorical && (!historicalDetail || historyStatus !== 'ready'))
+    || Boolean(runId && runId !== currentRunId && !isHistorical);
+  const contextFreshness = status !== 'ready' ? status : contextIsLoading ? 'loading' : 'ready';
+  const visibleTaskTitle = isHistorical ? contextTitle
+    : projectedWorkspace?.proposed_task?.run_id ? currentRunTitle
+      : projectedWorkspace?.proposed_task?.exact_request || (hasProjectedMission && !isTaskAssistantConversation ? currentRunTitle : '');
   const contextStep = currentWorkflowStep(workflowSteps);
   const completedStepCount = workflowSteps.filter((step) => (
     ['done', 'complete', 'completed'].includes(step.status)
   )).length;
   const currentRunSummary = runHistory.find((item) => item.run_id === currentRunId);
-  const contextUpdatedAt = projectedMission?.updated_at || currentRunSummary?.updated_at || '';
+  const contextUpdatedAt = contextMission?.updated_at || (isHistorical ? selectedSummary?.updated_at : currentRunSummary?.updated_at) || '';
   const contextUpdatedLabel = formattedRunUpdate(contextUpdatedAt, language);
   const hasRunContext = Boolean(data?.active_run || (hasProjectedMission && !isTaskAssistantConversation));
   const showRunSelector = runHistory.length > 0 && (
@@ -798,13 +810,23 @@ export default function WorkPage() {
   }, [projectKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!isHistorical || !runId) { queueMicrotask(() => setHistoricalDetail(null)); return undefined; }
+    if (!isHistorical || !runId) return undefined;
     const controller = new AbortController();
     runApi.getProjectRun(projectKey, runId, { signal: controller.signal })
-      .then(setHistoricalDetail)
+      .then((detail) => {
+        if (controller.signal.aborted) return;
+        const detailRunId = detail?.team_workspace?.mission?.run_id || detail?.state?.run_id;
+        const detailProjectKey = detail?.team_workspace?.mission?.project_key || detail?.state?.project_key;
+        if (detailRunId !== runId || (detailProjectKey && detailProjectKey !== projectKey)) {
+          setHistoryError({ code: 'run_not_found', message: 'The requested historical run could not be verified.' });
+          setHistoryStatus('stale');
+          return;
+        }
+        setHistoricalSnapshot({ projectKey, runId, detail });
+      })
       .catch((caught) => { if (caught.name !== 'AbortError') { setHistoryError(caught); setHistoryStatus('stale'); } });
     return () => controller.abort();
-  }, [isHistorical, projectKey, runId]);
+  }, [isHistorical, projectKey, runId, historyRefresh]);
 
   useEffect(() => {
     if (!runId && currentRunId) navigate(routes.projectRun(projectKey, currentRunId), { replace: true });
@@ -1044,7 +1066,18 @@ export default function WorkPage() {
   ) : null;
 
   return (
-    <main id="main-content" className="product-page product-work-page">
+    <main id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
+      <CurrentWorkContext
+        projectKey={projectKey}
+        projectName={projectName}
+        title={visibleTaskTitle}
+        workspace={isHistorical ? historicalDetail?.team_workspace : projectedWorkspace}
+        freshness={contextFreshness}
+        historical={isHistorical}
+        onRefresh={() => { void refresh(); void loadRuns(); setHistoryRefresh((value) => value + 1); }}
+        reducedMotion={reducedMotion}
+        t={t}
+      />
       <header
         aria-hidden={workDrawer ? !workDrawer.open : undefined}
         className="product-page-header work-context-drawer"
@@ -1062,14 +1095,14 @@ export default function WorkPage() {
             <section className={`work-run-context${showRunSelector ? ' work-run-context--selectable' : ''}`} aria-label={t('work.manager.currentMission')}>
               <div className="work-run-context__mission">
                 <span>{t('work.manager.currentMission')}</span>
-                <strong className="work-run-title" title={currentRunTitle}>{currentRunTitle}</strong>
+                <strong className="work-run-title" title={contextTitle}>{contextTitle}</strong>
               </div>
               <div className="work-run-context__facts">
-                <StatusBadge tone={tone(contextStep?.status || projectedMission?.status || 'active')}>
+                <StatusBadge tone={tone(contextStep?.status || contextMission?.status || 'active')}>
                   {contextStep
                     ? statusLabel(contextStep, t)
-                    : projectedMission
-                      ? statusText(projectedMission.status, t)
+                    : contextMission
+                      ? statusText(contextMission.status, t)
                       : t('work.active')}
                 </StatusBadge>
                 {contextStep ? (

@@ -1,3 +1,4 @@
+import { useParams } from 'react-router-dom';
 import './workspace.css';
 import './workspaceResponsive.css';
 import './workspaceTaskDetail.css';
@@ -11,9 +12,10 @@ export function WorkWorkspaceShell({ children }) {
 }
 
 export default function WorkWorkspaceRoute({ Component }) {
+  const { projectKey } = useParams();
   return (
     <WorkWorkspaceShell>
-      <Component />
+      <Component key={projectKey} />
     </WorkWorkspaceShell>
   );
 }
