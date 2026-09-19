@@ -23,6 +23,8 @@ import AssistantControls from './AssistantControls';
 import ManagerMissionEntry from './ConversationComposer';
 import { conversationTimeline, deliveryLabel } from './conversationFeedback';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
+import PreparationFacts from './PreparationFacts';
+import DeliverySummary from './DeliverySummary';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
 const MOBILE_TEAM_QUERY = '(max-width: 767px)';
@@ -351,6 +353,7 @@ function ProjectPreparationAttention({ attention, busy, onContinue, t }) {
     <section className="team-attention" data-kind="project_preparation" aria-label={t('work.manager.attention')}>
       <p className="team-attention__label"><AlertCircle aria-hidden="true" size={15} />{t('work.taskAssistant.preparationTitle')}</p>
       <h3>{t(`work.taskAssistant.preparation.${kind}`)}</h3>
+      <PreparationFacts requirements={requirements} t={t} />
       {kind === 'command_confirmation' ? (
         <div className="team-preparation-options">
           {commands.map((command) => (
@@ -638,6 +641,7 @@ function ExecutionPane({ actors, reducedMotion, sectionProps, t }) {
 }
 
 function OutcomesPane({
+  deliverySummary,
   activeReviewTaskId,
   attentionTaskId,
   expandedTaskId,
@@ -657,6 +661,7 @@ function OutcomesPane({
         </div>
         <span className="team-pane__count">{outcomes.length}</span>
       </header>
+      <DeliverySummary summary={deliverySummary} t={t} />
       {outcomes.length ? (
         <ol className="team-outcome-list">
           {outcomes.map((task, index) => {
@@ -1008,6 +1013,7 @@ function TeamWorkspace({
           t={t}
         />
         <OutcomesPane
+          deliverySummary={data.delivery_summary}
           activeReviewTaskId={activeReviewTargetId}
           attentionTaskId={attentionReviewTask?.id || ''}
           expandedTaskId={expandedTaskId}

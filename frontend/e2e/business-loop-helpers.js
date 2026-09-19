@@ -63,8 +63,16 @@ export async function prepareFirstTask(page, fixture, evidence) {
   await expect(page.getByRole('heading', { name: 'Which project commands should the team use for verification?' })).toBeVisible();
   await expect(page.getByRole('checkbox', { name: 'npm run test', exact: true })).toBeChecked();
   await clickMutation(page, page.getByRole('button', { name: 'Confirm and continue' }), endpoint);
-  expect((await snapshot(page, fixture, evidence)).state).toBeNull();
-  await expect(page.getByRole('heading', { name: 'I found project instructions and constraints. Confirm that the team should follow them.' })).toBeVisible();
+  const preparation = await snapshot(page, fixture, evidence);
+  expect(preparation.state).toBeNull();
+  await expect(page.getByRole('heading', { name: 'Review the project constraints before continuing.' })).toBeVisible();
+  const constraints = preparation.team_workspace.attention_request.input_requirements.constraints
+    .filter((value) => typeof value === 'string' && value.trim());
+  if (constraints.length) {
+    await expect(page.locator('.team-preparation-facts li')).toHaveText(constraints);
+  } else {
+    await expect(page.getByText('No project constraints were returned. Confirm whether to continue.')).toBeVisible();
+  }
   const result = await clickMutation(page, page.getByRole('button', { name: 'Confirm and continue' }), endpoint);
   expect(result.workflow_started).toBe(true);
   const readiness = await getJson(page, `/api/projects/${fixture.key}/home`);

@@ -1653,6 +1653,13 @@ def run_retro_until_complete(
     return state
 
 
+def _team_execution_role(target: dict[str, object], role: str) -> str:
+    from goodteam_os.team_control_plane import attached_team_state
+
+    # Intake is a workflow stage, provided by the existing Research capability.
+    return "research" if role == "project_intake" and attached_team_state(target) is not None else role
+
+
 def resolve_role_adapter(target: dict[str, object], role: str) -> str:
     """Pick the worker backend for a single role.
 
@@ -1664,6 +1671,7 @@ def resolve_role_adapter(target: dict[str, object], role: str) -> str:
     """
     from goodteam_os.team_control_plane import active_workers_for_role, attached_team_state, normalize_provider
 
+    role = _team_execution_role(target, role)
     state = attached_team_state(target)
     if state is not None and role != "orchestrator":
         active = sorted(active_workers_for_role(state, role), key=lambda w: (str(w["created_at"]), str(w["id"])))
@@ -1800,6 +1808,8 @@ def _worker_job_fields(
     the Worker has no explicit model configured.
     """
     from goodteam_os.team_control_plane import resolve_worker_for_role
+
+    role = _team_execution_role(target, role)
 
     if model_fallback is not None:
         fallback_model = model_fallback()

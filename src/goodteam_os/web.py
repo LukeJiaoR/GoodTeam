@@ -742,6 +742,19 @@ def build_approval_recommendation(
         if release_stage and unknown_count:
             reasons.append({"kind": "missing_evidence", "text": "Release-stage gate has unknown CI, smoke, or QA evidence."})
 
+        if "reviewer_provenance" in review_dict or "review_evidence_policy" in review_dict:
+            provenance = review_dict.get("reviewer_provenance")
+            provenance = provenance if isinstance(provenance, dict) else {}
+            derived_policy = evaluate_review_evidence_policy(provenance, gate=approval)
+            policy = review_dict.get("review_evidence_policy")
+            policy_state = policy.get("state") if isinstance(policy, dict) else None
+            unproven_policy = (
+                derived_policy["state"] != "ok"
+                or ("review_evidence_policy" in review_dict and policy_state != "ok")
+            )
+            if unproven_policy:
+                reasons.append({"kind": "missing_evidence", "text": "Reviewer evidence is missing, simulated or unsuccessful. Human review is required."})
+
         messages = {}
         raw_messages = {}
         committee = review_dict.get("committee", {})
@@ -2350,6 +2363,8 @@ def build_team_events_payload(workspace: Path, project_key: str) -> dict[str, ob
 
 
 def build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
+    from goodteam_os.delivery_outcomes import build_delivery_summary
+
     project_config = _project_config_for_key(workspace, project_key)
     start_context = build_start_console_context(workspace, project_config=project_config)
     state = resolve_dashboard_state(workspace, project_key=project_key)
@@ -2395,6 +2410,7 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
         "smoke_run_items": build_smoke_run_items(workspace),
         "agile_board": agile_board,
         "worker_jobs": worker_jobs,
+        "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_job_records),
         "team_workspace": build_team_workspace(
             state=state,
             workflow_active=active_run,
@@ -3311,6 +3327,8 @@ def build_project_run_detail(
     project_key: str,
     run_id: str,
 ) -> dict[str, object]:
+    from goodteam_os.delivery_outcomes import build_delivery_summary
+
     key = normalize_project_key(project_key)
     store = StateStore(workspace)
     current = store.read_project_current(key)
@@ -3389,6 +3407,9 @@ def build_project_run_detail(
         "agile_board": agile_board,
         "approval_reviews": approval_reviews,
         "team_workspace": team_workspace,
+        "delivery_summary": build_delivery_summary(
+            workspace, state=state, jobs=worker_jobs, historical_reason=str(summary.get("reason", "")),
+        ),
     }
 
 
@@ -7843,6 +7864,19 @@ def serve(
             if project_response is not None:
                 status, payload = project_response
                 self._send_json(status, payload)
+                return
+            if parsed.path == "/api/delivery-artifact":
+                from goodteam_os.delivery_outcomes import DeliveryArtifactError, read_delivery_artifact
+                try:
+                    self._send_json(200, read_delivery_artifact(
+                        workspace, project_key=project_key,
+                        run_id=_decode_project_run_id(query.get("run", [""])[0]),
+                        artifact_key=query.get("key", [""])[0], version=query.get("version", [""])[0],
+                    ))
+                except DeliveryArtifactError as exc:
+                    self._send_json(exc.status, {"error": "delivery_artifact_unavailable", "message": str(exc)})
+                except Exception as exc:
+                    self._send_api_error(exc)
                 return
             if parsed.path in {"/artifact", "/api/artifact"}:
                 try:
