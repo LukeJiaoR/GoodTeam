@@ -1,0 +1,78 @@
+name: Apply isolated Work context patch
+on:
+  push:
+    branches: [codex/work-context-417]
+    paths: ['.github/gt417/**', '.github/workflows/gt417-apply.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'LukeJiaoR/GoodTeam' && github.ref == 'refs/heads/codex/work-context-417'
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Apply hash-bound patch to this feature branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, gzip, hashlib, os, pathlib, subprocess, tempfile
+          base = 'c465fecf3c162434d505f7cbe5db2433e1e943cb'
+          branch = 'refs/heads/codex/work-context-417'
+          expected_hash = 'dfeb8488a95c130a2dab4ba9507c85b20f5955174425eb3a6afb9b390f89291d'
+          allowed = set('''docs/plans/2026-09-19-current-work-context.md
+          frontend/e2e/current-work-context.spec.js
+          frontend/src/features/runs/WorkPage.jsx
+          frontend/src/features/runs/workspace/CurrentWorkContext.jsx
+          frontend/src/features/runs/workspace/CurrentWorkContext.test.jsx
+          frontend/src/features/runs/workspace/WorkWorkspaceShell.jsx
+          frontend/src/features/runs/workspace/WorkWorkspaceShell.test.jsx
+          frontend/src/features/runs/workspace/currentWorkContext.css
+          frontend/src/features/runs/workspace/currentWorkContext.js
+          frontend/src/features/runs/workspace/currentWorkContext.vitest.js
+          frontend/src/i18n/locales/en.js
+          frontend/src/i18n/locales/zh-CN.js'''.splitlines())
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          def run(*args):
+              subprocess.run(['git', *args], check=True)
+          def remote(ref):
+              value = git('ls-remote', '--exit-code', 'origin', ref).split()
+              if len(value) != 2 or value[1] != ref:
+                  raise SystemExit('Unexpected remote reference')
+              return value[0]
+          head = os.environ['GITHUB_SHA']
+          if os.environ['GITHUB_REF'] != branch or git('rev-parse', 'HEAD') != head:
+              raise SystemExit('Unexpected checkout')
+          if git('rev-parse', 'HEAD^') != base or remote('refs/heads/main') != base or remote(branch) != head:
+              raise SystemExit('Base or feature branch moved')
+          if git('status', '--porcelain'):
+              raise SystemExit('Checkout not clean')
+          encoded = ''.join(pathlib.Path(f'.github/gt417/patch-{i}').read_text() for i in range(5))
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          if hashlib.sha256(patch).hexdigest() != expected_hash:
+              raise SystemExit('Patch hash mismatch')
+          with tempfile.NamedTemporaryFile(suffix='.patch') as out:
+              out.write(patch)
+              out.flush()
+              run('apply', '--check', '--index', out.name)
+              run('apply', '--index', out.name)
+          if set(git('diff', '--cached', '--name-only').splitlines()) != allowed:
+              raise SystemExit('Patch path mismatch')
+          run('rm', '-r', '--', '.github/gt417', '.github/workflows/gt417-apply.yml')
+          if set(git('diff', '--cached', '--name-only', base).splitlines()) != allowed:
+              raise SystemExit('Final scope mismatch')
+          run('diff', '--cached', '--check')
+          run('config', 'user.name', 'GoodTeam implementation')
+          run('config', 'user.email', 'noreply@users.noreply.github.com')
+          run('commit', '-m', 'feat(work): keep task context visible and isolate historical reads', '-m', 'Refs #417, #411. Add a read-only current-context bar, exact history loading, project-scoped UI state and focused/browser regressions. Local verification is static only; require ordinary exact-head CI. Temporary patch transport removed.')
+          if remote('refs/heads/main') != base or remote(branch) != head:
+              raise SystemExit('Concurrent update; no push performed')
+          run('push', 'origin', 'HEAD:' + branch)
+          print('PRODUCT_HEAD=' + git('rev-parse', 'HEAD'))
+          print('PRODUCT_TREE=' + git('rev-parse', 'HEAD^{tree}'))
+          print('PATCH_SHA256=' + expected_hash)
+          PY
