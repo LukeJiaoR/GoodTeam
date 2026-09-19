@@ -1,3 +1,4 @@
+import { availableChangeTarget } from './conversationChangeContext';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -581,6 +582,11 @@ function ManagerPane({
             busy={Boolean(busy) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
             onStart={onStart}
             changeIntent={attention?.intent_commit}
+            activeTask={mission?.source === 'workflow' && Boolean(mission.run_id)}
+            changeTarget={availableChangeTarget({ mission, attention, projectKey })}
+            recordedChange={(timeline || []).filter((item) => item.event === 'change_request_committed'
+              && item.details?.intent_status === 'committed').at(-1)}
+            onStartChangeIntent={onStartChangeIntent}
             onDiscussChangeIntent={onDiscussChangeIntent}
             onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
             suggestions={suggestions}
