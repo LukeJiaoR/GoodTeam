@@ -1,0 +1,29 @@
+name: PR 426 isolated patch application
+on:
+  push:
+    branches: [codex/delivery-outcomes]
+    paths: [.github/workflows/pr426-hardening.yml, scripts/ci/pr426_apply.py, 'scripts/ci/pr426-patch-*.txt']
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'LukeJiaoR/GoodTeam' && github.ref == 'refs/heads/codex/delivery-outcomes'
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply hash-checked patch to this PR only and remove temporary helpers
+        env:
+          PATCH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: python3 scripts/ci/pr426_apply.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr426-applied-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/pr426-applied-source/
+          retention-days: 1
+          if-no-files-found: error
