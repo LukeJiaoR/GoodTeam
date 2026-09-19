@@ -696,7 +696,10 @@ test('requires explicit confirmation of a Task Assistant proposal before startin
   mocks.taskAssistantAction.mockResolvedValue({ workflow_started: true, run_id: 'run-1' });
 
   renderWorkPage('/projects/DEMO/work');
-  expect(screen.getByText('Fix login and add a regression test')).toBeVisible();
+  expect(within(screen.getByRole('region', { name: 'Proposed task' })).getByText('Fix login and add a regression test')).toBeVisible();
+  const context = screen.getByRole('region', { name: 'Current task and next step' });
+  expect(within(context).getByText('Fix login and add a regression test')).toBeVisible();
+  await userEvent.click(within(context).getByRole('button', { name: 'Review task draft' }));
   expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Start this task' }));
 
