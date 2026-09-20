@@ -63,6 +63,44 @@ flowchart TD
 Operator rule: if the task cannot be stated as a bounded packet, do not dispatch
 it yet. Re-plan or split it.
 
+## Configure Workers in Team
+
+The Team page starts with responsibility groups. Expand a group only when you
+need to inspect or change an individual role or Worker:
+
+| Responsibility | Roles |
+| --- | --- |
+| Requirements & planning | Research, Product / Requirement, Architect, Review, Planner |
+| Design & implementation | UI, Implementation, Frontend, Backend |
+| Quality & delivery | QA, Code review, Release |
+| Learning & knowledge | Retro / Memory |
+
+The Task Assistant has its own configuration above these groups. Grouping is a
+presentation aid; it does not change role identities or dispatch boundaries.
+Additional server-defined roles appear under Other responsibilities.
+
+Use **Configure group** to apply an agent, model, and reasoning depth to one
+responsibility, or **Bulk configure** to select several groups. Expand a group
+inside the configuration dialog to select individual roles. The preview shows
+how many Workers will change and how many will be created for empty roles.
+Disabled roles are excluded. Names, individual instructions, and paused states
+are preserved. The changes are submitted as one team decision.
+
+For individual changes, expand a group and use a Worker's **Configure** button.
+New Workers use the project's default agent explicitly. An empty model means
+the selected agent's default; **Enter model ID** also works when model discovery
+is unavailable. Additional instructions are optional and can be expanded when
+needed. Saving a Worker configuration does not invoke the model; the Task
+Assistant's separate **Save and check connection** action still performs its
+existing connection check.
+
+The default backend is `codex`, and new Codex configurations preselect
+`gpt-5.6-sol`. The default `balanced` model profile and the Codex adapter fallback
+also use `gpt-5.6-sol`; `GOODTEAM_CODEX_MODEL` can still override the adapter
+fallback. Explicitly selected project backends, other named profiles, and saved
+Worker configurations retain their settings. When a group's Workers share one
+configuration, the dialog prefills that existing configuration.
+
 ## Role Backend Selection
 
 Project config has a global default and optional per-role overrides:

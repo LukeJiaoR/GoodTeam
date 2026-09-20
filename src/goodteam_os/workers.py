@@ -30,7 +30,7 @@ from goodteam_os.session_runtimes import (
 
 
 DEFAULT_CODEX_PATH = os.getenv("GOODTEAM_CODEX_PATH", "/opt/homebrew/bin/codex")
-DEFAULT_CODEX_MODEL = os.getenv("GOODTEAM_CODEX_MODEL", "gpt-5.4")
+DEFAULT_CODEX_MODEL = os.getenv("GOODTEAM_CODEX_MODEL", "gpt-5.6-sol")
 CODEX_AUTH_ENV_NAMES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
 DEFAULT_CLAUDE_PATH = os.getenv("GOODTEAM_CLAUDE_PATH", "claude")
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"

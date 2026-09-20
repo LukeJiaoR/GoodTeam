@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, History, Pause, Play, Plus, RefreshCw, Trash2, UserRoundCog, X } from 'lucide-react';
+import { AlertTriangle, Bot, History, Pause, Pencil, Play, Plus, Settings2, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
@@ -8,49 +8,17 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import useProjectState from '../runs/useProjectState';
 import { settingsApi } from '../settings/settingsApi';
 import './team.css';
-import { buildTeamModel, capabilityCounts, changeRuntimeSelection, rosteredWorkerCount, runtimeOptions, workerCreateCommand, workerEditCommands } from './teamModel';
-
-const FOCUSABLE_SELECTOR = [
-  'button:not([disabled])',
-  'select:not([disabled])',
-  'input:not([disabled])',
-  'textarea:not([disabled])',
-  '[href]',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
-
-function useDialogAccessibility(dialogRef, closeRef, onClose) {
-  const closeOnEscape = useCallback(
-    (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onClose();
-      }
-    },
-    [onClose],
-  );
-  useEffect(() => {
-    closeRef.current?.focus();
-  }, [closeRef]);
-  const handleKeyDown = (event) => {
-    closeOnEscape(event);
-    if (event.key !== 'Tab' || !dialogRef.current) return;
-    const focusable = [...dialogRef.current.querySelectorAll(FOCUSABLE_SELECTOR)];
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-  return handleKeyDown;
-}
+import BatchWorkerDialog from './BatchWorkerDialog';
+import RuntimeFields from './RuntimeFields';
+import ResponsibilityGroup from './ResponsibilityGroup';
+import useTeamDialog from './useTeamDialog';
+import { buildTeamModel, capabilityCounts, groupTeamRoles, newWorkerRuntime, rosteredWorkerCount, workerCreateCommand, workerEditCommands } from './teamModel';
 
 const EMPTY_DRAFT = { name: '', role: '', lifecycle: '', provider: '', model: '', reasoningDepth: 'default', additionalPrompt: '' };
+
+function newCommandKey() {
+  return globalThis.crypto?.randomUUID?.() || `team-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function draftFromWorker(worker) {
   return {
@@ -64,56 +32,11 @@ function draftFromWorker(worker) {
   };
 }
 
-function RuntimeFields({ draft, setDraft, backendOptions, agents, defaultProvider, t }) {
-  const options = runtimeOptions(agents, draft.provider, draft.model, defaultProvider);
-  const changeSelection = (patch) => setDraft(changeRuntimeSelection(draft, patch, agents, defaultProvider));
-  const effortLabel = (value) => t(`team.dialog.reasoning${value[0].toUpperCase()}${value.slice(1)}`);
-  const currentUnsupported = draft.reasoningDepth !== 'default' && !options.reasoningDepths.includes(draft.reasoningDepth);
-  return (
-    <>
-      <label>
-        <span>{t('team.dialog.provider')}</span>
-        <select aria-label={t('team.dialog.provider')} value={draft.provider} onChange={(event) => changeSelection({ provider: event.target.value, model: '' })}>
-          <option value="">{t('team.dialog.inheritProvider')} ({defaultProvider})</option>
-          {backendOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-        </select>
-      </label>
-      <label>
-        <span>{t('team.dialog.model')}</span>
-        <select aria-label={t('team.dialog.model')} value={draft.model} onChange={(event) => changeSelection({ model: event.target.value })}>
-          <option value="">{t('team.dialog.inheritModel')}{options.agent?.model_default ? ` (${options.agent.model_default})` : ''}</option>
-          {options.models.map((model) => <option key={model} value={model}>{model}</option>)}
-        </select>
-        {['unavailable', 'unsupported'].includes(options.agent?.models_source) ? <small role="status">{t(`team.dialog.catalog${options.agent.models_source === 'unsupported' ? 'Unsupported' : 'Unavailable'}`)}</small> : null}
-      </label>
-      <label>
-        <span>{t('team.dialog.reasoning')}</span>
-        <select aria-label={t('team.dialog.reasoning')} disabled={!options.reasoningDepths.length && !currentUnsupported} value={draft.reasoningDepth} onChange={(event) => setDraft({ ...draft, reasoningDepth: event.target.value })}>
-          <option value="default">{t('team.dialog.reasoningDefault')}</option>
-          {currentUnsupported ? <option value={draft.reasoningDepth} disabled>{effortLabel(draft.reasoningDepth)} · {t('team.dialog.reasoningUnavailable')}</option> : null}
-          {options.reasoningDepths.map((depth) => <option key={depth} value={depth}>{effortLabel(depth)}</option>)}
-        </select>
-      </label>
-      <label className="team-dialog__prompt">
-        <span>{t('team.dialog.additionalPrompt')}</span>
-        <textarea
-          aria-label={t('team.dialog.additionalPrompt')}
-          maxLength="4000"
-          rows="2"
-          value={draft.additionalPrompt}
-          onChange={(event) => setDraft({ ...draft, additionalPrompt: event.target.value })}
-          placeholder={t('team.dialog.additionalPromptPlaceholder')}
-        />
-      </label>
-    </>
-  );
-}
-
-function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, roles, manager, managerRuntime, assistantSession, saving, t, worker }) {
+function WorkerDialog({ agents, backendOptions, agentsLoading, onRefresh, defaultProvider, error, onClose, onSubmit, roleEntry, roles, manager, managerRuntime, assistantSession, saving, t, worker }) {
   const titleId = useId();
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
-  const handleKeyDown = useDialogAccessibility(dialogRef, closeRef, onClose);
+  const handleKeyDown = useTeamDialog(dialogRef, closeRef, onClose);
   const editing = Boolean(worker);
   const submitting = useRef(false);
   const [verification, setVerification] = useState(null);
@@ -121,7 +44,7 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
   const [draft, setDraft] = useState(() => {
     if (worker) return draftFromWorker(worker);
     if (manager) return { ...EMPTY_DRAFT, provider: managerRuntime?.provider || '', model: managerRuntime?.model || '', reasoningDepth: managerRuntime?.reasoningDepth || 'default', additionalPrompt: managerRuntime?.additionalPrompt || '' };
-    return { ...EMPTY_DRAFT, role: roleEntry?.role || '' };
+    return { ...EMPTY_DRAFT, ...newWorkerRuntime(defaultProvider), role: roleEntry?.role || '' };
   });
 
   const runtimeBusy = manager && (assistantSession?.runtime?.status === 'checking'
@@ -149,7 +72,7 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
       setVerification(null);
       setSubmitError(null);
       try {
-        const result = await onSubmit([{ kind: 'change_manager_runtime', provider: draft.provider || managerRuntime?.provider || 'codex', model: draft.model, reasoning_depth: draft.reasoningDepth, additional_prompt: draft.additionalPrompt.trim() }]);
+        const result = await onSubmit([{ kind: 'change_manager_runtime', provider: draft.provider || managerRuntime?.provider || 'codex', model: draft.model.trim(), reasoning_depth: draft.reasoningDepth, additional_prompt: draft.additionalPrompt.trim() }]);
         setVerification(result);
       } catch (caught) {
         setSubmitError(caught);
@@ -158,11 +81,13 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
       }
       return;
     }
-    if (editing) {
-      onSubmit(workerEditCommands(worker, draft));
-      return;
+    submitting.current = true;
+    const normalized = { ...draft, model: draft.model.trim() };
+    try {
+      await onSubmit(editing ? workerEditCommands(worker, normalized) : [workerCreateCommand(draft.role, normalized)]);
+    } finally {
+      submitting.current = false;
     }
-    onSubmit([workerCreateCommand(draft.role, draft)]);
   };
 
   return (
@@ -182,7 +107,7 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
             <h2 id={titleId}>{manager ? t('team.dialog.managerTitle') : editing ? t('team.dialog.editTitle', { name: worker.name }) : t('team.dialog.createTitle')}</h2>
             <p>{manager ? t('team.dialog.managerDescription') : t('team.dialog.workerDescription')}</p>
           </div>
-          <button ref={closeRef} className="team-icon-button" type="button" onClick={onClose} aria-label={t('team.dialog.close')}>
+          <button ref={closeRef} className="team-icon-button" type="button" disabled={saving} onClick={onClose} aria-label={t('team.dialog.close')}>
             <X aria-hidden="true" size={18} />
           </button>
         </header>
@@ -200,8 +125,10 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
                 <span>{t('team.dialog.role')}</span>
                 <select aria-label={t('team.dialog.role')} required value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })}>
                   <option value="" disabled>{t('team.dialog.selectRole')}</option>
-                  {(roles || (roleEntry ? [roleEntry] : [])).map((entry) => (
-                    <option key={entry.role} value={entry.role}>{entry.label}</option>
+                  {groupTeamRoles(roles || (roleEntry ? [roleEntry] : [])).map((group) => (
+                    <optgroup key={group.key} label={t(`team.groups.${group.key}.title`)}>
+                      {group.roles.map((entry) => <option key={entry.role} value={entry.role}>{entry.label}</option>)}
+                    </optgroup>
                   ))}
                 </select>
               </label>
@@ -211,8 +138,10 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
               </label>
             </>
           ) : null}
-          <RuntimeFields draft={draft} setDraft={changeDraft} agents={agents} backendOptions={backendOptions} defaultProvider={worker?.provider || managerRuntime?.provider || 'codex'} t={t} />
+          <RuntimeFields draft={draft} setDraft={changeDraft} agents={agents} backendOptions={backendOptions} defaultProvider={worker?.provider || managerRuntime?.provider || defaultProvider} agentsLoading={agentsLoading} onRefresh={onRefresh} t={t} />
         </fieldset>
+
+        {error ? <div className="team-dialog__error"><ProductError error={error} t={t} /></div> : null}
 
         {manager ? <section className="team-runtime-check" aria-label={t('assistant.runtime')}>
           <span role="status">{t(`assistant.status.${verificationStatus}`)}</span>
@@ -223,7 +152,7 @@ function WorkerDialog({ agents, backendOptions, onClose, onSubmit, roleEntry, ro
         </section> : null}
 
         <footer className="team-dialog__footer">
-          <Button variant="secondary" onClick={onClose}>{t(manager && verification?.saved ? 'team.dialog.close' : 'team.dialog.cancel')}</Button>
+          <Button variant="secondary" disabled={saving} onClick={onClose}>{t(manager && verification?.saved ? 'team.dialog.close' : 'team.dialog.cancel')}</Button>
           <Button type="submit" busy={saving} disabled={locked}>{manager ? t('team.dialog.saveAndCheck') : editing ? t('team.dialog.saveWorker') : t('team.dialog.createWorker')}</Button>
         </footer>
       </form>
@@ -235,7 +164,7 @@ function HistoryPanel({ onClose, events, t }) {
   const titleId = useId();
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
-  const handleKeyDown = useDialogAccessibility(dialogRef, closeRef, onClose);
+  const handleKeyDown = useTeamDialog(dialogRef, closeRef, onClose);
   const actorLabels = {
     user: t('team.actor.user'),
     manager: t('team.actor.manager'),
@@ -320,11 +249,13 @@ export default function TeamPage({ api = settingsApi }) {
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [mutationError, setMutationError] = useState(null);
-  const [dialog, setDialog] = useState(null); // {type: 'worker'|'create'|'manager'|'history', roleEntry?, worker?}
+  const [savedNotice, setSavedNotice] = useState(false);
+  const [dialog, setDialog] = useState(null); // {type, roleEntry?, worker?, roleKeys?}
   const [events, setEvents] = useState([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const addWorkerButtonRef = useRef(null);
+  const commandPending = useRef(false);
+  const commandAttempt = useRef(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -349,20 +280,30 @@ export default function TeamPage({ api = settingsApi }) {
   ])], [data, agents]);
 
   const runCommands = async (commands, { reason = '' } = {}) => {
+    if (commandPending.current) return;
     if (!commands.length) {
       setDialog(null);
       return;
     }
     setSaving(true);
+    commandPending.current = true;
     setMutationError(null);
+    setSavedNotice(false);
+    const signature = JSON.stringify({ projectKey, commands, reason });
+    if (commandAttempt.current?.signature !== signature) {
+      commandAttempt.current = { signature, key: newCommandKey() };
+    }
     try {
-      await api.sendTeamCommands(projectKey, commands, { reason });
+      await api.sendTeamCommands(projectKey, commands, { reason, commandKey: commandAttempt.current.key });
       await refresh();
       setDialog(null);
+      setSavedNotice(true);
+      commandAttempt.current = null;
     } catch (caught) {
       setMutationError(caught);
     } finally {
       setSaving(false);
+      commandPending.current = false;
     }
   };
 
@@ -398,9 +339,16 @@ export default function TeamPage({ api = settingsApi }) {
     }
   };
   const closeDialog = useCallback(() => {
+    if (commandPending.current || saving) return;
     setDialog(null);
-    queueMicrotask(() => addWorkerButtonRef.current?.focus());
-  }, []);
+    setMutationError(null);
+    commandAttempt.current = null;
+  }, [saving]);
+  const openDialog = (next) => {
+    setMutationError(null);
+    setSavedNotice(false);
+    setDialog(next);
+  };
 
   if (status === 'loading') return <main id="main-content" className="team-page"><div className="team-page-skeleton" role="status"><span /><span /><span /></div></main>;
   if (status === 'error' && !data) return <main id="main-content" className="team-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
@@ -414,13 +362,18 @@ export default function TeamPage({ api = settingsApi }) {
 
   const counts = capabilityCounts(team.roles);
   const workers = rosteredWorkerCount(team.roles);
+  const responsibilities = groupTeamRoles(team.roles);
+  const responsibilityNames = Object.fromEntries(responsibilities.flatMap((group) => group.roles.map((role) => [role.role, t(`team.groups.${group.key}.title`)])));
+  const defaultProvider = data?.start_context?.worker_backend?.mode || 'codex';
+  const runtimeProps = { agents, backendOptions, agentsLoading, onRefresh: refreshAgents, defaultProvider, error: mutationError };
   const visibleRoles = team.roles.filter((role) => {
-    const matches = [role.role, role.label, ...role.workers.flatMap((worker) => [worker.name, worker.runtimeLabel])]
+    const matches = [responsibilityNames[role.role], role.role, role.label, ...role.workers.flatMap((worker) => [worker.name, worker.runtimeLabel])]
       .join(' ').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
     const ready = role.state === 'enabled' && role.capability === 'ready';
     const needsSetup = role.state === 'enabled' && role.capability !== 'ready';
     return matches && (filter === 'all' || (filter === 'ready' ? ready : filter === 'disabled' ? role.state === 'disabled' : needsSetup));
   });
+  const visibleGroups = groupTeamRoles(visibleRoles);
 
   return (
     <main id="main-content" className="team-page">
@@ -431,23 +384,22 @@ export default function TeamPage({ api = settingsApi }) {
           <p>{t('team.description')}</p>
         </div>
         <div className="team-page__actions">
-          <button type="button" className="product-button product-button--secondary" disabled={agentsLoading} onClick={refreshAgents}>
-            <RefreshCw aria-hidden="true" size={16} />
-            {t(agentsLoading ? 'team.modelsLoading' : 'team.refreshModels')}
-          </button>
           <button type="button" className="product-button product-button--secondary team-configure-button" onClick={openHistory}>
             <History aria-hidden="true" size={16} />
             {t('team.history.button')}
           </button>
-          <button ref={addWorkerButtonRef} type="button" className="product-button product-button--primary team-configure-button" onClick={() => setDialog({ type: 'create' })}>
+          <button type="button" className="product-button product-button--secondary team-configure-button" disabled={saving} onClick={() => openDialog({ type: 'create' })}>
             <Plus aria-hidden="true" size={16} />
             {t('team.addWorker')}
+          </button>
+          <button type="button" className="product-button product-button--primary team-configure-button" disabled={saving || !team.roles.some((role) => role.state === 'enabled')} onClick={() => openDialog({ type: 'batch' })}>
+            <Settings2 aria-hidden="true" size={16} />{t('team.bulk.button')}
           </button>
         </div>
       </header>
 
       <section className="team-summary" aria-label={t('team.summary.label')}>
-        <div><strong>{team.roles.length}</strong><span>{t('team.summary.roles')}</span></div>
+        <div><strong>{responsibilities.length}</strong><span>{t('team.groups.summary')}</span></div>
         <div><strong>{workers}</strong><span>{t('team.summary.workers')}</span></div>
         <div data-tone="active"><strong>{counts.ready}</strong><span>{t('team.capability.ready')}</span></div>
         <div><strong>{counts.unstaffed}</strong><span>{t('team.capability.unstaffed')}</span></div>
@@ -455,7 +407,8 @@ export default function TeamPage({ api = settingsApi }) {
         <div data-tone="disabled"><strong>{counts.disabled}</strong><span>{t('team.capability.disabled')}</span></div>
       </section>
 
-      {mutationError ? <ProductError error={mutationError} onRetry={() => setMutationError(null)} t={t} /> : null}
+      {savedNotice ? <p className="team-save-notice" role="status">{t('team.config.saved')}</p> : null}
+      {mutationError && !dialog ? <ProductError error={mutationError} onRetry={() => setMutationError(null)} t={t} /> : null}
       {loadError ? <ProductError error={loadError} onRetry={refreshAgents} t={t} /> : null}
 
       <section className="team-manager" aria-labelledby="team-manager-title">
@@ -471,7 +424,7 @@ export default function TeamPage({ api = settingsApi }) {
             <code>{team.manager.runtimeLabel || t('team.modelDefault')}</code>
             <StatusBadge tone="active">{t('team.manager.alwaysOn')}</StatusBadge>
           </div>
-          <button type="button" className="product-button product-button--secondary" onClick={() => setDialog({ type: 'manager' })}>
+          <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => openDialog({ type: 'manager' })}>
             <Bot aria-hidden="true" size={15} />
             {t('team.manager.edit')}
           </button>
@@ -488,89 +441,93 @@ export default function TeamPage({ api = settingsApi }) {
         </div>
         <CollectionToolbar label={t('team.search')} query={query} onQueryChange={setQuery}
           filters={['all', 'attention', 'ready', 'disabled'].map((key) => [key, t(key === 'all' ? 'collection.all' : key === 'disabled' ? 'team.state.disabled' : `team.filter.${key}`)])}
-          selected={filter} onSelect={setFilter} count={visibleRoles.length} t={t} />
-        <div className="team-roster__columns" aria-hidden="true">
-          <span>{t('team.columns.role')}</span><span>{t('team.columns.workers')} · {t('team.columns.runtime')}</span><span>{t('team.columns.capability')}</span>
-        </div>
+          selected={filter} onSelect={setFilter} count={visibleGroups.length} t={t} />
         {!visibleRoles.length ? <div className="collection-empty"><p>{t('collection.noResults')}</p><Button variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>{t('collection.reset')}</Button></div> : null}
-        <div className="team-worker-list">
-          {visibleRoles.map((role) => (
-            <article className="team-worker" data-role-state={role.state} key={role.role}>
-              <div className="team-worker__overview">
-                <div className="team-worker__identity">
-                  <span className="team-worker__icon"><Bot aria-hidden="true" size={17} /></span>
-                  <div>
-                    <h3>{role.label}</h3>
-                    <p><code>{role.role}</code></p>
-                  </div>
-                </div>
-                <div className="team-worker__workers">
-                  {role.workers.length ? (
-                    <ul className="team-role-workers">
-                      {role.workers.map((worker) => (
-                        <li key={worker.id}>
-                          <StatusBadge tone={worker.lifecycle === 'active' ? 'active' : 'neutral'}>{t(`team.lifecycle.${worker.lifecycle}`)}</StatusBadge>
-                          <strong>{worker.name}</strong>
-                          <span className="team-role-workers__runtime">{worker.runtimeLabel || t('team.modelDefault')}</span>
-                          <span className="team-role-workers__actions">
-                            {worker.lifecycle === 'active' ? (
-                              <button type="button" className="team-icon-button" title={t('team.actions.pause')} aria-label={t('team.actions.pauseAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'inactivate_worker', worker_id: worker.id }], { reason: `Pause ${worker.name}` })}>
-                                <Pause aria-hidden="true" size={14} />
-                              </button>
-                            ) : (
-                              <button type="button" className="team-icon-button" title={t('team.actions.activate')} aria-label={t('team.actions.activateAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'activate_worker', worker_id: worker.id }], { reason: `Activate ${worker.name}` })}>
-                                <Play aria-hidden="true" size={14} />
-                              </button>
-                            )}
-                            <button type="button" className="team-icon-button" title={t('team.actions.delete')} aria-label={t('team.actions.deleteAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'delete_worker', worker_id: worker.id }], { reason: `Delete ${worker.name}` })}>
-                              <Trash2 aria-hidden="true" size={14} />
+        <div className="team-responsibility-list">
+          {visibleGroups.map((group) => (
+            <ResponsibilityGroup key={group.key} group={group} t={t} saving={saving} forceOpen={Boolean(query.trim()) || filter !== 'all'}
+              expansionContext={`${query.trim()}:${filter}`}
+              onConfigure={() => openDialog({ type: 'batch', roleKeys: group.roles.map((role) => role.role) })}>
+              <div className="team-worker-list">
+                {group.roles.map((role) => (
+                  <article className="team-worker" data-role-state={role.state} key={role.role} aria-labelledby={`team-role-${role.role}`}>
+                    <div className="team-worker__overview">
+                      <div className="team-worker__identity">
+                        <span className="team-worker__icon"><Bot aria-hidden="true" size={17} /></span>
+                        <div>
+                          <h3 id={`team-role-${role.role}`}>{role.label}</h3>
+                          <p><code>{role.role}</code></p>
+                        </div>
+                      </div>
+                      <div className="team-worker__workers">
+                        {role.workers.length ? (
+                          <ul className="team-role-workers">
+                            {role.workers.map((worker) => (
+                              <li key={worker.id}>
+                                <StatusBadge tone={worker.lifecycle === 'active' ? 'active' : 'neutral'}>{t(`team.lifecycle.${worker.lifecycle}`)}</StatusBadge>
+                                <strong>{worker.name}</strong>
+                                <span className="team-role-workers__runtime">{worker.provider} · {worker.model || t('team.dialog.inheritModel')}</span>
+                                <span className="team-role-workers__actions">
+                                  <button type="button" className="product-button product-button--secondary team-edit-button" aria-label={t('team.actions.editAria', { name: worker.name })} disabled={saving} onClick={() => openDialog({ type: 'worker', worker })}>
+                                    <Pencil aria-hidden="true" size={14} />{t('team.config.edit')}
+                                  </button>
+                                  {worker.lifecycle === 'active' ? (
+                                    <button type="button" className="team-icon-button" title={t('team.actions.pause')} aria-label={t('team.actions.pauseAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'inactivate_worker', worker_id: worker.id }], { reason: `Pause ${worker.name}` })}>
+                                      <Pause aria-hidden="true" size={14} />
+                                    </button>
+                                  ) : (
+                                    <button type="button" className="team-icon-button" title={t('team.actions.activate')} aria-label={t('team.actions.activateAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'activate_worker', worker_id: worker.id }], { reason: `Activate ${worker.name}` })}>
+                                      <Play aria-hidden="true" size={14} />
+                                    </button>
+                                  )}
+                                  <button type="button" className="team-icon-button" title={t('team.actions.delete')} aria-label={t('team.actions.deleteAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'delete_worker', worker_id: worker.id }], { reason: `Delete ${worker.name}` })}>
+                                    <Trash2 aria-hidden="true" size={14} />
+                                  </button>
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="team-worker__empty">{t('team.noWorkers')}</p>
+                        )}
+                      </div>
+                      <div className="team-worker__capability">
+                        <StatusBadge tone={role.state === 'disabled' ? 'neutral' : role.capabilityTone}>
+                          {role.state === 'disabled' ? t('team.state.disabled') : t(`team.capability.${role.capability}`)}
+                        </StatusBadge>
+                        <span className="team-role-actions">
+                          {role.state === 'enabled' ? (
+                            <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => runCommands([{ kind: 'disable_role', role: role.role }], { reason: `Disable ${role.label}` })}>
+                              {t('team.actions.disableRole')}
                             </button>
-                            <button type="button" className="team-icon-button" onClick={() => setDialog({ type: 'worker', worker })}>
-                              <span aria-hidden="true">✎</span>
-                              <span className="visually-hidden">{t('team.actions.editAria', { name: worker.name })}</span>
+                          ) : (
+                            <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => runCommands([{ kind: 'enable_role', role: role.role }], { reason: `Enable ${role.label}` })}>
+                              {t('team.actions.enableRole')}
                             </button>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="team-worker__empty">{t('team.noWorkers')}</p>
-                  )}
-                </div>
-                <div className="team-worker__capability">
-                  <StatusBadge tone={role.state === 'disabled' ? 'neutral' : role.capabilityTone}>
-                    {role.state === 'disabled' ? t('team.state.disabled') : t(`team.capability.${role.capability}`)}
-                  </StatusBadge>
-                  <span className="team-role-actions">
-                    {role.state === 'enabled' ? (
-                      <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => runCommands([{ kind: 'disable_role', role: role.role }], { reason: `Disable ${role.label}` })}>
-                        {t('team.actions.disableRole')}
-                      </button>
-                    ) : (
-                      <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => runCommands([{ kind: 'enable_role', role: role.role }], { reason: `Enable ${role.label}` })}>
-                        {t('team.actions.enableRole')}
-                      </button>
-                    )}
-                    <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => setDialog({ type: 'create', roleEntry: role })}>
-                      <Plus aria-hidden="true" size={14} />
-                      {t('team.actions.addWorker')}
-                    </button>
-                  </span>
-                  {role.capability === 'degraded' ? (
-                    <p className="team-role-warning"><AlertTriangle aria-hidden="true" size={13} />{t('team.degradedHint')}</p>
-                  ) : null}
-                </div>
+                          )}
+                          <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => openDialog({ type: 'create', roleEntry: role })}>
+                            <Plus aria-hidden="true" size={14} />
+                            {t('team.actions.addWorker')}
+                          </button>
+                        </span>
+                        {role.capability === 'degraded' ? (
+                          <p className="team-role-warning"><AlertTriangle aria-hidden="true" size={13} />{t('team.degradedHint')}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </article>
+                ))}
               </div>
-            </article>
+            </ResponsibilityGroup>
           ))}
         </div>
       </section>
 
       {dialog?.type === 'history' ? <HistoryPanel events={events} onClose={closeDialog} t={t} /> : null}
+      {dialog?.type === 'batch' ? <BatchWorkerDialog {...runtimeProps} roles={dialog.roleKeys ? team.roles.filter((role) => dialog.roleKeys.includes(role.role)) : team.roles} saving={saving} onClose={closeDialog} onSubmit={(commands) => runCommands(commands, { reason: 'Configure workers in selected roles' })} t={t} /> : null}
       {dialog?.type === 'worker' ? (
         <WorkerDialog
-          agents={agents}
-          backendOptions={backendOptions}
+          {...runtimeProps}
           onClose={closeDialog}
           onSubmit={(commands) => runCommands(commands, { reason: `Update ${dialog.worker.name}` })}
           saving={saving}
@@ -580,8 +537,7 @@ export default function TeamPage({ api = settingsApi }) {
       ) : null}
       {dialog?.type === 'create' ? (
         <WorkerDialog
-          agents={agents}
-          backendOptions={backendOptions}
+          {...runtimeProps}
           onClose={closeDialog}
           onSubmit={(commands) => runCommands(commands, { reason: 'Add worker' })}
           roleEntry={dialog.roleEntry}
@@ -593,8 +549,7 @@ export default function TeamPage({ api = settingsApi }) {
       {dialog?.type === 'manager' ? (
         <WorkerDialog
           key={projectKey}
-          agents={agents}
-          backendOptions={backendOptions}
+          {...runtimeProps}
           manager
           managerRuntime={team.manager}
           assistantSession={data?.task_assistant_session}

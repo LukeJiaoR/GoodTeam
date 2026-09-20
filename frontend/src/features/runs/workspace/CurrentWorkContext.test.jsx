@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { translate } from '../../../i18n';
-import CurrentWorkContext from './CurrentWorkContext';
+import CurrentWorkContext from './CurrentWorkContext.jsx';
 
 const base = { projectKey: 'A', projectName: 'Project A', title: 'Keep APIs stable', freshness: 'ready', workspace: { schema_version: 'team_workspace.v1', mission: { project_key: 'A', status: 'working', source: 'workflow' } } };
 const t = (key, params) => translate('en', key, params);

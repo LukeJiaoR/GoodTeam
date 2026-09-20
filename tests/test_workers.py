@@ -1200,10 +1200,10 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
 
     assert result["status"] == "completed"
     assert result["adapter"] == "codex"
-    assert result["model"] == "gpt-5.4"
+    assert result["model"] == "gpt-5.6-sol"
     assert result["exit_code"] == 0
     assert calls[0]["cwd"] == tmp_path
-    assert calls[0]["command"][:4] == ["/fake/bin/codex", "exec", "--model", "gpt-5.4"]
+    assert calls[0]["command"][:4] == ["/fake/bin/codex", "exec", "--model", "gpt-5.6-sol"]
     assert "--skip-git-repo-check" in calls[0]["command"]
     assert "--ignore-user-config" not in calls[0]["command"]
     assert "--ephemeral" not in calls[0]["command"]
@@ -1219,7 +1219,7 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
         "external_invocation": True,
         "command": "/fake/bin/codex",
         "command_available": True,
-        "model": "gpt-5.4",
+        "model": "gpt-5.6-sol",
         "reason": "Codex CLI invocation attempted",
         "runtime_adapter": "codex",
         "runtime_binary": "/fake/bin/codex",
@@ -1227,7 +1227,7 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
         "runtime_version_warning": True,
         "runtime_version_warning_reason": "runtime_version_unavailable",
         "runtime_version_failure_reason": "version command failed to start",
-        "runtime_model": "gpt-5.4",
+        "runtime_model": "gpt-5.6-sol",
         "runtime_cwd": str(tmp_path),
         "runtime_workspace_mode": "project_root",
         "runtime_workspace_status": "none",
@@ -1246,7 +1246,7 @@ def test_codex_adapter_invokes_codex_cli_and_records_metadata(tmp_path, monkeypa
         "pythonpath_workspace_src": False,
     }
     assert status["preflight"]["codex_available"] is True
-    assert status["preflight"]["model"] == "gpt-5.4"
+    assert status["preflight"]["model"] == "gpt-5.6-sol"
     assert "OPENAI_API_KEY" in status["preflight"]["auth_env"]
     assert "value" not in json.dumps(status["preflight"]).lower()
     assert calls[0]["text"] is True
@@ -1288,7 +1288,7 @@ def test_runtime_version_detection_success_records_structured_runtime_evidence(t
     assert evidence["runtime_binary"] == "/fake/bin/codex"
     assert evidence["runtime_version"] == "codex 0.61.0"
     assert evidence["runtime_version_warning"] is False
-    assert evidence["runtime_model"] == "gpt-5.4"
+    assert evidence["runtime_model"] == "gpt-5.6-sol"
     assert evidence["runtime_cwd"] == str(tmp_path)
     assert evidence["runtime_workspace_mode"] == "project_root"
     assert evidence["runtime_workspace_status"] == "none"
@@ -1747,7 +1747,7 @@ def test_discover_installed_agents_dedupes_aliases_and_reflects_availability(mon
     assert by_backend["codex"]["available"] is True
     assert by_backend["codex"]["ready"] is True
     assert by_backend["codex"]["command"] == "codex"
-    assert by_backend["codex"]["model_default"] == "gpt-5.4"
+    assert by_backend["codex"]["model_default"] == "gpt-5.6-sol"
     assert by_backend["codex"]["models"] == []
     assert "gpt-5.3-codex" not in by_backend["codex"]["models"]
     assert by_backend["codex"]["models_source"] == "unavailable"
@@ -2727,7 +2727,7 @@ def test_codex_adapter_fails_fast_when_codex_cli_is_missing(tmp_path, monkeypatc
         "external_invocation": False,
         "command": "/missing/codex",
         "command_available": False,
-        "model": "gpt-5.4",
+        "model": "gpt-5.6-sol",
         "reason": "Codex CLI is not available. Install codex or add it to PATH before running codex workers.",
         "runtime_adapter": "codex",
         "runtime_binary": "/missing/codex",
@@ -2735,7 +2735,7 @@ def test_codex_adapter_fails_fast_when_codex_cli_is_missing(tmp_path, monkeypatc
         "runtime_version_warning": True,
         "runtime_version_warning_reason": "runtime_version_unavailable",
         "runtime_version_failure_reason": "runtime binary unavailable",
-        "runtime_model": "gpt-5.4",
+        "runtime_model": "gpt-5.6-sol",
         "runtime_cwd": str(tmp_path),
         "runtime_workspace_mode": "project_root",
         "runtime_workspace_status": "none",
