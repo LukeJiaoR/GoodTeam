@@ -540,7 +540,7 @@ test('renders the projection order stably with LED-only Execution states', async
   renderWorkPage();
 
   const execution = screen.getByRole('region', { name: 'Execution' });
-  const actorOrder = () => within(execution).getAllByRole('listitem').map((item) => (
+  const actorOrder = () => Array.from(execution.querySelectorAll('.team-actor-list > li')).map((item) => (
     item.querySelector('.team-actor-list__copy p')?.textContent
   ));
   const expected = [
@@ -1057,8 +1057,8 @@ test('keeps Task Assistant attention in the conversation after recorded mission 
   renderWorkPage();
 
   const manager = screen.getByRole('region', { name: 'Task Assistant' });
-  expect(within(manager).getByText('Needs you', { selector: '.product-status-badge' }))
-    .toHaveAttribute('data-tone', 'active');
+  expect(within(manager).getByText('Available', { selector: '.product-status-badge' }))
+    .toHaveAttribute('data-tone', 'neutral');
   const attention = manager.querySelector('.team-attention');
   const history = manager.querySelector('.team-manager-timeline');
   expect(attention).toBeInTheDocument();
@@ -1080,7 +1080,7 @@ test('renders compact system event chips for machine state and deliverable updat
   renderWorkPage();
 
   const manager = screen.getByRole('region', { name: 'Task Assistant' });
-  const systemChip = manager.querySelector('.team-manager-event--system .team-manager-system-chip');
+  const systemChip = within(manager).getByText('prd.md is ready.').closest('.team-manager-system-chip');
   expect(systemChip).toBeInTheDocument();
   expect(within(systemChip).getByText('prd.md is ready.')).toBeVisible();
 });
@@ -1615,7 +1615,7 @@ test('labels the active run and run selector with task titles instead of raw IDs
   expect(screen.queryByText('run-active')).not.toBeInTheDocument();
 });
 
-test.each([false, true])('renders historical Task Assistant history read-only in semantic order (mobile=%s)', async (mobile) => {
+test.each([false, true])('keeps project chat available while historical task activity and actions stay read-only (mobile=%s)', async (mobile) => {
   stubMediaPreferences({ mobile });
   mocks.useProjectState.mockReturnValue({
     data: projectedWorkData(),
@@ -1666,17 +1666,21 @@ test.each([false, true])('renders historical Task Assistant history read-only in
   const manager = historicalWorkspace.querySelector('.team-pane--manager');
   expect(historicalWorkspace.querySelector('.team-pane--execution')).toBeInTheDocument();
   expect(historicalWorkspace.querySelector('.team-pane--outcomes')).toBeInTheDocument();
-  expect(within(historicalWorkspace).getAllByText('Implement the earlier OAuth revision').length)
+  expect((await within(historicalWorkspace).findAllByText('Implement the earlier OAuth revision')).length)
     .toBeGreaterThan(0);
   expect(within(historicalWorkspace).getByRole('button', { name: 'Implement the earlier OAuth revision', hidden: true }))
     .toHaveAttribute('aria-expanded', 'false');
-  const request = within(manager).getByText('Ship the earlier OAuth revision');
-  const retry = within(manager).getByText('The work needed 2 attempts and then completed.');
-  const complete = within(manager).getByText('The mission reached its recorded completion state.');
+  expect(within(manager).getByRole('textbox', { name: 'Message' })).toBeVisible();
+  expect(within(manager).queryByRole('button', { name: 'Approve', exact: true })).not.toBeInTheDocument();
+  expect(within(manager).queryByRole('button', { name: 'Cancel entire mission' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Historical runs are read-only and visually separate from the active run.'));
+  const activity = screen.getByRole('list', { name: 'Historical task activity' });
+  const request = within(activity).getByText('Ship the earlier OAuth revision');
+  const retry = within(activity).getByText('The work needed 2 attempts and then completed.');
+  const complete = within(activity).getByText('The mission reached its recorded completion state.');
   expect(request.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(retry.compareDocumentPosition(complete) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(within(manager).queryByRole('button')).not.toBeInTheDocument();
-  expect(screen.getByText('Run details', { selector: 'summary' })).toBeVisible();
+
 });
 
 test('makes an actionable takeover review the primary next step', async () => {

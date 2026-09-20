@@ -96,10 +96,10 @@ class TaskAssistantService:
         return self._with_readiness_attention(session, readiness)
 
     def send_message(
-        self, *, project_key: str, root: Path, text: str, message_id: str,
+        self, *, project_key: str, root: Path, text: str, message_id: str, context_run_id: str = "",
     ) -> dict[str, object]:
         return assistant_requests.execute_message(
-            self, project_key=project_key, root=root, text=text, message_id=message_id,
+            self, project_key=project_key, root=root, text=text, message_id=message_id, context_run_id=context_run_id,
         )
 
     def retry_message(self, *, project_key, root, message_id, expected_attempt):

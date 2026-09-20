@@ -1,11 +1,11 @@
 // Presentation-only delivery state: it is not a task, approval, or execution status.
-export function createConversationDelivery({ projectKey, runId = '', text, intentId = '', previous }) {
+export function createConversationDelivery({ projectKey, runId = '', text, intentId = '', contextKey = '', previous }) {
   const reusable = !intentId && previous?.status === 'unconfirmed'
     && previous.projectKey === projectKey && previous.runId === runId
-    && !previous.intentId && previous.text === text;
+    && (previous.contextKey || '') === contextKey && !previous.intentId && previous.text === text;
   return {
     id: reusable ? previous.id : globalThis.crypto?.randomUUID?.() || `message-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    projectKey, runId, text, intentId,
+    projectKey, runId, text, intentId, contextKey,
     timestamp: new Date().toISOString(),
     status: 'sending',
   };

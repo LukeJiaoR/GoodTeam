@@ -70,6 +70,8 @@ class LocalTaskStore:
         artifact_refs: list[str] | None = None,
         external_refs: list[str] | None = None,
     ) -> dict[str, Any]:
+        if role == "orchestrator":
+            raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
         ledger = self._read()
         tasks = list(ledger.get("tasks", []))
         now = self._now()
@@ -100,6 +102,8 @@ class LocalTaskStore:
         return task
 
     def update_task(self, task_id: str, **updates: Any) -> dict[str, Any]:
+        if updates.get("role") == "orchestrator":
+            raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
         ledger = self._read()
         tasks = list(ledger.get("tasks", []))
         new_id = str(updates.get("id", task_id)).strip()

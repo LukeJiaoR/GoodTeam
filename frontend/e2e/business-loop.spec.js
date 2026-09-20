@@ -74,7 +74,7 @@ async function verifyHistory(page, fixture, { first, secondRunId }) {
   await expect(page.getByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
   await expect(page.getByRole('heading', { name: firstRequest, exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve and continue', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: firstRequest, exact: true })).toBeVisible();
   const current = await workState(page, fixture.key);

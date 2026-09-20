@@ -36,8 +36,11 @@ keystrokes remain browser-local and are not promised to survive reload.
 
 ## Deliberate limits
 
-This change does not implement arbitrary mid-worker cancellation, automatic replanning,
-parallel task intake or natural-language approval. Running-task scope changes still go through
+The [project Manager contract](project-manager-conversation.md) adds explicit saved
+future tasks and a persistent project conversation across task/history selection.
+Saving or selecting a future draft does not start it. This does not implement
+arbitrary mid-worker cancellation, automatic replanning, parallel execution or
+natural-language approval. Running-task scope changes still go through
 a current review's Request changes/Intent Commit boundary. Discussing an adjustment before
 that boundary does not change the worker's instructions. Fake/builtin responses display the
 recorded state; they are not evidence of real-model comprehension or verified delivery.

@@ -627,7 +627,8 @@ def test_project_state_exposes_task_assistant_before_first_workflow(tmp_path: Pa
     payload = web.build_project_work_state(tmp_path, "TEAM")
 
     assert payload["task_assistant_session"]["project_mode_hint"]["mode"] == "existing_project"
-    assert payload["team_workspace"]["mission"]["source"] == "task_assistant"
+    assert payload["team_workspace"]["mission"] is None
+    assert payload["project_assistant"]["project_key"] == "TEAM"
     assert payload["team_workspace"]["manager_timeline"][0]["event"] == "welcome_existing_project"
 
 
@@ -663,6 +664,7 @@ def test_task_assistant_message_api_uses_project_bound_service(tmp_path: Path, m
             "root": project_root.resolve(),
             "message_id": "message-1",
             "text": "看一下当前项目",
+            "context_run_id": "",
         },
     )
 

@@ -35,6 +35,10 @@ of persisted task, Team and readiness state. This is intentionally fail-closed.
 
 ## Task Drafts
 
+The [project Manager contract](project-manager-conversation.md) separates the
+project coordinator from business assignments and adds an independent queue of
+future drafts. The rules below still govern the one selected proposal.
+
 - One unconfirmed draft retains a stable ID and monotonically increasing revision.
 - Explicit additions append the exact original paragraph and its source message ID.
   Model summaries never replace the human-approved text.
