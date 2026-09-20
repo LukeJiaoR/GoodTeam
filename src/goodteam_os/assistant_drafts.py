@@ -179,6 +179,12 @@ def confirm_and_prepare(service, *, project_key, root, request):
         revision = request.get("expected_revision")
         if type(revision) is not int:
             raise ValueError("Confirm the latest task revision.")
+        from goodteam_os.assistant_queue import active_project_run
+
+        current = active_project_run(service.workspace, project_key)
+        proposal = store.read().get("proposed_task") or {}
+        if current and current.run_id not in {proposal.get("run_id"), proposal.get("start_run_id")}:
+            raise ValueError("Finish or cancel the active task before starting another task.")
         state = service._readiness_state(project_key, root)
         if state.get("project_mode") == "unconfirmed":
             raise ValueError("Confirm the project mode before starting the task.")

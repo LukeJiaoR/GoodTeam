@@ -9,6 +9,33 @@ const submitChange = 'work.manager.intent.reviewInterpretation';
 
 // All tests exercise the same textarea, not a separate Request changes form.
 describe('persistent conversation composer', () => {
+  it('saves a separate future task while retaining the ordinary unsent question', async () => {
+    const onStart = vi.fn();
+    const onQueueTask = vi.fn().mockResolvedValue({ session: {} });
+    const onDiscussChangeIntent = vi.fn();
+    render(<ConversationComposer t={t} onStart={onStart} onQueueTask={onQueueTask}
+      activeTask onDiscussChangeIntent={onDiscussChangeIntent} />);
+    fireEvent.change(screen.getByRole('textbox', { name: message }), { target: { value: 'Why is the current task blocked?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'assistant.project.newTask' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'assistant.project.newTask' }), { target: { value: 'An independent task.\n\nKeep the schema.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'assistant.project.saveTask' }));
+    await waitFor(() => expect(onQueueTask).toHaveBeenCalledWith('An independent task.\n\nKeep the schema.'));
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onDiscussChangeIntent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: message }));
+    expect(screen.getByRole('textbox', { name: message })).toHaveValue('Why is the current task blocked?');
+  });
+
+  it('retains a future task after a rejected save', async () => {
+    render(<ConversationComposer t={t} onStart={vi.fn()} onQueueTask={vi.fn().mockResolvedValue(false)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'assistant.project.newTask' }));
+    const draft = screen.getByRole('textbox', { name: 'assistant.project.newTask' });
+    fireEvent.change(draft, { target: { value: 'Keep this future request.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'assistant.project.saveTask' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'assistant.project.saveTask' })).not.toBeDisabled());
+    expect(draft).toHaveValue('Keep this future request.');
+  });
+
   it('switches to bound change discussion and retains the ordinary unsent draft', async () => {
     const onStart = vi.fn().mockResolvedValue({});
     const onDiscussChangeIntent = vi.fn().mockResolvedValue({});

@@ -1,5 +1,6 @@
 import { useParams } from 'react-router-dom';
 import './workspace.css';
+import './projectConversation.css';
 import './workspaceResponsive.css';
 import './workspaceTaskDetail.css';
 

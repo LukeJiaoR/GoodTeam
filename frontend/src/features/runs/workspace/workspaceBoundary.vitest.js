@@ -10,6 +10,7 @@ const readSource = (relativePath) => fs.readFileSync(
 
 const sources = {
   workspace: readSource('src/features/runs/workspace/workspace.css'),
+  conversation: readSource('src/features/runs/workspace/projectConversation.css'),
   responsive: readSource('src/features/runs/workspace/workspaceResponsive.css'),
   taskDetail: readSource('src/features/runs/workspace/workspaceTaskDetail.css'),
 };
@@ -110,7 +111,7 @@ test('Manager presentation components are owned by the workspace feature', () =>
   expect(workPageSource).toContain("from './workspace/WorkTaskDetailDialog'");
   expect(workPageSource).not.toContain('function TeamWorkspace(');
   expect(workPageSource).not.toContain('function ManagerApprovalBrief(');
-  expect(teamWorkspaceSource).toContain('function ManagerPane(');
+  expect(teamWorkspaceSource).toContain("import ProjectConversation from './ProjectConversation'");
   expect(teamWorkspaceSource).toContain('function AdvancedInspector(');
   expect(fs.existsSync(path.resolve(
     globalThis.process.cwd(),

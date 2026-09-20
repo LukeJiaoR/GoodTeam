@@ -18,8 +18,7 @@ def test_completed_current_project_accepts_next_task_but_history_stays_read_only
         state=state, workflow_active=False, project_root=None, task_assistant_session=session, read_only=True,
     )
 
-    assert "task_assistant" == current["mission"]["source"]
-    assert False is current["mission"]["read_only"]
+    assert current["mission"] is None
     assert session["proposed_task"] == current["proposed_task"]
     assert "first-run" == history["mission"]["run_id"]
     assert True is history["mission"]["read_only"]

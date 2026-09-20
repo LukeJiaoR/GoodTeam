@@ -117,6 +117,8 @@ from goodteam_os.tasks import (
     serialize_task_board,
 )
 from goodteam_os.team_workspace import build_team_workspace
+from goodteam_os.assistant_workspace import build_project_assistant
+from goodteam_os.assistant_queue import QUEUE_ACTIONS, handle_queue_action
 from goodteam_os.telegram import send_approval_notification
 from goodteam_os.workflow_table import (
     GATE_TRANSITIONS,
@@ -2387,14 +2389,25 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
         if isinstance(task, dict)
     ]
     active_run = is_active_run(state)
-    intent_commits = IntentCommitStore(workspace, project_key).list_intents(
-        mission_id=state.run_id if state is not None else "",
-    )
+    intent_commits = IntentCommitStore(workspace, project_key).list_intents()
     team_payload = None
     try:
         team_payload = build_team_view_payload(workspace, project_key)["team"]
     except (ProjectApiError, ValueError):
         team_payload = None
+    team_workspace = build_team_workspace(
+        state=state,
+        workflow_active=active_run,
+        project_root=project_root,
+        project_key=project_key,
+        operator_state_dir=service_state_dir(),
+        tasks=task_rows,
+        worker_jobs=worker_job_records,
+        approval_reviews=approval_reviews,
+        action_items=action_items,
+        intent_commits=intent_commits,
+        task_assistant_session=task_assistant_session,
+    )
     return {
         "type": "project",
         "state": asdict(state) if state is not None else None,
@@ -2411,18 +2424,10 @@ def build_project_work_state(workspace: Path, project_key: str) -> dict[str, obj
         "agile_board": agile_board,
         "worker_jobs": worker_jobs,
         "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_job_records),
-        "team_workspace": build_team_workspace(
-            state=state,
-            workflow_active=active_run,
-            project_root=project_root,
-            project_key=project_key,
-            operator_state_dir=service_state_dir(),
-            tasks=task_rows,
-            worker_jobs=worker_job_records,
-            approval_reviews=approval_reviews,
-            action_items=action_items,
-            intent_commits=intent_commits,
-            task_assistant_session=task_assistant_session,
+        "team_workspace": team_workspace,
+        "project_assistant": build_project_assistant(
+            task_assistant_session, team_workspace, project_key=project_key,
+            workflow_active=active_run, jobs=worker_job_records, intent_commits=intent_commits,
         ),
     }
 
@@ -5857,6 +5862,7 @@ def handle_project_api_post(
                 root=root,
                 message_id=str(request.get("message_id", "")),
                 text=str(request.get("text", "")),
+                context_run_id=request.get("context_run_id", ""),
             )
         except ManagerExecutionError as exc:
             raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
@@ -5870,6 +5876,12 @@ def handle_project_api_post(
         key = _decode_project_api_key(task_assistant_action_match.group(1))
         key, target, root = _project_target_and_root(workspace, key)
         action = str(request.get("action", ""))
+        if action in QUEUE_ACTIONS:
+            service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
+            try:
+                return 200, handle_queue_action(service, project_key=key, root=root, request=request)
+            except ValueError as exc:
+                raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
         if action in {"edit_task", "resolve_draft", "confirm_project_mode"}:
             service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
             try:

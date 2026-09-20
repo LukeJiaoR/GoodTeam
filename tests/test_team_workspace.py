@@ -1792,7 +1792,7 @@ def test_no_active_durable_work_returns_stable_empty_contract(tmp_path: Path) ->
     assert build_team_workspace(state=None, workflow_active=False, project_root=tmp_path) == empty_team_workspace()
 
 
-def test_task_assistant_conversation_is_the_mission_before_workflow_start(tmp_path: Path) -> None:
+def test_task_assistant_conversation_has_no_mission_before_workflow_start(tmp_path: Path) -> None:
     session = {
         "schema_version": "task_assistant_session.v1",
         "project_key": "DEMO",
@@ -1820,7 +1820,7 @@ def test_task_assistant_conversation_is_the_mission_before_workflow_start(tmp_pa
         task_assistant_session=session,
     )
 
-    assert projection["mission"]["source"] == "task_assistant"
+    assert projection["mission"] is None
     assert projection["manager_timeline"][0]["id"] == "welcome:DEMO"
     assert projection["manager_timeline"][0]["timestamp"] == "2026-09-04T10:00:00Z"
     assert projection["manager_timeline"][0]["event"] == "welcome_existing_project"

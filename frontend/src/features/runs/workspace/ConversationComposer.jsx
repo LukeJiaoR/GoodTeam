@@ -7,10 +7,11 @@ import ConversationChangeContext from './ConversationChangeContext.jsx';
 import { matchesSavedChange } from './conversationChangeContext';
 
 export default function ConversationComposer({
-  busy, embedded = true, error, onStart, suggestions = [], t,
+  busy, embedded = true, error, onStart, onQueueTask, suggestions = [], t,
   changeIntent, onDiscussChangeIntent, onKeepDiscussingChangeIntent,
   activeTask = false, changeTarget = null, recordedChange, onStartChangeIntent,
 }) {
+  const [entryMode, setEntryMode] = useState('message');
   const [drafts, setDrafts] = useState({});
   const [modes, setModes] = useState({});
   const [sending, setSending] = useState(false);
@@ -18,8 +19,9 @@ export default function ConversationComposer({
   const submitting = useRef(false);
   const inputRef = useRef(null);
   const editableIntent = isChangeDiscussion(changeIntent);
-  const changing = editableIntent && modes[changeIntent.id] !== 'message';
-  const scopeKey = changing ? `change:${changeIntent.id}` : 'message';
+  const queuing = entryMode === 'new_task';
+  const changing = !queuing && editableIntent && modes[changeIntent.id] !== 'message';
+  const scopeKey = queuing ? 'new_task' : changing ? `change:${changeIntent.id}` : 'message';
   // Keep discussing retains the previous interpretation. Restore the exact
   // durable draft by discussion status, not by whether an interpretation exists.
   const seed = changing && changeIntent.status === 'discussing' ? changeIntent.draft_text || '' : '';
@@ -39,7 +41,7 @@ export default function ConversationComposer({
     setSubmitError(null);
     const sent = goal;
     try {
-      const result = await sendConversationInput({
+      const result = queuing ? await onQueueTask(sent) : await sendConversationInput({
         text: sent,
         intent: changing ? changeIntent : null,
         onStart,
@@ -86,13 +88,18 @@ export default function ConversationComposer({
 
   return (
     <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
-      <ConversationChangeContext active={activeTask} intent={changeIntent} target={changeTarget}
+      {onQueueTask ? <div className="project-composer-modes" aria-label={t('assistant.project.inputMode')}>
+        <button type="button" aria-pressed={!queuing} onClick={() => { setEntryMode('message'); if (changeIntent?.id) setModes((current) => ({ ...current, [changeIntent.id]: 'message' })); }}>{t('work.taskAssistant.message')}</button>
+        <button type="button" aria-pressed={queuing} onClick={() => setEntryMode('new_task')}>{t('assistant.project.newTask')}</button>
+      </div> : null}
+      {queuing ? <p className="product-empty-copy">{t('assistant.project.queueBoundary')}</p> : null}
+      <ConversationChangeContext active={!queuing && activeTask} intent={queuing ? null : changeIntent} target={queuing ? null : changeTarget}
         recordedChange={recordedChange} busy={blocked} onBegin={beginChange} t={t} />
-      {editableIntent ? (
+      {editableIntent && !queuing ? (
         <div className="team-manager-suggestions" aria-label={t('work.manager.intent.question')}>
-          <button type="button" aria-pressed={!changing} onClick={() => setModes((current) => ({ ...current, [changeIntent.id]: 'message' }))}>
+          {!onQueueTask ? <button type="button" aria-pressed={!changing} onClick={() => setModes((current) => ({ ...current, [changeIntent.id]: 'message' }))}>
             {t('work.taskAssistant.message')}
-          </button>
+          </button> : null}
           <button type="button" aria-pressed={changing} onClick={() => setModes((current) => ({ ...current, [changeIntent.id]: 'changes' }))}>
             {t('work.manager.requestChanges')}
           </button>
@@ -113,7 +120,7 @@ export default function ConversationComposer({
         </div>
       ) : null}
       <label>
-        <span className="sr-only">{t(changing ? 'work.manager.changeReason' : 'work.taskAssistant.message')}</span>
+        <span className="sr-only">{t(queuing ? 'assistant.project.newTask' : changing ? 'work.manager.changeReason' : 'work.taskAssistant.message')}</span>
         <textarea
           ref={inputRef}
           aria-keyshortcuts="Enter"
@@ -131,7 +138,7 @@ export default function ConversationComposer({
       </label>
       {error || submitError ? <ProductError error={error || submitError} t={t} /> : null}
       <Button busy={blocked} disabled={blocked || !goal.trim()} type="submit">
-        {t(changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}
+        {t(queuing ? 'assistant.project.saveTask' : changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}
       </Button>
     </form>
   );

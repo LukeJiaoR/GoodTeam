@@ -68,11 +68,12 @@ afterEach(() => vi.clearAllMocks());
 
 test('loads full content before editing and saves against its run and version', async () => {
   const user = userEvent.setup();
+  const fullArtifact = deferred();
   mocks.getReviewState.mockResolvedValue(state);
   mocks.refresh.mockResolvedValue(state);
   mocks.getOpenQuestions.mockResolvedValue({ questions: [] });
   mocks.getArtifact
-    .mockResolvedValueOnce({ content: FULL_CONTENT, run_id: 'run-1', artifact_version: 'sha256:v1' })
+    .mockReturnValueOnce(fullArtifact.promise)
     .mockResolvedValueOnce({ content: `${FULL_CONTENT}\nEditor addition`, run_id: 'run-1', artifact_version: 'sha256:v2' });
   mocks.saveArtifact.mockResolvedValue({ saved: true });
 
@@ -80,6 +81,9 @@ test('loads full content before editing and saves against its run and version', 
 
   const editButton = await screen.findByRole('button', { name: translate('en', 'review.artifact.edit') });
   expect(editButton).toBeDisabled();
+  await act(async () => {
+    fullArtifact.resolve({ content: FULL_CONTENT, run_id: 'run-1', artifact_version: 'sha256:v1' });
+  });
   await screen.findByText('Acceptance: retain this final criterion.');
   await user.click(editButton);
   const editor = screen.getByRole('textbox', { name: translate('en', 'review.artifact.content') });
