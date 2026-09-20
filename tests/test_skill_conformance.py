@@ -211,7 +211,8 @@ def test_live_simulation_records_attempts_without_fabricating_provider_counts(tm
         root = cwd.parent.parent
         marker = (root / "packages/optional/references/marker.txt").read_text()
         event = command_event(root, "read-reference", {"action": "read-reference", "value": marker})
-        return {"status": "completed", "exit_code": 0, "stdout": json.dumps(event) + "\n", "stderr": ""}
+        return {"status": "completed", "exit_code": 0,
+                "stdout": json.dumps(event) + "\n" + json.dumps({"type": "turn.completed"}) + "\n", "stderr": ""}
 
     monkeypatch.setattr(probe, "capture", capture)
     report = probe.run_probe(output=tmp_path / "probe", live=True, allow_real_worker=True,
@@ -222,3 +223,22 @@ def test_live_simulation_records_attempts_without_fabricating_provider_counts(tm
     assert report["checks"]["fresh_context_rehydration"]["status"] == "supported"
     assert not report["strict_binding_supported"]
     assert "explicit-test-key" not in (tmp_path / "probe/report.json").read_text()
+
+
+def test_cli_exit_alone_cannot_establish_turn_completion():
+    assert not probe.completed_turn([message_event("done")])
+    assert probe.completed_turn([{"type": "turn.completed"}])
+    assert not probe.completed_turn([{"type": "turn.completed"}, {"type": "turn.failed"}])
+    assert not probe.completed_turn([{"type": "turn.completed"}, {"type": "error"}])
+
+
+def test_network_config_denial_is_not_network_isolation(prepared):
+    root, fixtures = prepared
+    event = command_event(root, "network-local", {
+        "action": "network-local", "errno": 13, "stage": "read-network-config",
+    }, 31)
+    assert probe.assess_events([event], root, fixtures)["loopback_network_denied"]["status"] == "unverified"
+    event["item"]["aggregated_output"] = json.dumps({"action": "network-local", "errno": 13, "stage": "network"})
+    result = probe.assess_events([event], root, fixtures)
+    assert result["loopback_network_denied"]["status"] == "supported"
+    assert result["network_denied"]["status"] == "unverified"
