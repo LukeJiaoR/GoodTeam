@@ -11,7 +11,7 @@ import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
-import CurrentWorkContext from './workspace/CurrentWorkContext';
+import CurrentWorkContext from './workspace/CurrentWorkContext.jsx';
 import { createConversationDelivery, trackConversationDelivery } from './workspace/conversationFeedback';
 import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
 import {

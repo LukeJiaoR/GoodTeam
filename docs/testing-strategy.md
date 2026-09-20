@@ -240,7 +240,9 @@ The automated contract is:
   the applicable full backend and/or frontend checks.
 - Every change affecting either stack also runs the `browser` job on the guarded
   `goodteam-ci` runner. It builds the frontend and runs the real HTTP/browser
-  acceptance suite twice against a fresh temporary workspace with fake Workers.
+  acceptance suite once against a fresh temporary workspace with fake Workers.
+  Frontend unit tests and lint also run in this job when the frontend is affected,
+  sharing the same dependency install and build.
   Tier 4 changes require reviewing this evidence and any additional smoke needed
   for adapters outside that suite.
 
@@ -249,12 +251,13 @@ fail closed to Tier 3 full backend and frontend verification. Changes to the
 classifier or workflow also run both full stacks.
 
 `CI / gate` is the stable required status check. It succeeds only when
-classification passes, every planned job succeeds, and every skipped stack was
-explicitly classified as unaffected. Browser acceptance may be skipped only
+classification passes, the backend job matches its planned mode, and the browser
+job (including planned frontend checks) succeeds. Browser acceptance may be skipped only
 when both stacks are unaffected. A manual `workflow_dispatch` bypasses
 changed-file selection and always runs full backend, frontend, and browser verification.
 
-The workflow also covers stacked pull requests targeting another feature branch.
+New commits cancel obsolete runs for the same pull request. The workflow also
+covers stacked pull requests targeting another feature branch.
 The workflow runs before merge on pull requests and does not rerun after merge
 to `main`. This is safe only while the repository ruleset requires pull requests
 for `main` and requires `CI / gate`; the workflow and required check must exist
@@ -262,7 +265,7 @@ on the default branch before that ruleset is enabled.
 
 ## Cleanup Guidance
 
-Do not delete tests as part of applying this policy. First collect evidence:
+Remove tests only with evidence of low value:
 
 - repeated runtime cost,
 - flaky behavior,
@@ -270,8 +273,22 @@ Do not delete tests as part of applying this policy. First collect evidence:
 - assertion of implementation detail instead of contract,
 - or obsolete product behavior.
 
-A future cleanup PR should name the contract that remains protected after any
-removal or consolidation.
+Every cleanup should name the contract that remains protected after removal or
+consolidation. Do not maintain unit tests for UI presentation: static rendering,
+copy, translation catalogs, CSS values, layout, component locations, and visual
+disclosure/focus details belong in browser acceptance or visual review. Component
+tests are still appropriate for business behavior such as exact request payloads,
+explicit confirmation, version binding, duplicate submission prevention, failed
+input preservation, and stale response/project/run isolation.
+
+The September 2026 cleanup removes presentation-only suites and presentation
+cases from mixed suites. It also removes a hard-coded package-version smoke test,
+duplicate model-default assertions, a same-object JSON serialization comparison,
+and CI/documentation substring checks. Package imports remain exercised by the
+backend suite; the model routing matrix remains covered by `test_models.py`.
+Classifier behavior and an executable gate test protect CI selection and reject
+failed or cancelled jobs and unexpected skips. The guarded runner and read-only
+permissions retain explicit checks.
 
 ## Business-loop Browser Acceptance
 
@@ -285,33 +302,39 @@ Assertions compare the UI and real API with persisted current state, approval
 operation IDs, proposal history, and the archived first run. The old run must
 remain read-only after the second task starts. Existing navigation/import tests
 use independent projects and no longer depend on test ordering. No business API
-is mocked. Each CI invocation uses a unique temporary directory and loopback
+is mocked. The shared browser fixture substitutes an empty Google Fonts stylesheet
+so business acceptance uses fallback fonts without relying on the public CDN;
+browser console and unhandled-error checks remain enabled.
+Each CI invocation uses a unique temporary directory and loopback
 port; the server refuses reuse and cleans only its owned directory on shutdown.
 
 The runner must provide the Chromium system libraries. CI downloads the pinned
 Playwright browser into the runner user cache with `npx playwright install chromium`;
 it does not require sudo or change system packages. Missing libraries fail the job.
 
-On the single runner, browser acceptance precedes backend/frontend jobs so
-setup or workflow failures surface first. The final gate still requires every
-planned stack to pass. CI runs `npm run test:e2e -- --repeat-each=2` with retries disabled. The
+On the single runner, browser acceptance precedes the remaining frontend checks
+in the same job and the backend job so setup or workflow failures surface first.
+The final gate still requires every planned stack to pass. CI runs
+`npm run test:e2e` with retries disabled. Repetition is available on demand via
+`npm run test:e2e -- --repeat-each=2` for flake investigation. The
 `browser-acceptance-<run>-<attempt>` artifact contains the HTML/JSON report,
 business-state/ledger snapshots, and screenshots/traces on failure. This is
 evidence for the built-in fake workflow; it does not verify real model output,
 deployment, GitHub or Telegram adapters. Staging deployment is disabled in the
 fixture's default configuration.
 
-For the initial implementation, the user explicitly prohibited all local tests,
-builds and smoke runs. Only static source review and `git diff --check` were
-performed locally; CI is the execution owner. Review the CI run for the exact
-PR head rather than reusing a prior PR's result.
+The initial implementation used CI-only validation at the user's request.
+Subsequent changes follow the verification tiers above. Review the CI run for
+the exact PR head rather than reusing a prior PR's result.
 
 ## Recovery Acceptance
 
 The browser CI job first runs `tests/test_workflow_http_recovery.py` with a
 dedicated pytest temporary root, then runs Playwright. Both must pass before
-the full backend/frontend jobs and final gate can succeed. The backend full
-suite also includes the recovery tests.
+the remaining frontend checks, backend job, and final gate can succeed. The CI
+backend command excludes `tests/test_workflow_http_recovery.py` because the
+required browser job already ran it with dedicated evidence. An ordinary local
+`pytest tests -q` still includes recovery; no tests are globally deselected.
 
 | Scenario | Observed contract |
 | --- | --- |
@@ -337,5 +360,4 @@ separate browser artifact with concurrency state snapshots.
 These cases verify the recorded interruption boundaries and explicit retry
 contract. They do not promise exactly-once external side effects after an
 arbitrary provider process crash, and do not exercise real GitHub, Telegram,
-deployment or model adapters. Local tests/builds/smoke remain unexecuted under
-the user's CI-only validation instruction.
+deployment or model adapters.

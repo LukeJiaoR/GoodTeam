@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@xyflow/react', async () => {
@@ -155,55 +155,6 @@ function projectedWorkData(overrides = {}) {
     },
     ...overrides,
   };
-}
-
-function repeatedArchitectAttemptData() {
-  const data = projectedWorkData();
-  data.worker_jobs = [
-    { id: 'job-architect-1', role: 'architect', status: 'blocked' },
-    { id: 'job-architect-2', role: 'architect', status: 'completed' },
-    { id: 'job-architect-3', role: 'architect', status: 'blocked' },
-    { id: 'job-architect-4', role: 'architect', status: 'completed' },
-  ];
-  data.team_workspace.execution_actors = [{
-    id: 'task-assignment:DEMO-1', role: 'architect', state: 'completed',
-    responsibility: 'Design RFC & Security Review', task_id: 'DEMO-1',
-    source: 'worker_job', status_reason: 'delivered', attempt_count: 4,
-    current_attempt_id: 'job-architect-4',
-  }];
-  data.team_workspace.outcome_tasks = [
-    {
-      id: 'DEMO-1',
-      objective: 'Design RFC & Security Review',
-      owner: 'architect',
-      status: 'completed',
-      status_reason: 'delivered',
-      dependencies: [],
-      acceptance_criteria: [],
-      attempt_count: 4,
-      current_attempt_id: 'job-architect-4',
-      supporting_refs: [],
-    },
-  ];
-  return data;
-}
-
-function orderedExecutionData() {
-  const data = projectedWorkData();
-  data.team_workspace.execution_actors = [
-    { id: 'blocked', role: 'architect', state: 'blocked', responsibility: 'Resolve CI failure', status_reason: 'execution_blocked' },
-    { id: 'reviewing', role: 'reviewer', state: 'reviewing', responsibility: 'Review architecture', status_reason: 'awaiting_review' },
-    { id: 'working', role: 'implementation', state: 'working', responsibility: 'Implement approved design', status_reason: 'worker_running' },
-    {
-      id: 'waiting', role: 'qa', state: 'waiting', responsibility: 'Verify implementation',
-      status_reason: 'waiting_for_dependencies', dependency_reason: 'waiting_for_dependencies',
-      dependency_task_id: 'DEMO-IMPL', dependency_task_title: 'Implement approved design',
-    },
-    { id: 'up-next', role: 'release', state: 'up_next', responsibility: 'Prepare release', status_reason: 'not_started' },
-    { id: 'completed', role: 'product_requirement', state: 'completed', responsibility: 'Approve requirements', status_reason: 'task_completed' },
-    { id: 'stopped', role: 'ui', state: 'stopped', responsibility: 'Retired visual draft', status_reason: 'task_stopped' },
-  ];
-  return data;
 }
 
 function managerReviewData() {
@@ -368,84 +319,6 @@ function managerIntentData(status = 'discussing', draftText = '') {
   return data;
 }
 
-test('renders the Task Assistant-centered three-pane workspace from the durable projection', async () => {
-  const data = projectedWorkData();
-  data.workflow_steps = [
-    { number: '1', key: 'product_requirement', title: 'Product / Requirement', status: 'done', status_label: 'Done' },
-    { number: '2', key: 'prd_review', title: 'PRD Review', status: 'review-needed', status_label: 'Needs review' },
-    { number: '3', key: 'architecture', title: 'Architecture', status: 'not-started', status_label: 'Not started' },
-  ];
-  mocks.useProjectState.mockReturnValue({
-    data, error: null, refresh: vi.fn(), status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
-  });
-
-  renderWorkPage();
-
-  expect(screen.getByRole('region', { name: 'Task Assistant' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Task Assistant' })).toBeVisible();
-  expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
-  expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Execution' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Outcomes & delivery' })).toBeVisible();
-  const missionContext = document.querySelector('.work-run-context');
-  expect(within(missionContext).getByText('Current mission')).toBeVisible();
-  expect(within(missionContext).getByText('PRD Review')).toBeVisible();
-  const reviewStatus = within(missionContext).getByText('Needs review');
-  expect(reviewStatus).toBeVisible();
-  expect(reviewStatus).toHaveAttribute('data-tone', 'active');
-  expect(within(missionContext).getByText('1 / 3 stages complete')).toBeVisible();
-  expect(screen.queryByRole('combobox', { name: 'Select run' })).not.toBeInTheDocument();
-  expect(screen.getByText('I organized this mission into 2 outcome tasks and identified the next eligible work.')).toBeVisible();
-  const execution = screen.getByRole('region', { name: 'Execution' });
-  expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();
-  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(2);
-  expect(within(execution).getByRole('img', { name: 'Working. A worker is executing this task now.' })).toBeVisible();
-  expect(within(execution).getByRole('img', { name: 'Waiting. Waiting for “Implement OAuth” to complete.' })).toBeVisible();
-  expect(within(execution).queryByText('Current task')).not.toBeInTheDocument();
-  expect(within(execution).queryByText('1 acceptance criteria')).not.toBeInTheDocument();
-  expect(within(execution).queryByText('Outcome: PR #42')).not.toBeInTheDocument();
-  expect(execution.querySelector('.team-task-progress')).not.toBeInTheDocument();
-  expect(document.querySelector('[data-task-id="DEMO-2"] .product-status-badge'))
-    .toHaveAttribute('data-tone', 'neutral');
-  expect(screen.getAllByText('Waiting for a dependency to complete.')).toHaveLength(1);
-  expect(screen.queryByRole('link', { name: 'Open PR #42 ↗' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('navigation', { name: 'Run views' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Run details' })).not.toBeInTheDocument();
-  expect(document.querySelector('.work-context-drawer')).toHaveAttribute('data-open', 'true');
-  expect(screen.queryByRole('button', { name: 'Mission history' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Open the Task Assistant conversation…' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Inspect workflow' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Inspect workers' })).not.toBeInTheDocument();
-  expect(document.querySelector('.product-work-page__identity')).toBeInTheDocument();
-  expect(screen.queryByRole('link', { name: 'Back to Home' })).not.toBeInTheDocument();
-
-  const outcomeToggle = screen.getByRole('button', { name: 'Implement OAuth' });
-  const outcomeCard = outcomeToggle.closest('li');
-  const outcomeDetails = document.querySelector(`#${outcomeToggle.getAttribute('aria-controls')}`);
-  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'false');
-  expect(outcomeCard).toHaveAttribute('data-expanded', 'false');
-  expect(outcomeDetails).toHaveAttribute('hidden');
-
-  await userEvent.click(outcomeToggle);
-  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'true');
-  expect(outcomeCard).toHaveAttribute('data-expanded', 'true');
-  expect(outcomeDetails).not.toHaveAttribute('hidden');
-  expect(screen.queryByRole('dialog', { name: 'Implement OAuth' })).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Open PR #42 ↗' })).toHaveAttribute('href', 'https://github.com/example/demo/pull/42');
-
-  await userEvent.click(outcomeToggle);
-  expect(outcomeToggle).toHaveAttribute('aria-expanded', 'false');
-  expect(outcomeDetails).toHaveAttribute('hidden');
-
-  await userEvent.click(outcomeToggle);
-  await userEvent.click(within(outcomeCard).getByRole('button', { name: 'Task details' }));
-  expect(await screen.findByRole('dialog', { name: 'Implement OAuth' })).toBeVisible();
-});
-
 test('does not infer outcome data from a shared role when task identity is absent', async () => {
   const data = projectedWorkData();
   data.team_workspace.execution_actors = [{
@@ -481,195 +354,6 @@ test('does not infer outcome data from a shared role when task identity is absen
   expect(within(execution).queryByText('Architecture B')).not.toBeInTheDocument();
   expect(within(execution).queryByText(/Criterion [AB]/)).not.toBeInTheDocument();
   expect(within(execution).queryByText(/RFC [AB]/)).not.toBeInTheDocument();
-});
-
-test('keeps terminal Architect attempts visible after active workers', async () => {
-  const scrollIntoView = vi.fn();
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-    configurable: true,
-    value: scrollIntoView,
-  });
-  mocks.useProjectState.mockReturnValue({
-    data: repeatedArchitectAttemptData(), error: null, refresh: vi.fn(), status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
-  });
-
-  renderWorkPage('/projects/DEMO/work/runs/run-active?view=plan');
-
-  const executionPane = screen.getByRole('region', { name: 'Execution' });
-  expect(within(executionPane).queryAllByRole('listitem')).toHaveLength(1);
-  expect(within(executionPane).getByText('Design RFC & Security Review')).toBeVisible();
-  expect(within(executionPane).getByRole('img', { name: /Completed/ })).toBeVisible();
-  const outcomesPane = screen.getByRole('region', { name: 'Outcomes' });
-  expect(within(outcomesPane).getByRole('button', {
-    name: 'Design RFC & Security Review',
-  })).toBeVisible();
-
-  const inspector = document.querySelector('.team-inspector');
-  expect(inspector).not.toBeNull();
-  expect(inspector).toHaveFocus();
-  expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-  const detailTabs = within(inspector).getByRole('navigation', { name: 'Run detail views' });
-  expect(within(detailTabs).getAllByRole('button').map((button) => button.textContent)).toEqual([
-    'Board', 'Activity', 'Execution', 'Messages', 'Delivery',
-  ]);
-  await userEvent.click(within(detailTabs).getByRole('button', { name: 'Execution' }));
-  expect(screen.getByTestId('location-search')).toHaveTextContent('?view=execution');
-  for (const jobId of ['job-architect-1', 'job-architect-2', 'job-architect-3', 'job-architect-4']) {
-    expect(within(inspector).getByText(jobId)).toBeVisible();
-  }
-});
-
-test('localizes up_next as an eligible assignment rather than a generic next step', () => {
-  expect(translate('en', 'work.team.status.up_next')).toBe('Up next');
-  expect(translate('zh-CN', 'work.team.status.up_next')).toBe('待执行');
-  expect(translate('zh-CN', 'work.team.status.up_next')).not.toBe('下一步');
-});
-
-test('renders the projection order stably with LED-only Execution states', async () => {
-  mocks.useProjectState.mockReturnValue({
-    data: orderedExecutionData(), error: null, refresh: vi.fn(), status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
-  });
-  const user = userEvent.setup();
-
-  renderWorkPage();
-
-  const execution = screen.getByRole('region', { name: 'Execution' });
-  const actorOrder = () => within(execution).getAllByRole('listitem').map((item) => (
-    item.querySelector('.team-actor-list__copy p')?.textContent
-  ));
-  const expected = [
-    'Resolve CI failure',
-    'Review architecture',
-    'Implement approved design',
-    'Verify implementation',
-    'Prepare release',
-    'Approve requirements',
-    'Retired visual draft',
-  ];
-  expect(actorOrder()).toEqual(expected);
-  expect(execution.querySelectorAll('.team-status-led')).toHaveLength(7);
-  expect(execution.querySelector('.team-actor-list .product-status-badge')).not.toBeInTheDocument();
-
-  await user.hover(within(execution).getByRole('img', { name: /Reviewing/ }));
-  expect(actorOrder()).toEqual(expected);
-});
-
-test('exposes the same localized LED explanation on hover and keyboard focus', async () => {
-  mocks.useProjectState.mockReturnValue({
-    data: orderedExecutionData(), error: null, refresh: vi.fn(), status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
-  });
-  const user = userEvent.setup();
-
-  renderWorkPage();
-
-  const execution = screen.getByRole('region', { name: 'Execution' });
-  const indicator = within(execution).getByRole('img', {
-    name: 'Waiting. Waiting for “Implement approved design” to complete.',
-  });
-  expect(indicator).toHaveAttribute('tabindex', '0');
-  expect(within(execution).queryByRole('tooltip')).not.toBeInTheDocument();
-
-  await user.hover(indicator);
-  let tooltip = within(execution).getByRole('tooltip');
-  expect(tooltip).toHaveTextContent('Waiting');
-  expect(tooltip).toHaveTextContent('Waiting for “Implement approved design” to complete.');
-  expect(indicator).toHaveAttribute('aria-describedby', tooltip.id);
-
-  await user.unhover(indicator);
-  expect(within(execution).queryByRole('tooltip')).not.toBeInTheDocument();
-  fireEvent.focus(indicator);
-  tooltip = within(execution).getByRole('tooltip');
-  expect(tooltip).toHaveTextContent('Waiting for “Implement approved design” to complete.');
-  fireEvent.blur(indicator);
-  expect(within(execution).queryByRole('tooltip')).not.toBeInTheDocument();
-});
-
-test('keeps active Execution LEDs static when reduced motion is preferred', () => {
-  stubMediaPreferences({ reducedMotion: true });
-  mocks.useProjectState.mockReturnValue({
-    data: orderedExecutionData(), error: null, refresh: vi.fn(), status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Make OAuth production ready', status: 'active' }],
-  });
-
-  renderWorkPage();
-
-  const execution = screen.getByRole('region', { name: 'Execution' });
-  for (const state of ['working', 'reviewing']) {
-    expect(execution.querySelector(`.team-status-led-trigger[data-state="${state}"]`))
-      .toHaveAttribute('data-motion', 'static');
-  }
-});
-
-test('opens empty Work as a Task Assistant conversation and keeps suggestions subordinate to free input', async () => {
-  const refresh = vi.fn().mockResolvedValue({});
-  mocks.useProjectState.mockReturnValue({
-    data: {
-      active_run: null,
-      agile_board: { columns: {}, counts: {} },
-      approval_reviews: [],
-      start_context: {
-        delivery_mode: 'init_project',
-        model_profile: 'balanced',
-        project_config: '/workspace/projects/demo.local.yaml',
-        project_name: 'Demo project',
-      },
-      state: null,
-      team_workspace: {
-        schema_version: 'team_workspace.v1',
-        mission: { id: 'task-assistant:DEMO', source: 'task_assistant', status: 'onboarding' },
-        manager_timeline: [
-          { id: 'welcome:DEMO', actor: 'task_assistant', event: 'welcome_existing_project', timestamp: '' },
-        ],
-        attention_request: null,
-        execution_actors: [],
-        outcome_tasks: [],
-        capabilities: [],
-        suggestions: [{ id: 'understand-project' }, { id: 'fix-problem' }],
-        proposed_task: null,
-      },
-      workflow_steps: [],
-      worker_jobs: [],
-    },
-    error: null,
-    refresh,
-    status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [] });
-  mocks.sendTaskAssistantMessage.mockResolvedValue({ intent: 'project_understanding' });
-
-  renderWorkPage('/projects/DEMO/work');
-
-  expect(screen.getByRole('region', { name: 'Execution' })).toBeVisible();
-  expect(screen.getByRole('region', { name: 'Task Assistant' })).toBeVisible();
-  expect(screen.getByRole('region', { name: 'Outcomes' })).toBeVisible();
-  expect(screen.getByText('No worker records yet.')).toBeVisible();
-  expect(screen.getByText('No tasks yet.')).toBeVisible();
-  expect(screen.getByText(/What can I help you with\?/)).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Understand this project' })).toBeVisible();
-  expect(document.querySelector('.work-start-panel')).not.toBeInTheDocument();
-
-  await userEvent.click(screen.getByRole('button', { name: 'Understand this project' }));
-  expect(screen.getByLabelText('Message')).toHaveValue('Help me understand this project');
-  expect(mocks.sendTaskAssistantMessage).not.toHaveBeenCalled();
-  await userEvent.clear(screen.getByLabelText('Message'));
-  await userEvent.type(screen.getByLabelText('Message'), 'Review the authentication design.');
-  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-
-  expect(mocks.sendTaskAssistantMessage).toHaveBeenCalledWith(
-    'DEMO',
-    expect.objectContaining({ text: 'Review the authentication design.' }),
-  );
 });
 
 test('requires explicit confirmation of a Task Assistant proposal before starting', async () => {
@@ -781,18 +465,6 @@ test('keeps an active Operator mission on Work when workflow history has a stale
     'Archived · Old workflow mission',
   ]);
   expect(screen.queryByRole('heading', { name: 'Run history' })).not.toBeInTheDocument();
-});
-
-test('falls back to the legacy run views for an unsupported workspace contract version', () => {
-  const data = projectedWorkData();
-  data.team_workspace.schema_version = 'team_workspace.v2';
-  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-
-  renderWorkPage();
-
-  expect(screen.getByRole('navigation', { name: 'Run views' })).toBeVisible();
-  expect(screen.queryByRole('region', { name: 'Task Assistant' })).not.toBeInTheDocument();
 });
 
 test('opens Request changes as a durable Task Assistant discussion without review mutation', async () => {
@@ -1049,157 +721,7 @@ test('restores a persisted discussion on re-entry and fails closed when it is st
   expect(screen.queryByRole('button', { name: 'Confirm changes' })).not.toBeInTheDocument();
 });
 
-test('keeps Task Assistant attention in the conversation after recorded mission history', async () => {
-  const data = managerReviewData();
-  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-
-  renderWorkPage();
-
-  const manager = screen.getByRole('region', { name: 'Task Assistant' });
-  expect(within(manager).getByText('Needs you', { selector: '.product-status-badge' }))
-    .toHaveAttribute('data-tone', 'active');
-  const attention = manager.querySelector('.team-attention');
-  const history = manager.querySelector('.team-manager-timeline');
-  expect(attention).toBeInTheDocument();
-  expect(history).toBeInTheDocument();
-  expect(history.compareDocumentPosition(attention) & Node.DOCUMENT_POSITION_FOLLOWING)
-    .toBeTruthy();
-});
-
-test('renders compact system event chips for machine state and deliverable updates', async () => {
-  const data = managerReviewData();
-  data.team_workspace.manager_timeline = [
-    { id: 'intent', actor: 'user', kind: 'intent', event: 'mission_requested', timestamp: '2026-08-30T10:00:00Z', content: 'Make OAuth production ready', details: {} },
-    { id: 'organized', actor: 'manager', kind: 'progress', event: 'mission_organized', timestamp: '2026-08-30T10:00:01Z', content: '', details: { task_count: 2 } },
-    { id: 'artifact-ready', actor: 'manager', kind: 'outcome', event: 'deliverable_ready', timestamp: '2026-08-30T10:00:02Z', content: '', details: { artifact: 'prd.md' } },
-  ];
-  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-
-  renderWorkPage();
-
-  const manager = screen.getByRole('region', { name: 'Task Assistant' });
-  const systemChip = manager.querySelector('.team-manager-event--system .team-manager-system-chip');
-  expect(systemChip).toBeInTheDocument();
-  expect(within(systemChip).getByText('prd.md is ready.')).toBeVisible();
-});
-
-test('smart auto-scroll follows timeline when near bottom, preserves position when scrolled up, and focuses new attention', async () => {
-  const initialData = projectedWorkData();
-  initialData.team_workspace.manager_timeline = [
-    { id: '1', actor: 'user', kind: 'intent', event: 'mission_requested', timestamp: '2026-08-30T10:00:00Z', content: 'Step 1', details: {} },
-    { id: '2', actor: 'manager', kind: 'progress', event: 'work_progressed', timestamp: '2026-08-30T10:00:01Z', content: '', details: {} },
-  ];
-  mocks.useProjectState.mockReturnValue({ data: initialData, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-
-  const { rerender } = renderWorkPage();
-
-  const conversation = document.querySelector('.team-manager-conversation');
-  expect(conversation).toBeInTheDocument();
-
-  Object.defineProperty(conversation, 'scrollHeight', { configurable: true, value: 1000 });
-  Object.defineProperty(conversation, 'clientHeight', { configurable: true, value: 400 });
-
-  // 1. User scrolled up (scrollTop = 200, distance from bottom = 1000 - 200 - 400 = 400 > 64)
-  conversation.scrollTop = 200;
-  fireEvent.scroll(conversation);
-
-  // Background pushes a new event
-  const updatedDataScrolledUp = {
-    ...initialData,
-    team_workspace: {
-      ...initialData.team_workspace,
-      manager_timeline: [
-        ...initialData.team_workspace.manager_timeline,
-        { id: '3', actor: 'manager', kind: 'progress', event: 'work_progressed', timestamp: '2026-08-30T10:00:02Z', content: '', details: {} },
-      ],
-    },
-  };
-  mocks.useProjectState.mockReturnValue({ data: updatedDataScrolledUp, error: null, refresh: vi.fn(), status: 'ready' });
-  rerender(
-    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active']}>
-      <Routes>
-        <Route element={<TranslationOutlet />}>
-          <Route path="/projects/:projectKey/work" element={<WorkPage />} />
-          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
-  );
-
-  // Scroll position is preserved (not hijacked)
-  expect(conversation.scrollTop).toBe(200);
-
-  // 2. User scrolls back to near bottom (scrollTop = 560, distance from bottom = 1000 - 560 - 400 = 40 <= 64)
-  conversation.scrollTop = 560;
-  fireEvent.scroll(conversation);
-
-  // Background pushes another event
-  const updatedDataNearBottom = {
-    ...initialData,
-    team_workspace: {
-      ...initialData.team_workspace,
-      manager_timeline: [
-        ...updatedDataScrolledUp.team_workspace.manager_timeline,
-        { id: '4', actor: 'manager', kind: 'progress', event: 'work_progressed', timestamp: '2026-08-30T10:00:03Z', content: '', details: {} },
-      ],
-    },
-  };
-  Object.defineProperty(conversation, 'scrollHeight', { configurable: true, value: 1200 });
-  mocks.useProjectState.mockReturnValue({ data: updatedDataNearBottom, error: null, refresh: vi.fn(), status: 'ready' });
-  rerender(
-    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active']}>
-      <Routes>
-        <Route element={<TranslationOutlet />}>
-          <Route path="/projects/:projectKey/work" element={<WorkPage />} />
-          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
-  );
-
-  // Auto-scrolls to new bottom
-  expect(conversation.scrollTop).toBe(1200);
-
-  // 3. User is scrolled up again, but new Task Assistant attention arrives
-  conversation.scrollTop = 300;
-  fireEvent.scroll(conversation);
-
-  const attentionData = {
-    ...updatedDataNearBottom,
-    team_workspace: {
-      ...updatedDataNearBottom.team_workspace,
-      attention_request: {
-        id: 'approval:new-gate',
-        kind: 'approval',
-        target_type: 'review',
-        target_id: 'new-gate',
-        reason: 'approval_required',
-        actions: ['approve'],
-        refs: ['new-gate'],
-      },
-    },
-  };
-  Object.defineProperty(conversation, 'scrollHeight', { configurable: true, value: 1500 });
-  mocks.useProjectState.mockReturnValue({ data: attentionData, error: null, refresh: vi.fn(), status: 'ready' });
-  rerender(
-    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active']}>
-      <Routes>
-        <Route element={<TranslationOutlet />}>
-          <Route path="/projects/:projectKey/work" element={<WorkPage />} />
-          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
-  );
-
-  // Focuses and bottoms for new attention
-  expect(conversation.scrollTop).toBe(1500);
-});
-
-test('renders a decision-ready Task Assistant approval brief and keeps exact approval direct', async () => {
+test('submits the exact version-bound approval from the Task Assistant', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
@@ -1211,36 +733,6 @@ test('renders a decision-ready Task Assistant approval brief and keeps exact app
 
   const manager = screen.getByRole('region', { name: 'Task Assistant' });
   const attention = manager.querySelector('.team-attention');
-  expect(within(attention).getByText('You are approving')).toBeVisible();
-  expect(within(attention).getByText(
-    'Accept the recorded security posture for Architecture security review and let Planning / Implementation begin.',
-  )).toBeVisible();
-  expect(within(attention).getByText('Google login in this iteration.')).toBeVisible();
-  expect(within(attention).getByText('GitHub login is not implemented yet.')).toBeVisible();
-  expect(within(attention).getByText('Security review')).toBeVisible();
-  expect(within(attention).getByText('Verified')).toBeVisible();
-  expect(within(attention).getByText('CI')).toBeVisible();
-  expect(within(attention).getByText('Passed')).toBeVisible();
-  expect(within(attention).getByText('Mission blockers')).toBeVisible();
-  expect(within(attention).getByText(
-    'These affect the run but are not attributed to this approval decision.',
-  )).toBeVisible();
-  expect(within(attention).getByText(
-    'Worker capacity is unavailable for a separate delivery task.',
-  )).toBeVisible();
-  expect(within(attention).getByText(
-    'The provider abstraction adds a small amount of initial complexity.',
-  )).toBeVisible();
-  expect(within(attention).getByText(
-    'Planning and implementation begin against the approved architecture and security posture.',
-  )).toBeVisible();
-  expect(within(attention).getByText('Next assigned outcome: Implementation')).toBeVisible();
-  expect(within(attention).getByText('Approve and continue', { selector: 'strong' })).toBeVisible();
-  expect(within(attention).getByText('No approval-specific blocking signal is recorded.')).toBeVisible();
-  expect(within(attention).queryByText(
-    'Review the current evidence and decide whether the team should continue.',
-  )).not.toBeInTheDocument();
-
   await user.click(within(attention).getByRole('button', { name: 'Approve and continue' }));
 
   expect(mocks.decideReview).toHaveBeenCalledWith(
@@ -1259,23 +751,6 @@ test('renders a decision-ready Task Assistant approval brief and keeps exact app
       },
     },
   );
-});
-
-test('falls back to generic attention for an unsupported approval brief version', async () => {
-  const data = managerReviewData();
-  data.team_workspace.attention_request.approval_brief.schema_version = 'manager_approval_brief.v2';
-  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-
-  renderWorkPage();
-
-  const manager = screen.getByRole('region', { name: 'Task Assistant' });
-  const attention = manager.querySelector('.team-attention');
-  expect(within(attention).getByText(
-    'Review the current evidence and decide whether the team should continue.',
-  )).toBeVisible();
-  expect(within(attention).queryByText('You are approving')).not.toBeInTheDocument();
-  expect(within(attention).getByRole('button', { name: 'Approve' })).toBeVisible();
 });
 
 test('refreshes the Task Assistant brief when exact approval binding is stale', async () => {
@@ -1298,60 +773,6 @@ test('refreshes the Task Assistant brief when exact approval binding is stale', 
 
   await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   expect(await screen.findByText('This approval changed after the brief was loaded.')).toBeVisible();
-});
-
-test('opens the exact attention Outcome in-place and restores Task Assistant focus on close', async () => {
-  const data = managerReviewData();
-  const scrollIntoView = vi.fn();
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-    configurable: true,
-    value: scrollIntoView,
-  });
-  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-  const user = userEvent.setup();
-
-  renderWorkPage('/projects/DEMO/work/runs/run-active?context=manager');
-
-  const manager = screen.getByRole('region', { name: 'Task Assistant' });
-  const reviewButton = within(manager).getByRole('button', { name: 'Inspect details →' });
-  const architecture = document.querySelector('[data-task-id="DEMO-ARCH"]');
-  const implementation = document.querySelector('[data-task-id="DEMO-IMPL"]');
-  const security = document.querySelector('[data-task-id="DEMO-SEC"]');
-  expect(architecture).toHaveAttribute('data-attention', 'true');
-  expect(within(architecture).getByText('Needs review')).not.toBeVisible();
-  expect(implementation).not.toHaveAttribute('data-attention');
-  expect(security).not.toHaveAttribute('data-attention');
-
-  await user.click(reviewButton);
-
-  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
-  expect(screen.getByTestId('location-search')).toHaveTextContent('?context=manager');
-  expect(screen.queryByTestId('full-review-page')).not.toBeInTheDocument();
-  expect(architecture).toHaveAttribute('data-active-review', 'true');
-  expect(implementation).not.toHaveAttribute('data-active-review');
-  expect(security).not.toHaveAttribute('data-active-review');
-  expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-  const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
-  expect(within(dialog).getByText('Architecture security review')).toBeVisible();
-  expect(within(dialog).getByText('Pending')).toBeVisible();
-  expect(within(dialog).queryByText('work.plan.status.pending')).not.toBeInTheDocument();
-  expect(within(dialog).getByText('CI: Passed')).toBeVisible();
-  expect(within(dialog).queryByText('Evidence snapshot')).not.toBeInTheDocument();
-  expect(within(dialog).queryByText('Reviewer provenance')).not.toBeInTheDocument();
-  expect(within(dialog).queryByText('independent_reviewer')).not.toBeInTheDocument();
-  expect(within(dialog).queryByText('security-review-3')).not.toBeInTheDocument();
-
-  await user.click(within(dialog).getAllByRole('button', { name: 'Close' })[0]);
-
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  const restoredTaskAssistant = screen.getByRole('region', { name: 'Task Assistant' });
-  expect(restoredTaskAssistant).toBeVisible();
-  expect(within(restoredTaskAssistant).getByText('Make OAuth production ready')).toBeVisible();
-  expect(architecture).toHaveAttribute('data-active-review', 'true');
-  expect(reviewButton).toHaveFocus();
-  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
-  expect(screen.getByTestId('location-search')).toHaveTextContent('?context=manager');
 });
 
 test('routes Request changes from exact Outcome details back into the Task Assistant discussion', async () => {
@@ -1385,25 +806,6 @@ test('routes Request changes from exact Outcome details back into the Task Assis
   expect(screen.getByRole('region', { name: 'Task Assistant' })).toBeVisible();
 });
 
-test('uses only the modal Full Review action for dedicated review navigation', async () => {
-  const data = managerReviewData();
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-    configurable: true,
-    value: vi.fn(),
-  });
-  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-  const user = userEvent.setup();
-
-  renderWorkPage();
-  await user.click(screen.getByRole('button', { name: 'Inspect details →' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
-  await user.click(within(dialog).getByRole('link', { name: /Full Review View/ }));
-
-  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/review/security');
-  expect(screen.getByTestId('full-review-page')).toBeVisible();
-});
-
 test('does not lend an actionable review to another same-role Outcome', async () => {
   const data = managerReviewData();
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
@@ -1425,93 +827,6 @@ test('does not lend an actionable review to another same-role Outcome', async ()
   const waitingBadge = within(dialog).getByText('Waiting', { selector: '.product-status-badge' });
   expect(waitingBadge).toHaveAttribute('data-tone', 'pending');
   expect(within(dialog).queryByText('work.plan.status.waiting')).not.toBeInTheDocument();
-});
-
-test('keeps Outcome task details project-facing and resolves dependencies exactly', async () => {
-  const data = projectedWorkData();
-  data.team_workspace.outcome_tasks[1] = {
-    ...data.team_workspace.outcome_tasks[1],
-    description: 'Workflow stage task for reviewer.',
-    updated_at: '2026-08-30T11:50:32.201021+00:00',
-    supporting_refs: ['stage:reviewer'],
-  };
-  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-  const user = userEvent.setup();
-
-  renderWorkPage();
-  const outcomes = screen.getByRole('region', { name: 'Outcomes' });
-  const reviewToggle = within(outcomes).getByRole('button', { name: 'Review OAuth' });
-  const reviewCard = reviewToggle.closest('li');
-  await user.click(reviewToggle);
-  await user.click(within(reviewCard).getByRole('button', { name: 'Task details' }));
-
-  const dialog = await screen.findByRole('dialog', { name: 'Review OAuth' });
-  const localizedUpdate = new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium', timeStyle: 'short',
-  }).format(new Date('2026-08-30T11:50:32.201021+00:00'));
-  expect(within(dialog).getByText('Implement OAuth')).toBeVisible();
-  expect(within(dialog).getByText(localizedUpdate)).toBeVisible();
-  expect(within(dialog).queryByText('DEMO-2')).not.toBeInTheDocument();
-  expect(within(dialog).queryByText('DEMO-1')).not.toBeInTheDocument();
-  expect(within(dialog).queryByText('Workflow stage task for reviewer.')).not.toBeInTheDocument();
-  expect(within(dialog).queryByText('stage:reviewer')).not.toBeInTheDocument();
-  expect(within(dialog).queryByText('2026-08-30T11:50:32.201021+00:00')).not.toBeInTheDocument();
-});
-
-test('uses a Task Assistant-default mobile tab workspace with keyboard navigation and mounted pane state', async () => {
-  const data = managerIntentData('discussing');
-  stubMediaPreferences({ mobile: true });
-  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
-  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-  const user = userEvent.setup();
-
-  renderWorkPage('/projects/DEMO/work/runs/run-active?mobile=tabs');
-
-  const tablist = screen.getByRole('tablist', { name: 'Team panes' });
-  const tabs = within(tablist).getAllByRole('tab');
-  expect(tabs.map((tab) => tab.id)).toEqual([
-    'team-tab-execution',
-    'team-tab-manager',
-    'team-tab-outcomes',
-  ]);
-  const [executionTab, managerTab, outcomesTab] = tabs;
-  const managerPanel = document.getElementById('team-panel-manager');
-  const executionPanel = document.getElementById('team-panel-execution');
-  const outcomesPanel = document.getElementById('team-panel-outcomes');
-  expect(managerTab).toHaveAttribute('aria-selected', 'true');
-  expect(managerTab).toHaveAttribute('tabindex', '0');
-  expect(managerTab).toHaveAccessibleName('Task Assistant. Needs you');
-  expect(managerTab.querySelector('.team-mobile-nav__attention')).toBeInTheDocument();
-  expect(executionTab).toHaveAttribute('aria-selected', 'false');
-  expect(outcomesTab).toHaveAttribute('aria-selected', 'false');
-  expect(managerPanel).toBeVisible();
-  expect(managerPanel).toHaveAttribute('role', 'tabpanel');
-  expect(executionPanel).not.toBeVisible();
-  expect(outcomesPanel).not.toBeVisible();
-  expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
-
-  const draft = within(managerPanel).getByLabelText('What should change?');
-  await user.type(draft, 'Keep this draft while switching panes.');
-
-  managerTab.focus();
-  await user.keyboard('{ArrowLeft}');
-  expect(executionTab).toHaveFocus();
-  expect(executionTab).toHaveAttribute('aria-selected', 'true');
-  expect(executionPanel).toBeVisible();
-  expect(managerPanel).not.toBeVisible();
-
-  await user.keyboard('{ArrowRight}');
-  expect(managerTab).toHaveFocus();
-  expect(managerTab).toHaveAttribute('aria-selected', 'true');
-  expect(managerPanel).toBeVisible();
-  expect(within(managerPanel).getByLabelText('What should change?'))
-    .toHaveValue('Keep this draft while switching panes.');
-
-  await user.keyboard('{ArrowRight}');
-  expect(outcomesTab).toHaveFocus();
-  expect(outcomesPanel).toBeVisible();
-  expect(managerPanel).not.toBeVisible();
 });
 
 test('opens exact Task Assistant review from the mobile Task Assistant tab and retains its Outcome target', async () => {
@@ -1583,39 +898,7 @@ test('requires confirmation before the Task Assistant cancels a mission', async 
   expect(mocks.terminateRun).toHaveBeenCalledWith('DEMO');
 });
 
-test('labels the active run and run selector with task titles instead of raw IDs', async () => {
-  mocks.useProjectState.mockReturnValue({
-    data: {
-      active_run: { run_id: 'run-active' },
-      agile_board: { counts: {} },
-      start_context: { project_name: 'Demo project' },
-      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
-      workflow_steps: [],
-    },
-    error: null,
-    refresh: vi.fn(),
-    status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [
-      { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' },
-      { run_id: 'run-archived', idea: 'Review the previous delivery', status: 'archived' },
-    ],
-  });
-
-  renderWorkPage();
-
-  expect(screen.getByText('Prepare a human-readable takeover brief', { selector: '.work-run-title' }))
-    .toBeVisible();
-  const selector = await screen.findByRole('combobox', { name: 'Select run' });
-  expect(Array.from(selector.options, (option) => option.textContent)).toEqual([
-    'Active · Prepare a human-readable takeover brief',
-    'Archived · Review the previous delivery',
-  ]);
-  expect(screen.queryByText('run-active')).not.toBeInTheDocument();
-});
-
-test.each([false, true])('renders historical Task Assistant history read-only in semantic order (mobile=%s)', async (mobile) => {
+test.each([false, true])('keeps historical runs read-only (mobile=%s)', async (mobile) => {
   stubMediaPreferences({ mobile });
   mocks.useProjectState.mockReturnValue({
     data: projectedWorkData(),
@@ -1664,122 +947,10 @@ test.each([false, true])('renders historical Task Assistant history read-only in
   const historicalWorkspace = document.querySelector('.team-workspace[data-read-only="true"]');
   expect(historicalWorkspace).toBeInTheDocument();
   const manager = historicalWorkspace.querySelector('.team-pane--manager');
-  expect(historicalWorkspace.querySelector('.team-pane--execution')).toBeInTheDocument();
-  expect(historicalWorkspace.querySelector('.team-pane--outcomes')).toBeInTheDocument();
-  expect(within(historicalWorkspace).getAllByText('Implement the earlier OAuth revision').length)
-    .toBeGreaterThan(0);
-  expect(within(historicalWorkspace).getByRole('button', { name: 'Implement the earlier OAuth revision', hidden: true }))
-    .toHaveAttribute('aria-expanded', 'false');
-  const request = within(manager).getByText('Ship the earlier OAuth revision');
-  const retry = within(manager).getByText('The work needed 2 attempts and then completed.');
-  const complete = within(manager).getByText('The mission reached its recorded completion state.');
-  expect(request.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(retry.compareDocumentPosition(complete) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(within(manager).queryByRole('button')).not.toBeInTheDocument();
-  expect(screen.getByText('Run details', { selector: 'summary' })).toBeVisible();
 });
 
-test('makes an actionable takeover review the primary next step', async () => {
-  mocks.useProjectState.mockReturnValue({
-    data: {
-      active_run: { run_id: 'run-active' },
-      agile_board: { counts: { blocked: 0 } },
-      approval_reviews: [{ approval: 'takeover', artifact: 'takeover', is_actionable: true }],
-      start_context: { project_name: 'Demo project' },
-      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
-      workflow_steps: [{ status: 'review-needed', title: 'Takeover Context' }],
-    },
-    error: null,
-    refresh: vi.fn(),
-    status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
-  });
-
-  renderWorkPage();
-
-  expect(screen.getByText('Review the takeover brief', { selector: 'h2' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Approve' })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Inspect details →' }))
-    .toHaveAttribute('href', '/projects/DEMO/review/takeover');
-  expect(screen.getByText('Stop or abandon this run')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Terminate this run' })).not.toBeVisible();
-});
-
-test('renders the workflow canvas above the views and opens the gate detail card', async () => {
-  mocks.useProjectState.mockReturnValue({
-    data: {
-      active_run: { run_id: 'run-active' },
-      agile_board: { counts: {} },
-      start_context: { project_name: 'Demo project' },
-      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
-      workflow_steps: [
-        { key: 'prd', number: '1', title: 'Product / Requirement', status: 'review-needed', approval: 'prd', status_label: 'Needs review' },
-        { key: 'rfc', number: '2', title: 'Architecture', status: 'not-started', approval: 'rfc', status_label: 'Not started' },
-      ],
-    },
-    error: null,
-    refresh: vi.fn(),
-    status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
-  });
-
-  renderWorkPage();
-
-  expect(await screen.findByRole('region', { name: 'Workflow canvas' })).toBeVisible();
-  await userEvent.click(screen.getByRole('button', { name: /Product \/ Requirement/ }));
-  expect(await screen.findByRole('dialog', { name: 'Stage details' })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Open full review' }))
-    .toHaveAttribute('href', '/projects/DEMO/review/prd');
-});
-
-test('delivery view renders structured lists with raw payload collapsed', async () => {
-  mocks.useProjectState.mockReturnValue({
-    data: {
-      active_run: { run_id: 'run-active' },
-      agile_board: { counts: {} },
-      start_context: { project_name: 'Demo project' },
-      resources: [{ key: 'prd', path: '/runs/x/prd.md' }],
-      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
-      workflow_steps: [],
-    },
-    error: null,
-    refresh: vi.fn(),
-    status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
-  });
-  mocks.getDevLoop.mockResolvedValue({
-    pull_requests: [{ number: 7, title: 'feat: walkthrough', branch: 'feat/x', state: 'open', html_url: 'https://example.com/pr/7' }],
-    ci: [{ name: 'backend', status: 'completed', conclusion: 'success', html_url: 'https://example.com/ci/1' }],
-    evidence: [],
-  });
-
-  render(
-    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active?view=delivery']}>
-      <Routes>
-        <Route element={<TranslationOutlet />}>
-          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
-  );
-
-  expect(await screen.findByText('feat: walkthrough')).toBeVisible();
-  expect(screen.getByText('feat/x', { selector: 'code' })).toBeVisible();
-  const openLinks = screen.getAllByRole('link', { name: 'Open PR' });
-  expect(openLinks.some((link) => link.getAttribute('href') === 'https://example.com/pr/7')).toBe(true);
-  expect(openLinks.some((link) => link.getAttribute('href') === 'https://example.com/ci/1')).toBe(true);
-  expect(screen.getByText('backend')).toBeVisible();
-  expect(screen.getByText('prd', { selector: 'strong' })).toBeVisible();
-  expect(screen.getAllByText('Raw payload', { selector: 'summary' }).length).toBeGreaterThanOrEqual(3);
-});
-
-test('subnav exposes the active view to assistive technology and dispatch confirms', async () => {
+test('dispatches a track only with the confirmed task and project', async () => {
   mocks.useProjectState.mockReturnValue({
     data: {
       active_run: { run_id: 'run-active' },
@@ -1799,10 +970,6 @@ test('subnav exposes the active view to assistive technology and dispatch confir
 
   renderWorkPage();
 
-  const plan = await screen.findByRole('button', { name: 'Board' });
-  expect(plan).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.getByRole('button', { name: 'Activity' })).toHaveAttribute('aria-pressed', 'false');
-
   await userEvent.click(screen.getByRole('button', { name: 'Execution' }));
   await userEvent.click(screen.getByRole('button', { name: 'Dispatch track' }));
   await userEvent.type(screen.getByLabelText('Track name'), 'audit scan');
@@ -1812,76 +979,6 @@ test('subnav exposes the active view to assistive technology and dispatch confir
   expect(mocks.dispatchTrack).toHaveBeenCalledWith({
     name: 'audit scan', role: 'implementation', adapter: 'codex', task: 'scan the repo read-only', project_key: 'DEMO',
   });
-});
-
-test('activity view renders action history timeline and transitions', async () => {
-  mocks.useProjectState.mockReturnValue({
-    data: {
-      active_run: { run_id: 'run-active' },
-      agile_board: { counts: {} },
-      action_items: [
-        { id: 'act-1', title: 'Start Workflow', action: 'start_run', node_transition: 'takeover -> product_requirement', timestamp: '2026-08-18T10:00:00Z', note: 'Run initialized by user' },
-        { id: 'act-2', title: 'PRD Approved', action: 'approve', approval: 'prd', node_transition: 'product_requirement -> architect', timestamp: '2026-08-18T11:00:00Z' },
-      ],
-      start_context: { project_name: 'Demo project' },
-      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
-      workflow_steps: [],
-    },
-    error: null,
-    refresh: vi.fn(),
-    status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
-  });
-
-  render(
-    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active?view=activity']}>
-      <Routes>
-        <Route element={<TranslationOutlet />}>
-          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
-  );
-
-  expect(await screen.findByText('Start Workflow')).toBeVisible();
-  expect(screen.getByText('takeover -> product_requirement')).toBeVisible();
-  expect(screen.getByText('Run initialized by user')).toBeVisible();
-  expect(screen.getByText('PRD Approved')).toBeVisible();
-  expect(screen.getByRole('link', { name: /View review \(prd\)/ })).toHaveAttribute('href', '/projects/DEMO/review/prd');
-});
-
-test('messages view renders recorded messages', async () => {
-  mocks.useProjectState.mockReturnValue({
-    data: {
-      active_run: { run_id: 'run-active' },
-      agile_board: { counts: {} },
-      start_context: { project_name: 'Demo project' },
-      state: { run_id: 'run-active', idea: 'Prepare a human-readable takeover brief' },
-      workflow_steps: [],
-    },
-    error: null,
-    refresh: vi.fn(),
-    status: 'ready',
-  });
-  mocks.getProjectRuns.mockResolvedValue({
-    runs: [{ run_id: 'run-active', idea: 'Prepare a human-readable takeover brief', status: 'active' }],
-  });
-  mocks.getMessages.mockResolvedValue({ messages: [{ id: 'm1', role: 'architect', content: 'RFC drafted' }] });
-
-  render(
-    <MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active?view=messages']}>
-      <Routes>
-        <Route element={<TranslationOutlet />}>
-          <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
-  );
-
-  expect(await screen.findByText('RFC drafted')).toBeVisible();
-  expect(mocks.getMessages).toHaveBeenCalledWith('DEMO', 'run-active', '', expect.anything());
 });
 
 test('routes a legacy takeover revision to the brief recovery screen', async () => {

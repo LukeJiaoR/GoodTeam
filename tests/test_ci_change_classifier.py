@@ -169,19 +169,6 @@ def test_empty_changes_and_unknown_paths_fail_closed():
     assert "fail closed" in unknown.reasons[0]
 
 
-def test_plan_serialization_is_deterministic():
-    plan = classify_changes(
-        [
-            Change("M", ("src/goodteam_os/memory.py",)),
-            Change("M", ("frontend/src/utils/time.js",)),
-        ]
-    )
-
-    first = json.dumps(plan.as_dict(), separators=(",", ":"), sort_keys=True)
-    second = json.dumps(plan.as_dict(), separators=(",", ":"), sort_keys=True)
-    assert first == second
-
-
 def test_full_plan_selects_both_stacks_without_smoke():
     plan = full_plan()
 

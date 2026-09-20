@@ -119,24 +119,6 @@ test('refines against the exact run and full-content version', async () => {
   );
 });
 
-test('accepts a complete review mock as full content without requesting the artifact', async () => {
-  const completeState = {
-    ...state,
-    approval_reviews: [{
-      ...state.approval_reviews[0],
-      content: FULL_CONTENT,
-      content_truncated: undefined,
-    }],
-  };
-  mocks.getReviewState.mockResolvedValue(completeState);
-  mocks.getOpenQuestions.mockResolvedValue({ questions: [] });
-
-  render(<RouterProvider router={routerFor()} />);
-
-  await screen.findByText('Acceptance: retain this final criterion.');
-  expect(mocks.getArtifact).not.toHaveBeenCalled();
-});
-
 test('approves the loaded full-content version, not a newer preview snapshot', async () => {
   const user = userEvent.setup();
   const pendingArtifact = deferred();

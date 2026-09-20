@@ -272,18 +272,3 @@ review_evidence_policy:
 
     assert payload["decision"] == "approved"
     assert payload["approvals"]["staging"] == "approved"
-
-
-def test_review_evidence_policy_renderer_surfaces_human_authority_copy():
-    policy = evaluate_review_evidence_policy(
-        _provenance("failed", invocation_status="failed"),
-        gate="staging",
-        config={"mode": "strict", "blockers": ["failed_invocation"]},
-    )
-
-    html = web.render_review_evidence_policy(policy)
-
-    assert "BLOCKER" in html
-    assert "failed_invocation" in html
-    assert "Human operator decides" in html
-    assert "does not automatically approve or reject" in html

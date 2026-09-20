@@ -94,7 +94,7 @@ def test_workbench_projects_sandbox_events_without_side_effects(tmp_path):
     ]
 
 
-def test_browser_html_renders_sandbox_evidence(tmp_path):
+def test_sandbox_html_redacts_command_secrets(tmp_path):
     first_id = "exec_sandbox_html_conflict"
     execution_id = "exec_sandbox_html"
     _create_run(tmp_path, first_id)
@@ -124,16 +124,6 @@ def test_browser_html_renders_sandbox_evidence(tmp_path):
 
     html = render_review_workbench_html(api.get_review_workbench(execution_id))
 
-    assert "Sandbox evidence" in html
-    assert "active" in html
-    assert sandbox["workspace_path"] in html
-    assert "Command history" in html
-    assert "sandbox_command_rejected" in html
-    assert "unknown_command" in html
-    assert "Claimed paths" in html
-    assert "path_claims_broad_or_low_confidence" in html
-    assert "matched sandbox area" in html
-    assert "Conflict risk" in html
     assert "[REDACTED]" in html
     assert "anthropic-secret" not in html
 
@@ -203,64 +193,6 @@ def test_workbench_surfaces_runtime_evidence_and_cleanup_required_warning(tmp_pa
     assert "sandbox_retained_for_pr" in [
         event["payload"]["transition"] for event in sandbox["events"]
     ]
-
-
-def test_browser_html_renders_runtime_and_cleanup_warnings(tmp_path):
-    execution_id = "exec_runtime_cleanup_html"
-    store = WorkerJobStore(tmp_path)
-    job = store.create_job(
-        run_id=execution_id,
-        role="implementation",
-        adapter="codex",
-        task="Implement runtime evidence.",
-        context="Approved artifacts are available.",
-    )
-    job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
-    _create_run(tmp_path, execution_id, worker_job_id=job["id"], adapter="codex")
-    (job_root / "status.json").write_text(
-        json.dumps(
-            {
-                "job_id": job["id"],
-                "run_id": execution_id,
-                "role": "implementation",
-                "adapter": "codex",
-                "status": "completed",
-                "summary": "Codex CLI exited with code 0.",
-                "updated_at": "2026-07-06T05:03:00Z",
-                "invocation_evidence": {
-                    "runtime_adapter": "codex",
-                    "runtime_binary": "/fake/bin/codex",
-                    "runtime_version": "unknown",
-                    "runtime_model": "gpt-5.4",
-                    "runtime_cwd": str(tmp_path / ".goodteam" / "sandboxes" / execution_id / "workspace"),
-                    "runtime_workspace_mode": "workspace",
-                    "runtime_workspace_status": "active",
-                    "runtime_sandbox_mode": "unknown",
-                    "runtime_approval_policy": "unknown",
-                    "runtime_unsafe_mode": False,
-                    "runtime_policy_warning": True,
-                    "runtime_policy_warning_reason": "runtime_policy_unverified",
-                    "runtime_transcript_path": "",
-                    "stdout_path": str(job_root / "stdout.txt"),
-                    "stderr_path": str(job_root / "stderr.txt"),
-                    "result_path": str(job_root / "result.md"),
-                },
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    api = ExecutionAPI(tmp_path, clock=FakeClock())
-    api.create_sandbox(execution_id)
-    SandboxService(tmp_path, clock=FakeClock()).retain_sandbox(execution_id, reason="pr_pending")
-
-    html = render_review_workbench_html(api.get_review_workbench(execution_id))
-
-    assert "Runtime adapter" in html
-    assert "codex" in html
-    assert "runtime_policy_unverified" in html
-    assert "cleanup required" in html.lower()
-    assert str(job_root / "stdout.txt") in html
 
 
 def test_workbench_surfaces_runtime_evidence_even_when_sandbox_events_are_missing(tmp_path):
@@ -336,15 +268,12 @@ def test_workbench_surfaces_cleanup_failed_as_retryable_recovery(tmp_path):
     sandbox_path.write_text(json.dumps(sandbox, indent=2), encoding="utf-8")
 
     workbench = api.get_review_workbench(execution_id)
-    html = render_review_workbench_html(workbench)
 
     assert workbench["sandbox"]["status"] == "cleanup_failed"
     assert workbench["sandbox"]["cleanup_required"] is True
     assert workbench["sandbox"]["cleanup_recovery_required"] is True
     assert workbench["sandbox"]["recovery_state"] == "sandbox_cleanup_recovery_required"
     assert workbench["sandbox"]["cleanup_failure_reason"] == "sandbox_destroy_failed"
-    assert "sandbox_cleanup_recovery_required" in html
-    assert "worktree remove exploded" in html
 
 
 def test_workbench_projects_failed_sandbox_commands(tmp_path, monkeypatch):

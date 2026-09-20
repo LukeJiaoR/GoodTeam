@@ -122,7 +122,6 @@ class Plan:
     backend: str
     frontend: str
     backend_test_targets: tuple[str, ...] = ()
-    frontend_test_targets: tuple[str, ...] = ()
     live_smoke_evidence_required: bool = False
     reasons: tuple[str, ...] = ()
 
@@ -138,7 +137,6 @@ def _plan(
     reason: str,
     *,
     backend_targets: tuple[str, ...] = (),
-    frontend_targets: tuple[str, ...] = (),
     smoke: bool = False,
 ) -> Plan:
     return Plan(
@@ -146,7 +144,6 @@ def _plan(
         backend=backend,
         frontend=frontend,
         backend_test_targets=backend_targets,
-        frontend_test_targets=frontend_targets,
         live_smoke_evidence_required=smoke,
         reasons=(f"{path}: {reason}",),
     )
@@ -276,9 +273,6 @@ def classify_changes(changes: Sequence[Change]) -> Plan:
         backend_test_targets=tuple(
             sorted({target for decision in decisions for target in decision.backend_test_targets})
         ),
-        frontend_test_targets=tuple(
-            sorted({target for decision in decisions for target in decision.frontend_test_targets})
-        ),
         live_smoke_evidence_required=any(
             decision.live_smoke_evidence_required for decision in decisions
         ),
@@ -325,7 +319,6 @@ def write_github_outputs(path: Path, plan: Plan) -> None:
         "backend": plan.backend,
         "frontend": plan.frontend,
         "backend_test_targets": " ".join(plan.backend_test_targets),
-        "frontend_test_targets": " ".join(plan.frontend_test_targets),
         "live_smoke_evidence_required": str(plan.live_smoke_evidence_required).lower(),
         "plan_json": json.dumps(plan.as_dict(), separators=(",", ":"), sort_keys=True),
     }

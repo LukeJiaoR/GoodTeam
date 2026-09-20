@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   classify:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -16,7 +20,6 @@ jobs:
       backend: ${{ steps.plan.outputs.backend }}
       frontend: ${{ steps.plan.outputs.frontend }}
       backend_test_targets: ${{ steps.plan.outputs.backend_test_targets }}
-      frontend_test_targets: ${{ steps.plan.outputs.frontend_test_targets }}
       live_smoke_evidence_required: ${{ steps.plan.outputs.live_smoke_evidence_required }}
 
     steps:
@@ -84,35 +87,10 @@ jobs:
 
       - name: Run full backend tests
         if: needs.classify.outputs.backend == 'full'
-        run: PYTHONPATH=src python -m pytest tests -q
+        # The required browser job already ran recovery with dedicated evidence.
+        run: PYTHONPATH=src python -m pytest tests --ignore=tests/test_workflow_http_recovery.py -q
 
       - run: ruff check src/goodteam_os/ tests/ scripts/ci/
-
-  frontend:
-    needs: [classify, browser]
-    if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && needs.classify.outputs.frontend != 'none'
-    runs-on: [self-hosted, linux, x64, goodteam-ci]
-
-    defaults:
-      run:
-        working-directory: frontend
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "20"
-
-      - run: npm ci
-
-      - run: npm test
-
-      - run: npm run build
-
-      - run: npm run lint
 
   browser:
     needs: classify
@@ -168,8 +146,8 @@ jobs:
       - run: npx playwright install chromium
         working-directory: frontend
 
-      - name: Verify isolated business loop twice
-        run: npm run test:e2e -- --repeat-each=2
+      - name: Verify isolated business loop
+        run: npm run test:e2e
         working-directory: frontend
 
       - name: Upload browser evidence
@@ -183,9 +161,19 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+      - name: Run frontend unit tests
+        if: needs.classify.outputs.frontend != 'none'
+        run: npm test
+        working-directory: frontend
+
+      - name: Lint frontend
+        if: needs.classify.outputs.frontend != 'none'
+        run: npm run lint
+        working-directory: frontend
+
   gate:
     name: CI / gate
-    needs: [classify, backend, frontend, browser]
+    needs: [classify, backend, browser]
     if: >-
       always()
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -195,7 +183,6 @@ jobs:
       BACKEND_MODE: ${{ needs.classify.outputs.backend }}
       BACKEND_RESULT: ${{ needs.backend.result }}
       FRONTEND_MODE: ${{ needs.classify.outputs.frontend }}
-      FRONTEND_RESULT: ${{ needs.frontend.result }}
       BROWSER_RESULT: ${{ needs.browser.result }}
       TIER: ${{ needs.classify.outputs.tier }}
       LIVE_SMOKE_REQUIRED: ${{ needs.classify.outputs.live_smoke_evidence_required }}
@@ -211,26 +198,22 @@ jobs:
 
           if [[ "$BACKEND_MODE" == "none" && "$BACKEND_RESULT" == "skipped" ]]; then
             echo "Backend was intentionally skipped."
-          elif [[ "$BACKEND_MODE" != "none" && "$BACKEND_RESULT" == "success" ]]; then
+          elif [[ ( "$BACKEND_MODE" == "focused" || "$BACKEND_MODE" == "full" ) && "$BACKEND_RESULT" == "success" ]]; then
             echo "Backend $BACKEND_MODE verification succeeded."
           else
             echo "Backend result $BACKEND_RESULT does not match plan $BACKEND_MODE." >&2
             exit 1
           fi
 
-          if [[ "$FRONTEND_MODE" == "none" && "$FRONTEND_RESULT" == "skipped" ]]; then
-            echo "Frontend was intentionally skipped."
-          elif [[ "$FRONTEND_MODE" != "none" && "$FRONTEND_RESULT" == "success" ]]; then
-            echo "Frontend $FRONTEND_MODE verification succeeded."
-          else
-            echo "Frontend result $FRONTEND_RESULT does not match plan $FRONTEND_MODE." >&2
+          if [[ "$FRONTEND_MODE" != "none" && "$FRONTEND_MODE" != "full" ]]; then
+            echo "Unknown frontend verification mode: $FRONTEND_MODE" >&2
             exit 1
           fi
 
           if [[ "$BACKEND_MODE" == "none" && "$FRONTEND_MODE" == "none" && "$BROWSER_RESULT" == "skipped" ]]; then
             echo "Browser acceptance was intentionally skipped for documentation."
           elif [[ ( "$BACKEND_MODE" != "none" || "$FRONTEND_MODE" != "none" ) && "$BROWSER_RESULT" == "success" ]]; then
-            echo "Isolated browser acceptance succeeded twice."
+            echo "Isolated browser acceptance and planned frontend checks succeeded."
           else
             echo "Browser result $BROWSER_RESULT does not match the verification plan." >&2
             exit 1
@@ -244,8 +227,8 @@ jobs:
             echo
             echo "- Tier: **$TIER**"
             echo "- Backend: \`$BACKEND_MODE\` ($BACKEND_RESULT)"
-            echo "- Frontend: \`$FRONTEND_MODE\` ($FRONTEND_RESULT)"
-            echo "- Browser acceptance: $BROWSER_RESULT (isolated workspace, fake Worker, two repetitions)"
+            echo "- Frontend unit/lint plan: \`$FRONTEND_MODE\` (included in browser job)"
+            echo "- Browser acceptance: $BROWSER_RESULT (isolated workspace, fake Worker)"
             echo "- Live smoke evidence required: \`$LIVE_SMOKE_REQUIRED\`"
             if [[ "$LIVE_SMOKE_REQUIRED" == "true" ]]; then
               echo

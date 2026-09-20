@@ -3,7 +3,7 @@ import Button from '../../../components/ui/Button';
 import ProductError from '../../../components/ui/ProductError';
 import { isChangeDiscussion, sendConversationInput } from './conversationRouting';
 import { shouldSubmitConversationOnEnter } from './conversationFeedback';
-import ConversationChangeContext from './ConversationChangeContext';
+import ConversationChangeContext from './ConversationChangeContext.jsx';
 import { matchesSavedChange } from './conversationChangeContext';
 
 export default function ConversationComposer({

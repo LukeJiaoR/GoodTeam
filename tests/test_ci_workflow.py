@@ -1,146 +1,82 @@
+import os
 from pathlib import Path
 import re
+import subprocess
+import textwrap
+
+import pytest
 
 
 WORKFLOW = Path(".github/workflows/ci.yml")
-TESTING_STRATEGY = Path("docs/testing-strategy.md")
-
-
-def _workflow_text() -> str:
-    return WORKFLOW.read_text(encoding="utf-8")
 
 
 def test_ci_is_pr_or_manual_only_with_read_only_permissions():
-    workflow = _workflow_text()
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    trigger = workflow.split("permissions:", 1)[0]
 
-    assert "  pull_request:" in workflow
-    assert "  workflow_dispatch:" in workflow
-    assert "  push:" not in workflow
+    assert "  pull_request:" in trigger
+    assert "  workflow_dispatch:" in trigger
+    assert "  push:" not in trigger
+    assert "branches:" not in trigger  # Stacked PRs also need pre-merge checks.
     assert "permissions:\n  contents: read" in workflow
 
 
-def test_all_routine_jobs_use_guarded_goodteam_runner_without_hosted_fallback():
-    workflow = _workflow_text()
-    selector = "runs-on: [self-hosted, linux, x64, goodteam-ci]"
-    same_repository_guard = (
+def test_every_job_keeps_the_self_hosted_runner_security_boundary():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    jobs = re.split(r"^  [a-z_]+:\n", workflow.split("\njobs:\n", 1)[1], flags=re.MULTILINE)[1:]
+    guard = (
         "github.event_name != 'pull_request' "
         "|| github.event.pull_request.head.repo.full_name == github.repository"
     )
 
-    assert workflow.count(selector) == 5
-    assert workflow.count(same_repository_guard) == 5
-    assert "runs-on: ubuntu-latest" not in workflow
+    assert jobs
+    for job in jobs:
+        assert "runs-on: [self-hosted, linux, x64, goodteam-ci]" in job
+        assert guard in job.split("steps:", 1)[0]
     assert "pull_request_target:" not in workflow
     assert "secrets." not in workflow
     assert "environment:" not in workflow
 
 
-def test_persistent_runner_uses_local_caches_with_reproducible_installs():
-    workflow = _workflow_text()
+@pytest.mark.parametrize(
+    ("backend_mode", "frontend_mode", "backend_result", "browser_result"),
+    [
+        ("none", "none", "skipped", "skipped"),
+        ("focused", "none", "success", "success"),
+        ("full", "none", "success", "success"),
+        ("none", "full", "skipped", "success"),
+        ("full", "full", "success", "success"),
+    ],
+)
+def test_gate_accepts_only_successful_planned_jobs(backend_mode, frontend_mode, backend_result, browser_result):
+    # Execute the real gate: source-string checks cannot prove that failures,
+    # cancellations, or unexpected skips actually block merging.
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    step = workflow.split("      - name: Validate planned jobs\n", 1)[1].split("\n      - name:", 1)[0]
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    planned = {
+        "CLASSIFY_RESULT": "success",
+        "BACKEND_MODE": backend_mode,
+        "FRONTEND_MODE": frontend_mode,
+        "BACKEND_RESULT": backend_result,
+        "BROWSER_RESULT": browser_result,
+    }
 
-    assert "python3.12 -m venv" in workflow
-    assert 'echo "$RUNNER_TEMP/goodteam-venv/bin" >> "$GITHUB_PATH"' in workflow
-    assert 'pip install -e ".[dev]"' in workflow
-    assert "npm ci" in workflow
-    assert "cache: pip" not in workflow
-    assert "cache: npm" not in workflow
+    def accepts(overrides):
+        result = subprocess.run(
+            ["bash", "-e", "-c", script],
+            env={**os.environ, **planned, **overrides},
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0
 
-
-def test_ci_classifies_full_history_or_manual_full_mode():
-    workflow = _workflow_text()
-
-    assert "fetch-depth: 0" in workflow
-    assert "--full" in workflow
-    assert "--base" in workflow
-    assert "--head" in workflow
-    assert "github.event.pull_request.base.sha" in workflow
-    assert "github.event.pull_request.head.sha" in workflow
-    assert "--github-output \"$GITHUB_OUTPUT\"" in workflow
-    assert "--summary \"$GITHUB_STEP_SUMMARY\"" in workflow
-
-
-def test_ci_jobs_follow_classifier_outputs():
-    workflow = _workflow_text()
-
-    assert "needs.classify.outputs.backend != 'none'" in workflow
-    assert "needs.classify.outputs.frontend != 'none'" in workflow
-    assert "needs.classify.outputs.backend == 'focused'" in workflow
-    assert "needs.classify.outputs.backend == 'full'" in workflow
-    assert "needs.classify.outputs.backend_test_targets" in workflow
-    assert "PYTHONPATH=src python -m pytest tests -q" in workflow
-    assert "ruff check src/goodteam_os/ tests/ scripts/ci/" in workflow
-    assert "npm ci" in workflow
-    assert "npm run build" in workflow
-    assert "npm test" in workflow
-    assert "npm run lint" in workflow
-
-
-def test_ci_has_stable_aggregation_gate_that_validates_skips():
-    workflow = _workflow_text()
-
-    assert "name: CI / gate" in workflow
-    assert "needs: [classify, backend, frontend, browser]" in workflow
-    assert "always()" in workflow
-    assert "CLASSIFY_RESULT: ${{ needs.classify.result }}" in workflow
-    assert "BACKEND_RESULT: ${{ needs.backend.result }}" in workflow
-    assert "FRONTEND_RESULT: ${{ needs.frontend.result }}" in workflow
-    assert '[[ "$BACKEND_MODE" == "none" && "$BACKEND_RESULT" == "skipped" ]]' in workflow
-    assert '[[ "$FRONTEND_MODE" == "none" && "$FRONTEND_RESULT" == "skipped" ]]' in workflow
-
-
-def test_testing_strategy_documents_risk_tiered_ci_gate():
-    policy = TESTING_STRATEGY.read_text(encoding="utf-8")
-
-    assert "`CI / gate`" in policy
-    assert "`workflow_dispatch`" in policy
-    assert "fail closed" in policy
-    assert re.search(r"does not rerun after merge\s+to `main`", policy)
-    assert re.search(r"requires pull requests\s+for `main`", policy)
-
-
-def test_openwiki_remains_manual_only_and_github_hosted():
-    workflow = Path(".github/workflows/openwiki-update.yml").read_text(encoding="utf-8")
-
-    assert "  workflow_dispatch:" in workflow
-    assert "  schedule:" not in workflow
-    assert "runs-on: ubuntu-latest" in workflow
-    assert "OPENROUTER_API_KEY" in workflow
-    assert "contents: write" in workflow
-
-
-def test_browser_acceptance_is_required_for_either_changed_stack_and_uploads_evidence():
-    workflow = _workflow_text()
-    browser = workflow.split("  browser:", 1)[1].split("  gate:", 1)[0]
-    gate = workflow.split("  gate:", 1)[1]
-
-    assert "needs.classify.outputs.backend != 'none' || needs.classify.outputs.frontend != 'none'" in browser
-    assert "python3.12 -m venv" in browser
-    assert "GOODTEAM_E2E_PYTHON=" in browser
-    assert "python -m pytest tests/test_workflow_http_recovery.py -q" in browser
-    assert "http-recovery-${{ github.run_id }}-${{ github.run_attempt }}" in browser
-    assert "npm ci" in browser and "npm run build" in browser
-    assert "npx playwright install chromium" in browser
-    assert "npm run test:e2e -- --repeat-each=2" in browser
-    assert 'GOODTEAM_DISABLE_TG_NETWORK: "1"' in browser
-    assert "continue-on-error" not in browser
-    assert "if: always()" in browser and "actions/upload-artifact@v4" in browser
-    assert "frontend/playwright-report/" in browser and "frontend/test-results/" in browser
-    assert "BROWSER_RESULT: ${{ needs.browser.result }}" in gate
-    assert '\"$BROWSER_RESULT\" == \"success\"' in gate
-    assert '\"$BROWSER_RESULT\" == \"skipped\"' in gate
-
-
-def test_ci_also_covers_stacked_prs_without_enabling_external_forks():
-    trigger = _workflow_text().split("permissions:", 1)[0]
-    assert "pull_request:" in trigger
-    assert "branches:" not in trigger
-
-
-def test_single_runner_runs_browser_acceptance_before_full_stacks():
-    workflow = _workflow_text()
-    backend = workflow.split("\n  backend:\n", 1)[1].split("\n  frontend:\n", 1)[0]
-    frontend = workflow.split("\n  frontend:\n", 1)[1].split("\n  browser:\n", 1)[0]
-    browser = workflow.split("  browser:", 1)[1].split("  gate:", 1)[0]
-    assert "needs: [classify, browser]" in backend
-    assert "needs: [classify, browser]" in frontend
-    assert "needs: classify" in browser
+    assert accepts({})
+    for key in ("CLASSIFY_RESULT", "BACKEND_RESULT", "BROWSER_RESULT"):
+        for result in ("success", "skipped", "failure", "cancelled", ""):
+            if result != planned[key]:
+                assert not accepts({key: result}), (key, result, planned)
+    for key in ("BACKEND_MODE", "FRONTEND_MODE"):
+        for mode in ("", "unknown"):
+            assert not accepts({key: mode}), (key, mode, planned)

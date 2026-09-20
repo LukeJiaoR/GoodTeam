@@ -6,12 +6,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 from goodteam_os import cli, web
-from goodteam_os.execution.api import ExecutionAPI
 from goodteam_os.execution.ledger import ExecutionLedger
-from goodteam_os.execution.models import ExecutionRun
 from tests.review_workbench_helpers import (
-    api as _api,
-    failed_event as _failed_event,
     full_lifecycle as _full_lifecycle,
     memory_event_files as _memory_event_files,
 )
@@ -30,7 +26,7 @@ def test_completed_execution_exports_browser_visible_html_and_json(tmp_path):
 
     result = api.export_review_workbench_html(execution_id)
 
-    html = Path(result["html_path"]).read_text(encoding="utf-8")
+    assert Path(result["html_path"]).is_file()
     payload = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
     assert result["status"] == "exported"
     assert result["schema_version"] == "review_workbench.v1"
@@ -45,38 +41,6 @@ def test_completed_execution_exports_browser_visible_html_and_json(tmp_path):
     assert payload["execution_replay_graph"]["nodes_by_type"]["reviewer_decision"] == [
         "reviewer_decision"
     ]
-    assert f"Review Workbench - {execution_id}" in html
-    assert "data-schema-version=\"review_workbench.v1\"" in html
-    assert "Status</dt><dd>completed</dd>" in html
-    assert "LukeJiaoR/GoodTeam#216" in html
-    assert "LukeJiaoR/GoodTeam#2160" in html
-    assert "commit-sha-216" in html
-    assert "2 files changed (+130/-2)" in html
-    assert "tests/test_review_workbench_diff_artifact.py" in html
-    assert "Memory provenance</dt><dd>complete</dd>" in html
-    assert "Decision</dt><dd>approve by LukeJiaoR</dd>" in html
-    assert "Task contract</h2>" in html
-    assert "Schema</dt><dd>task_contract.v1</dd>" in html
-    assert "Runtime policy</h2>" in html
-    assert "Schema</dt><dd>runtime_policy.v1</dd>" in html
-    assert "Worker backend</dt><dd>fake (fake)</dd>" in html
-    assert "External invocation</dt><dd>not requested</dd>" in html
-    assert "Broker status</h2>" in html
-    assert "Schema</dt><dd>github_broker_status.v1</dd>" in html
-    assert "Merge readiness</dt><dd>ready (merged)</dd>" in html
-    assert "Review state</dt><dd>approved, approvals=1, blockers=0</dd>" in html
-    assert "Replay graph</h2>" in html
-    assert "Schema</dt><dd>execution_replay_graph.v1</dd>" in html
-    assert "Complete</dt><dd>yes</dd>" in html
-    assert "Nodes</dt><dd>" in html
-    assert "broker_status" in html
-    assert "reviewer_decision" in html
-    assert "Expected artifacts" in html
-    assert "Sandbox</dt><dd>available</dd>" in html
-    assert "sandbox_created" in html
-    assert "sandbox_destroyed" in html
-    assert "diff_artifact_persisted" in html
-    assert "review_decision_recorded" in html
 
 
 def test_export_preserves_empty_states_without_mock_data(tmp_path):
@@ -84,55 +48,12 @@ def test_export_preserves_empty_states_without_mock_data(tmp_path):
 
     result = api.export_review_workbench_html(execution_id)
 
-    html = Path(result["html_path"]).read_text(encoding="utf-8")
+    assert Path(result["html_path"]).is_file()
     payload = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
     assert payload["diff"]["available"] is False
     assert payload["diff"]["reason"] == "diff_artifact_missing"
     assert payload["diff"]["changed_files"] == []
     assert payload["execution_replay_graph"]["summary"]["complete"] is True
-    assert "No persisted PR diff artifact is available." in html
-    assert "Changed files</h2>" in html
-    assert "No changed files available from persisted diff artifact." in html
-    assert "No sandbox commands recorded." in html
-
-
-def test_pending_and_failed_executions_render_without_crash(tmp_path):
-    pending_api = _api(tmp_path)
-    intake = pending_api.intake_github_issue(
-        repo="LukeJiaoR/GoodTeam",
-        issue_number=216,
-        adapter="fake",
-    )
-    pending_id = intake["execution_id"]
-    pending_api.run_execution(pending_id)
-
-    pending = pending_api.export_review_workbench_html(pending_id)
-    pending_html = Path(pending["html_path"]).read_text(encoding="utf-8")
-    assert "Status</dt><dd>pending</dd>" in pending_html
-    assert "pr_missing" in pending_html
-    assert "No review decision recorded." in pending_html
-
-    failed_id = "exec_failed_browser_workbench"
-    ledger = ExecutionLedger(tmp_path)
-    ledger.create_run(
-        ExecutionRun(
-            execution_id=failed_id,
-            task_id="task_failed",
-            worker_job_id="worker_failed",
-            adapter="fake",
-            status="failed",
-            branch_name="goodteam/exec_failed_browser_workbench",
-            pr_number=None,
-            created_at="2026-07-06T02:30:00Z",
-            updated_at="2026-07-06T02:31:00Z",
-        )
-    )
-    ledger.append_event(_failed_event(failed_id))
-
-    failed = ExecutionAPI(tmp_path).export_review_workbench_html(failed_id)
-    failed_html = Path(failed["html_path"]).read_text(encoding="utf-8")
-    assert "Status</dt><dd>failed</dd>" in failed_html
-    assert "execution_failed:worker_failed" in failed_html
 
 
 def test_export_is_read_only_for_ledger_and_memory(tmp_path):

@@ -24,8 +24,9 @@ has only `contents: read`, does not select a GitHub Environment, and has no
 automatic GitHub-hosted fallback.
 
 The first self-hosted job accepts a pull request only when its head repository
-is the current repository. Browser acceptance depends on that guarded job; backend and frontend wait for
-browser acceptance before using the single runner, and
+is the current repository. Browser acceptance depends on that guarded job;
+frontend checks share the browser job's install/build, the backend waits for
+that job, and
 the always-running gate repeats the same-repository guard. A fork PR therefore
 cannot schedule code on this persistent host; a maintainer must first put the
 reviewed patch on a same-repository branch. The workflow does not use
@@ -51,8 +52,9 @@ runner service or raise these limits without measuring simultaneous YUVA and
 GoodTeam jobs. The host's system Docker daemon is not available to the
 GoodTeam account; GoodTeam CI does not require Docker or a database. The browser job runs
 headless Chromium against an isolated temporary workspace with fake Workers.
-The full backend/frontend jobs start only after browser acceptance succeeds,
-so a browser failure is visible before spending time on the full suites.
+Frontend unit tests/lint run after browser acceptance in the same job when the
+frontend is affected. The backend starts only after that job succeeds. HTTP
+recovery runs once in the browser job and is excluded from the later backend run.
 
 ## Dependencies and caches
 
@@ -68,7 +70,7 @@ Browser jobs create their own Python environment and use the lockfile-pinned
 Playwright version to download Chromium into the unprivileged runner cache.
 Chromium system libraries must be available on the host; CI does not run sudo
 or install system packages. The browser suite refuses an existing server, uses
-a fresh workspace/registry/port, runs every case twice without automatic
+a fresh workspace/registry/port, runs every case once without automatic
 retries, and uploads report/state/trace evidence for 14 days.
 
 The start/completion hook removes only the current runner's job-temp children

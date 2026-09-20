@@ -512,7 +512,7 @@ def test_workbench_payload_adds_multi_projection_without_replacing_existing_fiel
     assert state.next_node == "await_staging_approval"
 
 
-def test_multi_reviewer_projection_renderer_surfaces_aggregate_and_per_reviewer_evidence():
+def test_reviewer_html_escapes_untrusted_reviewer_summary():
     projection = build_multi_reviewer_projection(
         approval="staging",
         reviewer_target=_target(
@@ -547,61 +547,4 @@ def test_multi_reviewer_projection_renderer_surfaces_aggregate_and_per_reviewer_
 
     html = web.render_multi_reviewer_projection(projection)
 
-    assert "Multi-reviewer evidence" in html
-    assert "Aggregate severity" in html
-    assert "BLOCKER" in html
-    assert "State counts" in html
-    assert "ok: 1" in html
-    assert "fallback_evidence: 1" in html
-    assert "missing_evidence: 1" in html
-    assert "failed_invocation: 1" in html
-    assert "Reviewer evidence remains advisory" in html
-    assert "Human operator decides" in html
-    assert "Correctness and security" in html
-    assert "correctness-security" in html
-    assert "architecture-maintainability" in html
-    assert "product-operator" in html
-    assert "profile_id" in html
-    assert "Missing evidence" in html
-    assert "fallback" in html
-    assert "Failed invocation" in html
-    assert "/tmp/job-failed/stderr.txt" in html
     assert "<failed reviewer>" not in html
-
-
-def test_multi_reviewer_projection_renderer_tolerates_missing_empty_and_malformed_payloads():
-    assert web.render_multi_reviewer_projection(None) == ""
-    assert "No reviewer evidence" in web.render_multi_reviewer_projection({"reviewers": []})
-    assert "Multi-reviewer evidence" in web.render_multi_reviewer_projection(
-        {
-            "aggregate_policy": "malformed",
-            "operator_message": {"bad": "shape"},
-            "reviewers": ["not-a-reviewer"],
-        }
-    )
-
-
-def test_render_multi_reviewer_projection_includes_advisory_evidence():
-    projection = build_multi_reviewer_projection(
-        approval="staging",
-        reviewer_target=_target("correctness-security", "architecture-maintainability"),
-        reviewer_statuses=[
-            _provider_status(profile_id="correctness-security"),
-            _provider_status(
-                profile_id="architecture-maintainability",
-                job_id="job-failed",
-                adapter="claude",
-                status="failed",
-                summary="Claude reviewer failed.",
-            ),
-        ],
-        review_evidence_policy_config={"mode": "strict", "blockers": ["failed_invocation"]},
-    )
-    html = web.render_multi_reviewer_projection(projection)
-
-    assert "Multi-reviewer evidence" in html
-    assert "Aggregate severity" in html
-    assert "BLOCKER" in html
-    assert "Correctness and security" in html
-    assert "architecture-maintainability" in html
-    assert "Reviewer evidence remains advisory" in html

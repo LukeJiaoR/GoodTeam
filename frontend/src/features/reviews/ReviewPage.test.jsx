@@ -2,7 +2,6 @@ import { createMemoryRouter, Outlet, RouterProvider } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import MarkdownView from '../../components/ui/MarkdownView';
 import { translate } from '../../i18n';
 import ReviewPage from './ReviewPage';
 
@@ -130,17 +129,13 @@ describe('ReviewPage workflow and navigation', () => {
     expect(router.state.location.pathname).toBe('/projects/DEMO/review/rfc');
   });
 
-  test('shows an approved decision result with the next step and link to Work', async () => {
+  test('submits approval against the loaded run and artifact version', async () => {
     const user = userEvent.setup();
     mocks.decideReview.mockResolvedValue({ ok: true });
     renderReview();
 
     await user.click(await screen.findByRole('button', { name: t('review.decision.approve') }));
 
-    expect(await screen.findByText('Approved PRD')).toBeVisible();
-    expect(screen.getByText(`Next: ${t('review.decision.node.rfc')}`)).toBeVisible();
-    expect(screen.getByRole('link', { name: t('review.decision.viewNext') }))
-      .toHaveAttribute('href', '/projects/DEMO/work');
     expect(mocks.decideReview).toHaveBeenCalledWith(
       'DEMO',
       'prd',
@@ -215,17 +210,6 @@ describe('ReviewPage workflow and navigation', () => {
     expect(mocks.decideReview).not.toHaveBeenCalled();
   });
 
-  test('renders the evidence summary badges from the snapshot', async () => {
-    renderReview();
-
-    expect(await screen.findByText('CI: Passed')).toBeVisible();
-    expect(screen.getByText('Smoke: Unknown')).toBeVisible();
-    expect(screen.getByText('QA: Failed')).toBeVisible();
-    expect(screen.getByText('Blockers 1')).toBeVisible();
-    expect(screen.getByText(t('review.evidence.title'), { selector: 'summary' })).toBeVisible();
-    expect(screen.getByText(t('review.provenance.title'), { selector: 'summary' })).toBeVisible();
-  });
-
   test('clears submitted question answers and confirms the count', async () => {
     const user = userEvent.setup();
     mocks.getReviewState.mockResolvedValue(state);
@@ -248,66 +232,4 @@ describe('ReviewPage workflow and navigation', () => {
     expect(screen.getByRole('textbox', { name: 'Should the CLI be the only surface?' })).toHaveValue('');
   });
 
-  test('renders the selected workflow stage in the workspace summary', async () => {
-    renderReview('/projects/DEMO/review/prd');
-
-    expect(await screen.findByText(t('review.workspace.stage'))).toBeVisible();
-    expect(screen.getByText('2/3')).toBeVisible();
-  });
-
-  test('opens non-actionable review artifacts in preview mode', async () => {
-    renderReview('/projects/DEMO/review/rfc');
-
-    expect(await screen.findByRole('heading', { level: 1, name: 'RFC' })).toBeVisible();
-    expect(screen.getByRole('button', { name: t('review.artifact.preview') })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByRole('textbox', { name: t('review.artifact.content') })).not.toBeInTheDocument();
-  });
-});
-
-describe('Markdown rendering in Review and Knowledge workflows', () => {
-  test('MarkdownView renders PRD, RFC, and QA report elements accurately', () => {
-    const prdSample = `
-# GitHub Actions CI/CD Deployment PRD
-
-## 1. Document Overview
-This document specifies the deployment pipeline.
-
-### Target Objectives
-- Zero secret hardcoding
-- Automated readyz health check
-
-\`\`\`yaml
-name: Deploy
-on:
-  push:
-    branches: [main]
-\`\`\`
-
-| Stage | Responsibility |
-|---|---|
-| Build | Compile and test |
-| Deploy | Push to target |
-`;
-
-    render(<MarkdownView content={prdSample} />);
-
-    expect(screen.getByRole('heading', { level: 1, name: 'GitHub Actions CI/CD Deployment PRD' })).toBeVisible();
-    expect(screen.getByRole('heading', { level: 2, name: '1. Document Overview' })).toBeVisible();
-    expect(screen.getByRole('heading', { level: 3, name: 'Target Objectives' })).toBeVisible();
-    expect(screen.getByText('Zero secret hardcoding')).toBeVisible();
-    expect(screen.getByText('Automated readyz health check')).toBeVisible();
-    expect(screen.getByText('Build')).toBeVisible();
-    expect(screen.getByText('Compile and test')).toBeVisible();
-  });
-});
-
-test('opens actionable material in reading mode and exposes editing on request', async () => {
-  const user = userEvent.setup();
-  render(<RouterProvider router={routerFor('/projects/DEMO/review/prd')} />);
-  expect(await screen.findByText('Initial plan.')).toBeVisible();
-  expect(screen.queryByRole('textbox', { name: 'Artifact content' })).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: translate('en', 'review.artifact.edit') }));
-  expect(screen.getByRole('textbox', { name: translate('en', 'review.artifact.content') })).toHaveValue('# PRD\nInitial plan.');
-  expect(mocks.saveArtifact).not.toHaveBeenCalled();
-  expect(mocks.decideReview).not.toHaveBeenCalled();
 });

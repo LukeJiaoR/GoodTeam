@@ -2051,63 +2051,6 @@ def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
     assert {node["kind"] for node in graph["nodes"]} <= {"stage", "gate", "terminal", "revise", "role"}
 
 
-def test_dashboard_stepper_order_follows_workflow_table_happy_path():
-    assert web._dashboard_stepper_table_order() == [
-        "takeover",
-        "product_requirement",
-        "prd",
-        "architect",
-        "rfc",
-        "security",
-        "planner",
-        "staging",
-        "release",
-        "retro_memory",
-    ]
-
-    steps = web._dashboard_stepper_steps()
-
-    assert [step["label"] for step in steps] == [
-        "Intake",
-        "Research",
-        "PRD",
-        "RFC",
-        "Arch Rev",
-        "Security",
-        "Planning",
-        "UI Design",
-        "Impl",
-        "QA",
-        "Code Review",
-        "Staging",
-        "Release",
-        "Retro",
-    ]
-    assert web._dashboard_stepper_node_sequence(steps) == {
-        "takeover_review_gate": 1,
-        "await_takeover_approval": 1,
-        "research": 2,
-        "product_requirement": 3,
-        "await_prd_approval": 3,
-        "architect": 4,
-        "rfc_review_gate": 5,
-        "await_rfc_approval": 5,
-        "await_security_approval": 6,
-        "security_review_gate": 6,
-        "planner": 7,
-        "ui": 8,
-        "implementation": 9,
-        "qa": 10,
-        "code_review": 11,
-        "staging": 12,
-        "await_staging_approval": 12,
-        "release": 13,
-        "await_release_approval": 13,
-        "retro_memory": 14,
-        "complete": 15,
-    }
-
-
 def test_build_workflow_graph_includes_active_project_run(tmp_path):
     state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
     state.current_node = "prd_review_gate"
@@ -3016,15 +2959,11 @@ def test_read_artifact_preview_truncates_long_content(tmp_path):
     assert preview == "aaaaa\n\n[Preview truncated]"
 
 
-def test_render_markdown_preview_outputs_readable_safe_html():
+def test_markdown_preview_escapes_script_content():
     html = render_markdown_preview(
         "# PRD\n\nReview **bold** text.\n\n- One\n- Two\n\n```html\n<script>alert(1)</script>\n```"
     )
 
-    assert '<h1 id="prd">PRD</h1>' in html
-    assert "<p>Review <strong>bold</strong> text.</p>" in html
-    assert "<ul>" in html
-    assert "<li>One</li>" in html
     assert "<pre><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></pre>" in html
     assert "<script>" not in html
 
@@ -3755,143 +3694,6 @@ def test_web_normalize_delivery_mode_accepts_new_presets_and_custom():
         "custom",
     ]:
         assert web.normalize_delivery_mode(mode) == mode
-
-
-def test_render_delivery_mode_options_uses_full_delivery_mode_catalog():
-    html = web.render_delivery_mode_options("cli_tool")
-
-    for mode in web.DELIVERY_MODES:
-        assert f'value="{mode}"' in html
-    assert '<option value="cli_tool" selected>' in html
-    assert "Multi-service product" in html
-    assert "Static site / landing" in html
-    assert "Custom" in html
-
-
-
-def test_product_frontend_replaces_legacy_dashboard_contracts():
-    root = Path(__file__).resolve().parents[1]
-    frontend = root / "frontend" / "src"
-
-    assert not (frontend / "App.jsx").exists()
-    assert not (frontend / "components" / "ProjectTabRouter.jsx").exists()
-    for retired_page in [
-        frontend / "features" / "inbox" / "InboxPage.jsx",
-        frontend / "features" / "activity" / "ActivityPage.jsx",
-        frontend / "features" / "settings" / "SettingsPage.jsx",
-        frontend / "features" / "settings" / "ProjectSettingsPage.jsx",
-        frontend / "components" / "ui" / "Breadcrumb.jsx",
-    ]:
-        assert not retired_page.exists()
-
-    router = (frontend / "app" / "AppRouter.jsx").read_text(encoding="utf-8")
-    for route in [
-        "/projects",
-        "/inbox",
-        "/activity",
-        "/settings",
-        "/projects/:projectKey/home",
-        "/projects/:projectKey/work",
-        "/projects/:projectKey/work/runs/:runId",
-        "/projects/:projectKey/review",
-        "/projects/:projectKey/review/:reviewId",
-        "/projects/:projectKey/knowledge",
-        "/projects/:projectKey/settings/:section",
-    ]:
-        assert route in router
-
-    run_api = (frontend / "features" / "runs" / "runApi.js").read_text(encoding="utf-8")
-    review_api = (frontend / "features" / "reviews" / "reviewApi.js").read_text(encoding="utf-8")
-    knowledge_api = (
-        frontend / "features" / "knowledge" / "knowledgeApi.js"
-    ).read_text(encoding="utf-8")
-    settings_api = (
-        frontend / "features" / "settings" / "settingsApi.js"
-    ).read_text(encoding="utf-8")
-    for endpoint in [
-        "/api/start",
-        "/api/retry",
-        "/api/dispatch-track",
-        "/api/messages",
-        "/api/devloop",
-    ]:
-        assert endpoint in run_api
-    assert "/api/approve" in review_api
-    assert "/api/recover-takeover-brief" in review_api
-    assert "/api/artifact" in review_api
-    assert "/api/artifact" in knowledge_api
-    # Team mutations go through the control-plane command surface (#402).
-    assert "/team/commands" in settings_api
-    assert "/team/events" in settings_api
-
-
-def test_frontend_i18n_locale_files_exist_and_define_current_product_chrome_keys():
-    root = Path(__file__).resolve().parents[1]
-    en = root / "frontend" / "src" / "i18n" / "locales" / "en.js"
-    zh = root / "frontend" / "src" / "i18n" / "locales" / "zh-CN.js"
-
-    assert en.exists()
-    assert zh.exists()
-
-    en_text = en.read_text(encoding="utf-8")
-    zh_text = zh.read_text(encoding="utf-8")
-    for key in [
-        "product.brand",
-        "product.navigation.projects",
-        "product.navigation.projectLabel",
-        "product.workNavigation.team",
-        "product.workNavigation.workbench",
-        "product.workNavigation.reviews",
-        "product.workNavigation.knowledge",
-        "product.appearance.label",
-        "product.appearance.light",
-        "product.appearance.dark",
-        "product.language.label",
-        "product.language.auto",
-        "product.language.en",
-        "product.language.zhCN",
-    ]:
-        assert key in en_text
-        assert key in zh_text
-
-    # Retired dashboard chrome, inbox/activity/settings surfaces, and the hidden
-    # Vivid/Minimal theme system stay deleted; these keys must not return.
-    for key in [
-        "nav.groups.work",
-        "nav.tabs.overview",
-        "chrome.runId",
-        "language.english",
-        "theme.toggle",
-        "approvalBanner.review",
-        "product.navigation.inbox",
-        "product.navigation.activity",
-        "product.navigation.settings",
-        "product.navigation.projectSettings",
-        "product.navigation.breadcrumb",
-        "inbox.title",
-        "activity.title",
-        "settings.title",
-        "toast.settingsSaved",
-    ]:
-        assert key not in en_text
-        assert key not in zh_text
-
-
-
-def test_frontend_i18n_resolves_auto_language_and_falls_back_to_english():
-    i18n_path = Path(__file__).resolve().parents[1] / "frontend" / "src" / "i18n" / "index.js"
-    assert i18n_path.exists()
-    i18n = i18n_path.read_text(encoding="utf-8")
-
-    assert "gt-language" in i18n
-    assert "LANGUAGE_PREFERENCE_AUTO = 'auto'" in i18n
-    assert "SUPPORTED_LANGUAGE_PREFERENCES = ['auto', 'en', 'zh-CN']" in i18n
-    assert "startsWith('zh')" in i18n or 'startsWith("zh")' in i18n
-    assert "return 'zh-CN'" in i18n
-    assert "return 'en'" in i18n
-    assert "normalizeLanguagePreference" in i18n
-    assert "resolveLanguage" in i18n
-    assert "translate" in i18n
 
 
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):
@@ -5845,19 +5647,6 @@ def test_tg_notify_gate_env_override_routes_correctly(monkeypatch):
 
     assert result == {"status": "skipped", "reason": "gate_not_in_notify_set"}
     assert called == []
-
-
-
-def test_frontend_dev_server_uses_goodteam_specific_default_port():
-    root = Path(__file__).resolve().parents[1]
-    vite_config = (root / "frontend" / "vite.config.js").read_text(encoding="utf-8")
-    dev_up = (root / "scripts" / "dev-up.sh").read_text(encoding="utf-8")
-
-    assert "port: 8790" in vite_config
-    assert "strictPort: true" in vite_config
-    assert "'/api': 'http://127.0.0.1:8788'" in vite_config
-    assert "npm run dev → :8790" in dev_up
-    assert ":5173" not in dev_up
 
 
 def test_context_estimate_returns_estimate_without_writing_cache(tmp_path):

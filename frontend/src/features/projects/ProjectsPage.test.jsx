@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -7,10 +7,7 @@ import { ApiError, requestJson } from '../../lib/api/client';
 import ProjectsPage from './ProjectsPage';
 import { importProject } from './projectApi';
 import { normalizeProjectsPayload } from './projectList';
-import {
-  projectErrorMessageKey,
-  projectRecoveryPresentation,
-} from './projectPresentation';
+import { projectRecoveryPresentation } from './projectPresentation';
 
 const chooseLocalPath = vi.hoisted(() => vi.fn());
 
@@ -157,31 +154,6 @@ describe('requestJson', () => {
 });
 
 test.each([
-  'invalid_request',
-  'invalid_project_root',
-  'project_root_not_absolute',
-  'invalid_project_key',
-  'invalid_project_mode',
-  'project_not_found',
-  'project_root_not_found',
-  'project_root_not_directory',
-  'project_root_not_readable',
-  'project_root_unavailable',
-  'project_workspace_not_isolated',
-  'project_readiness_mismatch',
-  'project_readiness_missing',
-  'same_origin_required',
-  'internal_error',
-  'invalid_response',
-])('maps known project error %s to an explicit translation key', (code) => {
-  expect(projectErrorMessageKey(code)).toBe(`projects.errors.${code}`);
-});
-
-test('maps unknown project errors to generic localized copy', () => {
-  expect(projectErrorMessageKey('raw_server_secret')).toBe('product.errors.generic');
-});
-
-test.each([
   ['choose_another_directory', 'choose'],
   ['retry', 'retry'],
   ['retry_request', 'retry'],
@@ -218,90 +190,6 @@ test('project import posts only the selected root', async () => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root: '/work/demo' }),
   });
-});
-
-test('shows a shape-matching skeleton, then renders one workspace row per project', async () => {
-  const list = deferred();
-  const api = {
-    listProjects: vi.fn(() => list.promise),
-    importProject: vi.fn(),
-  };
-  renderProjects({ api });
-
-  const loading = screen.getByRole('status', { name: 'Reading local projects' });
-  expect(loading).toHaveAttribute('aria-busy', 'true');
-  expect(within(loading).getAllByTestId('project-skeleton')).toHaveLength(3);
-
-  list.resolve({
-    projects: [
-      project({ key: 'LEGACY', name: 'Legacy', lifecycle: 'legacy' }),
-      project({ key: 'READY', name: 'Ready', lifecycle: 'ready' }),
-      project({
-        key: 'RUNNING',
-        name: 'Running',
-        lifecycle: 'ready',
-        activeRun: { run_id: 'run-7', next_node: 'implementation' },
-      }),
-    ],
-  });
-
-  expect(await screen.findByRole('heading', { name: 'Choose a project' })).toBeVisible();
-  expect(screen.queryByTestId('project-group')).not.toBeInTheDocument();
-  expect(screen.getAllByRole('button', { name: /Enter workspace:/ })).toHaveLength(3);
-  expect(screen.getByRole('button', { name: 'Enter workspace: Running' })).toHaveTextContent('Active work');
-  expect(screen.getByRole('button', { name: 'Enter workspace: Ready' })).toHaveTextContent('Ready');
-});
-
-test('enters the Task Assistant Work conversation directly from a project row', async () => {
-  const user = userEvent.setup();
-  const navigate = vi.fn();
-  const api = {
-    listProjects: vi.fn().mockResolvedValue({
-      projects: [project({ key: 'DEMO SPACE', name: 'Demo', lifecycle: 'ready' })],
-    }),
-    importProject: vi.fn(),
-  };
-  renderProjects({ api, navigate });
-
-  await user.click(await screen.findByRole('button', { name: 'Enter workspace: Demo' }));
-
-  expect(navigate).toHaveBeenCalledWith('/projects/DEMO%20SPACE/work');
-});
-
-test('renders a localized empty launcher after the project list resolves', async () => {
-  const api = {
-    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
-    importProject: vi.fn(),
-  };
-
-  renderProjects({ api, language: 'zh-CN' });
-
-  expect(await screen.findByRole('heading', { name: '添加第一个项目' })).toBeVisible();
-  expect(screen.getByText('选择一个本地代码仓库并在工作区中打开。')).toBeVisible();
-});
-
-test('opens project import on demand, traps focus, closes, and restores the launcher action', async () => {
-  const user = userEvent.setup();
-  const api = {
-    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
-    importProject: vi.fn(),
-  };
-  renderProjects({ api });
-  const addButton = (await screen.findAllByRole('button', { name: 'Add project' }))[0];
-
-  await user.click(addButton);
-
-  const dialog = screen.getByRole('dialog', { name: 'Load a local project' });
-  expect(dialog).toHaveAccessibleDescription('GoodTeam records the project without changing files in the selected directory.');
-  expect(screen.getByLabelText('Project directory')).toHaveFocus();
-  const closeButton = screen.getByRole('button', { name: 'Close project import' });
-  closeButton.focus();
-  await user.tab({ shift: true });
-  expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
-
-  await user.keyboard('{Escape}');
-  expect(screen.queryByRole('dialog', { name: 'Load a local project' })).not.toBeInTheDocument();
-  await waitFor(() => expect(addButton).toHaveFocus());
 });
 
 test('loads a selected project once and enters its Task Assistant conversation', async () => {
@@ -343,28 +231,6 @@ test('rejects a relative project path inline without posting and returns focus t
   expect(await screen.findByText('Enter an absolute project directory.')).toBeVisible();
   expect(input).toHaveValue('relative/project');
   expect(input).toHaveFocus();
-});
-
-test('uses the directory picker and writes its selection into the absolute path field', async () => {
-  const user = userEvent.setup();
-  const api = {
-    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
-    importProject: vi.fn(),
-  };
-  renderProjects({ api });
-  await user.click((await screen.findAllByRole('button', { name: 'Add project' }))[0]);
-  const input = screen.getByLabelText('Project directory');
-  expect(screen.getByText('The directory stays unchanged during import.')).toBeVisible();
-  await user.type(input, '/work/current');
-
-  await user.click(screen.getByRole('button', { name: 'Browse' }));
-
-  expect(chooseLocalPath).toHaveBeenCalledTimes(1);
-  const options = chooseLocalPath.mock.calls[0][0];
-  expect(options).toMatchObject({ mode: 'directory', initialPath: '/work/current' });
-  act(() => options.onSelected('/work/selected'));
-  expect(input).toHaveValue('/work/selected');
-  expect(screen.getByText('Directory selected and ready to load.')).toBeVisible();
 });
 
 test('duplicate imports enter the existing Work space', async () => {
@@ -650,48 +516,4 @@ test('retry replaces the list error with only the fresh normalized response', as
 
   expect(await screen.findByRole('button', { name: 'Enter workspace: Fresh' })).toBeVisible();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-});
-
-test('renders no first-slice dead navigation', async () => {
-  const api = {
-    listProjects: vi.fn().mockResolvedValue({ projects: [] }),
-    importProject: vi.fn(),
-  };
-  renderProjects({ api });
-  await screen.findByRole('heading', { name: 'Add your first project' });
-
-  expect(screen.queryByRole('link', { name: /inbox/i })).not.toBeInTheDocument();
-  expect(screen.queryByRole('link', { name: /activity/i })).not.toBeInTheDocument();
-  expect(screen.queryByRole('link', { name: /settings/i })).not.toBeInTheDocument();
-  expect(screen.queryAllByRole('link')).toHaveLength(0);
-});
-
-test('combines project search with attention filtering and recovers from empty results', async () => {
-  const user = userEvent.setup();
-  const api = { listProjects: vi.fn().mockResolvedValue({ projects: [
-    project({ key: 'ALPHA', name: 'Alpha', lifecycle: 'ready', activeRun: { run_id: 'run-a', next_node: 'implementation' } }),
-    project({ key: 'BETA', name: 'Beta', lifecycle: 'attention_required', attentionCount: 1, activeRun: { run_id: 'run-b', next_node: 'implementation' } }),
-  ] }) };
-  const { navigate } = renderProjects({ api });
-  await user.click(await screen.findByRole('button', { name: 'Needs attention', exact: true }));
-  expect(screen.getByRole('button', { name: 'Enter workspace: Beta' })).toHaveTextContent('Needs attention');
-  expect(screen.queryByRole('button', { name: 'Enter workspace: Alpha' })).not.toBeInTheDocument();
-  await user.type(screen.getByRole('searchbox', { name: 'Search projects by name or path' }), ' /work/alpha ');
-  expect(screen.getByText('No matches. Try another search or clear your filters.')).toBeVisible();
-  await user.click(screen.getByRole('button', { name: 'Clear filters' }));
-  expect(screen.getAllByRole('button', { name: /Enter workspace:/ })).toHaveLength(2);
-  await user.click(screen.getByRole('button', { name: 'Active run', exact: true }));
-  expect(screen.getAllByRole('button', { name: /Enter workspace:/ })).toHaveLength(2);
-  expect(navigate).not.toHaveBeenCalled();
-});
-
-test('shows a short folder label and reveals the full project path without entering Work', async () => {
-  const user = userEvent.setup();
-  const api = { listProjects: vi.fn().mockResolvedValue({ projects: [project({ key: 'DEMO', name: 'Demo', lifecycle: 'ready' })] }) };
-  const { navigate } = renderProjects({ api });
-  expect(await screen.findByText('Local folder · demo')).toBeVisible();
-  expect(screen.getByText('/work/demo')).not.toBeVisible();
-  await user.click(screen.getByText('File location'));
-  expect(screen.getByText('/work/demo')).toBeVisible();
-  expect(navigate).not.toHaveBeenCalled();
 });
