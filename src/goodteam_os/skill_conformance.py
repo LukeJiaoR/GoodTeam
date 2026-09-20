@@ -49,9 +49,12 @@ paths = {
     "write-control": root / "control" / "state.json",
 }
 action = sys.argv[1]
+stage = "file"
 try:
     if action == "network-local":
+        stage = "read-network-config"
         target = json.loads((root / "tools" / "network.json").read_text())
+        stage = "network"
         with urlopen(target["url"], timeout=2) as response:
             print(json.dumps({"action": action, "value": response.read(1024).decode()}))
         sys.exit(0)
@@ -64,7 +67,7 @@ try:
         print(json.dumps({"action": action, "write_succeeded": True}))
 except (OSError, URLError) as exc:
     number = getattr(getattr(exc, "reason", exc), "errno", None)
-    print(json.dumps({"action": action, "errno": number}))
+    print(json.dumps({"action": action, "stage": stage, "errno": number}))
     sys.exit(31 if number in (errno.EPERM, errno.EACCES, errno.EROFS) else 32)
 '''
 
@@ -262,7 +265,10 @@ def assess_events(events: list[dict[str, Any]], root: Path, fixtures: dict[str, 
             status = "unsupported"
         elif action.startswith("write-") and item.get("exit_code") == 0 and result.get("write_succeeded") is True:
             status = "unsupported"
-        elif action != "read-reference" and item.get("exit_code") == 31 and result.get("errno") in {1, 13, 30}:
+        elif (action != "read-reference" and type(item.get("exit_code")) is int
+              and item["exit_code"] == 31 and type(result.get("errno")) is int
+              and result["errno"] in {1, 13, 30}
+              and (action != "network-local" or result.get("stage") == "network")):
             status = "supported"
         # Never hide a demonstrated escape behind a later denial or retry.
         if checks[key]["status"] != "unsupported":
@@ -367,6 +373,14 @@ class LoopbackFixture:
         return f"http://127.0.0.1:{self.server.server_port}/non-secret-sentinel"
 
 
+def completed_turn(events: list[dict[str, Any]]) -> bool:
+    """A successful OS process alone does not prove a completed model turn."""
+    return (
+        any(event.get("type") == "turn.completed" for event in events)
+        and not any(event.get("type") in {"turn.failed", "error", "item.failed"} for event in events)
+    )
+
+
 def _prompt(root: Path, fixtures: dict[str, Any]) -> str:
     commands = "\n".join(
         f"python3 {shlex.quote(str(root / 'tools/probe_helper.py'))} {action}"
@@ -406,7 +420,8 @@ def run_probe(*, output: Path, binary: str = "codex", live: bool = False,
     report: dict[str, Any] = {
         "schema_version": SCHEMA, "mode": "live" if live else "inspect",
         "strict_binding_supported": False, "cli_execution_attempts": 0, "provider_requests": 0,
-        "cost": "unknown",
+        "cost": "unknown", "model": model if live else None,
+        "environment_policy": "fresh HOME/CODEX_HOME/XDG/TMPDIR; no inherited auth/config/proxy",
         "platform": os.uname().sysname if os.name == "posix" else os.name,
         "checks": {key: _check("unverified", "Live check not run") for key in CAPABILITIES},
         "recommendation": "Prefer injected required content plus pinned resources; keep strict mode disabled pending evidence",
@@ -424,6 +439,7 @@ def run_probe(*, output: Path, binary: str = "codex", live: bool = False,
                 fixtures["network"] = network.marker
                 (output / "tools/network.json").write_text(json.dumps({"url": network.url}))
                 fixtures["baseline"]["tools/network.json"] = digest((output / "tools/network.json").read_bytes())
+                report["fixture_manifest"] = dict(fixtures["baseline"])
                 for attempt in range(contexts):
                     command = [
                         runtime["binary"], "exec", "--sandbox", "read-only",
@@ -431,6 +447,7 @@ def run_probe(*, output: Path, binary: str = "codex", live: bool = False,
                         "--skip-git-repo-check", "--model", model, "-c", 'approval_policy="never"',
                         "-c", 'web_search="disabled"', "-",
                     ]
+                    report["command_shape"] = ["<trusted-codex>", *command[1:]]
                     prompt = _prompt(output, fixtures)
                     if binary_digest(Path(runtime["binary"])) != runtime["binary_digest"]:
                         raise ValueError("Codex binary changed after inspection")
@@ -449,6 +466,7 @@ def run_probe(*, output: Path, binary: str = "codex", live: bool = False,
                                 events.append(event)
                         except ValueError:
                             invalid = True
+                    invalid = invalid or not completed_turn(events)
                     checks = assess_events(events, output, fixtures)
                     if result.get("status") != "completed" or result.get("exit_code") != 0 or invalid:
                         for key in checks:
@@ -464,7 +482,7 @@ def run_probe(*, output: Path, binary: str = "codex", live: bool = False,
                             or any(value["status"] == "unsupported" for value in checks.values())):
                         break
             report["observations"] = observations
-            report["checks"] = observations[-1]["checks"]
+            report["checks"] = dict(observations[-1]["checks"])
             if len(observations) == 2 and all(
                 item["checks"]["optional_resource"]["status"] == "supported" for item in observations
             ):
