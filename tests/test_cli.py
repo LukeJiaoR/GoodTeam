@@ -1,7 +1,10 @@
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from goodteam_os.tasks import LocalTaskStore
 
@@ -554,12 +557,38 @@ def test_cli_dispatch_calls_runner_and_returns_zero_for_all_ok(tmp_path, capsys,
     assert calls[0]["research_report_file"] == research_report
 
 
-def test_dispatch_track_script_accepts_research_report_option():
-    script = Path("scripts/dispatch-track.sh").read_text(encoding="utf-8")
+@pytest.mark.parametrize("syntax", ["separate", "equals"])
+def test_dispatch_track_script_forwards_research_report(tmp_path, syntax):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    script = scripts / "dispatch-track.sh"
+    script.write_text(Path("scripts/dispatch-track.sh").read_text(encoding="utf-8"), encoding="utf-8")
+    executable = tmp_path / ".venv" / "bin" / "python"
+    executable.parent.mkdir(parents=True)
+    captured = tmp_path / "argv"
+    executable.write_text(
+        "#!/bin/sh\nprintf '%s\\0' \"$@\" > " + shlex.quote(str(captured)) + "\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    checkout = tmp_path / "isolated checkout"
+    checkout.mkdir()
+    report = tmp_path / "research report.md"
+    report.write_text("Research evidence", encoding="utf-8")
+    task = tmp_path / "task.md"
+    task.write_text("Read the report", encoding="utf-8")
+    option = ["--research-report", str(report)] if syntax == "separate" else [f"--research-report={report}"]
 
-    assert "--research-report) RESEARCH_REPORT=\"$2\"; shift 2 ;;" in script
-    assert "--research-report=*) RESEARCH_REPORT=\"${1#*=}\"; shift ;;" in script
-    assert 'CMD+=(--research-report "$RESEARCH_REPORT")' in script
+    result = subprocess.run(
+        ["bash", str(script), "--name", "audit", "--task", str(task), "--worktree", str(checkout), *option],
+        capture_output=True, text=True, timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert captured.read_bytes().decode().split("\0")[:-1] == [
+        "-m", "goodteam_os.cli", "dispatch", "--project-root", str(checkout),
+        "--track", f"implementation:codex:{task}", "--research-report", str(report),
+    ]
 
 
 def test_cli_dispatch_returns_one_when_any_track_needs_human(tmp_path, capsys, monkeypatch):

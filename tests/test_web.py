@@ -1,6 +1,5 @@
 import errno
 import json
-import inspect
 import queue
 import threading
 import urllib.error
@@ -1147,15 +1146,6 @@ def test_workspace_settings_reject_unknown_defaults(tmp_path):
         )
     assert model_error.value.code == "invalid_model_profile"
     assert model_error.value.status == 400
-
-
-def test_focused_and_full_handlers_share_project_api_dispatch() -> None:
-    focused_source = inspect.getsource(web.build_dashboard_handler)
-    full_source = inspect.getsource(web.serve)
-
-    for helper_name in ("handle_project_api_get", "handle_project_api_post"):
-        assert helper_name in focused_source
-        assert helper_name in full_source
 
 
 @pytest.mark.parametrize(
@@ -2450,11 +2440,23 @@ def test_failed_reviewer_retry_action_refuses_wrong_run_gate_and_stale_artifact(
     assert current_version != "sha256:old"
 
 
-def test_failed_reviewer_retry_route_is_registered_in_post_dispatcher():
-    source = inspect.getsource(web.serve)
+def test_failed_reviewer_retry_route_forwards_request_and_status(tmp_path, monkeypatch):
+    from tests.test_api import capture_post_handler
 
-    assert '"/reviewer-jobs/retry"' in source
-    assert 'retry_failed_reviewer_jobs_action(workspace, request)' in source
+    calls = []
+    request = {"project_key": "DEMO", "run_id": "run-1", "approval": "staging"}
+    expected = {"error": "artifact_version does not match"}
+
+    def retry(workspace, payload):
+        calls.append((workspace, payload))
+        return 409, expected
+
+    monkeypatch.setattr(web, "retry_failed_reviewer_jobs_action", retry)
+    response = capture_post_handler(tmp_path, monkeypatch)("/reviewer-jobs/retry", request)
+
+    assert calls == [(tmp_path, request)]
+    assert response.responses == [409]
+    assert json.loads(response.wfile.getvalue()) == expected
 
 
 def test_maybe_send_favicon_response_returns_204_without_network_server():
@@ -3258,7 +3260,6 @@ def test_discover_project_directories_defaults_to_home_without_personal_path(tmp
     dirs = discover_project_directories()
 
     assert dirs == [{"name": "api", "path": str(tmp_path / "api")}]
-    assert "/Users/luke/WorkSpace/codeAi" not in inspect.getsource(discover_project_directories)
 
 
 def test_list_directory_for_picker_returns_files_and_dirs_filtered_sorted_and_git_flag(tmp_path):

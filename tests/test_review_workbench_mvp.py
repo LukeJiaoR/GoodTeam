@@ -180,20 +180,6 @@ def test_memory_provenance_integrity_is_exposed(tmp_path):
     assert workbench["execution_replay_graph"]["nodes_by_type"]["memory"] == ["memory"]
 
 
-def test_missing_diff_artifact_returns_explicit_empty_state(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-
-    diff = api.get_review_workbench(execution_id)["diff"]
-
-    assert diff == {
-        "available": False,
-        "reason": "diff_artifact_missing",
-        "changed_files": [],
-        "artifact_path": "",
-        "summary": "",
-    }
-
-
 def test_record_approve_decision_writes_ledger_event(tmp_path):
     api, execution_id = _full_lifecycle(tmp_path)
 

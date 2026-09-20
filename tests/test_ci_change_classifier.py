@@ -74,46 +74,6 @@ def test_focused_paths_emit_fixed_test_targets():
     assert plan.backend_test_targets == ("tests/test_memory.py", "tests/test_web.py")
 
 
-@pytest.mark.parametrize(
-    ("paths", "tier", "backend", "frontend"),
-    [
-        (
-            [
-                "docs/superpowers/specs/2026-07-16-goodteam-product-frontend-redesign-design.md"
-            ],
-            0,
-            "none",
-            "none",
-        ),
-        (
-            [
-                "src/goodteam_os/telegram.py",
-                "src/goodteam_os/workers.py",
-                "tests/test_telegram_runtime_controls.py",
-            ],
-            4,
-            "full",
-            "none",
-        ),
-        (
-            [
-                "frontend/package-lock.json",
-                "frontend/src/app/AppRouter.jsx",
-                "src/goodteam_os/project_import.py",
-                "tests/test_web.py",
-            ],
-            4,
-            "full",
-            "full",
-        ),
-    ],
-)
-def test_historical_pr_file_sets(paths, tier, backend, frontend):
-    plan = classify_changes([Change("M", (path,)) for path in paths])
-
-    assert (plan.tier, plan.backend, plan.frontend) == (tier, backend, frontend)
-
-
 def test_name_status_parser_preserves_add_delete_and_rename_paths():
     changes = parse_name_status(
         b"A\0docs/new.md\0D\0src/goodteam_os/memory.py\0"

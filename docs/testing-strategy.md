@@ -290,6 +290,10 @@ Classifier behavior and an executable gate test protect CI selection and reject
 failed or cancelled jobs and unexpected skips. The guarded runner and read-only
 permissions retain explicit checks.
 
+The subsequent [full backend test-value audit](audit/backend-test-value-2026-09-21.md)
+records a disposition and supporting evidence for all 2,235 baseline pytest cases,
+including retained cases, known limitations, and the replacements for changed tests.
+
 ## Business-loop Browser Acceptance
 
 `frontend/e2e/business-loop.spec.js` exercises project import, task drafting,

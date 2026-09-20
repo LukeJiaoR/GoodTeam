@@ -512,39 +512,19 @@ def test_workbench_payload_adds_multi_projection_without_replacing_existing_fiel
     assert state.next_node == "await_staging_approval"
 
 
-def test_reviewer_html_escapes_untrusted_reviewer_summary():
-    projection = build_multi_reviewer_projection(
-        approval="staging",
-        reviewer_target=_target(
-            "correctness-security",
-            "architecture-maintainability",
-            "product-operator",
-        ),
-        reviewer_statuses=[
-            _provider_status(profile_id="correctness-security", job_id="job-provider"),
-            _provider_status(
-                profile_id="architecture-maintainability",
-                job_id="job-fallback",
-                invocation_evidence={
-                    "kind": "unavailable",
-                    "adapter": "claude",
-                    "provider": "anthropic",
-                    "external_invocation": False,
-                    "command_available": False,
-                    "reason": "claude command missing",
-                },
-            ),
-            _provider_status(
-                job_id="job-failed",
-                adapter="codex",
-                status="failed",
-                summary="<failed reviewer>",
-                stderr_path="/tmp/job-failed/stderr.txt",
-            ),
-        ],
-        review_evidence_policy_config={"mode": "strict", "blockers": ["failed_invocation"]},
-    )
+def test_reviewer_html_escapes_untrusted_output_fields():
+    fields = {
+        "operator_message": '<script>alert("operator")</script>',
+        "profile_id": '<img src=x onerror="profile">',
+        "profile_label": '<svg onload="label">',
+    }
+    html = web.render_multi_reviewer_projection({
+        "operator_message": fields["operator_message"],
+        "reviewers": [{"profile_id": fields["profile_id"], "profile_label": fields["profile_label"]}],
+    })
 
-    html = web.render_multi_reviewer_projection(projection)
-
-    assert "<failed reviewer>" not in html
+    for value in fields.values():
+        assert value not in html
+    assert "&lt;script&gt;alert(&quot;operator&quot;)&lt;/script&gt;" in html
+    assert "&lt;img src=x onerror=&quot;profile&quot;&gt;" in html
+    assert "&lt;svg onload=&quot;label&quot;&gt;" in html

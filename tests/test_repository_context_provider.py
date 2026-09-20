@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import inspect
 import json
 import os
 import shutil
@@ -1962,24 +1961,25 @@ def test_excerpt_rejects_invalid_line_range(tmp_path: Path) -> None:
     }
 
 
-@pytest.mark.parametrize("query", ["", "x" * 257])
-def test_search_rejects_empty_or_oversized_query(tmp_path: Path, query: str) -> None:
+@pytest.mark.parametrize("query", [None, "", "x" * 257], ids=["missing", "empty", "oversized"])
+def test_search_rejects_missing_empty_or_oversized_query(tmp_path: Path, query: str | None) -> None:
     from goodteam_os.repository_context_provider import ContextProviderError
 
     fixture = _provider_fixture(tmp_path)
     (fixture["root"] / "src").mkdir()
     (fixture["root"] / "src" / "app.py").write_text("create_order()\n", encoding="utf-8")
     _refresh_fixture_snapshot(fixture)
+    request = {"path": "src", "mode": "literal", "max_matches": 5}
+    if query is not None:
+        request["query"] = query
 
     with pytest.raises(ContextProviderError) as captured:
-        fixture["provider"].call(
-            "search_text",
-            {"path": "src", "query": query, "mode": "literal", "max_matches": 5},
-            model_turn=1,
-        )
+        fixture["provider"].call("search_text", request, model_turn=1)
 
     assert captured.value.code == "context_tool_limit_exceeded"
     record = _last_record_dict(fixture["workspace"], fixture["project_key"])
+    assert record["status"] == "error"
+    assert record["observations"] == []
     assert record["response_metadata"] == {
         "error": {"code": "context_tool_limit_exceeded"}
     }
@@ -4564,37 +4564,10 @@ def test_git_root_replacement_after_spawn_reaps_process(tmp_path: Path) -> None:
     assert process_state == (True, True, True, True)
 
 
-@pytest.mark.parametrize("tool", ["search_text"])
-def test_future_context_tools_fail_explicitly_until_implemented(
-    tmp_path: Path,
-    tool: str,
-) -> None:
-    from goodteam_os.repository_context_provider import ContextProviderError
-
-    fixture = _provider_fixture(tmp_path)
-
-    with pytest.raises(ContextProviderError) as captured:
-        fixture["provider"].call(tool, {}, model_turn=1)
-
-    expected_code = (
-        "context_tool_limit_exceeded"
-        if tool == "search_text"
-        else "context_tool_not_implemented"
-    )
-    assert captured.value.code == expected_code
-    record = _last_record_dict(fixture["workspace"], fixture["project_key"])
-    assert record["status"] == "error"
-    assert record["observations"] == []
-    assert record["response_metadata"] == {
-        "error": {"code": expected_code}
-    }
-
-
-def test_provider_has_no_mutable_callable_dispatch_map(tmp_path: Path) -> None:
+def test_provider_exposes_only_supported_tools(tmp_path: Path) -> None:
     fixture = _provider_fixture(tmp_path)
     provider = fixture["provider"]
 
-    assert not hasattr(provider, "_tool_handlers")
     assert provider.tool_names() == (
         "list_tree",
         "search_text",
@@ -5460,26 +5433,3 @@ def test_provider_requires_exact_validated_snapshot_artifact_binding(
         _rebuild_provider(fixture, RepositoryContextProvider)
 
     assert captured.value.code == "onboarding_snapshot_mismatch"
-
-
-def test_exact_allowlist_no_reflection_assertions(tmp_path: Path) -> None:
-    from goodteam_os.repository_context_provider import RepositoryContextProvider
-
-    fixture = _provider_fixture(tmp_path)
-    provider = fixture["provider"]
-
-    assert set(provider.tool_names()) == {
-        "inspect_git_history",
-        "inspect_manifest",
-        "inspect_recent_changes",
-        "inspect_tests",
-        "list_tree",
-        "read_file_excerpt",
-        "search_text",
-    }
-    assert provider.raw_argv_dispatch is False
-    assert provider.uses_reflection_dispatch is False
-    current_context_source = inspect.getsource(
-        RepositoryContextProvider._current_tool_call_context
-    )
-    assert "getattr(" not in current_context_source

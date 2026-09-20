@@ -120,6 +120,8 @@ def install_fake_popen(
 
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
     monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
+    # Fake processes need no wall-clock delay; retry tests assert backoff separately.
+    monkeypatch.setattr("goodteam_os.workers._sleep", lambda _seconds: None)
 
 
 def install_fake_popen_sequence(monkeypatch, responses, *, calls=None):

@@ -357,6 +357,12 @@ def test_settled_session_rejects_steer_and_abort_is_idempotent(monkeypatch, tmp_
 
 def test_discovery_lists_pi_separately_from_one_shot_registry(monkeypatch, tmp_path):
     configure_fake_pi(monkeypatch, tmp_path)
+    # Keep the fake-Pi probe without calling unrelated provider CLIs installed
+    # on the test host or querying their live model catalogs.
+    monkeypatch.setattr(
+        "goodteam_os.workers.worker_backend_doctor",
+        lambda mode: pi_backend_doctor(tmp_path) if mode == "pi" else {"available": False, "ready": False},
+    )
     pi = next(item for item in discover_installed_agents() if item["backend"] == "pi")
     assert pi["runtime_kind"] == "persistent_session"
     assert pi["aliases"] == ["pi", "pi-rpc"]
