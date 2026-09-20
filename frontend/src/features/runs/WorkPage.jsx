@@ -12,7 +12,9 @@ import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 import CurrentWorkContext from './workspace/CurrentWorkContext.jsx';
-import { createConversationDelivery, trackConversationDelivery } from './workspace/conversationFeedback';
+import useProjectConversation from './useProjectConversation';
+import TaskNavigation from './workspace/TaskNavigation';
+import { TimelineItem } from './workspace/ConversationTimeline';
 import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
 import {
   recommendationReasonText,
@@ -357,44 +359,22 @@ export function ActivityView({ data, language, projectKey, t }) {
   );
 }
 
-function HistoricalRunView({ detail, language, projectKey, reducedMotion, summary, t }) {
+function HistoricalRunSummary({ detail, projectKey, summary, language, t }) {
   const state = detail?.state || {};
-  const title = runTitle({ ...state, ...summary }, t);
-  const workspace = detail?.team_workspace?.schema_version === 'team_workspace.v1'
-    ? detail.team_workspace
-    : null;
-  return (
-    <section className="work-historical-view">
-      <p className="product-eyebrow">{t('work.history.title')}</p>
-      <h2>{title}</h2>
-      <p>{t('work.history.readOnly')}</p>
-      {workspace ? (
-        <TeamWorkspace
-          busy=""
-          data={{ ...detail, team_workspace: workspace }}
-          error={null}
-          inspectorContent={null}
-          language={language}
-          projectKey={projectKey}
-          reducedMotion={reducedMotion}
-          t={t}
-          view=""
-        />
-      ) : null}
-      <details className="work-historical-view__details">
-        <summary>{t('work.history.details')}</summary>
-        <dl className="settings-data-list">
-          <div><dt>{t('work.history.goal')}</dt><dd>{summary.idea || state.idea || '—'}</dd></div>
-          <div><dt>{t('work.history.source')}</dt><dd>{summary.source_type || state.source_type || '—'}</dd></div>
-          <div><dt>{t('work.history.status')}</dt><dd>{summary.status || '—'}</dd></div>
-          <div><dt>{t('work.history.currentNode')}</dt><dd>{state.current_node || summary.current_node || '—'}</dd></div>
-          <div><dt>{t('work.history.nextNode')}</dt><dd>{state.next_node || summary.next_node || '—'}</dd></div>
-          <div><dt>{t('work.history.updated')}</dt><dd><time dateTime={summary.updated_at}>{summary.updated_at || '—'}</time></dd></div>
-        </dl>
-      </details>
-      <Link to={routes.projectWork(projectKey)}>{t('work.history.current')}</Link>
-    </section>
-  );
+  return <section className="work-historical-view">
+    <h2>{runTitle({ ...state, ...summary }, t)}</h2>
+    <details>
+    <summary>{t('work.history.readOnly')}</summary>
+    <dl className="settings-data-list">
+      <div><dt>{t('work.history.goal')}</dt><dd>{summary?.idea || state.idea || '—'}</dd></div>
+      <div><dt>{t('work.history.status')}</dt><dd>{summary?.status || '—'}</dd></div>
+    </dl>
+    <ol className="team-manager-timeline" aria-label={t('assistant.project.taskHistory')}>
+      {(detail?.team_workspace?.manager_timeline || []).map((item) => <TimelineItem key={item.id} item={item} language={language} t={t} />)}
+    </ol>
+    <Link to={routes.projectWork(projectKey)}>{t('work.history.current')}</Link>
+    </details>
+  </section>;
 }
 
 export function findTaskForApprovalOrId(board, { approval, task: taskId, reviews }) {
@@ -744,7 +724,6 @@ export default function WorkPage() {
   const { data, error, refresh, status } = useProjectState(projectKey);
   const [mutationError, setMutationError] = useState(null);
   const [busy, setBusy] = useState('');
-  const [conversationDelivery, setConversationDelivery] = useState(null);
   const [runHistory, setRunHistory] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('loading');
   const [historyError, setHistoryError] = useState(null);
@@ -828,9 +807,6 @@ export default function WorkPage() {
     return () => controller.abort();
   }, [isHistorical, projectKey, runId, historyRefresh]);
 
-  useEffect(() => {
-    if (!runId && currentRunId) navigate(routes.projectRun(projectKey, currentRunId), { replace: true });
-  }, [currentRunId, navigate, projectKey, runId]);
 
   const projectName = data?.start_context?.project_name || projectKey;
   const tabs = useMemo(() => VIEWS.map((item) => ({ item, label: t(`work.views.${item}`) })), [t]);
@@ -928,32 +904,10 @@ export default function WorkPage() {
     return result;
   };
 
-  // Track API acknowledgement separately from refreshing the view. A failed
-  // refresh after a successful POST must not invite submitting the request twice.
-  const deliverConversation = async (name, text, operation, intentId = '') => {
-    const delivery = createConversationDelivery({
-      projectKey, runId: data?.state?.run_id || '', text, intentId,
-      previous: conversationDelivery,
-    });
-    let acknowledged;
-    try {
-      return await mutate(name, () => trackConversationDelivery({
-        delivery,
-        operation: async () => {
-          const result = await operation(delivery.id);
-          if (result !== false) acknowledged = result;
-          return result;
-        },
-        onUpdate: (next) => setConversationDelivery((current) => (
-          next.status === 'sending' || current?.id === next.id ? next : current
-        )),
-      }));
-    } catch (caught) {
-      if (acknowledged !== undefined) return acknowledged;
-      if (intentId) return refreshStaleIntent(caught);
-      return false;
-    }
-  };
+  const conversation = useProjectConversation({ projectKey, contextRunId: runId,
+    refresh: async () => { await refresh(); await loadRuns(); },
+  });
+  const deliverConversation = conversation.deliver;
 
   const handleDiscussChangeIntent = (intentId, text) => deliverConversation(
     'intent-discuss', text,
@@ -982,14 +936,12 @@ export default function WorkPage() {
     }
   };
 
-  const sendTaskAssistantMessage = (text) => deliverConversation(
-    'message', text,
-    (messageId) => runApi.sendTaskAssistantMessage(projectKey, { message_id: messageId, text }),
-  );
-
-  const handleAssistantAction = (request) => mutate(request.action, () => (
-    runApi.taskAssistantAction(projectKey, request)
-  )).catch(() => false);
+  const sendTaskAssistantMessage = conversation.send;
+  const handleAssistantAction = async (request) => {
+    const result = await conversation.act(request);
+    if (result !== false && request.action === 'select_queued_task') navigate(routes.projectWork(projectKey));
+    return result;
+  };
 
   const confirmTaskAssistantProposal = (proposalId, revision) => mutate('task-confirm', () => (
     runApi.taskAssistantAction(projectKey, { action: 'confirm_task', proposal_id: proposalId, expected_revision: revision })
@@ -1065,6 +1017,21 @@ export default function WorkPage() {
     </label>
   ) : null;
 
+  const selectTask = (selected) => navigate(selected ? routes.projectRun(projectKey, selected) : routes.projectWork(projectKey));
+  const conversationProps = {
+    projectAssistant: data.project_assistant || { ...data.team_workspace, timeline: data.team_workspace?.manager_timeline || [] },
+    conversationDelivery: conversation.delivery,
+    assistantBusy: conversation.busy,
+    assistantError: conversation.error,
+    onStart: sendTaskAssistantMessage,
+    onQueueTask: conversation.queue,
+    onAssistantAction: handleAssistantAction,
+    contextTitle: runId ? contextTitle : '',
+    onClearContext: () => selectTask(''),
+    taskNavigation: <TaskNavigation runs={runHistory} selectedRunId={runId} onSelect={selectTask}
+      assistant={data.project_assistant} busy={conversation.busy} onAction={handleAssistantAction} t={t} />,
+  };
+
   return (
     <main id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
       <CurrentWorkContext
@@ -1133,14 +1100,19 @@ export default function WorkPage() {
       </header>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
-      {isHistorical ? (historicalDetail ? <HistoricalRunView detail={historicalDetail} language={language} projectKey={projectKey} reducedMotion={reducedMotion} summary={selectedSummary} t={t} /> : <WorkSkeleton t={t} />) : hasProjectedWorkspace ? (
+      {hasProjectedWorkspace ? (
         <>
+          {isHistorical ? <HistoricalRunSummary language={language} detail={historicalDetail} summary={selectedSummary} projectKey={projectKey} t={t} /> : null}
           <TeamWorkspace
-            conversationDelivery={conversationDelivery}
+            {...conversationProps}
             busy={busy}
-            data={data}
+            data={isHistorical || contextIsLoading ? historicalDetail || {
+              ...data, approval_reviews: [], delivery_summary: null,
+              team_workspace: { ...projectedWorkspace, mission: { ...projectedMission, read_only: true },
+                attention_request: null, capabilities: [], execution_actors: [], outcome_tasks: [] },
+            } : data}
             error={mutationError}
-            inspectorContent={inspectorContent}
+            inspectorContent={isHistorical || contextIsLoading ? null : inspectorContent}
             language={language}
             onCloseInspector={closeInspector}
             onConfirmChangeIntent={handleConfirmChangeIntent}

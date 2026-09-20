@@ -1,30 +1,21 @@
-import { availableChangeTarget } from './conversationChangeContext';
+import ProjectConversation from './ProjectConversation';
+import { TeamAvatar } from './ConversationTimeline';
+import { TaskRunControls } from './TaskAttention';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
-  AlertCircle,
-  Bot,
   ChevronRight,
   FileCheck2,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import Button from '../../../components/ui/Button';
-import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
-import { routes } from '../../../lib/routing/routes';
-import ManagerApprovalBrief from './ManagerApprovalBrief';
 import {
-  reviewGateName,
   statusText,
   tone,
   translated,
   WORK_VIEWS,
 } from './presentationUtils';
 import WorkTaskDetailDialog from './WorkTaskDetailDialog';
-import AssistantControls from './AssistantControls';
 import ManagerMissionEntry from './ConversationComposer';
-import { conversationTimeline, deliveryLabel } from './conversationFeedback';
-import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
-import PreparationFacts from './PreparationFacts';
+import { conversationTimeline } from './conversationFeedback';
 import DeliverySummary from './DeliverySummary';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
@@ -55,15 +46,6 @@ function executionStatusReason(actor, t) {
   }
   const reason = actor.status_reason || actor.dependency_reason;
   return reason ? translated(t, `work.team.reasons.${reason}`, reason) : '';
-}
-
-function TeamAvatar({ label, manager = false }) {
-  const initial = String(label || '').trim().slice(0, 1).toUpperCase() || 'G';
-  return (
-    <span aria-hidden="true" className={`team-avatar${manager ? ' team-avatar--manager' : ''}`}>
-      {manager ? <Bot size={18} strokeWidth={1.9} /> : initial}
-    </span>
-  );
 }
 
 function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
@@ -111,511 +93,18 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 }
 
 
-const SYSTEM_TIMELINE_EVENTS = new Set([
-  'deliverable_ready',
-  'verification_updated',
-  'review_updated',
-  'work_progressed',
-  'work_dispatched',
-  'progress',
-]);
-
-function timelineCopy(item, t) {
-  if (item.actor === 'user' && item.event === 'mission_requested') return item.content;
-  const details = item.details || {};
-  return translated(
-    t,
-    `work.manager.events.${item.event}`,
-    item.content || translated(t, 'work.manager.events.progress', 'The team state changed.'),
-    {
-      artifact: details.artifact || t('work.manager.deliverable'),
-      decision: details.decision ? statusText(details.decision, t) : '',
-      gate: details.gate ? reviewGateName(details.gate, t) : '',
-      attemptCount: details.attempt_count || 0,
-      taskCount: details.task_count || 0,
-    },
-  );
-}
-
-function TimelineItem({ item, language, t }) {
-  const itemTimestamp = item.timestamp || item.created_at || '';
-  const timestamp = Date.parse(itemTimestamp);
-  const formatted = Number.isFinite(timestamp)
-    ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp))
-    : '';
-  const actorLabel = item.actor === 'user' ? t('work.manager.you') : t('work.manager.name');
-  const copy = timelineCopy(item, t);
-  const isSystem = item.actor !== 'user' && SYSTEM_TIMELINE_EVENTS.has(item.event);
-
-  if (isSystem) {
-    return (
-      <li className="team-manager-event team-manager-event--system" data-actor={item.actor} data-kind={item.kind} data-system="true">
-        <div className="team-manager-system-chip">
-          <span className="team-manager-system-chip__dot" aria-hidden="true" />
-          <span className="team-manager-system-chip__text">{copy}</span>
-          {formatted ? <time dateTime={itemTimestamp}>{formatted}</time> : null}
-        </div>
-      </li>
-    );
-  }
-
+function ExecutionPane({ actors, navigation, controls, task, projectScoped, reducedMotion, sectionProps, t }) {
   return (
-    <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind} data-delivery={item.delivery_status}>
-      <TeamAvatar label={actorLabel} manager={item.actor !== 'user'} />
-      <div className="team-manager-event__bubble">
-        <div className="team-manager-event__meta">
-          <strong>{actorLabel}</strong>
-          {item.delivery_status ? <span role="status">{deliveryLabel(language, item.delivery_status)}</span> : null}
-          {formatted ? <time dateTime={itemTimestamp}>{formatted}</time> : null}
-        </div>
-        <p>{copy}</p>
-        {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
-          <blockquote>{item.content}</blockquote>
-        ) : null}
-      </div>
-    </li>
-  );
-}
-
-function ManagerAttention({
-  attention,
-  busy,
-  onConfirmChangeIntent,
-  onDecide,
-  onKeepDiscussingChangeIntent,
-  onReview,
-  onRetry,
-  onStartChangeIntent,
-  projectKey,
-  t,
-}) {
-  const intent = attention?.intent_commit || null;
-  if (!attention) return null;
-  const actions = new Set(attention.actions || []);
-  const gate = attention.target_id || '';
-  const approvalBrief = attention.approval_brief?.schema_version === 'manager_approval_brief.v1'
-    ? attention.approval_brief
-    : null;
-  const decide = (decision, decisionNote = '') => {
-    Promise.resolve()
-      .then(() => onDecide?.(
-        gate,
-        decision,
-        decisionNote,
-        decision === 'approved' ? approvalBrief?.approval_target : null,
-      ))
-      .catch(() => {});
-  };
-  const startChangeDiscussion = () => Promise.resolve()
-    .then(() => onStartChangeIntent?.(gate, approvalBrief?.approval_target || null))
-    .catch(() => {});
-  const confirmChangeDiscussion = () => Promise.resolve()
-    .then(() => onConfirmChangeIntent?.(intent?.id))
-    .catch(() => {});
-  const keepDiscussing = () => Promise.resolve()
-    .then(() => onKeepDiscussingChangeIntent?.(intent?.id))
-    .catch(() => {});
-  const interpretationItems = Array.isArray(intent?.interpretation?.items)
-    ? intent.interpretation.items.filter((item) => item?.text)
-    : [];
-  return (
-    <section className="team-attention" data-kind={attention.kind} aria-label={t('work.manager.attention')}>
-      <p className="team-attention__label">
-        <AlertCircle aria-hidden="true" size={15} strokeWidth={2} />
-        <span>{t('work.manager.attention')}</span>
-      </p>
-      <h3 id="team-attention-title">
-        {translated(t, `work.manager.attentionKinds.${attention.kind}`, attention.reason)}
-      </h3>
-      {approvalBrief ? (
-        <ManagerApprovalBrief brief={approvalBrief} t={t} />
-      ) : (
-        <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason)}</p>
-      )}
-      <div className="team-attention__actions">
-        {!intent && actions.has('approve') ? (
-          <Button busy={busy === 'decision'} onClick={() => decide('approved')}>
-            {approvalBrief
-              ? t('work.manager.approvalBrief.approve')
-              : t('work.review.quickApprove')}
-          </Button>
-        ) : null}
-        {!intent && actions.has('request_changes') ? (
-          <Button busy={busy === 'intent-start'} variant="secondary" onClick={startChangeDiscussion}>
-            {t('work.manager.requestChanges')}
-          </Button>
-        ) : null}
-        {actions.has('review') && onReview ? (
-          <Button variant="secondary" onClick={(event) => onReview(event.currentTarget)}>
-            {t('work.review.viewDetails')}
-          </Button>
-        ) : actions.has('review') ? (
-          <Link className="product-button product-button--secondary" to={routes.projectReviewItem(projectKey, gate)}>
-            {t('work.review.viewDetails')}
-          </Link>
-        ) : null}
-        {actions.has('retry') ? (
-          <Button busy={busy === 'retry'} onClick={onRetry}>{t('work.actions.retryBlocked')}</Button>
-        ) : null}
-      </div>
-      {intent?.status === 'discussing' ? (
-        <div className="team-intent-commit" data-status="discussing">
-          <div className="team-intent-commit__heading">
-            <strong>{t(intent.draft_text ? 'work.manager.intent.savedDraft' : 'work.manager.intent.question')}</strong>
-            <StatusBadge tone="pending">{t('work.manager.intent.discussing')}</StatusBadge>
-          </div>
-          {!intent.draft_text ? <p>{t('work.manager.intent.restate')}</p> : null}
-          {intent.draft_text ? <blockquote>{intent.draft_text}</blockquote> : null}
-        </div>
-      ) : null}
-      {intent?.status === 'ready_to_confirm' ? (
-        <div className="team-intent-commit" data-status="ready_to_confirm">
-          <div className="team-intent-commit__heading">
-            <strong>{t('work.manager.intent.understanding')}</strong>
-            <StatusBadge tone="warning">{t('work.manager.intent.notCommitted')}</StatusBadge>
-          </div>
-          {interpretationItems.length ? (
-            <ol className="team-intent-commit__interpretation">
-              {interpretationItems.map((item, index) => (
-                <li key={`${item.kind || 'request'}:${index}`}>{item.text}</li>
-              ))}
-            </ol>
-          ) : (
-            <p>{t('work.manager.intent.unsafeInterpretation')}</p>
-          )}
-          <p className="team-intent-commit__boundary">{t('work.manager.intent.confirmBoundary')}</p>
-          <div className="team-intent-commit__actions">
-            <Button
-              busy={busy === 'intent-confirm'}
-              disabled={!interpretationItems.length}
-              onClick={confirmChangeDiscussion}
-            >
-              {t('work.manager.intent.confirm')}
-            </Button>
-            <Button
-              busy={busy === 'intent-discuss'}
-              variant="secondary"
-              onClick={keepDiscussing}
-            >
-              {t('work.manager.intent.keepDiscussing')}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-      {intent?.status === 'committing' ? (
-        <div className="team-intent-commit" data-status="committing" role="status">
-          <strong>{t('work.manager.intent.committing')}</strong>
-          <p>{t('work.manager.intent.commitBoundary')}</p>
-          <Button busy={busy === 'intent-confirm'} onClick={confirmChangeDiscussion}>
-            {t('work.manager.intent.resumeConfirmation')}
-          </Button>
-        </div>
-      ) : null}
-      {intent?.status === 'ambiguous' ? (
-        <div className="team-intent-commit" data-status="ambiguous" role="alert">
-          <div className="team-intent-commit__heading">
-            <strong>{t('work.manager.intent.ambiguousTitle')}</strong>
-            <StatusBadge tone="danger">{t('work.manager.intent.ambiguous')}</StatusBadge>
-          </div>
-          <p>{t('work.manager.intent.ambiguousDescription')}</p>
-        </div>
-      ) : null}
-      {intent?.status === 'stale' ? (
-        <div className="team-intent-commit" data-status="stale" role="alert">
-          <div className="team-intent-commit__heading">
-            <strong>{t('work.manager.intent.staleTitle')}</strong>
-            <StatusBadge tone="danger">{t('work.manager.intent.stale')}</StatusBadge>
-          </div>
-          <p>{t('work.manager.intent.staleDescription')}</p>
-          <Button busy={busy === 'intent-start'} onClick={startChangeDiscussion}>
-            {t('work.manager.intent.restart')}
-          </Button>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function ProjectPreparationAttention({ attention, busy, onContinue, t }) {
-  const requirements = attention.input_requirements || {};
-  const commands = requirements.commands || [];
-  const [selectedCommands, setSelectedCommands] = useState(() => commands.map((item) => item.id));
-  const [goal, setGoal] = useState('');
-  const [brief, setBrief] = useState('');
-  const kind = requirements.kind || 'project_preparation';
-  const submit = () => {
-    let values = { confirmed: true };
-    if (kind === 'command_confirmation') values = { confirmed_command_ids: selectedCommands };
-    if (kind === 'project_initialization') values = { goal: goal.trim(), brief: brief.trim() };
-    onContinue?.(attention.step_id, values);
-  };
-  const canContinue = kind !== 'project_initialization' || (goal.trim() && brief.trim());
-  return (
-    <section className="team-attention" data-kind="project_preparation" aria-label={t('work.manager.attention')}>
-      <p className="team-attention__label"><AlertCircle aria-hidden="true" size={15} />{t('work.taskAssistant.preparationTitle')}</p>
-      <h3>{t(`work.taskAssistant.preparation.${kind}`)}</h3>
-      <PreparationFacts requirements={requirements} t={t} />
-      {kind === 'command_confirmation' ? (
-        <div className="team-preparation-options">
-          {commands.map((command) => (
-            <label key={command.id}>
-              <input
-                checked={selectedCommands.includes(command.id)}
-                onChange={(event) => setSelectedCommands((current) => (
-                  event.target.checked ? [...current, command.id] : current.filter((id) => id !== command.id)
-                ))}
-                type="checkbox"
-              />
-              <code>{command.command}</code>
-            </label>
-          ))}
-        </div>
-      ) : null}
-      {kind === 'project_initialization' ? (
-        <div className="team-preparation-fields">
-          <label>{t('work.taskAssistant.projectGoal')}<input value={goal} onChange={(event) => setGoal(event.target.value)} /></label>
-          <label>{t('work.taskAssistant.projectBrief')}<textarea value={brief} onChange={(event) => setBrief(event.target.value)} /></label>
-        </div>
-      ) : null}
-      <Button busy={busy === 'preparation'} disabled={!canContinue} onClick={submit}>
-        {t('work.taskAssistant.continuePreparation')}
-      </Button>
-    </section>
-  );
-}
-
-function ManagerMissionControls({ busy, canCancel, onTerminate, t }) {
-  const [confirmCancel, setConfirmCancel] = useState(false);
-  if (!canCancel) return null;
-  return (
-    <div className="team-manager-controls">
-      {!confirmCancel ? (
-        <button type="button" onClick={() => setConfirmCancel(true)}>{t('work.manager.cancelMission')}</button>
-      ) : (
-        <div className="team-attention__confirm" role="group" aria-label={t('work.manager.cancelMission')}>
-          <p>{t('work.manager.cancelConfirm')}</p>
-          <div>
-            <Button busy={busy === 'terminate'} variant="danger" onClick={onTerminate}>{t('work.actions.terminate')}</Button>
-            <Button variant="secondary" onClick={() => setConfirmCancel(false)}>{t('work.manager.keepWorking')}</Button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const NEAR_BOTTOM_THRESHOLD = 64;
-
-function isNearBottom(element) {
-  if (!element) return true;
-  const { scrollTop, scrollHeight, clientHeight } = element;
-  return scrollHeight - scrollTop - clientHeight <= NEAR_BOTTOM_THRESHOLD;
-}
-
-function ManagerPane({
-  assistantState,
-  onAssistantAction,
-  attention,
-  busy,
-  capabilities,
-  error,
-  language,
-  mission,
-  onConfirmChangeIntent,
-  onDecide,
-  onDiscussChangeIntent,
-  onKeepDiscussingChangeIntent,
-  onReview,
-  onRetry,
-  onConfirmTask,
-  onContinuePreparation,
-  onStart,
-  onStartChangeIntent,
-  onTerminate,
-  projectKey,
-  sectionProps,
-  timeline,
-  t,
-  suggestions,
-  proposedTask,
-}) {
-  const managerTone = attention?.kind === 'blocker'
-    ? 'danger'
-    : attention
-      ? 'active'
-      : mission
-        ? tone(mission.status)
-        : 'neutral';
-  const requestStatus = Object.values(assistantState?.assistant_requests || {}).find((request) => request.status !== 'succeeded')?.status;
-  const assistantStatus = busy === 'message' || busy === 'retry_message' ? 'running' : requestStatus || assistantState?.runtime?.status;
-  const managerStatus = assistantState?.pending_team_decision?.status === 'pending' || proposedTask?.pending_change || attention
-    ? t('work.manager.needsYou')
-    : mission?.source === 'task_assistant' && assistantStatus && !['verified', 'simulated'].includes(assistantStatus)
-    ? t(`assistant.status.${assistantStatus}`)
-    : mission?.source === 'task_assistant'
-    ? mission.status === 'preparing_to_start'
-      ? t('work.taskAssistant.preparing')
-      : t('work.taskAssistant.available')
-    : attention
-    ? t('work.manager.needsYou')
-    : mission
-      ? statusText(mission.status, t)
-      : t('work.manager.ready');
-  const timelineHasMissionRequest = (timeline || []).some((item) => item.event === 'mission_requested');
-  const deliveryKey = (timeline || []).find((item) => item.delivery_status === 'sending')?.id || '';
-  const conversationRef = useRef(null);
-  const wasNearBottomRef = useRef(true);
-  const prevAttentionKeyRef = useRef(null);
-  const prevTimelineLengthRef = useRef(0);
-  const prevDeliveryKeyRef = useRef('');
-
-  const attentionKey = `${attention?.id || ''}:${attention?.intent_commit?.status || ''}`;
-
-  useEffect(() => {
-    const node = conversationRef.current;
-    if (!node) return;
-
-    const attentionChanged = prevAttentionKeyRef.current !== attentionKey;
-    const timelineChanged = prevTimelineLengthRef.current !== (timeline?.length || 0);
-    const deliveryChanged = prevDeliveryKeyRef.current !== deliveryKey;
-    prevDeliveryKeyRef.current = deliveryKey;
-
-    prevAttentionKeyRef.current = attentionKey;
-    prevTimelineLengthRef.current = timeline?.length || 0;
-
-    if ((attention && attentionChanged) || (deliveryKey && deliveryChanged)) {
-      node.scrollTop = node.scrollHeight;
-      wasNearBottomRef.current = true;
-    } else if (timelineChanged && wasNearBottomRef.current) {
-      node.scrollTop = node.scrollHeight;
-    }
-  }, [attention, attentionKey, deliveryKey, timeline?.length]);
-
-  useEffect(() => {
-    const node = conversationRef.current;
-    const target = node?.querySelector('.assistant-team-decision, .assistant-request');
-    if (target) node.scrollTop += target.getBoundingClientRect().top - node.getBoundingClientRect().top - 16;
-  }, [assistantState?.pending_team_decision?.id, requestStatus]);
-
-  const handleConversationScroll = (event) => {
-    const node = event.currentTarget;
-    wasNearBottomRef.current = isNearBottom(node);
-  };
-
-  return (
-    <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
-      <header className="team-pane__header">
-        <div className="team-manager-heading">
-          <TeamAvatar label={t('work.manager.name')} manager />
-          <div>
-            <div className="team-manager-heading__title">
-              <h2 id="team-manager-title">{t('work.manager.name')}</h2>
-              <StatusBadge tone={managerTone}>{managerStatus}</StatusBadge>
-            </div>
-            <span className="team-pane__eyebrow">{t('work.manager.subtitle')}</span>
-          </div>
-        </div>
-      </header>
-      <div className="team-manager-conversation" onScroll={handleConversationScroll} ref={conversationRef}>
-        <>
-            {mission && mission.source !== 'task_assistant' && !timelineHasMissionRequest ? (
-              <p className="team-manager-objective">
-                <span>{t('work.manager.currentMission')}</span>
-                <strong>{mission.objective}</strong>
-              </p>
-            ) : null}
-            {error && !(error.code === 'manager_execution_failed' && requestStatus) ? <ProductError error={error} t={t} /> : null}
-            <ol className="team-manager-timeline" aria-label={t('work.manager.history')}>
-              {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t} />)}
-            </ol>
-            <AssistantControls
-              runtime={assistantState?.runtime}
-              requests={assistantState?.assistant_requests}
-              pending={assistantState?.pending_team_decision}
-              busy={busy}
-              readOnly={mission?.read_only}
-              onAction={onAssistantAction}
-              projectKey={projectKey}
-              t={t}
-            />
-            {attention?.kind === 'project_mode' && !mission?.read_only ? (
-              <ProjectModeControl busy={busy} onAction={onAssistantAction} t={t} />
-            ) : null}
-            <TaskDraftControls
-              key={`${proposedTask?.id}:${proposedTask?.revision}`}
-              draft={proposedTask}
-              busy={busy || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
-              modeRequired={attention?.kind === 'project_mode'}
-              resumeReady={attention?.kind === 'task_start_resume'}
-              readOnly={mission?.read_only}
-              onAction={onAssistantAction}
-              onConfirm={onConfirmTask}
-              t={t}
-            />
-            {attention?.kind === 'project_preparation' ? (
-              <ProjectPreparationAttention
-                attention={attention}
-                busy={busy}
-                key={attention.id}
-                onContinue={onContinuePreparation}
-                t={t}
-              />
-            ) : !['project_mode', 'task_start_resume'].includes(attention?.kind) ? <ManagerAttention
-              attention={attention}
-              busy={busy}
-              key={`${attention?.id || 'none'}:${attention?.intent_commit?.id || 'direct'}:${attention?.intent_commit?.status || 'idle'}`}
-              onConfirmChangeIntent={onConfirmChangeIntent}
-              onDecide={onDecide}
-              onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
-              onReview={onReview}
-              onRetry={onRetry}
-              onStartChangeIntent={onStartChangeIntent}
-              projectKey={projectKey}
-              t={t}
-            /> : null}
-        </>
-      </div>
-      {!mission?.read_only ? (
-        <footer className="team-manager-dock">
-          <ManagerMissionEntry
-            key={projectKey}
-            busy={Boolean(busy) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
-            onStart={onStart}
-            changeIntent={attention?.intent_commit}
-            activeTask={mission?.source === 'workflow' && Boolean(mission.run_id)}
-            changeTarget={availableChangeTarget({ mission, attention, projectKey })}
-            recordedChange={(timeline || []).filter((item) => item.event === 'change_request_committed'
-              && item.details?.intent_status === 'committed').at(-1)}
-            onStartChangeIntent={onStartChangeIntent}
-            onDiscussChangeIntent={onDiscussChangeIntent}
-            onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
-            suggestions={suggestions}
-            t={t}
-          />
-          {mission && (capabilities || []).some((item) => item.action === 'cancel_mission') ? (
-          <ManagerMissionControls
-            busy={busy}
-            canCancel
-            onTerminate={onTerminate}
-            t={t}
-          />
-          ) : null}
-        </footer>
-      ) : null}
-    </section>
-  );
-}
-
-function ExecutionPane({ actors, reducedMotion, sectionProps, t }) {
-  return (
-    <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')} {...sectionProps}>
+    <section className="team-pane team-pane--execution" aria-label={t(projectScoped ? 'assistant.project.tasks' : 'work.team.execution')} {...sectionProps}>
       <header className="team-pane__header">
         <div>
-          <h2 id="team-execution-title">{t('work.team.execution')}</h2>
-          <span className="team-pane__eyebrow">{t('work.team.liveExecution')}</span>
+          <h2 id="team-execution-title">{t(projectScoped ? 'assistant.project.tasks' : 'work.team.execution')}</h2>
+          <span className="team-pane__eyebrow">{t(projectScoped ? 'assistant.project.taskHelp' : 'work.team.liveExecution')}</span>
         </div>
         <span className="team-pane__count">{actors.length}</span>
       </header>
+      {navigation}
+      {task ? <div className="project-task-identity"><small>{t('work.team.execution')}</small><strong>{task.objective || task.title}</strong></div> : null}
       {actors.length ? (
         <ol className="team-actor-list">
           {actors.map((actor) => {
@@ -642,6 +131,7 @@ function ExecutionPane({ actors, reducedMotion, sectionProps, t }) {
           })}
         </ol>
       ) : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
+      {controls}
     </section>
   );
 }
@@ -810,6 +300,13 @@ function AdvancedInspector({
 
 function TeamWorkspace({
   conversationDelivery = null,
+  projectAssistant,
+  assistantBusy,
+  assistantError,
+  taskNavigation,
+  contextTitle,
+  onClearContext,
+  onQueueTask,
   onAssistantAction,
   busy,
   data,
@@ -844,6 +341,7 @@ function TeamWorkspace({
   const returnFocusRef = useRef(null);
   const workspace = data.team_workspace;
   const mission = workspace.mission;
+  const assistant = projectAssistant || workspace;
   const readOnly = Boolean(mission?.read_only);
   const outcomes = workspace.outcome_tasks || [];
   const selectedTask = outcomes.find((task) => task.id === selectedTaskId) || null;
@@ -983,13 +481,13 @@ function TeamWorkspace({
         aria-label={t('work.team.workspace')}
         data-read-only={readOnly ? 'true' : undefined}
       >
-        <ManagerPane
-          assistantState={workspace}
+        <ProjectConversation
+          assistantState={assistant}
           onAssistantAction={onAssistantAction}
           attention={workspace.attention_request}
           busy={busy}
-          capabilities={workspace.capabilities || []}
-          error={error}
+          error={assistantError || error}
+          assistantBusy={assistantBusy ?? busy}
           language={language}
           mission={mission}
           onConfirmChangeIntent={onConfirmChangeIntent}
@@ -1002,18 +500,25 @@ function TeamWorkspace({
           onContinuePreparation={onContinuePreparation}
           onStart={onStart}
           onStartChangeIntent={onStartChangeIntent}
-          onTerminate={onTerminate}
           projectKey={projectKey}
           sectionProps={sectionProps('manager')}
-          timeline={conversationTimeline(workspace.manager_timeline || [], conversationDelivery, {
-            projectKey, runId: data.state?.run_id || '', readOnly,
+          timeline={conversationTimeline(assistant.timeline || workspace.manager_timeline || [], conversationDelivery, {
+            projectKey, runId: projectAssistant ? '' : data.state?.run_id || '', readOnly: readOnly && !onStart,
           })}
           t={t}
-          suggestions={workspace.suggestions || []}
-          proposedTask={workspace.proposed_task || null}
+          suggestions={assistant.suggestions || []}
+          proposedTask={assistant.proposed_task || null}
+          onQueueTask={onQueueTask}
+          contextTitle={contextTitle}
+          onClearContext={onClearContext}
         />
         <ExecutionPane
-          actors={workspace.execution_actors || []}
+          task={mission}
+          projectScoped={projectAssistant?.schema_version === 'project_assistant.v1'}
+          navigation={taskNavigation}
+          controls={!readOnly && (workspace.capabilities || []).some((item) => item.action === 'cancel_mission')
+            ? <TaskRunControls busy={busy} canCancel onTerminate={onTerminate} t={t} /> : null}
+          actors={(workspace.execution_actors || []).filter((actor) => actor.role !== 'orchestrator')}
           reducedMotion={reducedMotion}
           sectionProps={sectionProps('execution')}
           t={t}
@@ -1036,11 +541,11 @@ function TeamWorkspace({
           language={language}
           task={taskForModal}
           tasks={outcomes}
-          reviews={data.approval_reviews || []}
+          reviews={readOnly ? (data.approval_reviews || []).map((review) => ({ ...review, is_actionable: false })) : data.approval_reviews || []}
           projectKey={projectKey}
-          onDecide={onDecide}
+          onDecide={readOnly ? undefined : onDecide}
           onClose={closeTaskModal}
-          onRequestChanges={activeReviewTargetId && attention?.approval_brief ? async (_approval, _target, note) => {
+          onRequestChanges={!readOnly && activeReviewTargetId && attention?.approval_brief ? async (_approval, _target, note) => {
             await onStartChangeIntent?.(
               attention.target_id,
               attention.approval_brief.approval_target,

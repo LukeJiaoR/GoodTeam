@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from goodteam_os.assistant_workspace import is_assistant_activity
+from goodteam_os.conversation_projection import (
+    assistant_timeline as _task_assistant_timeline,
+    change_discussion_timeline as _intent_commit_timeline_items,
+    dedupe_timeline as _dedupe_timeline,
+)
+
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -269,7 +276,7 @@ def build_team_workspace(
     read_only: bool = False,
     historical_reason: str = "",
 ) -> dict[str, Any]:
-    """Project durable records into the Manager-centered Work contract.
+    """Project business runs, task assignments and their available operations.
 
     The returned object is presentation data only. This function never writes.
     Workflow state owns workflow missions; the durable Operator queue owns
@@ -295,12 +302,12 @@ def build_team_workspace(
                 project_root,
                 _text(queue_item.get("execution_id")),
             )
-            return _build_operator_workspace(
+            return _merge_task_assistant_session(_build_operator_workspace(
                 queue_item=queue_item,
                 task=task,
                 run=run,
                 events=events,
-            )
+            ), task_assistant_session)
     if not read_only and task_assistant_session:
         return _build_task_assistant_workspace(task_assistant_session)
     if state is not None:
@@ -323,19 +330,7 @@ def _build_task_assistant_workspace(session: Mapping[str, object]) -> dict[str, 
     timeline = _task_assistant_timeline(session)
     return {
         "schema_version": TEAM_WORKSPACE_SCHEMA_VERSION,
-        "mission": {
-            "id": f"task-assistant:{_text(session.get('project_key'))}",
-            "run_id": "",
-            "execution_id": "",
-            "project_key": _text(session.get("project_key")),
-            "source": "task_assistant",
-            "title": "",
-            "objective": "",
-            "status": _text(session.get("status")) or "onboarding",
-            "read_only": False,
-            "started_at": _text(timeline[0].get("timestamp")) if timeline else "",
-            "updated_at": _latest_timestamp(timeline),
-        },
+        "mission": None,
         "manager_timeline": timeline,
         "attention_request": session.get("attention_request"),
         "execution_actors": [],
@@ -373,21 +368,6 @@ def _merge_task_assistant_session(
     }
 
 
-def _task_assistant_timeline(session: Mapping[str, object]) -> list[dict[str, Any]]:
-    return [
-        {
-            **dict(item),
-            "id": _text(item.get("message_id")) or _text(item.get("id")),
-            "timestamp": _text(item.get("created_at")) or _text(item.get("timestamp")),
-            "kind": _text(item.get("kind")) or "conversation",
-            "details": dict(item.get("details", {}) or {}),
-            "refs": list(item.get("refs", []) or []),
-        }
-        for item in session.get("timeline", [])
-        if isinstance(item, Mapping)
-    ]
-
-
 def _build_workflow_workspace(
     *,
     state: AgileDevState,
@@ -407,7 +387,8 @@ def _build_workflow_workspace(
     ]
     # Worker jobs always persist a run id. Blank or foreign ids belong in the
     # attempt inspector, not in an active workflow's current-team projection.
-    run_jobs = [item for item in worker_jobs if _text(item.get("run_id")) == state.run_id]
+    run_jobs = [item for item in worker_jobs if _text(item.get("run_id")) == state.run_id and not is_assistant_activity(item)]
+    tasks = [task for task in tasks if task.get("role") != "orchestrator"]
     ordered_actions = sorted(run_actions, key=lambda item: _text(item.get("timestamp")))
     started_at = next(
         (_text(item.get("timestamp")) for item in ordered_actions if item.get("action") == "workflow_started"),
@@ -1623,57 +1604,6 @@ def _intent_recovery_attention(intent: Mapping[str, object]) -> dict[str, Any]:
     }
 
 
-def _intent_commit_timeline_items(
-    run_id: str,
-    intent_commits: Sequence[Mapping[str, object]],
-) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    seen_sources: set[tuple[str, ...]] = set()
-    for intent in intent_commits:
-        mission = _mapping(intent.get("mission"))
-        target = _mapping(intent.get("target"))
-        if _text(mission.get("id")) != run_id or _text(intent.get("kind")) != "request_changes":
-            continue
-        intent_id = _text(intent.get("id"))
-        for event in _list(intent.get("events")):
-            if not isinstance(event, Mapping):
-                continue
-            event_name = _text(event.get("event"))
-            actor = _text(event.get("actor"))
-            if not event_name or actor not in {"user", "manager"}:
-                continue
-            source_identity = (
-                intent_id,
-                _text(event.get("id")),
-                actor,
-                event_name,
-                _text(event.get("timestamp")),
-                _text(event.get("content")),
-                _text(target.get("target_id")),
-            )
-            if source_identity in seen_sources:
-                continue
-            seen_sources.add(source_identity)
-            items.append(
-                {
-                    "id": _text(event.get("id")) or f"{intent_id}:{event_name}:{len(items)}",
-                    "actor": actor,
-                    "kind": "intent",
-                    "event": event_name,
-                    "timestamp": _text(event.get("timestamp")),
-                    "content": _text(event.get("content")),
-                    "details": {
-                        "intent_id": intent_id,
-                        "intent_status": _text(intent.get("status")),
-                        "gate": _text(target.get("target_id")),
-                        "target_id": _text(target.get("target_id")),
-                    },
-                    "refs": [value for value in (intent_id, _text(target.get("target_id"))) if value],
-                }
-            )
-    return items
-
-
 def _workflow_timeline_items(
     run_id: str,
     actions: Sequence[Mapping[str, object]],
@@ -2143,7 +2073,7 @@ def _operator_actors(
     role = _OPERATOR_PHASE_ROLES.get(phase, "orchestrator")
     phase_state = _OPERATOR_PHASE_STATES.get(phase, "working")
     builder_is_current = run is not None and phase == "executing" and role == "implementation"
-    if not builder_is_current:
+    if not builder_is_current and role != "orchestrator":
         actor_id = f"{mission_id}:phase:{phase}"
         stable_order[actor_id] = 1
         actors.append(
@@ -2411,21 +2341,6 @@ def _task_status_reason(status: str, unmet_dependencies: Sequence[str]) -> str:
 def _mission_title(objective: str) -> str:
     first = next((line.strip() for line in objective.splitlines() if line.strip()), "")
     return first[:120]
-
-
-def _dedupe_timeline(items: Sequence[Mapping[str, object]]) -> list[dict[str, Any]]:
-    seen: set[str] = set()
-    result: list[dict[str, Any]] = []
-    for raw in items:
-        item = dict(raw)
-        identifier = _text(item.get("id"))
-        if not identifier or identifier in seen:
-            continue
-        seen.add(identifier)
-        result.append(item)
-    # Stable source order breaks ties for legacy records with equal or missing
-    # timestamps; sorting by id could place the final outcome before the request.
-    return sorted(result, key=lambda item: _text(item.get("timestamp")))
 
 
 def _latest_timestamp(*collections: Sequence[Mapping[str, object]]) -> str:

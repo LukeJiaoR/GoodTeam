@@ -3,6 +3,10 @@ from pathlib import Path
 from goodteam_os.models import apply_role_overrides, load_model_profile, resolve_project_model_profile
 
 
+
+
+
+
 def test_all_model_profiles_follow_task_strength_routing_policy():
     coding_and_debug_roles = {
         "implementation": "daily coding / IDE agent workflow",
@@ -26,11 +30,12 @@ def test_all_model_profiles_follow_task_strength_routing_policy():
     for profile_name in ["balanced", "cheap", "max_quality"]:
         profile = load_model_profile(Path("models.yaml"), profile_name)
         assert profile["implementation"]["mode"] == "worker-dispatch"
+        expected_model = "codex:gpt-5.6-sol" if profile_name == "balanced" else "codex:gpt-5.4"
 
-        # Default policy: all roles route to gpt-5.4; users configure per-role overrides
-        # (e.g. bump architect/planner to gpt-5.5) themselves via models.yaml / overrides.
+        # Balanced is the product default; explicitly selected alternatives retain
+        # their own routing and can still be overridden per role.
         for role, scene in {**coding_and_debug_roles, **reasoning_product_docs_roles}.items():
-            assert profile[role].get("primary") == "codex:gpt-5.4", f"{profile_name}.{role} should default to GPT-5.4 for {scene}"
+            assert profile[role].get("primary") == expected_model, f"{profile_name}.{role} should use {expected_model} for {scene}"
 
 
 def test_apply_role_overrides_replaces_primary_model():
@@ -39,7 +44,7 @@ def test_apply_role_overrides_replaces_primary_model():
     updated = apply_role_overrides(profile, ["architect=codex:gpt-5.5"])
 
     assert updated["architect"]["primary"] == "codex:gpt-5.5"
-    assert updated["architect"]["reviewer"] == "codex:gpt-5.4"
+    assert updated["architect"]["reviewer"] == "codex:gpt-5.6-sol"
 
 
 def test_resolve_project_model_profile_applies_project_defaults_and_overrides():

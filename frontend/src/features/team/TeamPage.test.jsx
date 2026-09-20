@@ -126,7 +126,7 @@ test('saves and checks the assistant connection inside runtime configuration', a
   expect(within(configuration).queryByRole('button', { name: 'Check connection' })).not.toBeInTheDocument();
   expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
   mocks.sendTeamCommands.mockResolvedValue({ ok: true });
-  await user.click(within(configuration).getByRole('button', { name: 'Runtime' }));
+  await user.click(within(configuration).getByRole('button', { name: 'Configure assistant' }));
   const dialog = screen.getByRole('dialog');
   const check = within(dialog).getByRole('button', { name: 'Save and check connection' });
   expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
@@ -153,13 +153,172 @@ test('builds a layered team model with roles, capability, and workers', () => {
   const implementation = team.roles[0];
   expect(implementation.workers).toHaveLength(2);
   expect(implementation.workers[0].runtimeLabel).toBe('codex · gpt-5.4');
+  expect(implementation.workers[0].role).toBe('implementation');
   expect(team.manager.label).toBe('Task Assistant');
   expect(capabilityCounts(team.roles)).toEqual({ ready: 1, unstaffed: 1, degraded: 1, disabled: 1 });
+});
+
+test('configures selected roles in one decision while preserving worker identity and lifecycle', async () => {
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Bulk configure' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).queryByRole('checkbox', { name: /Planner/ })).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole('checkbox', { name: /Task Assistant/ })).not.toBeInTheDocument();
+  await user.click(within(dialog).getByRole('checkbox', { name: 'Select Quality & delivery' }));
+  await user.selectOptions(within(dialog).getByLabelText('Model'), 'gpt-5.4');
+  await user.selectOptions(within(dialog).getByLabelText('Reasoning depth'), 'medium');
+  expect(within(dialog).getByText('Update 2 workers · Add 1 workers')).toBeVisible();
+  await user.click(within(dialog).getByRole('button', { name: 'Apply configuration' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledOnce());
+  expect(mocks.sendTeamCommands.mock.calls[0][1]).toEqual([
+    { kind: 'change_worker_runtime', worker_id: 'implementation-a', reasoning_depth: 'medium' },
+    { kind: 'change_worker_runtime', worker_id: 'implementation-b', provider: 'codex', model: 'gpt-5.4', reasoning_depth: 'medium' },
+    { kind: 'initialize_worker', role: 'research', ensure_role_enabled: false, runtime: { provider: 'codex', model: 'gpt-5.4', reasoning_depth: 'medium' } },
+  ]);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByText('Worker settings saved.')).toBeVisible();
+});
+
+test('bulk configuration requires a selection and does not save unchanged workers', async () => {
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Bulk configure' }));
+  const dialog = screen.getByRole('dialog');
+  await user.click(within(dialog).getByRole('button', { name: 'Clear selection' }));
+  expect(within(dialog).getByRole('button', { name: 'Apply configuration' })).toBeDisabled();
+  await user.click(within(dialog).getByRole('checkbox', { name: 'Select Quality & delivery' }));
+  await user.selectOptions(within(dialog).getByLabelText('Agent'), 'fake');
+  expect(within(dialog).getByText('These workers already use this configuration.')).toBeVisible();
+  expect(within(dialog).getByRole('button', { name: 'Apply configuration' })).toBeDisabled();
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(mocks.sendTeamCommands).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Bulk configure' })).toHaveFocus();
+});
+
+test('configures a responsibility group without requiring the user to open its roles', async () => {
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Configure Design & implementation' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getAllByRole('checkbox')).toHaveLength(1);
+  expect(within(dialog).getByRole('checkbox', { name: 'Select Design & implementation' })).toBeChecked();
+  await user.selectOptions(within(dialog).getByLabelText('Agent'), 'fake');
+  await user.click(within(dialog).getByRole('button', { name: 'Apply configuration' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledOnce());
+  const commands = mocks.sendTeamCommands.mock.calls[0][1];
+  expect(commands.map((command) => command.worker_id)).toEqual(['implementation-a', 'implementation-b']);
+  expect(commands.every((command) => command.kind === 'change_worker_runtime')).toBe(true);
+});
+
+test('prefills an existing group configuration without silently resetting its model or reasoning', async () => {
+  const state = stateFixture();
+  state.team.roles = [{ ...state.team.roles[0], workers: [state.team.roles[0].workers[0]] }];
+  mocks.projectState.mockReturnValue(state);
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Configure Design & implementation' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByLabelText('Agent')).toHaveValue('codex');
+  expect(within(dialog).getByLabelText('Model')).toHaveValue('gpt-5.4');
+  expect(within(dialog).getByLabelText('Reasoning depth')).toHaveValue('high');
+  expect(within(dialog).getByRole('button', { name: 'Apply configuration' })).toBeDisabled();
+});
+
+test('can expand a selected responsibility and choose an individual role', async () => {
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Bulk configure' }));
+  const dialog = screen.getByRole('dialog');
+  await user.click(within(dialog).getByRole('button', { name: 'Clear selection' }));
+  await user.click(within(dialog).getByRole('button', { name: 'Show roles in Requirements & planning' }));
+  expect(within(dialog).queryByRole('checkbox', { name: /Planner/ })).not.toBeInTheDocument();
+  await user.click(within(dialog).getByRole('checkbox', { name: /Research/ }));
+  expect(within(dialog).getByRole('checkbox', { name: 'Select Requirements & planning' })).toBeChecked();
+  await user.click(within(dialog).getByRole('button', { name: 'Apply configuration' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledOnce());
+  expect(mocks.sendTeamCommands.mock.calls[0][1]).toEqual([
+    { kind: 'initialize_worker', role: 'research', ensure_role_enabled: false, runtime: { provider: 'codex', model: 'gpt-5.6-sol' } },
+  ]);
+});
+
+test('uses the project backend explicitly when creating a worker', async () => {
+  const state = stateFixture();
+  state.start_context.worker_backend = { mode: 'fake' };
+  mocks.projectState.mockReturnValue(state);
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Show roles in Requirements & planning' }));
+  const research = screen.getByRole('heading', { name: 'Research' }).closest('article');
+  await user.click(within(research).getByRole('button', { name: 'Add', exact: true }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByLabelText('Agent')).toHaveValue('fake');
+  await user.click(within(dialog).getByRole('button', { name: 'Add worker' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledOnce());
+  expect(mocks.sendTeamCommands.mock.calls[0][1]).toEqual([
+    { kind: 'initialize_worker', role: 'research', ensure_role_enabled: true, runtime: { provider: 'fake' } },
+  ]);
+});
+
+test('new workers default to Codex with an explicit GPT-5.6 Sol model even without a catalog', async () => {
+  mocks.getAgents.mockResolvedValue({ agents: [] });
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Add worker' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByLabelText('Agent')).toHaveValue('codex');
+  expect(within(dialog).getByLabelText('Model')).toHaveValue('gpt-5.6-sol');
+  await user.selectOptions(within(dialog).getByLabelText('Role'), 'research');
+  await user.click(within(dialog).getByRole('button', { name: 'Add worker' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledOnce());
+  expect(mocks.sendTeamCommands.mock.calls[0][1]).toEqual([
+    { kind: 'initialize_worker', role: 'research', ensure_role_enabled: true, runtime: { provider: 'codex', model: 'gpt-5.6-sol' } },
+  ]);
+});
+
+test('allows a custom model after discovery fails, retains the draft on save failure, and retries idempotently', async () => {
+  mocks.getAgents.mockRejectedValue(new Error('Discovery unavailable'));
+  mocks.sendTeamCommands.mockRejectedValueOnce(new Error('Save could not be confirmed.')).mockResolvedValue({ ok: true });
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
+  await user.click(screen.getByRole('button', { name: 'Edit Builder A' }));
+  const dialog = screen.getByRole('dialog');
+  await user.click(within(dialog).getByRole('button', { name: 'Enter model ID' }));
+  await user.clear(within(dialog).getByLabelText('Model'));
+  await user.type(within(dialog).getByLabelText('Model'), ' custom/model ');
+  await user.click(within(dialog).getByRole('button', { name: 'Save worker' }));
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent('Save could not be confirmed.');
+  expect(within(dialog).getByLabelText('Model')).toHaveValue(' custom/model ');
+  await user.click(within(dialog).getByRole('button', { name: 'Save worker' }));
+  await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledTimes(2));
+  const [first, second] = mocks.sendTeamCommands.mock.calls;
+  expect(first[1]).toEqual([{ kind: 'change_worker_runtime', worker_id: 'implementation-a', model: 'custom/model', reasoning_depth: 'default' }]);
+  expect(second[2].commandKey).toBe(first[2].commandKey);
+  expect(first[2].commandKey).toEqual(expect.any(String));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test('keeps a saving bulk dialog open and prevents duplicate submissions', async () => {
+  let finishSave;
+  mocks.sendTeamCommands.mockImplementationOnce(() => new Promise((resolve) => { finishSave = resolve; }));
+  const user = userEvent.setup();
+  renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Bulk configure' }));
+  const dialog = screen.getByRole('dialog');
+  await user.dblClick(within(dialog).getByRole('button', { name: 'Apply configuration' }));
+  expect(mocks.sendTeamCommands).toHaveBeenCalledOnce();
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+  await user.keyboard('{Escape}');
+  expect(dialog).toBeVisible();
+  finishSave({ ok: true });
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 });
 
 test('disabling a role goes through the control-plane command', async () => {
   const user = userEvent.setup();
   renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
 
   const implementation = screen.getByRole('heading', { name: 'Implementation' }).closest('article');
   await user.click(within(implementation).getByRole('button', { name: 'Disable' }));
@@ -175,6 +334,7 @@ test('disabling a role goes through the control-plane command', async () => {
 test('pausing and deleting a worker emits lifecycle commands', async () => {
   const user = userEvent.setup();
   renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
 
   await user.click(screen.getByRole('button', { name: 'Pause Builder A' }));
   await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
@@ -194,6 +354,7 @@ test('pausing and deleting a worker emits lifecycle commands', async () => {
 test('activating a paused worker emits activate command', async () => {
   const user = userEvent.setup();
   renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
 
   await user.click(screen.getByRole('button', { name: 'Activate Builder B' }));
   await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
@@ -206,6 +367,7 @@ test('activating a paused worker emits activate command', async () => {
 test('edits worker identity and runtime into diff-based commands', async () => {
   const user = userEvent.setup();
   renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
 
   await user.click(screen.getByRole('button', { name: 'Edit Builder A' }));
   const dialog = screen.getByRole('dialog');
@@ -233,7 +395,7 @@ test('adds a worker with an explicit role and runtime', async () => {
   await user.click(screen.getByRole('button', { name: 'Add worker' }));
   const dialog = screen.getByRole('dialog');
   await user.selectOptions(within(dialog).getByLabelText('Role'), 'research');
-  await user.selectOptions(within(dialog).getByLabelText('Runtime / provider'), 'codex');
+  await user.selectOptions(within(dialog).getByLabelText('Agent'), 'codex');
   await user.selectOptions(within(dialog).getByLabelText('Model'), 'gpt-5.4');
   await user.click(within(dialog).getByRole('button', { name: 'Add worker' }));
 
@@ -261,8 +423,9 @@ test('loads the inherited agent models and follows each model effort catalog', a
   const dialog = screen.getByRole('dialog');
   const model = within(dialog).getByLabelText('Model');
   const reasoning = within(dialog).getByLabelText('Reasoning depth');
-  expect(within(model).getByRole('option', { name: 'Inherit model (model-deep)' })).toBeInTheDocument();
+  expect(within(model).getByRole('option', { name: 'Agent default (model-deep)' })).toBeInTheDocument();
   expect(within(model).getByRole('option', { name: 'model-deep', exact: true })).toBeInTheDocument();
+  await user.selectOptions(model, '');
   await user.selectOptions(reasoning, 'ultra');
   await user.selectOptions(model, 'model-light');
   expect(reasoning).toHaveValue('default');
@@ -275,7 +438,7 @@ test('loads the inherited agent models and follows each model effort catalog', a
   await user.click(within(dialog).getByRole('button', { name: 'Add worker' }));
   await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith('DEMO', [{
     kind: 'initialize_worker', role: 'research', ensure_role_enabled: true,
-    runtime: { model: 'model-deep', reasoning_depth: 'ultra' },
+    runtime: { provider: 'codex', model: 'model-deep', reasoning_depth: 'ultra' },
   }], expect.anything()));
 });
 
@@ -286,12 +449,13 @@ test('refreshes model discovery and resets unsupported effort on provider change
   ] });
   const user = userEvent.setup();
   renderTeam();
-  await user.click(await screen.findByRole('button', { name: 'Refresh models' }));
-  await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));
+  await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
   await user.click(screen.getByRole('button', { name: 'Edit Builder A' }));
   const dialog = screen.getByRole('dialog');
+  await user.click(await within(dialog).findByRole('button', { name: 'Refresh models' }));
+  await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));
   await user.selectOptions(within(dialog).getByLabelText('Reasoning depth'), 'xhigh');
-  await user.selectOptions(within(dialog).getByLabelText('Runtime / provider'), 'gemini');
+  await user.selectOptions(within(dialog).getByLabelText('Agent'), 'gemini');
   expect(within(dialog).getByLabelText('Reasoning depth')).toHaveValue('default');
   expect(within(dialog).getByLabelText('Reasoning depth')).toBeDisabled();
 });
@@ -305,12 +469,12 @@ test('failed refresh drops the previous catalog instead of serving stale models'
   }] });
   const user = userEvent.setup();
   renderTeam();
-  await user.click(await screen.findByRole('button', { name: 'Refresh models' }));
-  await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));
   await user.click(screen.getByRole('button', { name: 'Add worker' }));
   const dialog = screen.getByRole('dialog');
-  expect([...within(dialog).getByLabelText('Model').options].map((item) => item.value)).toEqual(['']);
-  expect(within(dialog).getByText('Could not fetch models from this agent. Try Refresh models.')).toBeInTheDocument();
+  await user.click(await within(dialog).findByRole('button', { name: 'Refresh models' }));
+  await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));
+  expect([...within(dialog).getByLabelText('Model').options].map((item) => item.value)).toEqual(['', 'gpt-5.6-sol']);
+  expect(within(dialog).getByText('Model discovery is unavailable. Refresh the list or enter a model ID.')).toBeInTheDocument();
   expect(within(dialog).getByLabelText('Reasoning depth')).toBeDisabled();
 });
 
@@ -320,10 +484,10 @@ test('edits the Task Assistant runtime without making it a role', async () => {
   renderTeam();
 
   const managerSection = screen.getByRole('heading', { name: 'Task Assistant' }).closest('section');
-  await user.click(within(managerSection).getByRole('button', { name: 'Runtime' }));
+  await user.click(within(managerSection).getByRole('button', { name: 'Configure assistant' }));
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).queryByLabelText('Role')).not.toBeInTheDocument();
-  await user.selectOptions(within(dialog).getByLabelText('Runtime / provider'), 'claude');
+  await user.selectOptions(within(dialog).getByLabelText('Agent'), 'claude');
   await user.click(within(dialog).getByRole('button', { name: 'Save and check connection' }));
 
   await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
@@ -337,6 +501,7 @@ test('surfaces command failures to the user', async () => {
   mocks.sendTeamCommands.mockRejectedValue(new Error('The team control plane rejected this command.'));
   const user = userEvent.setup();
   renderTeam();
+  await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
 
   const implementation = screen.getByRole('heading', { name: 'Implementation' }).closest('article');
   await user.click(within(implementation).getByRole('button', { name: 'Disable' }));

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import wraps
 
-from goodteam_os.assistant_conversation import continue_conversation
+from goodteam_os.assistant_conversation import continue_conversation, conversation_scope
 from goodteam_os.assistant_runtime import record_runtime, runtime_snapshot, safe_failure
 from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.project_readiness import assess_project_mode
@@ -73,26 +73,32 @@ def response(service, project_key, root, *, intent="ambiguous"):
             "intent": intent, "workflow_started": False, "run_id": ""}
 
 
-def execute_message(service, *, project_key, root, text, message_id, expected_attempt=None):
+def execute_message(service, *, project_key, root, text, message_id, expected_attempt=None, context_run_id=""):
+    if not isinstance(context_run_id, str):
+        raise ValueError("Invalid conversation task context")
     message_id = message_id.strip()
     if not message_id.strip() or not text.strip():
         raise ValueError("Task Assistant message and message_id must not be blank")
     store = TaskAssistantSessionStore(service.workspace, project_key)
     with conversation_lock(store):
         previous = store.read().get("assistant_requests", {}).get(message_id)
+        if previous and previous.get("context_run_id", "") != context_run_id:
+            raise ValueError("message_id is already used with different task context")
+        if context_run_id:
+            conversation_scope(store, context_run_id)
         attempt = _next_attempt(previous, text, expected_attempt)
         if attempt is None:
             return response(service, project_key, root, intent=(previous or {}).get("intent", "ambiguous"))
         store.initialize_context(assess_project_mode(root))
         store.append_message(message_id, "user", text)
-        update_request(store, message_id, text=text, attempt=attempt, status="running", phase="model", error=None)
+        update_request(store, message_id, text=text, context_run_id=context_run_id, attempt=attempt, status="running", phase="model", error=None)
         snapshot = None
         try:
             snapshot = runtime_snapshot(service.project_config)
             attempt_id = worker_attempt_id(project_key, message_id, attempt)
             result = continue_conversation(
                 service, store=store, project_key=project_key, root=root,
-                text=text, message_id=message_id, attempt_id=attempt_id,
+                text=text, message_id=message_id, attempt_id=attempt_id, context_run_id=context_run_id,
             )
             if result is None:
                 result = service._send_message(project_key=project_key, root=root, text=text,
@@ -150,7 +156,7 @@ def retry_message(service, *, project_key, root, message_id, expected_attempt):
     if request is None:
         raise ValueError("Task Assistant request is unavailable")
     return execute_message(service, project_key=project_key, root=root, message_id=message_id,
-                           text=request["text"], expected_attempt=expected_attempt)
+                           text=request["text"], expected_attempt=expected_attempt, context_run_id=request.get("context_run_id", ""))
 
 
 def check_runtime(service, *, project_key, root, message_id):

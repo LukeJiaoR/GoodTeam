@@ -626,7 +626,8 @@ def test_project_state_exposes_task_assistant_before_first_workflow(tmp_path: Pa
     payload = web.build_project_work_state(tmp_path, "TEAM")
 
     assert payload["task_assistant_session"]["project_mode_hint"]["mode"] == "existing_project"
-    assert payload["team_workspace"]["mission"]["source"] == "task_assistant"
+    assert payload["team_workspace"]["mission"] is None
+    assert payload["project_assistant"]["project_key"] == "TEAM"
     assert payload["team_workspace"]["manager_timeline"][0]["event"] == "welcome_existing_project"
 
 
@@ -662,6 +663,7 @@ def test_task_assistant_message_api_uses_project_bound_service(tmp_path: Path, m
             "root": project_root.resolve(),
             "message_id": "message-1",
             "text": "看一下当前项目",
+            "context_run_id": "",
         },
     )
 
@@ -4821,8 +4823,8 @@ def test_retry_blocked_workflow_refreshes_role_models_before_dispatch(tmp_path, 
 
     def fake_advance_approved_workflow(*, state, workspace, project_config):
         persisted = StateStore(workspace).read_project_current("CONTENTOPS")
-        assert persisted.role_models["implementation"]["primary"] == "codex:gpt-5.4"
-        assert persisted.role_models["qa"]["primary"] == "codex:gpt-5.4"
+        assert persisted.role_models["implementation"]["primary"] == "codex:gpt-5.6-sol"
+        assert persisted.role_models["qa"]["primary"] == "codex:gpt-5.6-sol"
         state.current_node = "release_review_gate"
         state.next_node = "await_release_approval"
         return state
@@ -4831,8 +4833,8 @@ def test_retry_blocked_workflow_refreshes_role_models_before_dispatch(tmp_path, 
 
     payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS")
 
-    assert payload["role_models"]["implementation"]["primary"] == "codex:gpt-5.4"
-    assert payload["role_models"]["qa"]["primary"] == "codex:gpt-5.4"
+    assert payload["role_models"]["implementation"]["primary"] == "codex:gpt-5.6-sol"
+    assert payload["role_models"]["qa"]["primary"] == "codex:gpt-5.6-sol"
 
 
 def test_retry_blocked_workflow_rejects_non_blocked_run(tmp_path):

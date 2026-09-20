@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@xyflow/react', async () => {
@@ -898,7 +898,7 @@ test('requires confirmation before the Task Assistant cancels a mission', async 
   expect(mocks.terminateRun).toHaveBeenCalledWith('DEMO');
 });
 
-test.each([false, true])('keeps historical runs read-only (mobile=%s)', async (mobile) => {
+test.each([false, true])('keeps project chat available while historical task activity and actions stay read-only (mobile=%s)', async (mobile) => {
   stubMediaPreferences({ mobile });
   mocks.useProjectState.mockReturnValue({
     data: projectedWorkData(),
@@ -947,7 +947,23 @@ test.each([false, true])('keeps historical runs read-only (mobile=%s)', async (m
   const historicalWorkspace = document.querySelector('.team-workspace[data-read-only="true"]');
   expect(historicalWorkspace).toBeInTheDocument();
   const manager = historicalWorkspace.querySelector('.team-pane--manager');
-  expect(within(manager).queryByRole('button')).not.toBeInTheDocument();
+  expect(historicalWorkspace.querySelector('.team-pane--execution')).toBeInTheDocument();
+  expect(historicalWorkspace.querySelector('.team-pane--outcomes')).toBeInTheDocument();
+  expect((await within(historicalWorkspace).findAllByText('Implement the earlier OAuth revision')).length)
+    .toBeGreaterThan(0);
+  expect(within(historicalWorkspace).getByRole('button', { name: 'Implement the earlier OAuth revision', hidden: true }))
+    .toHaveAttribute('aria-expanded', 'false');
+  expect(within(manager).getByRole('textbox', { name: 'Message' })).toBeVisible();
+  expect(within(manager).queryByRole('button', { name: 'Approve', exact: true })).not.toBeInTheDocument();
+  expect(within(manager).queryByRole('button', { name: 'Cancel entire mission' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Historical runs are read-only and visually separate from the active run.'));
+  const activity = screen.getByRole('list', { name: 'Historical task activity' });
+  const request = within(activity).getByText('Ship the earlier OAuth revision');
+  const retry = within(activity).getByText('The work needed 2 attempts and then completed.');
+  const complete = within(activity).getByText('The mission reached its recorded completion state.');
+  expect(request.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(retry.compareDocumentPosition(complete) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
 });
 
 test('dispatches a track only with the confirmed task and project', async () => {
@@ -969,6 +985,8 @@ test('dispatches a track only with the confirmed task and project', async () => 
   mocks.dispatchTrack.mockResolvedValue({ ok: true });
 
   renderWorkPage();
+
+  await screen.findByRole('button', { name: 'Board' });
 
   await userEvent.click(screen.getByRole('button', { name: 'Execution' }));
   await userEvent.click(screen.getByRole('button', { name: 'Dispatch track' }));

@@ -1,5 +1,26 @@
 const ROLE_FALLBACK_LABEL = (role) => String(role || '').replaceAll('_', ' ');
 
+export function newWorkerRuntime(provider = 'codex') {
+  return { provider, model: provider === 'codex' ? 'gpt-5.6-sol' : '', reasoningDepth: 'default' };
+}
+
+// A presentation hierarchy only: the server still owns role identity, state,
+// dispatch and permissions. Unknown roles remain visible in the final group.
+const RESPONSIBILITY_GROUPS = [
+  { key: 'planning', roles: ['research', 'product_requirement', 'architect', 'review', 'planner'] },
+  { key: 'building', roles: ['ui', 'implementation', 'frontend', 'backend'] },
+  { key: 'delivery', roles: ['qa', 'code_review', 'release'] },
+  { key: 'learning', roles: ['retro_memory'] },
+];
+
+export function groupTeamRoles(roles) {
+  const known = new Set(RESPONSIBILITY_GROUPS.flatMap((group) => group.roles));
+  return [
+    ...RESPONSIBILITY_GROUPS.map((group) => ({ key: group.key, roles: roles.filter((role) => group.roles.includes(role.role)) })),
+    { key: 'other', roles: roles.filter((role) => !known.has(role.role)) },
+  ].filter((group) => group.roles.length);
+}
+
 export function runtimeOptions(agents, provider, model, defaultProvider = 'codex') {
   const effectiveProvider = provider || defaultProvider;
   const agent = agents.find((item) => item.backend === effectiveProvider || item.aliases?.includes(effectiveProvider));
@@ -47,6 +68,7 @@ export function buildTeamModel(data) {
     capabilityTone: capabilityTone(entry.capability),
     workers: (entry.workers || []).map((worker) => ({
       id: worker.id,
+      role: entry.role,
       name: worker.name || worker.id,
       lifecycle: worker.lifecycle,
       dispatchable: Boolean(worker.dispatchable),
@@ -123,4 +145,42 @@ export function workerCreateCommand(role, draft) {
   if (draft.name && draft.name.trim()) command.name = draft.name.trim();
   if (Object.keys(runtime).length) command.runtime = runtime;
   return command;
+}
+
+// Bulk configuration changes only runtime settings. Roles and worker lifecycle
+// remain server-owned; paused members keep their state and individual prompts.
+export function initialWorkerRuntime(roles, defaultProvider) {
+  const workers = roles.filter((role) => role.state === 'enabled').flatMap((role) => role.workers);
+  const first = workers[0];
+  const sameProvider = first && workers.every((worker) => worker.provider === first.provider);
+  const sameModel = sameProvider && workers.every((worker) => worker.model === first.model);
+  const sameReasoning = sameModel && workers.every((worker) => worker.reasoningDepth === first.reasoningDepth);
+  const defaults = newWorkerRuntime(sameProvider ? first.provider : defaultProvider);
+  return {
+    provider: defaults.provider,
+    model: sameModel ? first.model : defaults.model,
+    reasoningDepth: sameReasoning ? first.reasoningDepth : 'default',
+  };
+}
+
+export function batchWorkerPlan(roles, selectedRoles, draft) {
+  const selected = new Set(selectedRoles);
+  const commands = [];
+  let updated = 0;
+  let created = 0;
+  for (const role of roles) {
+    if (role.state !== 'enabled' || !selected.has(role.role)) continue;
+    const runtime = { provider: draft.provider, model: draft.model, reasoningDepth: draft.reasoningDepth };
+    if (!role.workers.length) {
+      commands.push({ ...workerCreateCommand(role.role, runtime), ensure_role_enabled: false });
+      created += 1;
+    } else {
+      for (const worker of role.workers) {
+        const changes = workerEditCommands(worker, { ...worker, ...runtime });
+        commands.push(...changes);
+        if (changes.length) updated += 1;
+      }
+    }
+  }
+  return { commands, updated, created };
 }

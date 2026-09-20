@@ -1,0 +1,43 @@
+.work-workspace-shell .project-conversation-scope,
+.work-workspace-shell .project-composer-modes {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.65rem 1rem;
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--work-border, #d7e1ef);
+}
+.work-workspace-shell .project-conversation-scope span { flex: 1; overflow-wrap: anywhere; }
+.work-workspace-shell .project-conversation-scope button,
+.work-workspace-shell .project-composer-modes button,
+.work-workspace-shell .project-task-navigation button:not(.product-button) {
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  color: inherit;
+  background: transparent;
+  padding: 0.45rem 0.65rem;
+  text-align: start;
+  cursor: pointer;
+  font: inherit;
+}
+.work-workspace-shell .project-composer-modes button[aria-pressed="true"],
+.work-workspace-shell .project-task-navigation button[aria-current="page"] {
+  background: var(--work-material, #edf2f8);
+  border-color: var(--work-border, #b8c9df);
+  font-weight: 650;
+}
+.work-workspace-shell .project-task-navigation { padding: 1rem; max-height: 42vh; overflow: auto; flex-shrink: 0; border-bottom: 1px solid var(--work-border, #d7e1ef); }
+.work-workspace-shell .project-task-navigation ul { list-style: none; padding: 0; margin: 0.5rem 0; }
+.work-workspace-shell .project-task-navigation button:not(.product-button) { display: grid; width: 100%; gap: 0.25rem; }
+.work-workspace-shell .project-task-navigation span,
+.work-workspace-shell .project-queued-task p { overflow-wrap: anywhere; white-space: pre-wrap; }
+.work-workspace-shell .project-task-navigation small { opacity: 0.7; }
+.work-workspace-shell .project-task-navigation h3 { font-size: 0.85rem; margin: 1rem 0 0.5rem; }
+.work-workspace-shell .project-queued-task { padding: 0.6rem 0; border-top: 1px solid var(--work-border, #d7e1ef); }
+.work-workspace-shell .project-queued-task textarea { width: 100%; min-height: 5rem; color: inherit; background: transparent; }
+.work-workspace-shell .project-assistant-activity { margin: 0.75rem 0; font-size: 0.75rem; overflow-wrap: anywhere; }
+.work-workspace-shell .project-assistant-activity ul { padding-inline-start: 1rem; }
+
+.work-workspace-shell .project-task-identity { display: grid; gap: 0.35rem; padding: 1rem; font-size: 0.8rem; overflow-wrap: anywhere; }
+.work-workspace-shell .project-task-identity small { opacity: 0.7; }
