@@ -20,7 +20,9 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
       return result;
     } catch (caught) {
       setError(caught);
-      await refresh().catch(() => {});
+      // Failure feedback makes an explicit resend available immediately. A
+      // background read must not hold the composer after the failure is shown.
+      void refresh().catch(() => {});
       // A receipt survives a failed refresh. Never encourage a second POST.
       return result === undefined ? false : result;
     } finally {
