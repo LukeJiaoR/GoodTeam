@@ -1022,6 +1022,7 @@ def test_api_fs_mkdir_route_rejects_invalid_names(tmp_path, monkeypatch):
     for name in ["", "..", "bad/name", "bad\\name"]:
         handler = simulate_post("/api/fs/mkdir", {"parent": str(tmp_path), "name": name})
         assert 400 in handler.responses
+        assert list(tmp_path.iterdir()) == []
 
 
 def test_api_fs_mkdir_route_missing_parent_returns_404(tmp_path, monkeypatch):

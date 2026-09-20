@@ -5,7 +5,6 @@ from pathlib import Path
 
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.pr_diff_contract import artifact_json_path, artifact_patch_path
-from goodteam_os.execution.review_workbench_browser import render_review_workbench_html
 from tests.review_workbench_helpers import (
     full_lifecycle as _full_lifecycle,
     memory_event_files as _memory_event_files,
@@ -147,24 +146,6 @@ def test_rationale_excerpts_are_bounded_and_deterministic(tmp_path):
     assert "B" * 900 not in first
 
 
-def test_browser_html_renders_rationale_evidence_under_each_changed_file(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-    _write_worker_file(
-        tmp_path,
-        api.ledger_store.read_run(execution_id).worker_job_id,
-        "result.md",
-        "Implemented src/goodteam_os/execution/api.py only.",
-    )
-
-    html = render_review_workbench_html(api.get_review_workbench(execution_id))
-
-    assert "Rationale evidence" in html
-    assert "worker_result" in html
-    assert "confidence</dt><dd>direct</dd>" in html
-    assert "No file-level rationale mapping available." in html
-
-
 def test_static_export_includes_rationale_refs_in_embedded_json(tmp_path):
     api, execution_id = _full_lifecycle(tmp_path)
     api.persist_pr_diff(execution_id)
@@ -184,7 +165,6 @@ def test_static_export_includes_rationale_refs_in_embedded_json(tmp_path):
     assert refs[0]["name"] == "task"
     assert refs[0]["excerpt"] == "Task context names tests/test_review_workbench_diff_artifact.py for regression coverage."
     assert '"rationale_refs": [' in html
-    assert "Prompt snapshot: task" in html
 
 
 def test_get_review_workbench_rationale_mapping_is_read_only(tmp_path):

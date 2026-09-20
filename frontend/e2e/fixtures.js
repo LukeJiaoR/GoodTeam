@@ -4,7 +4,12 @@ import process from 'node:process';
 import { test as base, expect } from '@playwright/test';
 
 export const test = base.extend({
-  fixture: async ({ page }, provide, testInfo) => {
+  fixture: async ({ page, context }, provide, testInfo) => {
+    // Business acceptance uses fallback fonts; CDN availability is not part of
+    // the product contract. Keep application requests and console checks real.
+    await context.route('https://fonts.googleapis.com/**', (route) => route.fulfill({
+      contentType: 'text/css', body: '',
+    }));
     const name = `project-${testInfo.testId.replace(/[^a-zA-Z0-9]/g, '').slice(-12)}-${testInfo.repeatEachIndex}`;
     const root = path.join(process.env.GOODTEAM_E2E_ROOT, 'targets', name);
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });

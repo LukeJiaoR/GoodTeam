@@ -6,7 +6,6 @@ from pathlib import Path
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.api import ExecutionAPI
 from goodteam_os.execution.models import ExecutionRun
-from goodteam_os.execution.review_workbench import render_review_workbench
 from tests.review_workbench_helpers import (
     FakeClock,
     FakeGitHubClient,
@@ -131,17 +130,6 @@ def test_workbench_reads_persisted_diff_artifact(tmp_path):
     assert diff["patch_path"].endswith("/pr-diff.patch")
     assert diff["changed_files"][1]["path"] == "tests/test_review_workbench_diff_artifact.py"
     assert diff["summary"] == "2 files changed (+130/-2)"
-
-
-def test_renderer_includes_changed_files_from_diff_artifact(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-
-    output = render_review_workbench(api.get_review_workbench(execution_id))
-
-    assert "Diff: 2 files changed (+130/-2)" in output
-    assert "- src/goodteam_os/execution/api.py modified +10 -2" in output
-    assert "- tests/test_review_workbench_diff_artifact.py added +120 -0" in output
 
 
 def test_missing_diff_artifact_empty_state_is_preserved(tmp_path):

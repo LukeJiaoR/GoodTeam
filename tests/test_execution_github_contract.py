@@ -129,8 +129,14 @@ def test_github_issue_body_populates_contract_sections():
     ]
 
 
-def test_snapshot_preserves_labels():
-    snapshot = _snapshot()
+def test_snapshot_copies_labels_without_aliasing_input():
+    labels = ["p0", "execution", "github"]
+    snapshot = GitHubIssueSnapshot(
+        repo="LukeJiaoR/GoodTeam", issue_number=227, title="Intake",
+        body="", url="https://github.com/LukeJiaoR/GoodTeam/issues/227",
+        labels=labels,
+    )
+    labels.append("changed-after-capture")
 
     assert snapshot.labels == ["p0", "execution", "github"]
 

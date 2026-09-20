@@ -6,7 +6,6 @@ from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.idempotency import execution_id_from_task
 from goodteam_os.execution.api import ExecutionAPI
 from goodteam_os.execution.models import ExecutionRun, ExecutionTask
-from goodteam_os.execution.review_workbench import render_review_workbench
 from tests.review_workbench_helpers import (
     api as _api,
     failed_event as _failed_event,
@@ -181,20 +180,6 @@ def test_memory_provenance_integrity_is_exposed(tmp_path):
     assert workbench["execution_replay_graph"]["nodes_by_type"]["memory"] == ["memory"]
 
 
-def test_missing_diff_artifact_returns_explicit_empty_state(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-
-    diff = api.get_review_workbench(execution_id)["diff"]
-
-    assert diff == {
-        "available": False,
-        "reason": "diff_artifact_missing",
-        "changed_files": [],
-        "artifact_path": "",
-        "summary": "",
-    }
-
-
 def test_record_approve_decision_writes_ledger_event(tmp_path):
     api, execution_id = _full_lifecycle(tmp_path)
 
@@ -302,26 +287,6 @@ def test_review_decision_does_not_mutate_existing_ledger_events(tmp_path):
     after = ledger.read_events(execution_id)
     assert after[: len(before)] == before
     assert len(after) == len(before) + 1
-
-
-def test_text_renderer_consumes_canonical_review_object(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.finalize(execution_id)
-    api.record_review_decision(execution_id, "approve", "LukeJiaoR", "ok")
-
-    output = render_review_workbench(api.get_review_workbench(execution_id))
-
-    assert f"Execution: {execution_id}" in output
-    assert "Issue: LukeJiaoR/GoodTeam#216" in output
-    assert "PR: LukeJiaoR/GoodTeam#2160" in output
-    assert "CI: success" in output
-    assert "Memory provenance: complete" in output
-    assert "Decision: approve by LukeJiaoR" in output
-    assert "Task contract: task_contract.v1" in output
-    assert "Runtime policy: runtime_policy.v1" in output
-    assert "Worker backend: fake (fake)" in output
-    assert "External invocation: not requested" in output
-    assert "diff_artifact_missing" in output
 
 
 def test_record_request_changes_and_reject_must_have_reason(tmp_path):

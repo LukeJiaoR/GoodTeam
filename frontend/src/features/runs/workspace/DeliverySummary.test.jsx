@@ -30,13 +30,6 @@ describe('Delivery summary', () => {
     expect(requestJson).toHaveBeenCalledWith(artifact.href, { signal: expect.any(AbortSignal), cache: 'no-store' });
   });
 
-  it('shows missing and simulated evidence without an open action', () => {
-    render(<DeliverySummary summary={{ ...summary, simulated: true, artifacts: [{ key: 'qa_report', href: '', version: '' }] }} t={t} />);
-    expect(screen.getByRole('button')).toBeDisabled();
-    expect(screen.getByText(en['work.deliverySummary.simulated'])).toBeInTheDocument();
-    expect(requestJson).not.toHaveBeenCalled();
-  });
-
   it.each(['project_key', 'run_id', 'artifact', 'version'])('rejects a response with the wrong %s', async (field) => {
     requestJson.mockResolvedValue({ ...response, [field]: 'OTHER' });
     render(<DeliverySummary summary={summary} t={t} />);

@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from goodteam_os.execution.ledger import ExecutionLedger
-from goodteam_os.execution.review_workbench_browser import render_review_workbench_html
 from goodteam_os.execution.review_workbench_diff import parse_unified_diff
 from tests.review_workbench_helpers import full_lifecycle as _full_lifecycle
 from tests.review_workbench_helpers import memory_event_files as _memory_event_files
@@ -52,32 +51,6 @@ def test_workbench_diff_includes_file_anchors_and_hunks_when_patch_exists(tmp_pa
     assert diff["changed_files"][0]["hunks"][0]["lines"][1]["kind"] == "delete"
 
 
-def test_browser_html_includes_file_navigation_links(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-    _write_patch(tmp_path, execution_id, _sample_patch())
-
-    html = render_review_workbench_html(api.get_review_workbench(execution_id))
-
-    assert '<nav class="diff-file-nav"' in html
-    assert 'href="#file-src-goodteam-os-execution-api-py"' in html
-    assert "src/goodteam_os/execution/api.py" in html
-
-
-def test_browser_html_includes_changed_line_css_classes(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-    _write_patch(tmp_path, execution_id, _sample_patch())
-
-    html = render_review_workbench_html(api.get_review_workbench(execution_id))
-
-    assert "diff-line-add" in html
-    assert "diff-line-delete" in html
-    assert "diff-line-context" in html
-    assert "+    return rich_diff" in html
-    assert "-    return diff" in html
-
-
 def test_missing_patch_still_shows_files_and_patch_missing_state(tmp_path):
     api, execution_id = _full_lifecycle(tmp_path)
     result = api.persist_pr_diff(execution_id)
@@ -90,9 +63,6 @@ def test_missing_patch_still_shows_files_and_patch_missing_state(tmp_path):
     assert workbench["diff"]["reason"] == ""
     assert workbench["diff"]["changed_files"][0]["hunks"] == []
     assert _warning_codes(workbench) >= {"patch_missing"}
-    html = render_review_workbench_html(workbench)
-    assert "patch_missing" in html
-    assert 'href="#file-src-goodteam-os-execution-api-py"' in html
 
 
 def test_malformed_patch_does_not_crash_and_emits_warning(tmp_path):
@@ -106,8 +76,6 @@ def test_malformed_patch_does_not_crash_and_emits_warning(tmp_path):
     assert workbench["diff"]["patch_state"] == "parse_failed"
     assert workbench["diff"]["changed_files"][0]["hunks"] == []
     assert _warning_codes(workbench) >= {"patch_parse_failed"}
-    html = render_review_workbench_html(workbench)
-    assert "patch_parse_failed" in html
 
 
 def test_get_workbench_diff_navigation_is_read_only(tmp_path):

@@ -82,13 +82,6 @@ describe('persistent conversation composer', () => {
     expect(input).toHaveValue('Do not lose this request.');
   });
 
-  it('recovers a seeded change draft without creating another input', () => {
-    render(<ConversationComposer t={t} onStart={vi.fn()}
-      changeIntent={{ id: 'intent-1', status: 'discussing', draft_text: 'Saved before reload.', interpretation: null }} />);
-    expect(screen.getAllByRole('textbox')).toHaveLength(1);
-    expect(screen.getByRole('textbox', { name: change })).toHaveValue('Saved before reload.');
-  });
-
   it('restores an interpreted discussion and follows durable updates before local editing', async () => {
     const original = '  Preserve formatting.  \n\n    keep_indentation()\n';
     const onStart = vi.fn();

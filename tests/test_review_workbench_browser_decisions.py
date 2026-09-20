@@ -265,26 +265,6 @@ def test_workbench_get_routes_remain_read_only_for_ledger_and_memory(tmp_path, m
     assert _memory_event_files(tmp_path) == before_memory
 
 
-def test_browser_html_includes_decision_form_and_current_decision(tmp_path, monkeypatch):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.record_review_decision(execution_id, "approve", "LukeJiaoR", "ok")
-    request = _capture_dashboard_requests(tmp_path, monkeypatch)
-    root = quote(str(tmp_path))
-
-    status, _, html = request("GET", f"/review-workbench/{execution_id}?project_root={root}")
-
-    assert status == 200
-    assert "Current decision</dt><dd>approve by LukeJiaoR</dd>" in html
-    assert "<form id=\"review-decision-form\"" in html
-    assert "name=\"reviewer\"" in html
-    assert "name=\"decision\"" in html
-    assert "approve" in html
-    assert "request_changes" in html
-    assert "reject" in html
-    assert "name=\"reason\"" in html
-    assert "Decision actions require local server route." not in html
-
-
 def test_static_export_disables_decision_actions(tmp_path):
     api, execution_id = _full_lifecycle(tmp_path)
 

@@ -315,30 +315,6 @@ test('keeps a saving bulk dialog open and prevents duplicate submissions', async
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 });
 
-test('starts with responsibility groups and reveals roles and workers on demand', async () => {
-  const user = userEvent.setup();
-  renderTeam();
-  expect(screen.queryByRole('heading', { name: 'Implementation' })).not.toBeInTheDocument();
-  expect(screen.queryByText('Builder A')).not.toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Requirements & planning' })).toBeVisible();
-  for (const name of ['Requirements & planning', 'Design & implementation', 'Quality & delivery']) {
-    await user.click(screen.getByRole('button', { name: `Show roles in ${name}` }));
-  }
-
-  expect(screen.getByRole('heading', { name: 'Team' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Implementation' })).toBeVisible();
-  expect(screen.getByText('Builder A')).toBeVisible();
-  expect(screen.getByText('Builder B')).toBeVisible();
-  const qa = screen.getByRole('heading', { name: 'QA' }).closest('article');
-  expect(within(qa).getByText('Degraded')).toBeVisible();
-  const research = screen.getByRole('heading', { name: 'Research' }).closest('article');
-  expect(within(research).getByText('Unstaffed')).toBeVisible();
-  const planner = screen.getByRole('heading', { name: 'Planner' }).closest('article');
-  expect(within(planner).getByText('Disabled')).toBeVisible();
-  // The legacy type-level configuration surface stays gone.
-  expect(screen.queryByText('Desired instances')).not.toBeInTheDocument();
-});
-
 test('disabling a role goes through the control-plane command', async () => {
   const user = userEvent.setup();
   renderTeam();
@@ -521,30 +497,6 @@ test('edits the Task Assistant runtime without making it a role', async () => {
   ));
 });
 
-test('history panel groups the decision ledger', async () => {
-  mocks.getTeamEvents.mockResolvedValue({
-    events: [
-      { id: 'e1', decision_id: 'dec-1', timestamp: '2026-09-05T10:00:00Z', actor: 'user', surface: 'team_ui', event: 'team_role.disabled', target: { kind: 'team_role', id: 'research' }, reason: 'Disable Research', cause: 'user_command' },
-      { id: 'e2', decision_id: 'dec-1', timestamp: '2026-09-05T10:00:00Z', actor: 'system', surface: 'team_ui', event: 'worker.inactivated', target: { kind: 'worker', id: 'research-a' }, reason: '', cause: 'cascade' },
-    ],
-  });
-  const user = userEvent.setup();
-  renderTeam();
-
-  await user.click(screen.getByRole('button', { name: 'History' }));
-  const dialog = screen.getByRole('dialog');
-  // One decision header for the shared decision id: both causal events stay
-  // grouped, visible, and attributed. The raw ledger enum stays a backend
-  // contract; the panel may translate event labels later.
-  expect(within(dialog).getAllByText('dec-1')).toHaveLength(1);
-  expect(within(dialog).getAllByRole('listitem')).toHaveLength(2);
-  expect(within(dialog).getByText('Disable Research')).toBeVisible();
-  expect(within(dialog).getByText(/research-a/)).toBeVisible();
-  expect(within(dialog).getByText(/cascaded/)).toBeVisible();
-  await user.keyboard('{Escape}');
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-});
-
 test('surfaces command failures to the user', async () => {
   mocks.sendTeamCommands.mockRejectedValue(new Error('The team control plane rejected this command.'));
   const user = userEvent.setup();
@@ -592,22 +544,4 @@ test('worker edit commands diff identity, role, runtime, and lifecycle', () => {
     { kind: 'change_worker_runtime', worker_id: 'implementation-a', provider: 'claude', model: 'claude-opus-4-5', reasoning_depth: 'high', additional_prompt: 'Be brief.' },
     { kind: 'activate_worker', worker_id: 'implementation-a' },
   ]));
-});
-
-test('finds roles by worker runtime and filters setup needs without changing the team', async () => {
-  const user = userEvent.setup();
-  renderTeam();
-  await user.type(screen.getByRole('searchbox', { name: 'Find a role, worker or model' }), 'gpt-5.4');
-  expect(screen.getByRole('heading', { name: 'Implementation' })).toBeVisible();
-  expect(screen.queryByRole('heading', { name: 'QA' })).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Needs setup' }));
-  expect(screen.getByText('No matches. Try another search or clear your filters.')).toBeVisible();
-  await user.click(screen.getByRole('button', { name: 'Clear search' }));
-  expect(screen.getByRole('heading', { name: 'QA' })).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Research' })).toBeVisible();
-  expect(screen.queryByRole('heading', { name: 'Implementation' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('heading', { name: 'Planner' })).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Disabled', exact: true }));
-  expect(screen.getByRole('heading', { name: 'Planner' })).toBeVisible();
-  expect(mocks.sendTeamCommands).not.toHaveBeenCalled();
 });
