@@ -208,3 +208,17 @@ def test_git_revision_is_distinct_from_logical_installed_identity():
     second = replace(first, revision="b" * 40)
     assert installed_id(scope, first) == installed_id(scope, second)
     assert installed_id(scope, first) != installed_id(SkillScope("user", "bob"), first)
+
+
+def test_programmatic_capture_stops_reading_at_the_configured_entry_bound():
+    consumed = []
+
+    def files():
+        for index in range(100):
+            consumed.append(index)
+            yield PackageFile(f"file-{index}", b"data")
+
+    with pytest.raises(SkillError) as error:
+        package_from_files(files(), limits=PackageLimits(max_files=3))
+    assert error.value.code == "package_limit"
+    assert consumed == [0, 1, 2, 3]

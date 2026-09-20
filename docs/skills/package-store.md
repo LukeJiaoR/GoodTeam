@@ -112,11 +112,12 @@ There is no active version named `latest` and no fallback to another package.
 Partial staging is cleaned only inside the operation's own temporary directory.
 
 Every mutation requires a command key. Same key/same input replays the original
-result; a different input under the same key returns `operation_conflict` rather
-than creating a second operation. New command keys for identical source/content
-still reuse the same immutable version. The index is versioned and bounded;
-unknown schema, malformed ownership or duplicate JSON keys fail closed, without
-rewriting state.
+receipt and exact version; the accompanying installed-record view reflects the
+current library, not a historical or Role-active selection. A different input
+under the same key returns `operation_conflict` rather than creating a second
+operation. New command keys for identical source/content still reuse the same
+immutable version. The index is versioned and bounded; unknown schema, malformed
+ownership or duplicate JSON keys fail closed, without rewriting state.
 
 ## Retention pins and APIs
 

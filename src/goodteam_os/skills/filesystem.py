@@ -10,6 +10,27 @@ from typing import Iterator
 from .models import SkillError, resource_path
 
 
+def _child_directory(parent: int, name: str, *, create: bool) -> int:
+    created = False
+    if create:
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent)
+            created = True
+        except FileExistsError:
+            pass
+    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+    try:
+        if created:
+            # Restore only owner access needed for newly created storage paths.
+            os.fchmod(child, 0o700)
+            os.fsync(child)
+            os.fsync(parent)
+        return child
+    except BaseException:
+        os.close(child)
+        raise
+
+
 @contextmanager
 def directory(path: Path, *, create: bool = False) -> Iterator[int]:
     """Walk every path component without following links; caller authorizes root.
@@ -25,12 +46,7 @@ def directory(path: Path, *, create: bool = False) -> Iterator[int]:
     fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in path.parts[1:]:
-            if create:
-                try:
-                    os.mkdir(part, mode=0o700, dir_fd=fd)
-                except FileExistsError:
-                    pass
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            child = _child_directory(fd, part, create=create)
             os.close(fd)
             fd = child
         yield fd
@@ -46,12 +62,7 @@ def subdirectory(root_fd: int, relative: str, *, create: bool = False) -> Iterat
     fd = os.dup(root_fd)
     try:
         for part in relative.split("/"):
-            if create:
-                try:
-                    os.mkdir(part, mode=0o700, dir_fd=fd)
-                except FileExistsError:
-                    pass
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            child = _child_directory(fd, part, create=create)
             os.close(fd)
             fd = child
         yield fd
@@ -87,4 +98,5 @@ def write_new(fd: int, name: str, data: bytes, *, mode: int = 0o600) -> None:
     with os.fdopen(target, "wb") as stream:
         stream.write(data)
         stream.flush()
+        os.fchmod(stream.fileno(), mode)
         os.fsync(stream.fileno())

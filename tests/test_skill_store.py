@@ -267,3 +267,30 @@ def test_git_provenance_revision_changes_without_losing_original_bytes(store):
     assert first.version.version_id != second.version.version_id
     assert first.version.package_digest == second.version.package_digest
     assert store.get_version(first.installed.skill_id, first.version.version_id).source.revision == "a" * 40
+
+
+def test_restrictive_umask_does_not_rewrite_executable_intent(store, origin):
+    previous = os.umask(0o177)
+    try:
+        result = store.publish(make_package(), origin, command_key="restrictive-umask")
+    finally:
+        os.umask(previous)
+    assert store.get_version(result.installed.skill_id, result.version.version_id).package_digest == make_package().digest
+    script = store.root / store.scope.namespace / "objects" / result.version.package_digest[7:] / "content/script.sh"
+    assert script.stat().st_mode & 0o777 == 0o500
+
+
+def test_nested_empty_directories_survive_full_store_roundtrip(store, origin):
+    package = package_from_files([PackageFile("SKILL.md", MAIN)], ["a", "a/b", "a/b/c"])
+    result = store.publish(package, origin, command_key="nested-directories")
+    assert store.get_version(result.installed.skill_id, result.version.version_id).package_digest == package.digest
+    folder = store.root / store.scope.namespace / "objects" / package.digest[7:] / "content/a/b/c"
+    assert folder.is_dir()
+
+
+def test_replay_returns_fixed_receipt_version_and_a_separate_current_install_view(store, origin):
+    first = store.publish(make_package(), origin, command_key="first")
+    second = store.publish(make_package(b"second"), origin, command_key="second")
+    replay = store.publish(make_package(), origin, command_key="first")
+    assert replay.replayed and replay.version == first.version and replay.revision == first.revision
+    assert replay.installed == second.installed  # Current state is not an active-version selection.

@@ -258,6 +258,7 @@ class SkillStore:
             os.mkdir(name, mode=0o700, dir_fd=objects)
             try:
                 with subdirectory(objects, name) as staging:
+                    os.fchmod(staging, 0o700)
                     with subdirectory(staging, "content", create=True) as content:
                         for relative in package.directories:
                             with subdirectory(content, relative, create=True) as child:
@@ -270,6 +271,10 @@ class SkillStore:
                                     os.fsync(child)
                             else:
                                 write_new(content, leaf, item.data, mode=0o500 if item.executable else 0o400)
+                        # Children must be durable before their parent entries.
+                        for relative in sorted(package.directories, key=lambda value: value.count("/"), reverse=True):
+                            with subdirectory(content, relative) as child:
+                                os.fsync(child)
                         os.fsync(content)
                     write_new(staging, "manifest.json", canonical_json(package.manifest).encode(), mode=0o400)
                     os.fsync(staging)

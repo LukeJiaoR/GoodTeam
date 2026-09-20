@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from itertools import islice
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -184,10 +185,14 @@ class SkillPackage:
 def package_from_files(files, directories=(), *, root_name="", limits: PackageLimits | None = None) -> SkillPackage:
     """Validate captured bytes; source paths are not reopened when publishing."""
     limits = limits or PackageLimits()
-    files = tuple(sorted(files, key=lambda item: item.path))
-    directories = tuple(sorted(directories))
+    files = tuple(islice(files, limits.max_files + 1))
+    directories = tuple(islice(directories, limits.max_entries + 1))
     if len(files) > limits.max_files or len(files) + len(directories) > limits.max_entries:
         raise SkillError("package_limit", "Skill package contains too many resources.")
+    if any(not isinstance(item, PackageFile) for item in files) or any(not isinstance(item, str) for item in directories):
+        raise SkillError("invalid_package", "Invalid captured file or directory record.")
+    files = tuple(sorted(files, key=lambda item: item.path))
+    directories = tuple(sorted(directories))
     identities = set()
     for relative in (*directories, *(item.path for item in files)):
         resource_path(relative)
