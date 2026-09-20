@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ConversationComposer from './ConversationComposer';
-import ConversationChangeContext from './ConversationChangeContext';
+import ConversationChangeContext from './ConversationChangeContext.jsx';
 
 const t = (key) => key;
 const target = { project_key: 'A', approval: 'rfc', run_id: 'r', target_type: 'review', target_id: 'rfc', artifact_key: 'rfc', artifact_version: 'v1' };

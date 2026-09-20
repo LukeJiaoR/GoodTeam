@@ -1,63 +1,63 @@
 profiles:
   balanced:
     orchestrator:
-      primary: codex:gpt-5.4
-      fallback: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      fallback: codex:gpt-5.6-sol
       mode: short-context
     research:
-      primary: codex:gpt-5.4
-      fallback: codex:gpt-5.4
-      assistant: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      fallback: codex:gpt-5.6-sol
+      assistant: codex:gpt-5.6-sol
       mode: long-context
     product_requirement:
-      primary: codex:gpt-5.4
-      draft: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      draft: codex:gpt-5.6-sol
       mode: spec-writing
     architect:
-      primary: codex:gpt-5.4
-      reviewer: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      reviewer: codex:gpt-5.6-sol
       mode: high-reasoning
     review:
-      primary: codex:gpt-5.4
-      reviewer: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      reviewer: codex:gpt-5.6-sol
       mode: adversarial-review
     planner:
-      primary: codex:gpt-5.4
-      reviewer: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      reviewer: codex:gpt-5.6-sol
       mode: structured-breakdown
     ui:
-      primary: codex:gpt-5.4
-      fallback: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      fallback: codex:gpt-5.6-sol
       mode: multimodal
     implementation:
-      primary: codex:gpt-5.4
-      fallback: codex:gpt-5.4
-      assistant: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      fallback: codex:gpt-5.6-sol
+      assistant: codex:gpt-5.6-sol
       mode: worker-dispatch
     frontend:
-      primary: codex:gpt-5.4
-      fallback: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      fallback: codex:gpt-5.6-sol
       mode: implementation
     backend:
-      primary: codex:gpt-5.4
-      assistant: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      assistant: codex:gpt-5.6-sol
       mode: implementation
     qa:
-      primary: codex:gpt-5.4
-      fallback: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      fallback: codex:gpt-5.6-sol
       mode: test-design
     code_review:
-      first_pass: codex:gpt-5.4
-      primary: codex:gpt-5.4
-      architecture_review: codex:gpt-5.4
+      first_pass: codex:gpt-5.6-sol
+      primary: codex:gpt-5.6-sol
+      architecture_review: codex:gpt-5.6-sol
       mode: multi-pass-review
     release:
-      primary: codex:gpt-5.4
-      checklist: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      checklist: codex:gpt-5.6-sol
       mode: release-control
     retro_memory:
-      primary: codex:gpt-5.4
-      reviewer: codex:gpt-5.4
+      primary: codex:gpt-5.6-sol
+      reviewer: codex:gpt-5.6-sol
       mode: memory-writing
   cheap:
     orchestrator:

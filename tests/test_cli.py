@@ -443,7 +443,7 @@ def test_cli_start_dry_run_does_not_write_state_or_artifacts(tmp_path):
     assert payload["dry_run"] is True
     assert payload["next_node"] == "await_prd_approval"
     assert payload["planned_artifacts"]["prd"].endswith("/prd/prd.md")
-    assert payload["role_models"]["architect"]["primary"] == "codex:gpt-5.4"
+    assert payload["role_models"]["architect"]["primary"] == "codex:gpt-5.6-sol"
     assert not (tmp_path / "state" / "current.json").exists()
     assert not (tmp_path / "artifacts").exists()
 
