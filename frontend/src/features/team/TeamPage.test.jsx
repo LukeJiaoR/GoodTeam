@@ -599,9 +599,9 @@ test('configures a Role with an installed Skill without changing worker state', 
   const qa = screen.getByRole('article', { name: 'QA' });
   await user.click(within(qa).getByRole('button', { name: 'Methods' }));
   const dialog = screen.getByRole('dialog', { name: 'QA methods' });
-  await screen.findByText('qa-method');
   await user.click(within(dialog).getByRole('radio', { name: /Custom Skills/i }));
-  await user.click(within(dialog).getByRole('checkbox', { name: /qa-method/i }));
+  const skillChoice = await within(dialog).findByRole('checkbox', { name: /qa-method/i });
+  await user.click(skillChoice);
   await user.click(within(dialog).getByRole('button', { name: 'Save methods' }));
 
   expect(mocks.sendTeamCommands).toHaveBeenCalledExactlyOnceWith(
