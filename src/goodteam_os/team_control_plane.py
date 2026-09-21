@@ -459,6 +459,10 @@ class TeamControlPlaneStore:
             if expected_revision is not None and expected_revision != state["revision"]:
                 raise TeamControlPlaneError("Team changed since this proposal. Request a new proposal.")
 
+            recoverable_binding_decision = any(
+                str(item.get("kind", "") or "") == "set_role_skills"
+                for item in commands
+            )
             binding_resolver = None
             needs_binding_lookup = any(
                 str(item.get("kind", "") or "") == "set_role_skills"
@@ -503,12 +507,16 @@ class TeamControlPlaneStore:
                 }
                 state["executed_commands"] = executed
 
-            state["pending_events"] = deepcopy(events)
-            self._write_state(state)
-            if events:
-                self._append_events(events)
-                state["pending_events"] = []
+            if recoverable_binding_decision:
+                state["pending_events"] = deepcopy(events)
                 self._write_state(state)
+                if events:
+                    self._append_events(events)
+                    state["pending_events"] = []
+                    self._write_state(state)
+            else:
+                self._write_state(state)
+                self._append_events(events)
             if events and config_path is not None:
                 _sync_legacy_worker_config_view(config_path, state)
             return {
