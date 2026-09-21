@@ -35,6 +35,18 @@ function role(binding = {}) {
   };
 }
 
+function refreshedState(bindingRevision = 1, teamRevision = 8) {
+  return {
+    team: {
+      project_key: 'DEMO',
+      revision: teamRevision,
+      roles: [{ role: 'code_review', skill_binding: {
+        subject: 'role:code_review', binding_revision: bindingRevision,
+      } }],
+    },
+  };
+}
+
 function renderDialog(overrides = {}) {
   const props = {
     api: { getSkillLibrary: vi.fn().mockResolvedValue({ skills: [skill] }) },
@@ -122,18 +134,18 @@ test('explicit default mode restores the default preset rather than silently fal
   }), { expectedTeamRevision: 12 });
 });
 
-test('refreshing current truth preserves the local draft and exposes a changed baseline', async () => {
+test('explicit refresh preserves the draft and adopts only the returned baseline', async () => {
   const user = userEvent.setup();
-  const initial = role();
-  const onRefresh = vi.fn().mockResolvedValue({});
-  const { rerender, props } = renderDialog({ role: initial, onRefresh });
+  const onRefresh = vi.fn().mockResolvedValue(refreshedState());
+  const { rerender, props } = renderDialog({ onRefresh });
   await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
   await screen.findByRole('checkbox', { name: /custom-review/i });
   await user.click(screen.getByRole('checkbox', { name: /custom-review/i }));
   await user.click(screen.getByRole('button', { name: 'Refresh current' }));
   expect(onRefresh).toHaveBeenCalledOnce();
 
-  rerender(<RoleSkillsDialog {...props} role={role({ bindingRevision: 1 })} currentTeamRevision={8} />);
+  // A later background poll must not rebase past the explicit refresh response.
+  rerender(<RoleSkillsDialog {...props} role={role({ bindingRevision: 2 })} currentTeamRevision={9} />);
   expect(screen.getByText(/changed while this editor was open/i)).toBeVisible();
   expect(screen.getByRole('checkbox', { name: /custom-review/i })).toBeChecked();
 
@@ -142,4 +154,64 @@ test('refreshing current truth preserves the local draft and exposes a changed b
     expected_binding_revision: 1,
     bindings: [expect.objectContaining({ skill_id: skill.skill_id })],
   }), { expectedTeamRevision: 8 });
+});
+
+test('background polling does not rebase an old draft or an uncertain-result retry', async () => {
+  const user = userEvent.setup();
+  const { rerender, props } = renderDialog();
+  await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
+  await user.click(await screen.findByRole('checkbox', { name: /custom-review/i }));
+  await user.click(screen.getByRole('button', { name: 'Save methods' }));
+  const first = props.onSubmit.mock.calls[0];
+
+  rerender(<RoleSkillsDialog {...props} role={role({ bindingRevision: 1 })} currentTeamRevision={8} />);
+  expect(screen.getByRole('checkbox', { name: /custom-review/i })).toBeChecked();
+  await user.click(screen.getByRole('button', { name: 'Save methods' }));
+
+  expect(props.onSubmit).toHaveBeenCalledTimes(2);
+  expect(props.onSubmit.mock.calls[1]).toEqual(first);
+  expect(first[0].expected_binding_revision).toBe(0);
+  expect(first[1].expectedTeamRevision).toBe(7);
+  expect(props.onRefresh).not.toHaveBeenCalled();
+});
+
+test.each([null, {}, { team: { ...refreshedState().team, project_key: 'OTHER' } }])(
+  'an unavailable or wrong-project refresh does not adopt a polled revision: %j',
+  async (payload) => {
+    const user = userEvent.setup();
+    const { rerender, props } = renderDialog({ onRefresh: vi.fn().mockResolvedValue(payload) });
+    await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
+    await screen.findByRole('checkbox', { name: /custom-review/i });
+    rerender(<RoleSkillsDialog {...props} role={role({ bindingRevision: 1 })} currentTeamRevision={8} />);
+    await user.click(screen.getByRole('button', { name: 'Refresh current' }));
+    await user.click(screen.getByRole('button', { name: 'Save methods' }));
+    expect(props.onSubmit).toHaveBeenLastCalledWith(expect.objectContaining({
+      expected_binding_revision: 0,
+    }), { expectedTeamRevision: 7 });
+  },
+);
+
+test('a missing custom version blocks custom save but not explicit default restoration', async () => {
+  const user = userEvent.setup();
+  const customRole = role({
+    bindingRevision: 4,
+    mode: 'custom',
+    status: 'configured',
+    items: [{
+      skill_id: skill.skill_id,
+      version_id: 'version-' + '9'.repeat(64),
+      package_digest: version.package_digest,
+      activation: 'required',
+      enabled: true,
+    }],
+  });
+  const { props } = renderDialog({ role: customRole, currentTeamRevision: 12 });
+  await screen.findByRole('checkbox', { name: /custom-review/i });
+  expect(screen.getByRole('button', { name: 'Save methods' })).toBeDisabled();
+  await user.click(screen.getByRole('radio', { name: /GoodTeam default methods/i }));
+  expect(screen.getByRole('button', { name: 'Restore default methods' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Restore default methods' }));
+  expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    mode: 'default', bindings: [], expected_binding_revision: 4,
+  }), { expectedTeamRevision: 12 });
 });

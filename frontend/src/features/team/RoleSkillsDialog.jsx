@@ -42,10 +42,17 @@ export default function RoleSkillsDialog({
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
   const [openedBindingRevision] = useState(() => role.skillBinding.bindingRevision);
+  // Polling may update the displayed truth, but must not rebase this draft or
+  // change the semantic payload of an uncertain-result retry.
+  const [submissionBaseline, setSubmissionBaseline] = useState(() => ({
+    teamRevision: currentTeamRevision,
+    bindingRevision: role.skillBinding.bindingRevision,
+  }));
   const [mode, setMode] = useState(role.skillBinding.mode || 'default');
   const [selections, setSelections] = useState(() => initialSelections(role));
   const [library, setLibrary] = useState({ skills: [] });
   const [loadError, setLoadError] = useState(null);
+  const [refreshError, setRefreshError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const handleKeyDown = useTeamDialog(dialogRef, closeRef, () => {
@@ -105,8 +112,17 @@ export default function RoleSkillsDialog({
     });
   };
 
+  const selectedIds = new Set(Object.keys(selections));
+  const missingSelections = Object.values(selections).filter((item) => {
+    const skill = installedById.get(item.skillId);
+    return !skill || !findVersion(skill, item.versionId);
+  });
+  const submitBlocked = saving || refreshing
+    || (mode === 'custom' && (loading || Boolean(loadError) || missingSelections.length > 0));
+
   const submit = (event) => {
     event.preventDefault();
+    if (submitBlocked) return;
     const bindings = mode === 'custom'
       ? Object.values(selections).map((selection) => ({
         skill_id: selection.skillId,
@@ -121,25 +137,37 @@ export default function RoleSkillsDialog({
       subject: role.skillBinding.subject || `role:${role.role}`,
       mode,
       bindings,
-      expected_binding_revision: role.skillBinding.bindingRevision,
-    }, { expectedTeamRevision: currentTeamRevision });
+      expected_binding_revision: submissionBaseline.bindingRevision,
+    }, { expectedTeamRevision: submissionBaseline.teamRevision });
   };
 
   const refreshCurrent = async () => {
     if (refreshing || saving) return;
     setRefreshing(true);
+    setRefreshError(null);
     try {
-      await onRefresh();
+      // Only this explicit action may adopt a new CAS baseline. Read the
+      // returned snapshot, not props captured before the request or a later poll.
+      const payload = await onRefresh();
+      const team = payload?.team;
+      const binding = team?.roles?.find((entry) => entry.role === role.role)?.skill_binding;
+      if (
+        team?.project_key === projectKey
+        && Number.isInteger(team.revision)
+        && binding?.subject === (role.skillBinding.subject || `role:${role.role}`)
+        && Number.isInteger(binding.binding_revision)
+      ) {
+        setSubmissionBaseline({
+          teamRevision: team.revision,
+          bindingRevision: binding.binding_revision,
+        });
+      }
+    } catch (caught) {
+      setRefreshError(caught);
     } finally {
       setRefreshing(false);
     }
   };
-
-  const selectedIds = new Set(Object.keys(selections));
-  const missingSelections = Object.values(selections).filter((item) => {
-    const skill = installedById.get(item.skillId);
-    return !skill || !findVersion(skill, item.versionId);
-  });
 
   return (
     <div
@@ -178,6 +206,7 @@ export default function RoleSkillsDialog({
         <div className="team-skills-dialog__body">
           {error ? <ProductError error={error} t={t} /> : null}
           {loadError ? <ProductError error={loadError} t={t} /> : null}
+          {refreshError ? <ProductError error={refreshError} t={t} /> : null}
 
           <div className="team-skills-dialog__status">
             <span>{t('team.roleSkills.project', { project: projectKey || role.skillBinding.projectKey || '—' })}</span>
@@ -189,7 +218,18 @@ export default function RoleSkillsDialog({
           {staleBaseline ? (
             <div className="team-skills-dialog__stale" role="status">
               <AlertTriangle aria-hidden="true" size={16} />
-              <span>{t('team.roleSkills.changedWhileEditing')}</span>
+              <div>
+                <span>{t('team.roleSkills.changedWhileEditing')}</span>
+                <p>{t(`team.roleSkills.status.${role.skillBinding.status}`)} · r{role.skillBinding.bindingRevision}</p>
+                <ul>
+                  {(role.skillBinding.items || []).map((item) => (
+                    <li key={item.skill_id}>
+                      {installedById.get(item.skill_id)?.name || item.skill_id}
+                      {' · '}<code>{item.version_id}</code>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           ) : null}
 
@@ -345,11 +385,7 @@ export default function RoleSkillsDialog({
           <Button variant="secondary" type="button" disabled={saving || refreshing} onClick={onClose}>
             {t('team.dialog.cancel')}
           </Button>
-          <Button
-            type="submit"
-            disabled={saving || refreshing || loading || missingSelections.length > 0}
-            busy={saving}
-          >
+          <Button type="submit" disabled={submitBlocked} busy={saving}>
             {mode === 'default' ? t('team.roleSkills.restoreDefault') : t('team.roleSkills.save')}
           </Button>
         </footer>
