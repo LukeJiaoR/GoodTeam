@@ -1243,6 +1243,22 @@ def _request_origin_is_same_origin(*, origin: str, host: str) -> bool:
     return origin_name in local_hosts and request_name in local_hosts
 
 
+def _request_host_is_loopback(host: str) -> bool:
+    if not host:
+        return False
+    try:
+        parsed = urlparse(f"//{host}")
+        hostname = (parsed.hostname or "").lower()
+    except ValueError:
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
 def _native_picker_request_targets_local_server(*, request_host: str, port: int) -> bool:
     if not request_host:
         return False
@@ -6670,7 +6686,11 @@ def build_dashboard_handler(workspace: Path):
                     client = ipaddress.ip_address(str(self.client_address[0]))
                 except ValueError:
                     client = None
-                if client is None or not client.is_loopback:
+                if (
+                    client is None
+                    or not client.is_loopback
+                    or not _request_host_is_loopback(str(self.headers.get("Host", "")))
+                ):
                     self._send_api_error(
                         ProjectApiError(
                             "local_skill_import_requires_loopback",
