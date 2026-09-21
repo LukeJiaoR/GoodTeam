@@ -1,4 +1,4 @@
-import json
+from concurrent.futures import ThreadPoolExecutor\nimport json
 from pathlib import Path
 
 import pytest
@@ -120,3 +120,24 @@ def test_library_store_refuses_worker_workspace_before_creating_library_state(tm
         SkillLibraryService(state_root, worker_roots=(workspace,))
     assert exc.value.code == "unsafe_store_root"
     assert not (state_root / "skills").exists()
+
+
+def test_concurrent_preview_and_install_replay_one_logical_operation(tmp_path):
+    source = write_skill(tmp_path / "skill")
+    service = SkillLibraryService(tmp_path / "state")
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        previews = list(pool.map(
+            lambda _: service.preview_local(str(source), command_key="concurrent-preview"),
+            range(12),
+        ))
+    proposal_ids = {item["proposal_id"] for item in previews}
+    assert len(proposal_ids) == 1
+
+    proposal_id = previews[0]["proposal_id"]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        installs = list(pool.map(lambda _: service.install(proposal_id), range(12)))
+    assert {item["status"] for item in installs} == {"installed"}
+    library = service.list_library()
+    assert len(library["skills"]) == 1
+    assert len(library["skills"][0]["versions"]) == 1
