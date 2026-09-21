@@ -700,3 +700,14 @@
   .team-skills-dialog__body { padding-inline: 1rem; }
   .team-skills-dialog__options { grid-template-columns: minmax(0, 1fr); padding-left: 0; }
 }
+
+.team-skills-dialog__missing { display: grid; gap: 0.45rem; }
+.team-skills-dialog__missing > ul { margin: 0; padding: 0; list-style: none; }
+.team-skills-dialog__missing > ul > li {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.5rem;
+}
+.team-skills-dialog__missing code { overflow-wrap: anywhere; font-size: 0.62rem; }
