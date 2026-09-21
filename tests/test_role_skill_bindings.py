@@ -12,6 +12,7 @@ from goodteam_os.team_control_plane import (
     ensure_team_state,
     execute_team_commands,
     load_team_view,
+    preview_team_commands,
 )
 
 
@@ -216,6 +217,25 @@ def test_binding_rejects_stale_revision_and_uninstalled_version_without_mutation
             expected_revision=first["team_revision"],
             config_path=config,
         )
+
+    stale_digest = {**item, "package_digest": "sha256:" + "f" * 64}
+    with pytest.raises(TeamControlPlaneError, match="no longer matches"):
+        execute_team_commands(
+            workspace,
+            "DEMO",
+            [{
+                "kind": "set_role_skills",
+                "subject": "role:qa",
+                "mode": "custom",
+                "bindings": [stale_digest],
+                "expected_binding_revision": 0,
+            }],
+            actor="user",
+            surface="team_ui",
+            command_key="stale-digest",
+            expected_revision=first["team_revision"],
+            config_path=config,
+        )
     assert store.read() == before
     assert len(store.read_events()) == event_count
 
@@ -379,3 +399,31 @@ def test_http_rejects_stale_team_revision_before_binding_mutation(tmp_path):
     current = TeamControlPlaneStore(workspace, "DEMO").read()
     assert current["skill_bindings"]["role:qa"]["mode"] == "default"
     assert current["skill_bindings"]["role:qa"]["binding_revision"] == 0
+
+
+def test_workflow_role_preview_keeps_project_intake_identity(tmp_path):
+    workspace, _config = make_project(tmp_path)
+    state = TeamControlPlaneStore(workspace, "DEMO").read()
+    preview = preview_team_commands(
+        state,
+        [{
+            "kind": "set_role_skills",
+            "subject": "workflow_role:project_intake",
+            "mode": "custom",
+            "bindings": [],
+            "expected_binding_revision": 0,
+        }],
+    )
+    assert preview["changes"] == [{
+        "command_index": 0,
+        "target": {
+            "kind": "role_skill_binding",
+            "id": "workflow_role:project_intake",
+            "role": "project_intake",
+            "label": "Project Intake",
+        },
+        "before": preview["changes"][0]["before"],
+        "after": preview["changes"][0]["after"],
+    }]
+    assert preview["changes"][0]["before"]["status"] == "default"
+    assert preview["changes"][0]["after"]["status"] == "unconfigured"
