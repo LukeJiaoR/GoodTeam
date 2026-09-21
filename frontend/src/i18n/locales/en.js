@@ -673,6 +673,7 @@ export const en = {
   'team.roleSkills.restoreDefault': 'Restore default methods',
   'team.roleSkills.changedWhileEditing': 'The current Role binding changed while this editor was open. Your draft is preserved; compare it with the refreshed state before saving.',
   'team.roleSkills.missingVersion': 'A configured Skill version is no longer available in the Library. Remove or restore it before saving.',
+  'team.roleSkills.remove': 'Remove',
   'team.roleSkills.status.default': 'Default methods',
   'team.roleSkills.status.configured': 'Custom methods',
   'team.roleSkills.status.unconfigured': 'Methods unconfigured',
