@@ -24,6 +24,7 @@ execution snapshot at start.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 from copy import deepcopy
@@ -32,6 +33,16 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
+from goodteam_os.skills.bindings import (
+    default_binding,
+    manager_subject,
+    normalize_binding,
+    normalize_binding_map,
+    normalize_items,
+    project_binding,
+    role_subject,
+)
+from goodteam_os.skills.models import SkillError
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.state import normalize_project_key
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, worker_backend_doctor
@@ -227,6 +238,17 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
         raise TeamControlPlaneError("Team workers must be a list")
     manager = payload.get("manager", {})
     manager_runtime = _sanitize_worker_runtime(dict(manager).get("runtime", {}) if isinstance(manager, dict) else {})
+    try:
+        skill_bindings = normalize_binding_map(
+            payload.get("skill_bindings", {}),
+            role_keys=ROLE_KEYS,
+            manager_role=MANAGER_ROLE,
+        )
+    except SkillError as exc:
+        raise TeamControlPlaneError(str(exc)) from exc
+    pending_raw = payload.get("pending_events", [])
+    if not isinstance(pending_raw, list) or any(not isinstance(item, dict) or not item.get("id") for item in pending_raw):
+        raise TeamControlPlaneError("Pending Team audit events are invalid")
     return {
         "schema_version": TEAM_CONTROL_PLANE_SCHEMA_VERSION,
         "project_key": normalize_project_key(str(payload.get("project_key", "") or "")),
@@ -234,8 +256,10 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
         "roles": roles,
         "workers": [_sanitize_worker_record(item) for item in workers_raw],
         "manager": {"runtime": manager_runtime, "updated_at": str(dict(manager).get("updated_at", "") or "") if isinstance(manager, dict) else ""},
+        "skill_bindings": skill_bindings,
         "migrated": dict(payload.get("migrated", {}) or {}) if isinstance(payload.get("migrated", {}), dict) else {},
         "executed_commands": dict(payload.get("executed_commands", {}) or {}) if isinstance(payload.get("executed_commands", {}), dict) else {},
+        "pending_events": [deepcopy(item) for item in pending_raw],
     }
 
 
