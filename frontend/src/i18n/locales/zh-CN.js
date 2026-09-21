@@ -654,6 +654,7 @@ export const zhCN = {
   'team.roleSkills.description': '设置这个角色可以使用的工作方法；这里只影响后续新任务的配置。',
   'team.roleSkills.close': '关闭角色方法',
   'team.roleSkills.futureOnly': '仅影响后续任务',
+  'team.roleSkills.project': '项目 {{project}}',
   'team.roleSkills.methodMode': '方法来源',
   'team.roleSkills.defaultMode': 'GoodTeam 默认方法',
   'team.roleSkills.defaultModeHint': '使用 GoodTeam 为该角色提供的默认专业方法预设。',
