@@ -86,6 +86,7 @@ test('preview retry keeps the same command key and source input', async () => {
   };
   render(<SkillLibraryPanel api={api} onClose={vi.fn()} t={t} />);
 
+  await screen.findByText('No Skills installed yet.');
   const input = screen.getByLabelText('Server directory');
   await user.type(input, '/srv/methods/my-review');
   await user.click(screen.getByRole('button', { name: 'Preview' }));
