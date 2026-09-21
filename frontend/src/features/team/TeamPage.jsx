@@ -11,6 +11,7 @@ import './team.css';
 import BatchWorkerDialog from './BatchWorkerDialog';
 import RuntimeFields from './RuntimeFields';
 import ResponsibilityGroup from './ResponsibilityGroup';
+import RoleSkillsDialog from './RoleSkillsDialog';
 import SkillLibraryPanel from './SkillLibraryPanel';
 import useTeamDialog from './useTeamDialog';
 import { buildTeamModel, capabilityCounts, groupTeamRoles, newWorkerRuntime, rosteredWorkerCount, workerCreateCommand, workerEditCommands } from './teamModel';
@@ -281,7 +282,7 @@ export default function TeamPage({ api = settingsApi }) {
     ...agents.filter((agent) => agent.available !== false).map((agent) => agent.backend),
   ])], [data, agents]);
 
-  const runCommands = async (commands, { reason = '' } = {}) => {
+  const runCommands = async (commands, { reason = '', expectedTeamRevision = null } = {}) => {
     if (commandPending.current) return;
     if (!commands.length) {
       setDialog(null);
@@ -296,7 +297,11 @@ export default function TeamPage({ api = settingsApi }) {
       commandAttempt.current = { signature, key: newCommandKey() };
     }
     try {
-      await api.sendTeamCommands(projectKey, commands, { reason, commandKey: commandAttempt.current.key });
+      await api.sendTeamCommands(projectKey, commands, {
+        reason,
+        commandKey: commandAttempt.current.key,
+        expectedTeamRevision,
+      });
       await refresh();
       setDialog(null);
       setSavedNotice(true);
@@ -511,11 +516,18 @@ export default function TeamPage({ api = settingsApi }) {
                               {t('team.actions.enableRole')}
                             </button>
                           )}
+                          <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => openDialog({ type: 'role-skills', roleKey: role.role })}>
+                            <PackageOpen aria-hidden="true" size={14} />
+                            {t('team.roleSkills.button')}
+                          </button>
                           <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => openDialog({ type: 'create', roleEntry: role })}>
                             <Plus aria-hidden="true" size={14} />
                             {t('team.actions.addWorker')}
                           </button>
                         </span>
+                        <p className="team-role-method-status" data-status={role.skillBinding.status}>
+                          {t(`team.roleSkills.status.${role.skillBinding.status}`)}
+                        </p>
                         {role.capability === 'degraded' ? (
                           <p className="team-role-warning"><AlertTriangle aria-hidden="true" size={13} />{t('team.degradedHint')}</p>
                         ) : null}
@@ -530,6 +542,29 @@ export default function TeamPage({ api = settingsApi }) {
       </section>
 
       {skillsOpen ? <SkillLibraryPanel api={api} onClose={() => setSkillsOpen(false)} t={t} /> : null}
+      {dialog?.type === 'role-skills' ? (() => {
+        const currentRole = team.roles.find((role) => role.role === dialog.roleKey);
+        if (!currentRole) return null;
+        return (
+          <RoleSkillsDialog
+            api={api}
+            currentTeamRevision={team.revision}
+            error={mutationError}
+            onClose={closeDialog}
+            onRefresh={refresh}
+            onSubmit={(command, options) => runCommands(
+              [command],
+              {
+                reason: `Configure Skills for ${currentRole.label}`,
+                expectedTeamRevision: options.expectedTeamRevision,
+              },
+            )}
+            role={currentRole}
+            saving={saving}
+            t={t}
+          />
+        );
+      })() : null}
       {dialog?.type === 'history' ? <HistoryPanel events={events} onClose={closeDialog} t={t} /> : null}
       {dialog?.type === 'batch' ? <BatchWorkerDialog {...runtimeProps} roles={dialog.roleKeys ? team.roles.filter((role) => dialog.roleKeys.includes(role.role)) : team.roles} saving={saving} onClose={closeDialog} onSubmit={(commands) => runCommands(commands, { reason: 'Configure workers in selected roles' })} t={t} /> : null}
       {dialog?.type === 'worker' ? (
