@@ -60,8 +60,8 @@ test('installs a server-local Skill, binds it to QA, and preserves Role state af
   let qa = page.getByRole('article', { name: 'QA', exact: true });
   await qa.getByRole('button', { name: 'Methods', exact: true }).click();
   dialog = page.getByRole('dialog', { name: 'QA methods', exact: true });
-  await expect(dialog.getByText(skillName, { exact: true })).toBeVisible();
   await dialog.getByRole('radio', { name: /Custom Skills/ }).check();
+  await expect(dialog.getByText(skillName, { exact: true })).toBeVisible();
   await dialog.getByRole('checkbox', { name: new RegExp(skillName) }).check();
 
   const bindResponse = page.waitForResponse(
