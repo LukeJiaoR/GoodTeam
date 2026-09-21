@@ -70,8 +70,9 @@ test('installs a server-local Skill, binds it to QA, and preserves Role state af
   );
   await dialog.getByRole('button', { name: 'Save methods', exact: true }).click();
   const bound = await bindResponse;
-  expect(bound.status(), await bound.text()).toBe(200);
-  const boundPayload = await bound.json();
+  const boundText = await bound.text();
+  expect(bound.status(), boundText).toBe(200);
+  const boundPayload = JSON.parse(boundText);
   const qaBound = boundPayload.team.roles.find((entry) => entry.role === 'qa');
   expect(qaBound.skill_binding.status).toBe('configured');
   expect(qaBound.skill_binding.mode).toBe('custom');
