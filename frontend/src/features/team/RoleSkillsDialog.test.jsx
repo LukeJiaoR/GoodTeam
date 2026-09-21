@@ -55,9 +55,9 @@ function renderDialog(overrides = {}) {
 test('replaces default methods with an exact installed Skill binding', async () => {
   const user = userEvent.setup();
   const { props } = renderDialog();
+  await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
   await screen.findByText('custom-review');
 
-  await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
   await user.click(screen.getByRole('checkbox', { name: /custom-review/i }));
   await user.selectOptions(screen.getByLabelText('Loading'), 'on_demand');
   await user.click(screen.getByRole('button', { name: 'Save methods' }));
@@ -81,9 +81,8 @@ test('replaces default methods with an exact installed Skill binding', async () 
 test('custom mode can intentionally save an empty unconfigured binding', async () => {
   const user = userEvent.setup();
   const { props } = renderDialog();
-  await screen.findByText('custom-review');
-
   await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
+  await screen.findByText('custom-review');
   expect(screen.getByText(/defaults will not be restored automatically/i)).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Save methods' }));
 
@@ -126,9 +125,8 @@ test('refreshing current truth preserves the local draft and exposes a changed b
   const initial = role();
   const onRefresh = vi.fn().mockResolvedValue({});
   const { rerender, props } = renderDialog({ role: initial, onRefresh });
-  await screen.findByText('custom-review');
-
   await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
+  await screen.findByText('custom-review');
   await user.click(screen.getByRole('checkbox', { name: /custom-review/i }));
   await user.click(screen.getByRole('button', { name: 'Refresh current' }));
   expect(onRefresh).toHaveBeenCalledOnce();
