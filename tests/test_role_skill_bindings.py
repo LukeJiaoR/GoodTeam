@@ -311,7 +311,7 @@ def test_interrupted_audit_append_recovers_once_without_reapplying_binding(tmp_p
     item = install_skill(tmp_path, monkeypatch)
     store = TeamControlPlaneStore(workspace, "DEMO")
     state = store.read()
-    original_append = store._append_events
+    original_append = store._append_events_idempotent
     calls = {"count": 0}
 
     def fail_first(events):
@@ -320,7 +320,7 @@ def test_interrupted_audit_append_recovers_once_without_reapplying_binding(tmp_p
             raise OSError("simulated ledger interruption")
         return original_append(events)
 
-    monkeypatch.setattr(store, "_append_events", fail_first)
+    monkeypatch.setattr(store, "_append_events_idempotent", fail_first)
     with pytest.raises(OSError, match="ledger interruption"):
         store.execute(
             [{
@@ -340,7 +340,7 @@ def test_interrupted_audit_append_recovers_once_without_reapplying_binding(tmp_p
     committed = store.read()
     assert committed["skill_bindings"]["role:code_review"]["binding_revision"] == 1
     assert len(committed["pending_events"]) == 1
-    monkeypatch.setattr(store, "_append_events", original_append)
+    monkeypatch.setattr(store, "_append_events_idempotent", original_append)
 
     recovered = store.reconcile_pending_audit()
     assert recovered["pending_events"] == []
