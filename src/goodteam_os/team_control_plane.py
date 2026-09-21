@@ -486,8 +486,13 @@ class TeamControlPlaneStore:
                 previous = dict(state["executed_commands"]).get(normalized_key)
                 if isinstance(previous, dict) and previous.get("decision_id"):
                     previous_fingerprint = str(previous.get("fingerprint", "") or "")
-                    if recoverable_binding_decision and previous_fingerprint and previous_fingerprint != fingerprint:
-                        raise TeamControlPlaneError("Team command key already belongs to different inputs.")
+                    if recoverable_binding_decision:
+                        if not previous_fingerprint:
+                            raise TeamControlPlaneError(
+                                "Team command key belongs to an older operation whose inputs cannot be verified."
+                            )
+                        if previous_fingerprint != fingerprint:
+                            raise TeamControlPlaneError("Team command key already belongs to different inputs.")
                     receipt = previous.get("result")
                     if isinstance(receipt, dict):
                         return {
