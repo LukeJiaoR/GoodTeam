@@ -2363,6 +2363,7 @@ def build_team_view_payload(workspace: Path, project_key: str) -> dict[str, obje
             recovery=["reload_project"],
         )
     store = TeamControlPlaneStore(workspace, key)
+    state = store.reconcile_pending_audit() or state
     return {
         "team": build_team_capability_view(state),
         "events": store.read_events(limit=200),
@@ -2373,6 +2374,7 @@ def build_team_events_payload(workspace: Path, project_key: str) -> dict[str, ob
     key = normalize_project_key(project_key)
     _project_config_for_key(workspace, key)
     store = TeamControlPlaneStore(workspace, key)
+    store.reconcile_pending_audit()
     events = store.read_events(limit=500)
     return {
         "schema_version": "team_decision_ledger.v1",
@@ -6135,6 +6137,14 @@ def handle_project_api_post(
                 400,
                 recovery=["retry_request"],
             )
+        expected_team_revision = request.get("expected_team_revision")
+        if expected_team_revision is not None and type(expected_team_revision) is not int:
+            raise ProjectApiError(
+                "invalid_request",
+                "expected_team_revision must be an integer.",
+                400,
+                recovery=["reload_team", "retry_request"],
+            )
         try:
             outcome = execute_team_commands(
                 workspace,
@@ -6146,6 +6156,7 @@ def handle_project_api_post(
                 source_ref={"client_context": dict(request.get("client_context") or {})} if request.get("client_context") else None,
                 command_key=str(request.get("command_key", "") or "")[:200],
                 config_path=config_path,
+                expected_revision=expected_team_revision,
             )
         except TeamControlPlaneError as exc:
             raise ProjectApiError(

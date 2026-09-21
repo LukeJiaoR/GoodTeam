@@ -587,3 +587,130 @@
 .skill-library__files code { overflow-wrap: anywhere; }
 .skill-library__files span { flex: none; color: var(--product-text-muted); }
 .skill-library__version { display: block; margin-top: 0.28rem; color: var(--product-text-muted); font-size: 0.62rem; overflow-wrap: anywhere; }
+
+
+/* --- Role–Skill bindings (#443) --- */
+
+.team-role-method-status {
+  margin: 0;
+  color: var(--product-text-muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+.team-role-method-status span,
+.team-role-method-status small { display: block; }
+.team-role-method-status small { margin-top: 0.12rem; font-size: 0.64rem; font-weight: 500; }
+.team-role-method-status[data-status="configured"] { color: var(--product-accent-strong); }
+.team-role-method-status[data-status="unconfigured"] { color: var(--product-warning); }
+
+.team-skills-dialog { width: min(100%, 58rem); }
+.team-skills-dialog__body { display: grid; gap: 1.1rem; padding: 1.2rem 1.5rem 1.4rem; }
+.team-skills-dialog__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
+  align-items: center;
+  color: var(--product-text-muted);
+  font-size: 0.75rem;
+}
+.team-skills-dialog__status code { font-size: 0.68rem; }
+.team-skills-dialog__stale,
+.team-skills-dialog__execution {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--product-warning);
+  border-radius: 8px;
+  color: var(--product-warning);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.team-skills-dialog__stale svg,
+.team-skills-dialog__execution svg { flex: none; margin-top: 0.1rem; }
+
+.team-skills-dialog__modes {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.team-skills-dialog__modes legend {
+  margin-bottom: 0.35rem;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+.team-skills-dialog__modes label {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  padding: 0.8rem;
+  border: 1px solid var(--product-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.team-skills-dialog__modes input { margin-top: 0.2rem; accent-color: var(--product-accent-strong); }
+.team-skills-dialog__modes label > span { display: grid; gap: 0.2rem; }
+.team-skills-dialog__modes strong { font-size: 0.8rem; }
+.team-skills-dialog__modes small { color: var(--product-text-muted); font-size: 0.72rem; line-height: 1.45; }
+
+.team-skills-dialog__library { display: grid; gap: 0.8rem; }
+.team-skills-dialog__section-heading h3 { margin: 0; font-size: 0.9rem; }
+.team-skills-dialog__section-heading p { margin: 0.25rem 0 0; color: var(--product-text-muted); font-size: 0.74rem; }
+.team-skills-dialog__list { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
+.team-skills-dialog__list > li {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.8rem;
+  border: 1px solid var(--product-border);
+  border-radius: 9px;
+}
+.team-skills-dialog__list > li[data-selected="true"] { border-color: var(--product-accent); background: var(--product-accent-soft); }
+.team-skills-dialog__select { display: flex; gap: 0.7rem; align-items: flex-start; cursor: pointer; }
+.team-skills-dialog__select input { margin-top: 0.2rem; accent-color: var(--product-accent-strong); }
+.team-skills-dialog__select > span { display: grid; min-width: 0; gap: 0.2rem; }
+.team-skills-dialog__select strong { font-size: 0.82rem; }
+.team-skills-dialog__select small,
+.team-skills-dialog__select em { color: var(--product-text-muted); font-size: 0.7rem; font-style: normal; }
+.team-skills-dialog__options {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(8rem, 0.6fr);
+  gap: 0.7rem;
+  padding-left: 1.7rem;
+}
+.team-skills-dialog__options > label { display: grid; gap: 0.3rem; }
+.team-skills-dialog__options > label > span { color: var(--product-text-muted); font-size: 0.68rem; font-weight: 650; }
+.team-skills-dialog__options select {
+  min-height: 2.35rem;
+  min-width: 0;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  color: var(--product-text);
+  background: var(--product-surface);
+}
+.team-skills-dialog__diagnostics {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--product-warning);
+  font-size: 0.7rem;
+}
+.team-skills-dialog__empty-warning { margin: 0; color: var(--product-warning); font-size: 0.75rem; }
+
+@media (max-width: 640px) {
+  .team-skills-dialog__body { padding-inline: 1rem; }
+  .team-skills-dialog__options { grid-template-columns: minmax(0, 1fr); padding-left: 0; }
+}
+
+.team-skills-dialog__missing { display: grid; gap: 0.45rem; }
+.team-skills-dialog__missing > ul { margin: 0; padding: 0; list-style: none; }
+.team-skills-dialog__missing > ul > li {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.5rem;
+}
+.team-skills-dialog__missing code { overflow-wrap: anywhere; font-size: 0.62rem; }

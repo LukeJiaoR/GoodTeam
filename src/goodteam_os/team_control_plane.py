@@ -24,6 +24,7 @@ execution snapshot at start.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 from copy import deepcopy
@@ -32,6 +33,17 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
+from goodteam_os.skills.bindings import (
+    default_binding,
+    manager_subject,
+    normalize_binding,
+    normalize_binding_map,
+    normalize_items,
+    project_binding,
+    role_subject,
+    workflow_role_subject,
+)
+from goodteam_os.skills.models import SkillError
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.state import normalize_project_key
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, worker_backend_doctor
@@ -42,6 +54,10 @@ TEAM_CAPABILITY_VIEW_SCHEMA_VERSION = "team_capability_view.v1"
 TEAM_EXECUTION_SNAPSHOT_SCHEMA_VERSION = "team_execution_snapshot.v1"
 
 MANAGER_ROLE = "orchestrator"
+# project_intake is a workflow Role Definition, not a TeamRole. Its Worker
+# identity/runtime is provided by the Research Team capability today; its
+# method configuration remains an independent workflow-role subject.
+WORKFLOW_ROLE_PROVIDERS: dict[str, str] = {"project_intake": "research"}
 
 # Worker runtime providers this product accepts, mirroring the web-layer
 # accepted backend set without importing the web module.
@@ -130,6 +146,29 @@ def _now() -> str:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
+
+
+def _command_fingerprint(
+    commands: list[dict[str, object]],
+    *,
+    reason: str,
+    source_ref: dict[str, object] | None,
+) -> str:
+    try:
+        data = json.dumps(
+            {
+                "commands": commands,
+                "reason": reason,
+                "source_ref": dict(source_ref or {}),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise TeamControlPlaneError("Team commands must be JSON-compatible values") from exc
+    return "sha256:" + hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 def role_label(role: str) -> str:
@@ -227,15 +266,31 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
         raise TeamControlPlaneError("Team workers must be a list")
     manager = payload.get("manager", {})
     manager_runtime = _sanitize_worker_runtime(dict(manager).get("runtime", {}) if isinstance(manager, dict) else {})
+    project_key = normalize_project_key(str(payload.get("project_key", "") or ""))
+    try:
+        skill_bindings = normalize_binding_map(
+            payload.get("skill_bindings", {}),
+            role_keys=ROLE_KEYS,
+            manager_role=MANAGER_ROLE,
+            project_key=project_key,
+            workflow_role_keys=tuple(WORKFLOW_ROLE_PROVIDERS),
+        )
+    except SkillError as exc:
+        raise TeamControlPlaneError(str(exc)) from exc
+    pending_raw = payload.get("pending_events", [])
+    if not isinstance(pending_raw, list) or any(not isinstance(item, dict) or not item.get("id") for item in pending_raw):
+        raise TeamControlPlaneError("Pending Team audit events are invalid")
     return {
         "schema_version": TEAM_CONTROL_PLANE_SCHEMA_VERSION,
-        "project_key": normalize_project_key(str(payload.get("project_key", "") or "")),
+        "project_key": project_key,
         "revision": int(payload.get("revision", 0) or 0),
         "roles": roles,
         "workers": [_sanitize_worker_record(item) for item in workers_raw],
         "manager": {"runtime": manager_runtime, "updated_at": str(dict(manager).get("updated_at", "") or "") if isinstance(manager, dict) else ""},
+        "skill_bindings": skill_bindings,
         "migrated": dict(payload.get("migrated", {}) or {}) if isinstance(payload.get("migrated", {}), dict) else {},
         "executed_commands": dict(payload.get("executed_commands", {}) or {}) if isinstance(payload.get("executed_commands", {}), dict) else {},
+        "pending_events": [deepcopy(item) for item in pending_raw],
     }
 
 
@@ -297,14 +352,23 @@ class TeamControlPlaneStore:
                 _sync_legacy_worker_config_view(config_path, state)
             return state
 
-    def _write_state(self, state: dict[str, object]) -> None:
+    def _write_state(self, state: dict[str, object], *, durable: bool = False) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", dir=self.state_dir, delete=False) as handle:
             json.dump(state, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+            if durable:
+                handle.flush()
+                os.fsync(handle.fileno())
             temporary = Path(handle.name)
         try:
             os.replace(temporary, self.state_path)
+            if durable:
+                directory = os.open(self.state_dir, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -340,6 +404,63 @@ class TeamControlPlaneStore:
             for event in events:
                 handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
+    def _append_events_idempotent(self, events: list[dict[str, object]]) -> None:
+        """Publish complete binding audit records while holding the Team lock.
+
+        A failed temporary write must never leave a partial JSONL record in the
+        visible ledger. Preserve its exact bytes and atomically publish the
+        extended file before the caller clears the durable pending events.
+        The ordinary Team mutation append path remains unchanged.
+        """
+        if not events:
+            return
+        existing_ids = {str(item.get("id", "")) for item in self.read_events()}
+        pending = []
+        for event in events:
+            event_id = str(event.get("id", ""))
+            if event_id not in existing_ids:
+                pending.append(event)
+                existing_ids.add(event_id)
+        previous = self.events_path.read_bytes() if self.events_path.exists() else b""
+        separator = b"\n" if previous and not previous.endswith(b"\n") else b""
+        addition = "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in pending).encode("utf-8")
+        self.events_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with NamedTemporaryFile("wb", dir=self.events_path.parent, prefix=".team-events-", delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(previous + separator + addition)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.events_path)
+            # Also establish durability when every ID was already present: a
+            # prior attempt may have stopped after replace but before fsync.
+            directory = os.open(self.events_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    def _recover_pending_events(self, state: dict[str, object]) -> None:
+        pending = [deepcopy(item) for item in list(state.get("pending_events", []) or [])]
+        if not pending:
+            return
+        self._append_events_idempotent(pending)
+        state["pending_events"] = []
+        self._write_state(state, durable=True)
+
+    def reconcile_pending_audit(self) -> dict[str, object] | None:
+        """Recover a committed state mutation whose audit append was interrupted."""
+        with self._locked():
+            state = self.read()
+            if state is None:
+                return None
+            self._recover_pending_events(state)
+            return state
+
     # --------------------------------------------------------------- commands
 
     def execute(
@@ -355,27 +476,55 @@ class TeamControlPlaneStore:
         config_path: Path | None = None,
         expected_revision: int | None = None,
     ) -> dict[str, object]:
-        """Execute one authorized decision (one or more commands).
-
-        Commands in one call share a single ``decision_id``. A repeated
-        ``command_key`` is an idempotent replay: the recorded decision is
-        returned and no new events are appended.
-        """
+        """Execute one authorized decision through one serialized Team truth."""
         if actor not in ACTORS:
             raise TeamControlPlaneError(f"Unknown actor: {actor}")
         if surface not in SURFACES:
             raise TeamControlPlaneError(f"Unknown surface: {surface}")
         if not commands:
             raise TeamControlPlaneError("At least one team command is required")
+        if any(not isinstance(item, dict) for item in commands):
+            raise TeamControlPlaneError("Each team command must be a JSON object")
+        recoverable_binding_decision = any(
+            str(item.get("kind", "") or "") == "set_role_skills"
+            for item in commands
+        )
+        fingerprint = (
+            _command_fingerprint(commands, reason=reason, source_ref=source_ref)
+            if recoverable_binding_decision
+            else ""
+        )
 
         with self._locked():
             state = self.read()
             if state is None:
                 raise TeamControlPlaneError("Team state is unavailable for this project")
+            self._recover_pending_events(state)
             normalized_key = str(command_key or "").strip()
             if normalized_key:
                 previous = dict(state["executed_commands"]).get(normalized_key)
                 if isinstance(previous, dict) and previous.get("decision_id"):
+                    previous_fingerprint = str(previous.get("fingerprint", "") or "")
+                    if recoverable_binding_decision:
+                        if not previous_fingerprint:
+                            raise TeamControlPlaneError(
+                                "Team command key belongs to an older operation whose inputs cannot be verified."
+                            )
+                        if previous_fingerprint != fingerprint:
+                            raise TeamControlPlaneError("Team command key already belongs to different inputs.")
+                    receipt = previous.get("result")
+                    if isinstance(receipt, dict):
+                        return {
+                            "ok": True,
+                            "changed": bool(receipt.get("changed", False)),
+                            "replayed": True,
+                            "decision_id": str(previous["decision_id"]),
+                            "team_revision": int(receipt.get("team_revision", state["revision"])),
+                            "events": deepcopy(list(receipt.get("events", []) or [])),
+                            "team": build_team_capability_view(state),
+                        }
+                    # Legacy receipts predate payload/result binding. Preserve their
+                    # historical replay shape rather than fabricating old events.
                     return {
                         "ok": True,
                         "changed": False,
@@ -385,12 +534,28 @@ class TeamControlPlaneStore:
                         "events": [],
                         "team": build_team_capability_view(state),
                     }
+            if recoverable_binding_decision and expected_revision is None:
+                raise TeamControlPlaneError("Role-Skill binding changes require the current Team revision.")
             if expected_revision is not None and expected_revision != state["revision"]:
                 raise TeamControlPlaneError("Team changed since this proposal. Request a new proposal.")
+
+            binding_resolver = None
+            needs_binding_lookup = any(
+                str(item.get("kind", "") or "") == "set_role_skills"
+                and bool(list(item.get("bindings", []) or []))
+                for item in commands
+            )
+            if needs_binding_lookup:
+                from goodteam_os.service import service_state_dir
+                from goodteam_os.skills.library import SkillLibraryService
+
+                library = SkillLibraryService(service_state_dir(), worker_roots=(self.workspace,))
+                binding_resolver = library.binding_reference
+
             decision = decision_id or _new_id("dec")
             events: list[dict[str, object]] = []
             for raw_command in commands:
-                if not isinstance(raw_command, dict) or not str(raw_command.get("kind", "")).strip():
+                if not str(raw_command.get("kind", "")).strip():
                     raise TeamControlPlaneError("Each team command requires a kind")
                 events.extend(
                     _apply_command(
@@ -401,6 +566,7 @@ class TeamControlPlaneStore:
                         decision_id=decision,
                         source_ref=source_ref,
                         reason=reason,
+                        binding_resolver=binding_resolver,
                     )
                 )
             if events:
@@ -409,14 +575,31 @@ class TeamControlPlaneStore:
                     event["team_revision"] = int(state["revision"])
             if normalized_key:
                 executed = dict(state["executed_commands"])
-                executed[normalized_key] = {
+                receipt = {
                     "decision_id": decision,
                     "executed_at": _now(),
                     "event_count": len(events),
                 }
+                if recoverable_binding_decision:
+                    receipt["fingerprint"] = fingerprint
+                    receipt["result"] = {
+                        "changed": bool(events),
+                        "team_revision": int(state["revision"]),
+                        "events": deepcopy(events),
+                    }
+                executed[normalized_key] = receipt
                 state["executed_commands"] = executed
-            self._write_state(state)
-            self._append_events(events)
+
+            if recoverable_binding_decision:
+                state["pending_events"] = deepcopy(events)
+                self._write_state(state, durable=True)
+                if events:
+                    self._append_events_idempotent(events)
+                    state["pending_events"] = []
+                    self._write_state(state, durable=True)
+            else:
+                self._write_state(state)
+                self._append_events(events)
             if events and config_path is not None:
                 _sync_legacy_worker_config_view(config_path, state)
             return {
@@ -534,12 +717,21 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
         "roles": roles,
         "workers": workers,
         "manager": {"runtime": manager_runtime, "updated_at": _now()},
+        "skill_bindings": {
+            **{role_subject(role): default_binding(role_subject(role), project_key=key) for role in ROLE_KEYS},
+            **{
+                workflow_role_subject(role): default_binding(workflow_role_subject(role), project_key=key)
+                for role in WORKFLOW_ROLE_PROVIDERS
+            },
+            manager_subject(MANAGER_ROLE): default_binding(manager_subject(MANAGER_ROLE), project_key=key),
+        },
         "migrated": {
             "source": "legacy_worker_config",
             "at": _now(),
             "legacy_digest": _legacy_config_digest(target),
         },
         "executed_commands": {},
+        "pending_events": [],
     }
 
 
@@ -662,6 +854,19 @@ def preview_team_commands(state: dict[str, object], commands: list[dict[str, obj
                 target.update(name=worker["name"], role=worker["role"], label=role_label(worker["role"]))
             elif target["kind"] == "team_role":
                 target.update(role=target["id"], label=role_label(target["id"]))
+            elif target["kind"] == "role_skill_binding":
+                subject = str(target["id"])
+                if subject.startswith("role:"):
+                    role = subject.removeprefix("role:")
+                    target.update(role=role, label=role_label(role))
+                elif subject.startswith("workflow_role:"):
+                    role = subject.removeprefix("workflow_role:")
+                    target.update(
+                        role=role,
+                        label="Project Intake" if role == "project_intake" else role_label(role),
+                    )
+                else:
+                    target.update(role=MANAGER_ROLE, label="Task Assistant")
             else:
                 target.update(role=MANAGER_ROLE, label="Task Assistant")
             changes.append({
@@ -680,8 +885,20 @@ def _apply_command(
     decision_id: str,
     source_ref: dict[str, object] | None,
     reason: str,
+    binding_resolver=None,
 ) -> list[dict[str, object]]:
     kind = str(command.get("kind", "")).strip()
+    if kind == "set_role_skills":
+        return _cmd_set_role_skills(
+            state,
+            command,
+            actor=actor,
+            surface=surface,
+            decision_id=decision_id,
+            source_ref=source_ref,
+            reason=reason,
+            binding_resolver=binding_resolver,
+        )
     handlers = {
         "enable_role": _cmd_enable_role,
         "disable_role": _cmd_disable_role,
@@ -747,6 +964,92 @@ def _roles(state: dict[str, object]) -> dict[str, dict[str, str]]:
 
 def _workers(state: dict[str, object]) -> list[dict[str, object]]:
     return list(state["workers"])  # type: ignore[arg-type]
+
+
+def _skill_bindings(state: dict[str, object]) -> dict[str, dict[str, object]]:
+    return deepcopy(dict(state.get("skill_bindings", {}) or {}))
+
+
+def _binding_subject(command: dict[str, object]) -> str:
+    subject = str(command.get("subject", "") or "").strip()
+    if not subject and command.get("role"):
+        subject = role_subject(_command_role(command))
+    allowed = {
+        *(role_subject(role) for role in ROLE_KEYS),
+        *(workflow_role_subject(role) for role in WORKFLOW_ROLE_PROVIDERS),
+        manager_subject(MANAGER_ROLE),
+    }
+    if subject not in allowed:
+        raise TeamControlPlaneError(f"Unknown Role-Skill binding subject: {subject or '(blank)'}")
+    return subject
+
+
+def _cmd_set_role_skills(
+    state,
+    command,
+    *,
+    actor,
+    surface,
+    decision_id,
+    source_ref,
+    reason,
+    binding_resolver,
+):
+    subject = _binding_subject(command)
+    bindings = _skill_bindings(state)
+    current = normalize_binding(
+        bindings.get(subject, {}),
+        subject=subject,
+        project_key=str(state["project_key"]),
+    )
+    expected = command.get("expected_binding_revision")
+    if type(expected) is not int:
+        raise TeamControlPlaneError("Role-Skill binding changes require the current binding revision.")
+    if expected != current["binding_revision"]:
+        raise TeamControlPlaneError("Skill binding changed since this edit. Reload the Role before saving.")
+    mode = str(command.get("mode", "custom") or "").strip()
+    try:
+        items = normalize_items(command.get("bindings", []), resolver=binding_resolver)
+        candidate = normalize_binding(
+            {
+                "schema_version": current["schema_version"],
+                "project_key": current["project_key"],
+                "subject": subject,
+                "role_contract_ref": current["role_contract_ref"],
+                "binding_revision": current["binding_revision"],
+                "mode": mode,
+                "items": items,
+                "updated_at": current.get("updated_at", ""),
+            },
+            subject=subject,
+            project_key=str(state["project_key"]),
+        )
+    except SkillError as exc:
+        raise TeamControlPlaneError(str(exc)) from exc
+
+    if candidate["mode"] == current["mode"] and candidate["items"] == current["items"]:
+        return []
+    before = project_binding(current)
+    candidate["binding_revision"] = int(current["binding_revision"]) + 1
+    candidate["updated_at"] = _now()
+    bindings[subject] = candidate
+    state["skill_bindings"] = bindings
+    after = project_binding(candidate)
+    return [
+        _event(
+            project_key=str(state["project_key"]),
+            decision_id=decision_id,
+            actor=actor,
+            surface=surface,
+            source_ref=source_ref,
+            event="role_skills.changed",
+            target={"kind": "role_skill_binding", "id": subject},
+            reason=reason or f"Update methods for {subject}.",
+            before=before,
+            after=after,
+            cause="user_command",
+        )
+    ]
 
 
 def _find_worker(state: dict[str, object], worker_id: object) -> dict[str, object]:
@@ -1238,6 +1541,11 @@ def build_team_capability_view(
                     "updated_at": worker["updated_at"],
                 }
             )
+        binding = normalize_binding(
+            dict(state.get("skill_bindings", {}) or {}).get(role_subject(role), {}),
+            subject=role_subject(role),
+            project_key=str(state["project_key"]),
+        )
         roles.append(
             {
                 "role": role,
@@ -1249,6 +1557,7 @@ def build_team_capability_view(
                     role_workers,
                     backend_doctor=backend_doctor,
                 ),
+                "skill_binding": project_binding(binding),
                 "workers": projected_workers,
             }
         )
@@ -1258,10 +1567,32 @@ def build_team_capability_view(
         "project_key": state["project_key"],
         "revision": state["revision"],
         "roles": roles,
+        "workflow_roles": [
+            {
+                "role": role,
+                "label": "Project Intake" if role == "project_intake" else role_label(role),
+                "provided_by_team_role": provider,
+                "skill_binding": project_binding(
+                    normalize_binding(
+                        dict(state.get("skill_bindings", {}) or {}).get(workflow_role_subject(role), {}),
+                        subject=workflow_role_subject(role),
+                        project_key=str(state["project_key"]),
+                    )
+                ),
+            }
+            for role, provider in WORKFLOW_ROLE_PROVIDERS.items()
+        ],
         "manager": {
             "role": MANAGER_ROLE,
             "label": "Task Assistant",
             "runtime": dict(manager.get("runtime", {}) or {}),
+            "skill_binding": project_binding(
+                normalize_binding(
+                    dict(state.get("skill_bindings", {}) or {}).get(manager_subject(MANAGER_ROLE), {}),
+                    subject=manager_subject(MANAGER_ROLE),
+                    project_key=str(state["project_key"]),
+                )
+            ),
             "updated_at": manager.get("updated_at", ""),
         },
     }

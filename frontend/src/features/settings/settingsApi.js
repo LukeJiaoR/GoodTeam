@@ -4,12 +4,21 @@ import { getProjectState, taskAssistantAction } from '../runs/runApi';
 
 export const getSettingsAgents = getAgents;
 export const getProjectSettings = getProjectState;
-export const sendTeamCommands = (projectKey, commands, { reason = '', commandKey = '' } = {}) => requestJson(
+export const sendTeamCommands = (
+  projectKey,
+  commands,
+  { reason = '', commandKey = '', expectedTeamRevision = null } = {},
+) => requestJson(
   `/api/projects/${encodeURIComponent(projectKey)}/team/commands`,
   {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ commands, reason, command_key: commandKey }),
+    body: JSON.stringify({
+      commands,
+      reason,
+      command_key: commandKey,
+      ...(expectedTeamRevision == null ? {} : { expected_team_revision: expectedTeamRevision }),
+    }),
   },
 );
 export const getTeamEvents = (projectKey, { signal } = {}) => requestJson(

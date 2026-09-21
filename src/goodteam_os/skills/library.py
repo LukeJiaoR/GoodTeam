@@ -270,6 +270,26 @@ class SkillLibraryService:
         _atomic_json(proposal_root / "proposal.json", payload)
         return self._public_proposal(payload)
 
+    def binding_reference(self, skill_id: str, version_id: str) -> dict[str, Any]:
+        """Validate an exact installed version and return non-authoritative display metadata."""
+        version = self.store.get_version(skill_id, version_id)
+        installed = next(
+            (item for item in self.store.list_installed() if item.skill_id == skill_id),
+            None,
+        )
+        if installed is None:
+            raise SkillError("skill_missing", "Skill is not installed in this library scope.")
+        source = _public_source(version.source)
+        return {
+            "skill_id": skill_id,
+            "version_id": version_id,
+            "package_digest": version.package_digest,
+            "name": installed.name,
+            "description": str(version.metadata.get("description", "") or ""),
+            "source": source,
+            "diagnostics": _diagnostics(version.diagnostics),
+        }
+
     def list_library(self) -> dict[str, Any]:
         items = []
         for installed in self.store.list_installed():
