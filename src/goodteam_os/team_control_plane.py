@@ -266,11 +266,13 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
         raise TeamControlPlaneError("Team workers must be a list")
     manager = payload.get("manager", {})
     manager_runtime = _sanitize_worker_runtime(dict(manager).get("runtime", {}) if isinstance(manager, dict) else {})
+    project_key = normalize_project_key(str(payload.get("project_key", "") or ""))
     try:
         skill_bindings = normalize_binding_map(
             payload.get("skill_bindings", {}),
             role_keys=ROLE_KEYS,
             manager_role=MANAGER_ROLE,
+            project_key=project_key,
             workflow_role_keys=tuple(WORKFLOW_ROLE_PROVIDERS),
         )
     except SkillError as exc:
@@ -280,7 +282,7 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
         raise TeamControlPlaneError("Pending Team audit events are invalid")
     return {
         "schema_version": TEAM_CONTROL_PLANE_SCHEMA_VERSION,
-        "project_key": normalize_project_key(str(payload.get("project_key", "") or "")),
+        "project_key": project_key,
         "revision": int(payload.get("revision", 0) or 0),
         "roles": roles,
         "workers": [_sanitize_worker_record(item) for item in workers_raw],
@@ -668,12 +670,12 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
         "workers": workers,
         "manager": {"runtime": manager_runtime, "updated_at": _now()},
         "skill_bindings": {
-            **{role_subject(role): default_binding(role_subject(role)) for role in ROLE_KEYS},
+            **{role_subject(role): default_binding(role_subject(role), project_key=key) for role in ROLE_KEYS},
             **{
-                workflow_role_subject(role): default_binding(workflow_role_subject(role))
+                workflow_role_subject(role): default_binding(workflow_role_subject(role), project_key=key)
                 for role in WORKFLOW_ROLE_PROVIDERS
             },
-            manager_subject(MANAGER_ROLE): default_binding(manager_subject(MANAGER_ROLE)),
+            manager_subject(MANAGER_ROLE): default_binding(manager_subject(MANAGER_ROLE), project_key=key),
         },
         "migrated": {
             "source": "legacy_worker_config",
@@ -947,7 +949,11 @@ def _cmd_set_role_skills(
 ):
     subject = _binding_subject(command)
     bindings = _skill_bindings(state)
-    current = normalize_binding(bindings.get(subject, {}), subject=subject)
+    current = normalize_binding(
+        bindings.get(subject, {}),
+        subject=subject,
+        project_key=str(state["project_key"]),
+    )
     expected = command.get("expected_binding_revision")
     if type(expected) is not int:
         raise TeamControlPlaneError("Role-Skill binding changes require the current binding revision.")
@@ -958,6 +964,8 @@ def _cmd_set_role_skills(
         items = normalize_items(command.get("bindings", []), resolver=binding_resolver)
         candidate = normalize_binding(
             {
+                "schema_version": current["schema_version"],
+                "project_key": current["project_key"],
                 "subject": subject,
                 "role_contract_ref": current["role_contract_ref"],
                 "binding_revision": current["binding_revision"],
@@ -966,6 +974,7 @@ def _cmd_set_role_skills(
                 "updated_at": current.get("updated_at", ""),
             },
             subject=subject,
+            project_key=str(state["project_key"]),
         )
     except SkillError as exc:
         raise TeamControlPlaneError(str(exc)) from exc
@@ -1487,6 +1496,7 @@ def build_team_capability_view(
         binding = normalize_binding(
             dict(state.get("skill_bindings", {}) or {}).get(role_subject(role), {}),
             subject=role_subject(role),
+            project_key=str(state["project_key"]),
         )
         roles.append(
             {
@@ -1518,6 +1528,7 @@ def build_team_capability_view(
                     normalize_binding(
                         dict(state.get("skill_bindings", {}) or {}).get(workflow_role_subject(role), {}),
                         subject=workflow_role_subject(role),
+                        project_key=str(state["project_key"]),
                     )
                 ),
             }
@@ -1531,6 +1542,7 @@ def build_team_capability_view(
                 normalize_binding(
                     dict(state.get("skill_bindings", {}) or {}).get(manager_subject(MANAGER_ROLE), {}),
                     subject=manager_subject(MANAGER_ROLE),
+                    project_key=str(state["project_key"]),
                 )
             ),
             "updated_at": manager.get("updated_at", ""),
