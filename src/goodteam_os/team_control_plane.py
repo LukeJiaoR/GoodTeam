@@ -558,12 +558,17 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
         "roles": roles,
         "workers": workers,
         "manager": {"runtime": manager_runtime, "updated_at": _now()},
+        "skill_bindings": {
+            **{role_subject(role): default_binding(role_subject(role)) for role in ROLE_KEYS},
+            manager_subject(MANAGER_ROLE): default_binding(manager_subject(MANAGER_ROLE)),
+        },
         "migrated": {
             "source": "legacy_worker_config",
             "at": _now(),
             "legacy_digest": _legacy_config_digest(target),
         },
         "executed_commands": {},
+        "pending_events": [],
     }
 
 
