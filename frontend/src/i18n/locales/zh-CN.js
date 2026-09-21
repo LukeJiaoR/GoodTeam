@@ -668,6 +668,7 @@ export const zhCN = {
   'team.roleSkills.onDemand': '按需',
   'team.roleSkills.emptyCustom': '当前没有选择自定义方法。该角色会处于 Skill 方法未配置状态，不会自动恢复默认方法。',
   'team.roleSkills.executionNotConnected': '已保存的 Skill 配置目前尚未接入 Worker 执行；Runtime 加载会在后续 Skills 切片中落地。',
+  'team.roleSkills.executionPending': '仅已保存 · 尚未接入执行',
   'team.roleSkills.refresh': '刷新当前配置',
   'team.roleSkills.save': '保存方法',
   'team.roleSkills.restoreDefault': '恢复默认方法',
