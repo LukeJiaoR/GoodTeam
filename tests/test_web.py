@@ -6001,7 +6001,7 @@ def test_skill_library_http_cross_origin_cannot_read_local_directory(tmp_path: P
         origin="https://attacker.example",
     )
     assert status == 403
-    assert payload["error"]["code"] == "same_origin_required"
+    assert payload["code"] == "same_origin_required"
     assert not state_root.exists()
 
 
@@ -6014,7 +6014,7 @@ def test_skill_library_http_missing_proposal_has_stable_error(tmp_path: Path, mo
         {"proposal_id": "proposal-" + "0" * 32},
     )
     assert status == 404
-    assert payload["error"]["code"] == "proposal_missing"
+    assert payload["code"] == "proposal_missing"
 
 
 def test_skill_library_http_public_proxy_host_cannot_trigger_local_import(tmp_path: Path, monkeypatch) -> None:
@@ -6030,5 +6030,5 @@ def test_skill_library_http_public_proxy_host_cannot_trigger_local_import(tmp_pa
         host="goodteam.example",
     )
     assert status == 403
-    assert payload["error"]["code"] == "local_skill_import_requires_loopback"
+    assert payload["code"] == "local_skill_import_requires_loopback"
     assert not state_root.exists()
