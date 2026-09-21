@@ -5,6 +5,8 @@ from enum import StrEnum
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from goodteam_os.skills.task_context import workflow_skill_context
+
 from goodteam_os.resources import (
     ResourceDescriptor,
     derive_resources_from_legacy_artifacts,
@@ -45,6 +47,12 @@ class AgileDevState:
     next_node: str = "product_requirement"
     load_profile: str = "greenfield"
     pending_transition: dict[str, object] = field(default_factory=dict)
+    # A versioned reference to the task-start method lock, never live settings.
+    # Empty is the explicit legacy representation; reads do not manufacture locks.
+    task_skill_context: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.task_skill_context = _state_skill_context(self)
 
 
 def create_initial_state(run_id: str, project_key: str, idea: str) -> AgileDevState:
@@ -124,6 +132,7 @@ class StateStore:
 
     def write_project_current(self, state: AgileDevState, project_key: str | None = None) -> Path:
         key = normalize_project_key(project_key or state.project_key)
+        _state_skill_context(state, project_key=key)
         state.project_key = key
         path = self.project_state_dir(key) / "current.json"
         self._write(path, state)
@@ -135,6 +144,7 @@ class StateStore:
 
     def write_project_checkpoint(self, state: AgileDevState, project_key: str | None = None) -> Path:
         key = normalize_project_key(project_key or state.project_key)
+        _state_skill_context(state, project_key=key)
         state.project_key = key
         directory = self.project_state_dir(key) / "checkpoints" / state.run_id
         return self._write_checkpoint(directory, state)
@@ -157,7 +167,10 @@ class StateStore:
         return self._read(path)
 
     def read_project_current(self, project_key: str) -> AgileDevState | None:
-        return self._read(self.project_state_dir(project_key) / "current.json")
+        state = self._read(self.project_state_dir(project_key) / "current.json")
+        if state is not None:
+            _state_skill_context(state, project_key=normalize_project_key(project_key))
+        return state
 
     def archive_project_current(self, project_key: str, reason: str = "cancelled") -> Path:
         key = normalize_project_key(project_key)
@@ -182,6 +195,8 @@ class StateStore:
         ):
             try:
                 state = self._read(path)
+                if state is not None:
+                    _state_skill_context(state, project_key=normalize_project_key(project_key))
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 continue
             if state is not None:
@@ -216,13 +231,16 @@ class StateStore:
         data.setdefault("model_profile", "balanced")
         data.setdefault("role_models", {})
         data.setdefault("team_snapshot", {})
+        data.setdefault("task_skill_context", {})
         data.setdefault("load_profile", "greenfield")
         data.setdefault("pending_transition", {})
         return AgileDevState(**data)
 
     def _write(self, path: Path, state: AgileDevState) -> None:
+        context = _state_skill_context(state)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = asdict(state)
+        payload["task_skill_context"] = context
         payload["resources"] = resources_to_json(state.resources)
         payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
         with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
@@ -240,6 +258,7 @@ class StateStore:
             temporary.unlink(missing_ok=True)
 
     def _write_checkpoint(self, directory: Path, state: AgileDevState) -> Path:
+        context = _state_skill_context(state)
         directory.mkdir(parents=True, exist_ok=True)
         while True:
             path = self._next_checkpoint_path(directory, state.current_node)
@@ -247,6 +266,7 @@ class StateStore:
             try:
                 with path.open("x", encoding="utf-8") as file:
                     payload = asdict(state)
+                    payload["task_skill_context"] = context
                     payload["resources"] = resources_to_json(state.resources)
                     payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
                     payload["checkpoint"] = {
@@ -285,6 +305,17 @@ class StateStore:
         if not suffix.isdecimal():
             return None
         return int(suffix)
+
+
+def _state_skill_context(state: AgileDevState, *, project_key: str | None = None) -> dict[str, object]:
+    context = state.task_skill_context
+    # Preserve legacy construction even when a caller has not assigned its key yet.
+    if isinstance(context, dict) and not context:
+        return {}
+    return workflow_skill_context(
+        context, run_id=state.run_id,
+        project_key=normalize_project_key(project_key if project_key is not None else state.project_key),
+    )
 
 
 def normalize_project_key(value: str) -> str:
