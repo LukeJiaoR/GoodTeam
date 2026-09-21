@@ -233,9 +233,30 @@ export default function RoleSkillsDialog({
               {!loading && !library.skills.length ? <p>{t('team.roleSkills.noInstalled')}</p> : null}
 
               {missingSelections.length ? (
-                <div className="team-skills-dialog__stale" role="alert">
-                  <AlertTriangle aria-hidden="true" size={16} />
-                  <span>{t('team.roleSkills.missingVersion')}</span>
+                <div className="team-skills-dialog__missing" role="alert">
+                  <div className="team-skills-dialog__stale">
+                    <AlertTriangle aria-hidden="true" size={16} />
+                    <span>{t('team.roleSkills.missingVersion')}</span>
+                  </div>
+                  <ul>
+                    {missingSelections.map((item) => (
+                      <li key={item.skillId}>
+                        <code>{item.skillId}</code>
+                        <button
+                          type="button"
+                          className="team-text-button"
+                          onClick={() => setSelections((current) => {
+                            const next = { ...current };
+                            delete next[item.skillId];
+                            return next;
+                          })}
+                          disabled={saving}
+                        >
+                          {t('team.roleSkills.remove')}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
 
