@@ -56,7 +56,7 @@ test('replaces default methods with an exact installed Skill binding', async () 
   const user = userEvent.setup();
   const { props } = renderDialog();
   await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
-  await screen.findByText('custom-review');
+  await screen.findByRole('checkbox', { name: /custom-review/i });
 
   await user.click(screen.getByRole('checkbox', { name: /custom-review/i }));
   await user.selectOptions(screen.getByLabelText('Loading'), 'on_demand');
@@ -82,7 +82,7 @@ test('custom mode can intentionally save an empty unconfigured binding', async (
   const user = userEvent.setup();
   const { props } = renderDialog();
   await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
-  await screen.findByText('custom-review');
+  await screen.findByRole('checkbox', { name: /custom-review/i });
   expect(screen.getByText(/defaults will not be restored automatically/i)).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Save methods' }));
 
@@ -109,7 +109,7 @@ test('explicit default mode restores the default preset rather than silently fal
     }],
   });
   const { props } = renderDialog({ role: customRole, currentTeamRevision: 12 });
-  await screen.findByText('custom-review');
+  await screen.findByRole('checkbox', { name: /custom-review/i });
 
   await user.click(screen.getByRole('radio', { name: /GoodTeam default methods/i }));
   await user.click(screen.getByRole('button', { name: 'Restore default methods' }));
@@ -126,7 +126,7 @@ test('refreshing current truth preserves the local draft and exposes a changed b
   const onRefresh = vi.fn().mockResolvedValue({});
   const { rerender, props } = renderDialog({ role: initial, onRefresh });
   await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
-  await screen.findByText('custom-review');
+  await screen.findByRole('checkbox', { name: /custom-review/i });
   await user.click(screen.getByRole('checkbox', { name: /custom-review/i }));
   await user.click(screen.getByRole('button', { name: 'Refresh current' }));
   expect(onRefresh).toHaveBeenCalledOnce();
