@@ -38,7 +38,9 @@ test('installs a server-local Skill, binds it to QA, and preserves Role state af
   );
   await dialog.getByRole('button', { name: 'Install Skill', exact: true }).click();
   const installed = await installResponse;
-  expect(installed.status(), await installed.text()).toBe(200);
+  const installedText = await installed.text();
+  expect(installed.status(), installedText).toBe(200);
+  const installedPayload = JSON.parse(installedText);
   await expect(dialog.getByText('Installed. This Skill is not enabled for any role yet.', { exact: true })).toBeVisible();
 
   await page.reload();
@@ -74,8 +76,8 @@ test('installs a server-local Skill, binds it to QA, and preserves Role state af
   expect(qaBound.skill_binding.status).toBe('configured');
   expect(qaBound.skill_binding.mode).toBe('custom');
   expect(qaBound.skill_binding.items).toHaveLength(1);
-  expect(qaBound.skill_binding.items[0].skill_id).toBe(installed.skill_id);
-  expect(qaBound.skill_binding.items[0].version_id).toBe(installed.version_id);
+  expect(qaBound.skill_binding.items[0].skill_id).toBe(installedPayload.installed.skill_id);
+  expect(qaBound.skill_binding.items[0].version_id).toBe(installedPayload.installed.version_id);
   expect(qaBound.skill_binding.items[0].activation).toBe('required');
 
   await expect(page.getByRole('dialog', { name: 'QA methods', exact: true })).toHaveCount(0);
