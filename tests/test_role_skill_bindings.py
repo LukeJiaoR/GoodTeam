@@ -251,6 +251,14 @@ def test_command_key_same_payload_replays_but_different_payload_conflicts(tmp_pa
             config_path=config,
         )
 
+    with pytest.raises(TeamControlPlaneError, match="different inputs"):
+        execute_team_commands(
+            workspace, "DEMO", [command],
+            actor="user", surface="team_ui", command_key="same-key",
+            reason="different reason",
+            config_path=config,
+        )
+
 
 def test_binding_is_project_scoped_while_installed_skill_is_reusable(tmp_path, monkeypatch):
     workspace, config_a = make_project(tmp_path, "ALPHA")
