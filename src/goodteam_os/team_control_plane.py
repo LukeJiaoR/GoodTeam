@@ -405,25 +405,44 @@ class TeamControlPlaneStore:
                 handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     def _append_events_idempotent(self, events: list[dict[str, object]]) -> None:
+        """Publish complete binding audit records while holding the Team lock.
+
+        A failed temporary write must never leave a partial JSONL record in the
+        visible ledger. Preserve its exact bytes and atomically publish the
+        extended file before the caller clears the durable pending events.
+        The ordinary Team mutation append path remains unchanged.
+        """
         if not events:
             return
         existing_ids = {str(item.get("id", "")) for item in self.read_events()}
-        pending = [event for event in events if str(event.get("id", "")) not in existing_ids]
-        if not pending:
-            return
+        pending = []
+        for event in events:
+            event_id = str(event.get("id", ""))
+            if event_id not in existing_ids:
+                pending.append(event)
+                existing_ids.add(event_id)
+        previous = self.events_path.read_bytes() if self.events_path.exists() else b""
+        separator = b"\n" if previous and not previous.endswith(b"\n") else b""
+        addition = "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in pending).encode("utf-8")
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
-        created = not self.events_path.exists()
-        with self.events_path.open("a", encoding="utf-8") as handle:
-            for event in pending:
-                handle.write(json.dumps(event, ensure_ascii=False) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        if created:
+        temporary = None
+        try:
+            with NamedTemporaryFile("wb", dir=self.events_path.parent, prefix=".team-events-", delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(previous + separator + addition)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.events_path)
+            # Also establish durability when every ID was already present: a
+            # prior attempt may have stopped after replace but before fsync.
             directory = os.open(self.events_path.parent, os.O_RDONLY | os.O_DIRECTORY)
             try:
                 os.fsync(directory)
             finally:
                 os.close(directory)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def _recover_pending_events(self, state: dict[str, object]) -> None:
         pending = [deepcopy(item) for item in list(state.get("pending_events", []) or [])]
