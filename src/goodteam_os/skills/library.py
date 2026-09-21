@@ -102,10 +102,11 @@ class SkillLibraryService:
 
     def __init__(self, state_root: Path, *, worker_roots: tuple[Path, ...] = ()):
         self.root = Path(state_root).expanduser().absolute() / "skills"
+        scope = SkillScope(kind="user", owner_id=LOCAL_SCOPE_OWNER)
+        # Fail the managed-store boundary before creating any sibling Library state.
+        self.store = SkillStore(self.root / "store", scope, worker_roots=worker_roots)
         self.proposals = self.root / "proposals"
         self.proposals.mkdir(parents=True, exist_ok=True)
-        scope = SkillScope(kind="user", owner_id=LOCAL_SCOPE_OWNER)
-        self.store = SkillStore(self.root / "store", scope, worker_roots=worker_roots)
 
     @staticmethod
     def _proposal_id(command_key: str) -> str:
