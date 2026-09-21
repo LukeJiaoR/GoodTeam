@@ -49,6 +49,7 @@ def test_preview_captures_bytes_then_install_does_not_reopen_source(tmp_path):
     version = library["skills"][0]["versions"][0]
     assert version["metadata"]["description"] == "Review persisted state changes."
     assert version["package_digest"] == preview["package_digest"]
+    assert version["diagnostics"] == preview["diagnostics"]
 
 
 def test_preview_replay_is_stable_and_key_cannot_change_source(tmp_path):
@@ -109,3 +110,13 @@ def test_public_payload_does_not_expose_absolute_source_path(tmp_path):
     service.install(preview["proposal_id"])
     payload = service.list_library()
     assert str(source) not in json.dumps(payload)
+
+
+def test_library_store_refuses_worker_workspace_before_creating_library_state(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state_root = workspace / ".goodteam-state"
+    with pytest.raises(SkillError) as exc:
+        SkillLibraryService(state_root, worker_roots=(workspace,))
+    assert exc.value.code == "unsafe_store_root"
+    assert not (state_root / "skills").exists()
