@@ -567,3 +567,63 @@ test('opens the shared Skill Library from Team without changing role state', asy
   expect(mocks.sendTeamCommands).not.toHaveBeenCalled();
   expect(screen.getByText('No Skills installed yet.')).toBeVisible();
 });
+
+
+test('configures a Role with an installed Skill without changing worker state', async () => {
+  const user = userEvent.setup();
+  const version = {
+    version_id: 'version-' + '1'.repeat(64),
+    package_digest: 'sha256:' + '2'.repeat(64),
+    metadata: { description: 'QA verification method.' },
+    diagnostics: [],
+  };
+  const installed = {
+    skill_id: 'skill-' + '3'.repeat(64),
+    name: 'qa-method',
+    source: { kind: 'local', label: 'qa-method' },
+    versions: [version],
+  };
+  const api = {
+    getSettingsAgents: mocks.getAgents,
+    getProjectSettings: mocks.projectState,
+    sendTeamCommands: mocks.sendTeamCommands,
+    getTeamEvents: mocks.getTeamEvents,
+    taskAssistantAction: mocks.taskAssistantAction,
+    getSkillLibrary: vi.fn().mockResolvedValue({ schema_version: 'skill_library.v1', skills: [installed] }),
+    previewLocalSkill: vi.fn(),
+    installLocalSkill: vi.fn(),
+  };
+  renderTeam(api);
+
+  await user.click(screen.getByRole('button', { name: 'Show roles in Quality & delivery' }));
+  const qa = screen.getByRole('article', { name: 'QA' });
+  await user.click(within(qa).getByRole('button', { name: 'Methods' }));
+  const dialog = screen.getByRole('dialog', { name: 'QA methods' });
+  await screen.findByText('qa-method');
+  await user.click(within(dialog).getByRole('radio', { name: /Custom Skills/i }));
+  await user.click(within(dialog).getByRole('checkbox', { name: /qa-method/i }));
+  await user.click(within(dialog).getByRole('button', { name: 'Save methods' }));
+
+  expect(mocks.sendTeamCommands).toHaveBeenCalledExactlyOnceWith(
+    'DEMO',
+    [{
+      kind: 'set_role_skills',
+      subject: 'role:qa',
+      mode: 'custom',
+      bindings: [{
+        skill_id: installed.skill_id,
+        version_id: version.version_id,
+        package_digest: version.package_digest,
+        activation: 'required',
+        enabled: true,
+      }],
+      expected_binding_revision: 0,
+    }],
+    expect.objectContaining({
+      reason: 'Configure Skills for QA',
+      commandKey: expect.any(String),
+      expectedTeamRevision: 4,
+    }),
+  );
+  expect(screen.queryByRole('dialog', { name: 'QA methods' })).not.toBeInTheDocument();
+});
