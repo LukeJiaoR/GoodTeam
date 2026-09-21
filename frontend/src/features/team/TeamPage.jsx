@@ -555,6 +555,7 @@ export default function TeamPage({ api = settingsApi }) {
             error={mutationError}
             onClose={closeDialog}
             onRefresh={refresh}
+            projectKey={projectKey}
             onSubmit={(command, options) => runCommands(
               [command],
               {
