@@ -488,3 +488,46 @@ def test_same_named_sources_and_one_skill_can_bind_many_roles(tmp_path, monkeypa
     assert roles["code_review"]["skill_binding"]["items"][0]["skill_id"] == items[0]["skill_id"]
     assert roles["qa"]["workers"]
     assert roles["code_review"]["workers"]
+
+
+def test_interrupted_pending_clear_recovers_without_duplicate_audit(tmp_path, monkeypatch):
+    workspace, config = make_project(tmp_path)
+    item = install_skill(tmp_path, monkeypatch)
+    store = TeamControlPlaneStore(workspace, "DEMO")
+    state = store.read()
+    original_write = store._write_state
+    writes = {"count": 0}
+
+    def fail_clear(payload, *, durable=False):
+        writes["count"] += 1
+        if durable and payload.get("pending_events") == [] and writes["count"] >= 2:
+            raise OSError("simulated clear interruption")
+        return original_write(payload, durable=durable)
+
+    monkeypatch.setattr(store, "_write_state", fail_clear)
+    with pytest.raises(OSError, match="clear interruption"):
+        store.execute(
+            [{
+                "kind": "set_role_skills",
+                "subject": "role:code_review",
+                "mode": "custom",
+                "bindings": [item],
+                "expected_binding_revision": 0,
+            }],
+            actor="user",
+            surface="team_ui",
+            command_key="crash-after-append",
+            expected_revision=state["revision"],
+            config_path=config,
+        )
+
+    persisted = store.read()
+    assert len(persisted["pending_events"]) == 1
+    matching = [event for event in store.read_events() if event["event"] == "role_skills.changed"]
+    assert len(matching) == 1
+
+    monkeypatch.setattr(store, "_write_state", original_write)
+    recovered = store.reconcile_pending_audit()
+    assert recovered["pending_events"] == []
+    matching = [event for event in store.read_events() if event["event"] == "role_skills.changed"]
+    assert len(matching) == 1
