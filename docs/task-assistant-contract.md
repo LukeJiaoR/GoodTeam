@@ -61,6 +61,28 @@ The bounded language rules are conveniences, not an authorization system or a
 general semantic diff engine. Ambiguous relations require an explicit UI decision.
 All task execution still requires confirmation even if the model misclassifies.
 
+## Team Proposals
+
+Conversation-originated Team commands require separate explicit confirmation,
+including commands a model labels `user_authorized`. Each proposal binds its
+commands and source message to the Team revision observed before interpretation.
+Confirmation validates that revision under the command lock; replay cannot append
+a second decision. Dismissed proposals cannot execute.
+
+`team_decision_preview.v1` records the affected role, Worker name/ID, and exact
+before/after values. The control plane computes these effects using its command
+handlers on a private state copy, including cascade effects such as pausing
+Workers when a capability is disabled. Generating or reading a preview writes
+neither Team state nor decision events. Old proposals without a preview are
+projected only when their bound revision is still current. Stale proposals keep
+their original preview and expose dismissal instead of confirmation.
+
+The bounded Worker-name parser lists matching roles, names and IDs when an
+explicit pause/resume/runtime request is ambiguous. This clarification runs before
+a model can select a first match, including during an active task. A subsequent
+request with an exact ID still produces a proposal requiring confirmation. These
+deterministic replies do not establish real-provider runtime verification.
+
 ## Review Feedback Handoff
 
 `POST /api/intent-commit/start` accepts optional `initial_text` together with its

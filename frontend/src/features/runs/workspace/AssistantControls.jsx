@@ -3,6 +3,7 @@ import { Check, Plug, RotateCcw, Settings, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Button from '../../../components/ui/Button';
 import { routes } from '../../../lib/routing/routes';
+import TeamDecisionPreview from './TeamDecisionPreview';
 import './assistantControls.css';
 
 function RuntimeControls({ runtime, busy, onAction, projectKey, t }) {
@@ -38,18 +39,16 @@ function RequestRecovery({ requests = {}, busy, onAction, t }) {
 
 function TeamDecision({ pending, busy, onAction, t }) {
   if (!pending) return null;
+  const previewAvailable = pending.preview?.schema_version === 'team_decision_preview.v1'
+    && pending.preview.team_revision === pending.expected_team_revision;
   return (
     <section className="assistant-team-decision" aria-label={t('assistant.teamProposal')}>
       <strong>{t(pending.status === 'pending' ? 'assistant.teamProposal' : 'assistant.teamStale')}</strong>
       <p>{pending.reason}</p>
-      <ul>{(pending.commands || []).map((command, index) => <li key={index}>
-        <strong>{t(`assistant.command.${command.kind}`)}</strong>
-        <dl>{Object.entries(command).filter(([key]) => key !== 'kind').map(([key, value]) => (
-          <div key={key}><dt>{key}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>
-        ))}</dl>
-      </li>)}</ul>
+      {previewAvailable ? <TeamDecisionPreview preview={pending.preview} commands={pending.commands || []} t={t} />
+        : <p>{t('assistant.preview.unavailable')}</p>}
       <div className="assistant-control-actions">
-        {pending.status === 'pending' ? <Button disabled={Boolean(busy)} onClick={() => onAction?.({ action: 'confirm_team_decision', proposal_id: pending.id })}>
+        {pending.status === 'pending' ? <Button disabled={Boolean(busy) || !previewAvailable} onClick={() => onAction?.({ action: 'confirm_team_decision', proposal_id: pending.id })}>
           <Check size={14} aria-hidden="true" />{t('assistant.confirmTeam')}
         </Button> : null}
         <Button variant="secondary" disabled={Boolean(busy)} onClick={() => onAction?.({ action: 'dismiss_team_decision', proposal_id: pending.id })}>

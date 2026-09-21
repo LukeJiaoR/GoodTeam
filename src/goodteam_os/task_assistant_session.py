@@ -129,6 +129,7 @@ class TaskAssistantSessionStore:
         reason: str,
         source_message_id: str,
         expected_team_revision: int | None = None,
+        preview: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Record a Manager-proposed team decision awaiting user approval.
 
@@ -148,6 +149,7 @@ class TaskAssistantSessionStore:
                     "reason": str(reason),
                     "source_message_id": str(source_message_id),
                     "expected_team_revision": expected_team_revision,
+                    "preview": preview,
                     "status": "pending",
                     "created_at": _now(),
                 },

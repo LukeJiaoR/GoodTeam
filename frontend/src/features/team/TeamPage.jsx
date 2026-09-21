@@ -468,19 +468,19 @@ export default function TeamPage({ api = settingsApi }) {
                                 <strong>{worker.name}</strong>
                                 <span className="team-role-workers__runtime">{worker.provider} · {worker.model || t('team.dialog.inheritModel')}</span>
                                 <span className="team-role-workers__actions">
-                                  <button type="button" className="product-button product-button--secondary team-edit-button" aria-label={t('team.actions.editAria', { name: worker.name })} disabled={saving} onClick={() => openDialog({ type: 'worker', worker })}>
+                                  <button type="button" className="product-button product-button--secondary team-edit-button" aria-label={t('team.actions.editAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => openDialog({ type: 'worker', worker })}>
                                     <Pencil aria-hidden="true" size={14} />{t('team.config.edit')}
                                   </button>
                                   {worker.lifecycle === 'active' ? (
-                                    <button type="button" className="team-icon-button" title={t('team.actions.pause')} aria-label={t('team.actions.pauseAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'inactivate_worker', worker_id: worker.id }], { reason: `Pause ${worker.name}` })}>
+                                    <button type="button" className="team-icon-button" title={t('team.actions.pause')} aria-label={t('team.actions.pauseAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'inactivate_worker', worker_id: worker.id }], { reason: `Pause ${worker.name}` })}>
                                       <Pause aria-hidden="true" size={14} />
                                     </button>
                                   ) : (
-                                    <button type="button" className="team-icon-button" title={t('team.actions.activate')} aria-label={t('team.actions.activateAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'activate_worker', worker_id: worker.id }], { reason: `Activate ${worker.name}` })}>
+                                    <button type="button" className="team-icon-button" title={t('team.actions.activate')} aria-label={t('team.actions.activateAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'activate_worker', worker_id: worker.id }], { reason: `Activate ${worker.name}` })}>
                                       <Play aria-hidden="true" size={14} />
                                     </button>
                                   )}
-                                  <button type="button" className="team-icon-button" title={t('team.actions.delete')} aria-label={t('team.actions.deleteAria', { name: worker.name })} disabled={saving} onClick={() => runCommands([{ kind: 'delete_worker', worker_id: worker.id }], { reason: `Delete ${worker.name}` })}>
+                                  <button type="button" className="team-icon-button" title={t('team.actions.delete')} aria-label={t('team.actions.deleteAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'delete_worker', worker_id: worker.id }], { reason: `Delete ${worker.name}` })}>
                                     <Trash2 aria-hidden="true" size={14} />
                                   </button>
                                 </span>

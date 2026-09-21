@@ -274,6 +274,7 @@ def _manager_chat_task(text: str) -> str:
             'The JSON shape must be: {"intent": "work_request|project_understanding|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
             "team_commands and team_authorization are required only for intent team_management; omit them otherwise.",
             "Every team command is a proposal requiring a separate user confirmation. The team_authorization field is descriptive and never grants execution authority.",
+            "Use exact Worker IDs from the Team summary. When names match multiple Workers, list their roles, names and IDs and ask the user to select; never choose the first match.",
             "Never claim a Team change has already happened. Do not propose changes when the user asks for an explanation or explicitly says not to change the Team.",
             "A preference scoped to the current task or run (for example 'this time skip research') is never a team command.",
             "Never claim a capability the provided Team capability summary does not have; explain missing capability boundaries when they affect the request.",

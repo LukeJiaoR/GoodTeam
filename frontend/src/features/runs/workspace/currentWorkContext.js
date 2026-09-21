@@ -21,8 +21,9 @@ export function currentWorkContext({ workspace, projectKey, title, freshness = '
   if (attention?.kind === 'blocker') {
     return result('blocked', translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason || t('work.current.blocked')), 'attention');
   }
-  if (workspace.pending_team_decision?.status === 'pending') {
-    return result('needs_input', t('work.current.teamDecision'), 'team');
+  if (['pending', 'stale', 'failed'].includes(workspace.pending_team_decision?.status)) {
+    return result('needs_input', t(workspace.pending_team_decision.status === 'pending'
+      ? 'work.current.teamDecision' : 'assistant.teamStale'), 'team');
   }
   if (intent && ['discussing', 'ready_to_confirm'].includes(intent.status)) {
     return result('needs_input', t('work.current.changePending'), 'attention');

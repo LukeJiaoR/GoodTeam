@@ -36,9 +36,9 @@ test('bulk settings persist and keep paused workers, individual instructions and
   await expect(page.getByRole('article')).toHaveCount(0);
   await page.getByRole('button', { name: 'Show roles in Design & implementation', exact: true }).click();
   const roleRow = page.getByRole('article', { name: role.label, exact: true });
-  await roleRow.getByRole('button', { name: `Pause ${worker.name}`, exact: true }).click();
-  await expect(roleRow.getByRole('button', { name: `Activate ${worker.name}`, exact: true })).toBeVisible();
-  await roleRow.getByRole('button', { name: `Edit ${worker.name}`, exact: true }).click();
+  await roleRow.getByRole('button', { name: `Pause ${role.label} / ${worker.name} (${worker.id})`, exact: true }).click();
+  await expect(roleRow.getByRole('button', { name: `Activate ${role.label} / ${worker.name} (${worker.id})`, exact: true })).toBeVisible();
+  await roleRow.getByRole('button', { name: `Edit ${role.label} / ${worker.name} (${worker.id})`, exact: true }).click();
   let dialog = page.getByRole('dialog');
   await dialog.getByText('Additional instructions (optional)', { exact: true }).click();
   await dialog.getByLabel('Additional instructions', { exact: true }).fill('Keep this worker-specific instruction.');

@@ -32,12 +32,22 @@ describe('Assistant recovery and confirmation', () => {
 
   it('shows the exact proposed command and does not confirm until clicked', () => {
     const onAction = vi.fn();
-    mount({ onAction, pending: { id: 'p1', status: 'pending', reason: 'Disable QA', commands: [{ kind: 'disable_role', role: 'qa' }] } });
+    mount({ onAction, pending: { id: 'p1', status: 'pending', expected_team_revision: 1,
+      preview: { schema_version: 'team_decision_preview.v1', team_revision: 1, changes: [] },
+      reason: 'Disable QA', commands: [{ kind: 'disable_role', role: 'qa' }] } });
     expect(onAction).not.toHaveBeenCalled();
-    expect(screen.getByText('qa')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Team change' }));
     expect(onAction).toHaveBeenCalledWith({ action: 'confirm_team_decision', proposal_id: 'p1' });
   });
+
+  it.each([null, { schema_version: 'team_decision_preview.v1', team_revision: 2, changes: [] }])('cannot confirm without a preview matching the proposed revision', (preview) => {
+      const onAction = vi.fn();
+      mount({ onAction, pending: { id: 'p1', status: 'pending', expected_team_revision: 1, preview } });
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm Team change' }));
+      expect(onAction).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss proposal' }));
+      expect(onAction).toHaveBeenCalledWith({ action: 'dismiss_team_decision', proposal_id: 'p1' });
+    });
 
   it('never offers retry for interrupted work or mutation controls for history', () => {
     const props = { requests: { m1: { text: 'Original', status: 'interrupted', error: { code: 'interrupted' } } } };

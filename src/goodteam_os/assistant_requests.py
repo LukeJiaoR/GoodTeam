@@ -110,7 +110,8 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
                 record_runtime(store, evidence, "failed" if retryable else _verification_status(snapshot))
             raise ManagerExecutionError(safe_failure(exc)["message"]) from exc
         update_request(store, message_id, status="succeeded", intent=result["intent"])
-        record_runtime(store, snapshot, _verification_status(snapshot))
+        if not result.get("model_call_skipped"):
+            record_runtime(store, snapshot, _verification_status(snapshot))
         return response(service, project_key, root, intent=result["intent"])
 
 
