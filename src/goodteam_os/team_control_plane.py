@@ -765,8 +765,20 @@ def _apply_command(
     decision_id: str,
     source_ref: dict[str, object] | None,
     reason: str,
+    binding_resolver=None,
 ) -> list[dict[str, object]]:
     kind = str(command.get("kind", "")).strip()
+    if kind == "set_role_skills":
+        return _cmd_set_role_skills(
+            state,
+            command,
+            actor=actor,
+            surface=surface,
+            decision_id=decision_id,
+            source_ref=source_ref,
+            reason=reason,
+            binding_resolver=binding_resolver,
+        )
     handlers = {
         "enable_role": _cmd_enable_role,
         "disable_role": _cmd_disable_role,
@@ -832,6 +844,80 @@ def _roles(state: dict[str, object]) -> dict[str, dict[str, str]]:
 
 def _workers(state: dict[str, object]) -> list[dict[str, object]]:
     return list(state["workers"])  # type: ignore[arg-type]
+
+
+def _skill_bindings(state: dict[str, object]) -> dict[str, dict[str, object]]:
+    return deepcopy(dict(state.get("skill_bindings", {}) or {}))
+
+
+def _binding_subject(command: dict[str, object]) -> str:
+    subject = str(command.get("subject", "") or "").strip()
+    if not subject and command.get("role"):
+        subject = role_subject(_command_role(command))
+    allowed = {*(role_subject(role) for role in ROLE_KEYS), manager_subject(MANAGER_ROLE)}
+    if subject not in allowed:
+        raise TeamControlPlaneError(f"Unknown Role-Skill binding subject: {subject or '(blank)'}")
+    return subject
+
+
+def _cmd_set_role_skills(
+    state,
+    command,
+    *,
+    actor,
+    surface,
+    decision_id,
+    source_ref,
+    reason,
+    binding_resolver,
+):
+    subject = _binding_subject(command)
+    bindings = _skill_bindings(state)
+    current = normalize_binding(bindings.get(subject, {}), subject=subject)
+    expected = command.get("expected_binding_revision")
+    if expected is not None:
+        if type(expected) is not int or expected != current["binding_revision"]:
+            raise TeamControlPlaneError("Skill binding changed since this edit. Reload the Role before saving.")
+    mode = str(command.get("mode", "custom") or "").strip()
+    try:
+        items = normalize_items(command.get("bindings", []), resolver=binding_resolver)
+        candidate = normalize_binding(
+            {
+                "subject": subject,
+                "role_contract_ref": current["role_contract_ref"],
+                "binding_revision": current["binding_revision"],
+                "mode": mode,
+                "items": items,
+                "updated_at": current.get("updated_at", ""),
+            },
+            subject=subject,
+        )
+    except SkillError as exc:
+        raise TeamControlPlaneError(str(exc)) from exc
+
+    if candidate["mode"] == current["mode"] and candidate["items"] == current["items"]:
+        return []
+    before = project_binding(current)
+    candidate["binding_revision"] = int(current["binding_revision"]) + 1
+    candidate["updated_at"] = _now()
+    bindings[subject] = candidate
+    state["skill_bindings"] = bindings
+    after = project_binding(candidate)
+    return [
+        _event(
+            project_key=str(state["project_key"]),
+            decision_id=decision_id,
+            actor=actor,
+            surface=surface,
+            source_ref=source_ref,
+            event="role_skills.changed",
+            target={"kind": "role_skill_binding", "id": subject},
+            reason=reason or f"Update methods for {subject}.",
+            before=before,
+            after=after,
+            cause="user_command",
+        )
+    ]
 
 
 def _find_worker(state: dict[str, object], worker_id: object) -> dict[str, object]:
