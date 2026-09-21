@@ -148,9 +148,24 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
 
 
-def _command_fingerprint(commands: list[dict[str, object]]) -> str:
+def _command_fingerprint(
+    commands: list[dict[str, object]],
+    *,
+    reason: str,
+    source_ref: dict[str, object] | None,
+) -> str:
     try:
-        data = json.dumps(commands, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        data = json.dumps(
+            {
+                "commands": commands,
+                "reason": reason,
+                "source_ref": dict(source_ref or {}),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
     except (TypeError, ValueError) as exc:
         raise TeamControlPlaneError("Team commands must be JSON-compatible values") from exc
     return "sha256:" + hashlib.sha256(data.encode("utf-8")).hexdigest()
@@ -439,7 +454,7 @@ class TeamControlPlaneStore:
             raise TeamControlPlaneError("At least one team command is required")
         if any(not isinstance(item, dict) for item in commands):
             raise TeamControlPlaneError("Each team command must be a JSON object")
-        fingerprint = _command_fingerprint(commands)
+        fingerprint = _command_fingerprint(commands, reason=reason, source_ref=source_ref)
 
         with self._locked():
             state = self.read()
