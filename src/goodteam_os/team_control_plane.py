@@ -466,7 +466,15 @@ class TeamControlPlaneStore:
             raise TeamControlPlaneError("At least one team command is required")
         if any(not isinstance(item, dict) for item in commands):
             raise TeamControlPlaneError("Each team command must be a JSON object")
-        fingerprint = _command_fingerprint(commands, reason=reason, source_ref=source_ref)
+        recoverable_binding_decision = any(
+            str(item.get("kind", "") or "") == "set_role_skills"
+            for item in commands
+        )
+        fingerprint = (
+            _command_fingerprint(commands, reason=reason, source_ref=source_ref)
+            if recoverable_binding_decision
+            else ""
+        )
 
         with self._locked():
             state = self.read()
@@ -478,7 +486,7 @@ class TeamControlPlaneStore:
                 previous = dict(state["executed_commands"]).get(normalized_key)
                 if isinstance(previous, dict) and previous.get("decision_id"):
                     previous_fingerprint = str(previous.get("fingerprint", "") or "")
-                    if previous_fingerprint and previous_fingerprint != fingerprint:
+                    if recoverable_binding_decision and previous_fingerprint and previous_fingerprint != fingerprint:
                         raise TeamControlPlaneError("Team command key already belongs to different inputs.")
                     receipt = previous.get("result")
                     if isinstance(receipt, dict):
@@ -502,10 +510,6 @@ class TeamControlPlaneStore:
                         "events": [],
                         "team": build_team_capability_view(state),
                     }
-            recoverable_binding_decision = any(
-                str(item.get("kind", "") or "") == "set_role_skills"
-                for item in commands
-            )
             if recoverable_binding_decision and expected_revision is None:
                 raise TeamControlPlaneError("Role-Skill binding changes require the current Team revision.")
             if expected_revision is not None and expected_revision != state["revision"]:
@@ -551,9 +555,9 @@ class TeamControlPlaneStore:
                     "decision_id": decision,
                     "executed_at": _now(),
                     "event_count": len(events),
-                    "fingerprint": fingerprint,
                 }
                 if recoverable_binding_decision:
+                    receipt["fingerprint"] = fingerprint
                     receipt["result"] = {
                         "changed": bool(events),
                         "team_revision": int(state["revision"]),
