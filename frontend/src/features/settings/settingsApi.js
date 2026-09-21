@@ -17,4 +17,22 @@ export const getTeamEvents = (projectKey, { signal } = {}) => requestJson(
   { signal },
 );
 
-export const settingsApi = { getProjectSettings, getSettingsAgents, sendTeamCommands, getTeamEvents, taskAssistantAction };
+export const getSkillLibrary = ({ signal } = {}) => requestJson('/api/skills', { signal });
+export const previewLocalSkill = (path, { commandKey } = {}) => requestJson(
+  '/api/skills/local/preview',
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, command_key: commandKey }),
+  },
+);
+export const installLocalSkill = (proposalId) => requestJson(
+  '/api/skills/local/install',
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proposal_id: proposalId }),
+  },
+);
+
+export const settingsApi = { getProjectSettings, getSettingsAgents, sendTeamCommands, getTeamEvents, getSkillLibrary, previewLocalSkill, installLocalSkill, taskAssistantAction };

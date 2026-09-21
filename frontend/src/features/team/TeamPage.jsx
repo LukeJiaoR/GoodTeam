@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, History, Pause, Pencil, Play, Plus, Settings2, Trash2, UserRoundCog, X } from 'lucide-react';
+import { AlertTriangle, Bot, History, PackageOpen, Pause, Pencil, Play, Plus, Settings2, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
@@ -11,6 +11,7 @@ import './team.css';
 import BatchWorkerDialog from './BatchWorkerDialog';
 import RuntimeFields from './RuntimeFields';
 import ResponsibilityGroup from './ResponsibilityGroup';
+import SkillLibraryPanel from './SkillLibraryPanel';
 import useTeamDialog from './useTeamDialog';
 import { buildTeamModel, capabilityCounts, groupTeamRoles, newWorkerRuntime, rosteredWorkerCount, workerCreateCommand, workerEditCommands } from './teamModel';
 
@@ -254,6 +255,7 @@ export default function TeamPage({ api = settingsApi }) {
   const [events, setEvents] = useState([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const commandPending = useRef(false);
   const commandAttempt = useRef(null);
 
@@ -387,6 +389,10 @@ export default function TeamPage({ api = settingsApi }) {
           <button type="button" className="product-button product-button--secondary team-configure-button" onClick={openHistory}>
             <History aria-hidden="true" size={16} />
             {t('team.history.button')}
+          </button>
+          <button type="button" className="product-button product-button--secondary team-configure-button" onClick={() => setSkillsOpen(true)}>
+            <PackageOpen aria-hidden="true" size={16} />
+            {t('team.skills.button')}
           </button>
           <button type="button" className="product-button product-button--secondary team-configure-button" disabled={saving} onClick={() => openDialog({ type: 'create' })}>
             <Plus aria-hidden="true" size={16} />
@@ -523,6 +529,7 @@ export default function TeamPage({ api = settingsApi }) {
         </div>
       </section>
 
+      {skillsOpen ? <SkillLibraryPanel api={api} onClose={() => setSkillsOpen(false)} t={t} /> : null}
       {dialog?.type === 'history' ? <HistoryPanel events={events} onClose={closeDialog} t={t} /> : null}
       {dialog?.type === 'batch' ? <BatchWorkerDialog {...runtimeProps} roles={dialog.roleKeys ? team.roles.filter((role) => dialog.roleKeys.includes(role.role)) : team.roles} saving={saving} onClose={closeDialog} onSubmit={(commands) => runCommands(commands, { reason: 'Configure workers in selected roles' })} t={t} /> : null}
       {dialog?.type === 'worker' ? (

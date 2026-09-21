@@ -545,3 +545,25 @@ test('worker edit commands diff identity, role, runtime, and lifecycle', () => {
     { kind: 'activate_worker', worker_id: 'implementation-a' },
   ]));
 });
+
+
+test('opens the shared Skill Library from Team without changing role state', async () => {
+  const user = userEvent.setup();
+  const api = {
+    getSettingsAgents: mocks.getAgents,
+    getProjectSettings: mocks.projectState,
+    sendTeamCommands: mocks.sendTeamCommands,
+    getTeamEvents: mocks.getTeamEvents,
+    taskAssistantAction: mocks.taskAssistantAction,
+    getSkillLibrary: vi.fn().mockResolvedValue({ schema_version: 'skill_library.v1', skills: [] }),
+    previewLocalSkill: vi.fn(),
+    installLocalSkill: vi.fn(),
+  };
+  renderTeam(api);
+
+  await user.click(screen.getByRole('button', { name: 'Skills' }));
+  expect(await screen.findByRole('dialog', { name: 'Skills' })).toBeVisible();
+  expect(api.getSkillLibrary).toHaveBeenCalledOnce();
+  expect(mocks.sendTeamCommands).not.toHaveBeenCalled();
+  expect(screen.getByText('No Skills installed yet.')).toBeVisible();
+});
