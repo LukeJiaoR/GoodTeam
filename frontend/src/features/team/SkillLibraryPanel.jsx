@@ -29,18 +29,23 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
   const mutating = busy === 'preview' || busy === 'install';
   const handleKeyDown = useTeamDialog(dialogRef, closeRef, () => { if (!mutating) onClose(); });
 
-  const load = useCallback(async ({ signal } = {}) => {
+  const refreshLibrary = useCallback(async ({ signal } = {}) => {
     const payload = await api.getSkillLibrary({ signal });
     setLibrary({ ...payload, skills: Array.isArray(payload?.skills) ? payload.skills : [] });
   }, [api]);
 
   useEffect(() => {
     const controller = new AbortController();
-    load({ signal: controller.signal })
+    api.getSkillLibrary({ signal: controller.signal })
+      .then((payload) => {
+        if (!controller.signal.aborted) {
+          setLibrary({ ...payload, skills: Array.isArray(payload?.skills) ? payload.skills : [] });
+        }
+      })
       .catch((caught) => { if (!controller.signal.aborted) setError(caught); })
       .finally(() => { if (!controller.signal.aborted) setBusy(''); });
     return () => controller.abort();
-  }, [load]);
+  }, [api]);
 
   const submitPreview = async (event) => {
     event.preventDefault();
@@ -69,7 +74,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
     try {
       const result = await api.installLocalSkill(preview.proposal_id);
       setPreview(result);
-      await load();
+      await refreshLibrary();
     } catch (caught) {
       if (caught?.code === 'proposal_expired') {
         previewAttempt.current = null;
@@ -177,7 +182,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
               <button className="team-icon-button" type="button" disabled={Boolean(busy)} onClick={() => {
                 setBusy('loading');
                 setError(null);
-                load().catch(setError).finally(() => setBusy(''));
+                refreshLibrary().catch(setError).finally(() => setBusy(''));
               }} aria-label={t('team.skills.refresh')}>
                 <RefreshCw aria-hidden="true" size={15} />
               </button>
