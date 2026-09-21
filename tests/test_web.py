@@ -5949,7 +5949,7 @@ def _write_local_skill_fixture(root: Path, *, description: str = "Local review m
 
 
 def test_skill_library_http_preview_install_and_source_snapshot(tmp_path: Path, monkeypatch) -> None:
-    state_root = tmp_path / "service-state"
+    state_root = tmp_path.parent / f"{tmp_path.name}-service-state"
     monkeypatch.setattr(web, "service_state_dir", lambda: state_root)
     source = _write_local_skill_fixture(tmp_path / "external-skill")
 
@@ -5982,7 +5982,7 @@ def test_skill_library_http_preview_install_and_source_snapshot(tmp_path: Path, 
 
 
 def test_skill_library_http_cross_origin_cannot_read_local_directory(tmp_path: Path, monkeypatch) -> None:
-    state_root = tmp_path / "service-state"
+    state_root = tmp_path.parent / f"{tmp_path.name}-service-state"
     monkeypatch.setattr(web, "service_state_dir", lambda: state_root)
     source = _write_local_skill_fixture(tmp_path / "private-skill")
 
@@ -5998,7 +5998,7 @@ def test_skill_library_http_cross_origin_cannot_read_local_directory(tmp_path: P
 
 
 def test_skill_library_http_missing_proposal_has_stable_error(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(web, "service_state_dir", lambda: tmp_path / "service-state")
+    state_root = tmp_path.parent / f"{tmp_path.name}-service-state"\n    monkeypatch.setattr(web, "service_state_dir", lambda: state_root)
     status, payload = _post_web_json(
         tmp_path,
         "/api/skills/local/install",
