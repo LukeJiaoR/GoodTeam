@@ -25,7 +25,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
   const [sourcePath, setSourcePath] = useState('');
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
-  const [busy, setBusy] = useState('');
+  const [busy, setBusy] = useState('loading');
   const mutating = busy === 'preview' || busy === 'install';
   const handleKeyDown = useTeamDialog(dialogRef, closeRef, () => { if (!mutating) onClose(); });
 
@@ -36,7 +36,6 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    setBusy('loading');
     load({ signal: controller.signal })
       .catch((caught) => { if (!controller.signal.aborted) setError(caught); })
       .finally(() => { if (!controller.signal.aborted) setBusy(''); });
