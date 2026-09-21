@@ -19,6 +19,7 @@ from goodteam_os.team_control_plane import (
     TeamControlPlaneStore,
     TeamControlPlaneError,
     execute_team_commands,
+    preview_team_commands,
     role_label,
 )
 
@@ -84,7 +85,7 @@ class TaskAssistantService:
         except ValueError as exc:
             if not str(exc).startswith("No readiness found for project:"):
                 raise
-            return session
+            return self._with_team_decision_status(session, project_key)
         session = self._append_completed_understanding(
             store,
             session,
@@ -93,7 +94,22 @@ class TaskAssistantService:
             root,
         )
         session["runtime"] = runtime_view(self.project_config, session)
-        return self._with_readiness_attention(session, readiness)
+        return self._with_team_decision_status(self._with_readiness_attention(session, readiness), project_key)
+
+    def _with_team_decision_status(self, session, project_key):
+        pending = dict(session.get("pending_team_decision") or {})
+        if pending.get("status") != "pending":
+            return session
+        team = TeamControlPlaneStore(self.workspace, project_key).read()
+        if team is None or pending.get("expected_team_revision") != team["revision"]:
+            pending["status"] = "stale"
+        elif pending.get("preview") is None:
+            # Older proposals can be projected only against their original revision.
+            try:
+                pending["preview"] = preview_team_commands(team, list(pending.get("commands") or []))
+            except TeamControlPlaneError:
+                pending["status"] = "failed"
+        return {**session, "pending_team_decision": pending}
 
     def send_message(
         self, *, project_key: str, root: Path, text: str, message_id: str, context_run_id: str = "",
@@ -132,7 +148,11 @@ class TaskAssistantService:
         team_view = self.team_view(project_key)
         team_commands: list[dict[str, object]] = []
         team_authorization = ""
-        if self.project_config is not None and not self._manager_runtime_is_builtin():
+        detection = detect_team_commands(text, team_view)
+        if detection is not None and detection.candidates:
+            # Known ambiguous names must not be resolved to a model-selected first match.
+            intent, manager_response = "ambiguous", detection.reply
+        elif self.project_config is not None and not self._manager_runtime_is_builtin():
             turn = self.manager_turn(
                 project_config=self.project_config,
                 project_key=project_key,
@@ -149,7 +169,6 @@ class TaskAssistantService:
             # Deterministic path: builtin manager runtime (fake/noop/human)
             # cannot classify language, so the bounded classifier owns intent
             # and explicit team commands. Real-model turns stay above.
-            detection = detect_team_commands(text, team_view)
             if detection is not None:
                 intent = "team_management"
                 team_commands = detection.commands
@@ -253,6 +272,7 @@ class TaskAssistantService:
             "intent": intent,
             "workflow_started": False,
             "run_id": "",
+            "model_call_skipped": bool(detection and detection.candidates),
         }
 
     def team_view(self, project_key: str) -> dict[str, object] | None:
@@ -309,11 +329,13 @@ class TaskAssistantService:
         team = TeamControlPlaneStore(self.workspace, project_key).read()
         if team is None:
             raise ValueError("Team state is unavailable")
+        preview = preview_team_commands(team, commands) if team["revision"] == expected_team_revision else None
         session = store.propose_team_decision(
             commands=commands,
             reason=str(text)[:300],
             source_message_id=message_id,
             expected_team_revision=expected_team_revision,
+            preview=preview,
         )
         pending = dict(session.get("pending_team_decision") or {})
         return store.append_event(
@@ -577,6 +599,7 @@ _PERSISTENT_MARKERS = ("以后", "长期", "项目里", "团队", "from now on",
 class TeamCommandDetection:
     commands: list[dict[str, object]] = field(default_factory=list)
     reply: str = ""
+    candidates: list[dict[str, object]] = field(default_factory=list)
 
 
 def _is_cjk(text: str) -> bool:
@@ -626,16 +649,39 @@ def _complete_team_decision(store, pending, outcome):
     return store.take_pending_team_decision(proposal_id)
 
 
-def _match_worker_name(target: str, team_view: dict[str, object] | None) -> dict[str, object] | None:
+def _matching_workers(target: str, team_view: dict[str, object] | None) -> list[dict[str, object]]:
     if team_view is None:
-        return None
+        return []
     cleaned = str(target or "").strip().lower()
     if not cleaned:
-        return None
-    workers = [dict(worker) for role in team_view.get("roles") or [] for worker in dict(role).get("workers") or []]
+        return []
+    workers = [{**worker, "role": role["role"], "role_label": role.get("label") or role_label(role["role"])}
+               for role in team_view.get("roles") or [] for worker in role.get("workers") or []]
     exact = [worker for worker in workers if cleaned == str(worker.get("id", "")).lower()]
-    matches = exact or [worker for worker in workers if cleaned in str(worker.get("name", "")).lower()]
+    names = [worker for worker in workers if cleaned == str(worker.get("name", "")).lower()]
+    return exact or names or [worker for worker in workers if cleaned in str(worker.get("name", "")).lower()]
+
+
+def _match_worker_name(target: str, team_view: dict[str, object] | None) -> dict[str, object] | None:
+    matches = _matching_workers(target, team_view)
     return matches[0] if len(matches) == 1 else None
+
+
+def _worker_clarification(target, team_view, *, cjk, action, provider=""):
+    matches = _matching_workers(target, team_view)
+    if len(matches) < 2:
+        return None
+    lines = [f"多个 Worker 匹配“{target}”。请用具体 ID 重新提出变更；选择后仍需确认：" if cjk else
+             f'Several Workers match "{target}". Send the request with a specific ID; confirmation is still required:']
+    for worker in matches:
+        identifier = worker["id"]
+        request = {"pause": f"Pause {identifier}", "resume": f"Activate {identifier}",
+                   "runtime": f"让 {identifier} 改用 {provider}"}[action]
+        if cjk:
+            request = {"pause": f"暂停 {identifier}", "resume": f"激活 {identifier}",
+                       "runtime": f"让 {identifier} 改用 {provider}"}[action]
+        lines.append(f"- {worker['role_label']} / {worker['name']} ({identifier}): {request}")
+    return TeamCommandDetection(reply="\n".join(lines), candidates=matches)
 
 
 def detect_team_commands(text: str, team_view: dict[str, object] | None) -> TeamCommandDetection | None:
@@ -658,6 +704,9 @@ def detect_team_commands(text: str, team_view: dict[str, object] | None) -> Team
     pause = _PAUSE_WORKER_RE.search(raw)
     if pause:
         target = pause.group("target") or pause.group("target2") or ""
+        clarification = _worker_clarification(target, team_view, cjk=cjk, action="pause")
+        if clarification:
+            return clarification
         worker = _match_worker_name(target, team_view)
         if worker is not None:
             return TeamCommandDetection(
@@ -668,6 +717,9 @@ def detect_team_commands(text: str, team_view: dict[str, object] | None) -> Team
     resume = _RESUME_WORKER_RE.search(raw)
     if resume:
         target = resume.group("target") or resume.group("target2") or ""
+        clarification = _worker_clarification(target, team_view, cjk=cjk, action="resume")
+        if clarification:
+            return clarification
         worker = _match_worker_name(target, team_view)
         if worker is not None:
             return TeamCommandDetection(
@@ -681,6 +733,10 @@ def detect_team_commands(text: str, team_view: dict[str, object] | None) -> Team
         provider_value = "anthropic" if provider_value == "claude" else provider_value
         worker = None
         for candidate in re.finditer(r"(?:让|把)\s*([\w /-]{2,}?)\s*(?:改用|换成|换用|改成|切换到)", raw):
+            clarification = _worker_clarification(candidate.group(1), team_view, cjk=cjk,
+                                                  action="runtime", provider=provider_value)
+            if clarification:
+                return clarification
             worker = _match_worker_name(candidate.group(1), team_view)
             if worker is not None:
                 break

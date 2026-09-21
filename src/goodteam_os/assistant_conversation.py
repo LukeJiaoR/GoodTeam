@@ -65,7 +65,7 @@ def continue_conversation(service, *, store, project_key, root, text, message_id
 
     # Local imports avoid the TaskAssistantService/assistant_requests cycle.
     from goodteam_os.assistant_requests import update_request
-    from goodteam_os.task_assistant import detect_task_scoped_team_preference
+    from goodteam_os.task_assistant import detect_task_scoped_team_preference, detect_team_commands
 
     session = store.read()
     pending = scope["kind"] == "pending_draft"
@@ -90,7 +90,11 @@ def continue_conversation(service, *, store, project_key, root, text, message_id
         json.dumps({"scope": scope, "conversation": history, "team": team_view}, ensure_ascii=False, default=str),
     ])
     turn: dict[str, Any] = {}
-    if service.project_config is not None and not service._manager_runtime_is_builtin():
+    detection = detect_team_commands(text, team_view)
+    clarifying_worker = bool(detection and detection.candidates)
+    if clarifying_worker:
+        turn = {"intent": "ambiguous", "response": detection.reply}
+    elif service.project_config is not None and not service._manager_runtime_is_builtin():
         turn = service.manager_turn(
             project_config=service.project_config, project_key=project_key,
             message_id=attempt_id, text=text, context=context,
@@ -128,7 +132,7 @@ def continue_conversation(service, *, store, project_key, root, text, message_id
             "actions_applied": False,
         },
     )
-    return {"intent": "ambiguous"}
+    return {"intent": "ambiguous", "model_call_skipped": clarifying_worker}
 
 
 def _snapshot_reply(scope, text):

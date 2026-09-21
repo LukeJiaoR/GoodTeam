@@ -47,7 +47,8 @@ export default function ProjectConversation({
 }) {
   const requestStatus = Object.values(assistantState?.assistant_requests || {}).find((request) => request.status !== 'succeeded')?.status;
   const responding = ['message', 'retry_message'].includes(assistantBusy) || assistantState?.status === 'running' || requestStatus === 'running';
-  const needsAttention = ['failed', 'interrupted'].includes(requestStatus) || assistantState?.pending_team_decision?.status === 'pending';
+  const needsAttention = ['failed', 'interrupted'].includes(requestStatus)
+    || ['pending', 'stale', 'failed'].includes(assistantState?.pending_team_decision?.status);
   const managerTone = responding ? 'active' : needsAttention ? 'warning' : 'neutral';
   const managerStatus = t(responding ? 'assistant.project.responding' : needsAttention ? 'assistant.project.needsAttention' : 'assistant.project.available');
   const deliveryKey = (timeline || []).find((item) => item.delivery_status === 'sending')?.id || '';

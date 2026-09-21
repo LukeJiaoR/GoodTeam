@@ -282,7 +282,7 @@ test('allows a custom model after discovery fails, retains the draft on save fai
   const user = userEvent.setup();
   renderTeam();
   await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
-  await user.click(screen.getByRole('button', { name: 'Edit Builder A' }));
+  await user.click(screen.getByRole('button', { name: 'Edit Implementation / Builder A (implementation-a)' }));
   const dialog = screen.getByRole('dialog');
   await user.click(within(dialog).getByRole('button', { name: 'Enter model ID' }));
   await user.clear(within(dialog).getByLabelText('Model'));
@@ -336,14 +336,14 @@ test('pausing and deleting a worker emits lifecycle commands', async () => {
   renderTeam();
   await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
 
-  await user.click(screen.getByRole('button', { name: 'Pause Builder A' }));
+  await user.click(screen.getByRole('button', { name: 'Pause Implementation / Builder A (implementation-a)' }));
   await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
     'DEMO',
     [{ kind: 'inactivate_worker', worker_id: 'implementation-a' }],
     expect.anything(),
   ));
 
-  await user.click(screen.getByRole('button', { name: 'Delete Builder B; logical delete, history stays' }));
+  await user.click(screen.getByRole('button', { name: 'Delete Implementation / Builder B (implementation-b); logical delete, history stays' }));
   await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
     'DEMO',
     [{ kind: 'delete_worker', worker_id: 'implementation-b' }],
@@ -356,7 +356,7 @@ test('activating a paused worker emits activate command', async () => {
   renderTeam();
   await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
 
-  await user.click(screen.getByRole('button', { name: 'Activate Builder B' }));
+  await user.click(screen.getByRole('button', { name: 'Activate Implementation / Builder B (implementation-b)' }));
   await waitFor(() => expect(mocks.sendTeamCommands).toHaveBeenCalledWith(
     'DEMO',
     [{ kind: 'activate_worker', worker_id: 'implementation-b' }],
@@ -369,7 +369,7 @@ test('edits worker identity and runtime into diff-based commands', async () => {
   renderTeam();
   await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
 
-  await user.click(screen.getByRole('button', { name: 'Edit Builder A' }));
+  await user.click(screen.getByRole('button', { name: 'Edit Implementation / Builder A (implementation-a)' }));
   const dialog = screen.getByRole('dialog');
   await user.clear(within(dialog).getByLabelText('Name'));
   await user.type(within(dialog).getByLabelText('Name'), 'Builder Prime');
@@ -450,7 +450,7 @@ test('refreshes model discovery and resets unsupported effort on provider change
   const user = userEvent.setup();
   renderTeam();
   await user.click(screen.getByRole('button', { name: 'Show roles in Design & implementation' }));
-  await user.click(screen.getByRole('button', { name: 'Edit Builder A' }));
+  await user.click(screen.getByRole('button', { name: 'Edit Implementation / Builder A (implementation-a)' }));
   const dialog = screen.getByRole('dialog');
   await user.click(await within(dialog).findByRole('button', { name: 'Refresh models' }));
   await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));

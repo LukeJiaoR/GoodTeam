@@ -26,6 +26,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -642,6 +643,32 @@ def _worker_payload(worker: dict[str, object]) -> dict[str, object]:
 
 
 # ------------------------------------------------------------------ commands
+
+
+def preview_team_commands(state: dict[str, object], commands: list[dict[str, object]]) -> dict[str, object]:
+    """Project the real command effects on a copy; never write state or audit events."""
+    simulated = deepcopy(state)
+    changes = []
+    for index, command in enumerate(commands):
+        before_workers = {worker["id"]: dict(worker) for worker in _workers(simulated)}
+        events = _apply_command(
+            simulated, command, actor="manager", surface="manager_conversation",
+            decision_id="preview", source_ref=None, reason="",
+        )
+        for event in events:
+            target = dict(event["target"])
+            if target["kind"] == "worker":
+                worker = before_workers.get(target["id"]) or _find_worker(simulated, target["id"])
+                target.update(name=worker["name"], role=worker["role"], label=role_label(worker["role"]))
+            elif target["kind"] == "team_role":
+                target.update(role=target["id"], label=role_label(target["id"]))
+            else:
+                target.update(role=MANAGER_ROLE, label="Task Assistant")
+            changes.append({
+                "command_index": index, "target": target,
+                "before": deepcopy(event["before"]), "after": deepcopy(event["after"]),
+            })
+    return {"schema_version": "team_decision_preview.v1", "team_revision": state["revision"], "changes": changes}
 
 
 def _apply_command(

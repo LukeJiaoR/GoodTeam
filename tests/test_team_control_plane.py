@@ -586,7 +586,9 @@ def test_detect_team_commands_covers_explicit_utterances(tmp_path):
     disable = detect_team_commands("把 Research 关掉", view)
     assert disable is not None and disable.commands == [{"kind": "disable_role", "role": "research"}]
 
-    assert detect_team_commands("暂停 Builder A", view) is None
+    ambiguous = detect_team_commands("暂停 Builder A", view)
+    assert ambiguous is not None and not ambiguous.commands
+    assert {worker["id"] for worker in ambiguous.candidates} == {"implementation-a", "frontend-a", "backend-a"}
     pause = detect_team_commands("暂停 implementation-a", view)
     assert pause is not None and pause.commands == [{"kind": "inactivate_worker", "worker_id": "implementation-a"}]
 
@@ -733,7 +735,7 @@ def test_model_user_authorized_flag_still_requires_confirmation(tmp_path):
     session = service.send_message(
         project_key="demo",
         root=workspace.parent / "repo",
-        text="暂停 Builder A",
+        text="暂停 implementation-a",
         message_id="msg-auth-1",
     )
     assert worker_ids(config, "implementation", lifecycle="active") == ["implementation-a"]
