@@ -5821,6 +5821,7 @@ def handle_project_api_get(
 
 
 def handle_skill_api_post(
+    workspace: Path,
     path: str,
     request: dict[str, object],
 ) -> tuple[int, dict[str, object]] | None:
@@ -6687,7 +6688,7 @@ def build_dashboard_handler(workspace: Path):
                     response = (
                         handle_project_api_post(workspace, project_path, request)
                         if is_project_path
-                        else handle_skill_api_post(project_path, request)
+                        else handle_skill_api_post(workspace, project_path, request)
                     )
                     assert response is not None
                     status, result = response
