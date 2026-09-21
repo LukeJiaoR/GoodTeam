@@ -480,6 +480,19 @@ class TeamControlPlaneStore:
                     previous_fingerprint = str(previous.get("fingerprint", "") or "")
                     if previous_fingerprint and previous_fingerprint != fingerprint:
                         raise TeamControlPlaneError("Team command key already belongs to different inputs.")
+                    receipt = previous.get("result")
+                    if isinstance(receipt, dict):
+                        return {
+                            "ok": True,
+                            "changed": bool(receipt.get("changed", False)),
+                            "replayed": True,
+                            "decision_id": str(previous["decision_id"]),
+                            "team_revision": int(receipt.get("team_revision", state["revision"])),
+                            "events": deepcopy(list(receipt.get("events", []) or [])),
+                            "team": build_team_capability_view(state),
+                        }
+                    # Legacy receipts predate payload/result binding. Preserve their
+                    # historical replay shape rather than fabricating old events.
                     return {
                         "ok": True,
                         "changed": False,
@@ -539,6 +552,11 @@ class TeamControlPlaneStore:
                     "executed_at": _now(),
                     "event_count": len(events),
                     "fingerprint": fingerprint,
+                    "result": {
+                        "changed": bool(events),
+                        "team_revision": int(state["revision"]),
+                        "events": deepcopy(events),
+                    },
                 }
                 state["executed_commands"] = executed
 
