@@ -334,9 +334,16 @@ class TeamControlPlaneStore:
         with NamedTemporaryFile("w", encoding="utf-8", dir=self.state_dir, delete=False) as handle:
             json.dump(state, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
             temporary = Path(handle.name)
         try:
             os.replace(temporary, self.state_path)
+            directory = os.open(self.state_dir, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
         finally:
             temporary.unlink(missing_ok=True)
 
