@@ -48,7 +48,7 @@ test('installs a server-local Skill, binds it to QA, and preserves Role state af
   dialog = page.getByRole('dialog', { name: 'Skills' });
   await expect(dialog.getByText(skillName, { exact: true })).toBeVisible();
   await expect(dialog.getByText('Browser-installed review method.', { exact: true })).toBeVisible();
-  await dialog.getByRole('button', { name: 'Close Skills', exact: true }).click();
+  await dialog.locator('footer').getByRole('button', { name: 'Close Skills', exact: true }).click();
 
   const beforeResponse = await page.request.get(`/api/state?project=${fixture.key}`);
   expect(beforeResponse.ok()).toBeTruthy();
