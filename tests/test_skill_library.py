@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import goodteam_os.skills.library as skill_library
 from goodteam_os.skills.library import SkillLibraryService
 from goodteam_os.skills.models import SkillConflict, SkillError
 
@@ -141,3 +142,24 @@ def test_concurrent_preview_and_install_replay_one_logical_operation(tmp_path):
     library = service.list_library()
     assert len(library["skills"]) == 1
     assert len(library["skills"][0]["versions"]) == 1
+
+
+def test_unconfirmed_preview_expires_without_installing_stale_bytes(tmp_path, monkeypatch):
+    source = write_skill(tmp_path / "skill")
+    service = SkillLibraryService(tmp_path / "state")
+    clock = [datetime(2026, 9, 21, 0, 0, tzinfo=UTC)]
+    monkeypatch.setattr(skill_library, "_now", lambda: clock[0])
+
+    preview = service.preview_local(str(source), command_key="expiring")
+    assert preview["status"] == "awaiting_confirmation"
+    assert preview["expires_at"]
+
+    clock[0] += timedelta(minutes=31)
+    with pytest.raises(SkillConflict) as exc:
+        service.install(preview["proposal_id"])
+    assert exc.value.code == "proposal_expired"
+    assert service.list_library()["skills"] == []
+
+    with pytest.raises(SkillConflict) as exc:
+        service.preview_local(str(source), command_key="expiring")
+    assert exc.value.code == "proposal_expired"
