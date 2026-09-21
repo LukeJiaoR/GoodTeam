@@ -63,7 +63,7 @@ test('previews and installs a local Skill without implying Role binding', async 
     { commandKey: expect.any(String) },
   );
   expect(await screen.findByText('Review persistence boundaries.')).toBeVisible();
-  expect(screen.getByText('my-review')).toBeVisible();
+  expect(screen.getAllByText('my-review').length).toBeGreaterThanOrEqual(2);
   expect(screen.getByText('MIT')).toBeVisible();
 
   await user.click(screen.getByRole('button', { name: 'Install Skill' }));
