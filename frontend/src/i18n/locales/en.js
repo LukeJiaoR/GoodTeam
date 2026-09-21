@@ -654,6 +654,7 @@ export const en = {
   'team.roleSkills.description': 'Choose the methods available to this role. This changes future task configuration only.',
   'team.roleSkills.close': 'Close role methods',
   'team.roleSkills.futureOnly': 'Future tasks only',
+  'team.roleSkills.project': 'Project {{project}}',
   'team.roleSkills.methodMode': 'Method source',
   'team.roleSkills.defaultMode': 'GoodTeam default methods',
   'team.roleSkills.defaultModeHint': 'Use the default professional method preset for this role.',
