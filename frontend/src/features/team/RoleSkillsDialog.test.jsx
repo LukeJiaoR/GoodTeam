@@ -43,6 +43,7 @@ function renderDialog(overrides = {}) {
     onClose: vi.fn(),
     onRefresh: vi.fn().mockResolvedValue({}),
     onSubmit: vi.fn(),
+    projectKey: 'DEMO',
     role: role(),
     saving: false,
     t,
@@ -55,6 +56,7 @@ function renderDialog(overrides = {}) {
 test('replaces default methods with an exact installed Skill binding', async () => {
   const user = userEvent.setup();
   const { props } = renderDialog();
+  expect(screen.getByText('Project DEMO')).toBeVisible();
   await user.click(screen.getByRole('radio', { name: /Custom Skills/i }));
   await screen.findByRole('checkbox', { name: /custom-review/i });
 
