@@ -56,6 +56,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
       const result = await api.previewLocalSkill(path, { commandKey: previewAttempt.current.key });
       setPreview(result);
     } catch (caught) {
+      if (caught?.code === 'proposal_expired') previewAttempt.current = null;
       setError(caught);
     } finally {
       setBusy('');
@@ -71,6 +72,10 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
       setPreview(result);
       await load();
     } catch (caught) {
+      if (caught?.code === 'proposal_expired') {
+        previewAttempt.current = null;
+        setPreview(null);
+      }
       setError(caught);
     } finally {
       setBusy('');
