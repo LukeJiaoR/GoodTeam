@@ -115,7 +115,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
                 onChange={(event) => {
                   setSourcePath(event.target.value);
                   setPreview(null);
-                                if (previewAttempt.current?.path !== event.target.value.trim()) previewAttempt.current = null;
+                  if (previewAttempt.current?.path !== event.target.value.trim()) previewAttempt.current = null;
                 }}
                 placeholder={t('team.skills.pathPlaceholder')}
                 disabled={Boolean(busy)}
