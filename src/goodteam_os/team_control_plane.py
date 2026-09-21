@@ -796,8 +796,17 @@ def preview_team_commands(state: dict[str, object], commands: list[dict[str, obj
                 target.update(role=target["id"], label=role_label(target["id"]))
             elif target["kind"] == "role_skill_binding":
                 subject = str(target["id"])
-                role = subject.removeprefix("role:") if subject.startswith("role:") else MANAGER_ROLE
-                target.update(role=role, label=role_label(role) if role != MANAGER_ROLE else "Task Assistant")
+                if subject.startswith("role:"):
+                    role = subject.removeprefix("role:")
+                    target.update(role=role, label=role_label(role))
+                elif subject.startswith("workflow_role:"):
+                    role = subject.removeprefix("workflow_role:")
+                    target.update(
+                        role=role,
+                        label="Project Intake" if role == "project_intake" else role_label(role),
+                    )
+                else:
+                    target.update(role=MANAGER_ROLE, label="Task Assistant")
             else:
                 target.update(role=MANAGER_ROLE, label="Task Assistant")
             changes.append({
