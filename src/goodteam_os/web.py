@@ -5865,12 +5865,8 @@ def handle_skill_api_post(
                 )
             return 200, service.install(proposal_id)
     except SkillConflict as exc:
-        raise ProjectApiError(
-            exc.code,
-            str(exc),
-            409,
-            recovery=["reload_skill_library", "retry_request"],
-        ) from exc
+        recovery = ["repreview_skill"] if exc.code == "proposal_expired" else ["reload_skill_library", "retry_request"]
+        raise ProjectApiError(exc.code, str(exc), 409, recovery=recovery) from exc
     except SkillError as exc:
         status = 404 if exc.code == "proposal_missing" else 409 if exc.code in {"proposal_changed"} else 400
         recovery = ["repreview_skill"] if exc.code == "proposal_changed" else ["retry_request"]
