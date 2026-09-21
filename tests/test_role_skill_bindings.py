@@ -267,6 +267,9 @@ def test_command_key_same_payload_replays_but_different_payload_conflicts(tmp_pa
     )
     assert replay["replayed"] is True
     assert replay["decision_id"] == first["decision_id"]
+    assert replay["changed"] == first["changed"] is True
+    assert replay["team_revision"] == first["team_revision"]
+    assert replay["events"] == first["events"]
 
     changed = {**command, "subject": "role:release"}
     with pytest.raises(TeamControlPlaneError, match="different inputs"):
@@ -359,6 +362,10 @@ def test_interrupted_audit_append_recovers_once_without_reapplying_binding(tmp_p
         config_path=config,
     )
     assert replay["replayed"] is True
+    assert replay["changed"] is True
+    assert replay["team_revision"] == state["revision"] + 1
+    assert len(replay["events"]) == 1
+    assert replay["events"][0]["event"] == "role_skills.changed"
     assert len([event for event in store.read_events() if event["event"] == "role_skills.changed"]) == 1
 
 
