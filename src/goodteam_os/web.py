@@ -6137,6 +6137,14 @@ def handle_project_api_post(
                 400,
                 recovery=["retry_request"],
             )
+        expected_team_revision = request.get("expected_team_revision")
+        if expected_team_revision is not None and type(expected_team_revision) is not int:
+            raise ProjectApiError(
+                "invalid_request",
+                "expected_team_revision must be an integer.",
+                400,
+                recovery=["reload_team", "retry_request"],
+            )
         try:
             outcome = execute_team_commands(
                 workspace,
@@ -6148,11 +6156,7 @@ def handle_project_api_post(
                 source_ref={"client_context": dict(request.get("client_context") or {})} if request.get("client_context") else None,
                 command_key=str(request.get("command_key", "") or "")[:200],
                 config_path=config_path,
-                expected_revision=(
-                    int(request["expected_team_revision"])
-                    if request.get("expected_team_revision") is not None
-                    else None
-                ),
+                expected_revision=expected_team_revision,
             )
         except TeamControlPlaneError as exc:
             raise ProjectApiError(
