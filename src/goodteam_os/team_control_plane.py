@@ -350,21 +350,23 @@ class TeamControlPlaneStore:
                 _sync_legacy_worker_config_view(config_path, state)
             return state
 
-    def _write_state(self, state: dict[str, object]) -> None:
+    def _write_state(self, state: dict[str, object], *, durable: bool = False) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", dir=self.state_dir, delete=False) as handle:
             json.dump(state, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+            if durable:
+                handle.flush()
+                os.fsync(handle.fileno())
             temporary = Path(handle.name)
         try:
             os.replace(temporary, self.state_path)
-            directory = os.open(self.state_dir, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            if durable:
+                directory = os.open(self.state_dir, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -395,6 +397,14 @@ class TeamControlPlaneStore:
     def _append_events(self, events: list[dict[str, object]]) -> None:
         if not events:
             return
+        self.events_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.events_path.open("a", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def _append_events_idempotent(self, events: list[dict[str, object]]) -> None:
+        if not events:
+            return
         existing_ids = {str(item.get("id", "")) for item in self.read_events()}
         pending = [event for event in events if str(event.get("id", "")) not in existing_ids]
         if not pending:
@@ -417,9 +427,9 @@ class TeamControlPlaneStore:
         pending = [deepcopy(item) for item in list(state.get("pending_events", []) or [])]
         if not pending:
             return
-        self._append_events(pending)
+        self._append_events_idempotent(pending)
         state["pending_events"] = []
-        self._write_state(state)
+        self._write_state(state, durable=True)
 
     def reconcile_pending_audit(self) -> dict[str, object] | None:
         """Recover a committed state mutation whose audit append was interrupted."""
@@ -532,11 +542,11 @@ class TeamControlPlaneStore:
 
             if recoverable_binding_decision:
                 state["pending_events"] = deepcopy(events)
-                self._write_state(state)
+                self._write_state(state, durable=True)
                 if events:
-                    self._append_events(events)
+                    self._append_events_idempotent(events)
                     state["pending_events"] = []
-                    self._write_state(state)
+                    self._write_state(state, durable=True)
             else:
                 self._write_state(state)
                 self._append_events(events)
