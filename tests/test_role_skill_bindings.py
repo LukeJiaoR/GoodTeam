@@ -82,6 +82,8 @@ def test_existing_team_projects_default_binding_without_claiming_execution(tmp_p
     view = load_team_view(workspace, "DEMO")
     review = next(item for item in view["roles"] if item["role"] == "code_review")
     assert review["skill_binding"] == {
+        "schema_version": "role_skill_bindings.v1",
+        "project_key": "DEMO",
         "subject": "role:code_review",
         "role_contract_ref": "role:code_review@v1",
         "binding_revision": 0,
@@ -91,10 +93,13 @@ def test_existing_team_projects_default_binding_without_claiming_execution(tmp_p
         "execution_status": "not_connected",
         "updated_at": "",
     }
+    assert view["manager"]["skill_binding"]["schema_version"] == "role_skill_bindings.v1"
+    assert view["manager"]["skill_binding"]["project_key"] == "DEMO"
     assert view["manager"]["skill_binding"]["subject"] == "manager:orchestrator"
     assert view["manager"]["skill_binding"]["execution_status"] == "not_connected"
     intake = next(item for item in view["workflow_roles"] if item["role"] == "project_intake")
     assert intake["provided_by_team_role"] == "research"
+    assert intake["skill_binding"]["project_key"] == "DEMO"
     assert intake["skill_binding"]["subject"] == "workflow_role:project_intake"
     assert intake["skill_binding"]["status"] == "default"
     assert intake["skill_binding"]["execution_status"] == "not_connected"
@@ -531,3 +536,13 @@ def test_interrupted_pending_clear_recovers_without_duplicate_audit(tmp_path, mo
     assert recovered["pending_events"] == []
     matching = [event for event in store.read_events() if event["event"] == "role_skills.changed"]
     assert len(matching) == 1
+
+
+def test_binding_resource_rejects_cross_project_identity(tmp_path):
+    workspace, _config = make_project(tmp_path)
+    store = TeamControlPlaneStore(workspace, "DEMO")
+    state = store.read()
+    state["skill_bindings"]["role:qa"]["project_key"] = "OTHER"
+    store._write_state(state)
+    with pytest.raises(TeamControlPlaneError, match="project/subject"):
+        store.read()
