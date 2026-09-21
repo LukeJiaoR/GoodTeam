@@ -16,7 +16,7 @@ import tempfile
 from typing import Any
 
 from .models import SkillConflict, SkillError, SkillScope, SkillSource, bounded_text, canonical_json
-from .package import SkillPackage, capture_package
+from .package import SkillPackage, capture_package, package_from_files
 from .store import SkillStore
 
 PROPOSAL_SCHEMA = "skill_install_proposal.v1"
@@ -100,12 +100,12 @@ def _copy_package(package: SkillPackage, root: Path) -> None:
 class SkillLibraryService:
     """Single-operator library facade over the immutable SkillStore."""
 
-    def __init__(self, state_root: Path):
+    def __init__(self, state_root: Path, *, worker_roots: tuple[Path, ...] = ()):
         self.root = Path(state_root).expanduser().absolute() / "skills"
         self.proposals = self.root / "proposals"
         self.proposals.mkdir(parents=True, exist_ok=True)
         scope = SkillScope(kind="user", owner_id=LOCAL_SCOPE_OWNER)
-        self.store = SkillStore(self.root / "store", scope)
+        self.store = SkillStore(self.root / "store", scope, worker_roots=worker_roots)
 
     @staticmethod
     def _proposal_id(command_key: str) -> str:
@@ -164,6 +164,7 @@ class SkillLibraryService:
                 "source": asdict(source_record),
                 "source_label": source.name,
                 "metadata": package.metadata,
+                "root_name": package.root_name,
                 "package_digest": package.digest,
                 "manifest": package.manifest,
                 "diagnostics": _diagnostics(package.diagnostics),
@@ -196,7 +197,12 @@ class SkillLibraryService:
         if payload["status"] == "installed":
             return self._public_proposal(payload)
         proposal_root = self._proposal_path(proposal_id)
-        package = capture_package(proposal_root / "content")
+        captured = capture_package(proposal_root / "content")
+        package = package_from_files(
+            captured.files,
+            captured.directories,
+            root_name=str(payload.get("root_name", "") or ""),
+        )
         if package.digest != payload["package_digest"] or package.manifest != payload["manifest"]:
             raise SkillError("proposal_changed", "Skill install proposal bytes changed; re-preview the source.")
         source = SkillSource(**payload["source"])
