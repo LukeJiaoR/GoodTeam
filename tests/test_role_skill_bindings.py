@@ -92,6 +92,11 @@ def test_existing_team_projects_default_binding_without_claiming_execution(tmp_p
     }
     assert view["manager"]["skill_binding"]["subject"] == "manager:orchestrator"
     assert view["manager"]["skill_binding"]["execution_status"] == "not_connected"
+    intake = next(item for item in view["workflow_roles"] if item["role"] == "project_intake")
+    assert intake["provided_by_team_role"] == "research"
+    assert intake["skill_binding"]["subject"] == "workflow_role:project_intake"
+    assert intake["skill_binding"]["status"] == "default"
+    assert intake["skill_binding"]["execution_status"] == "not_connected"
 
 
 def test_user_skill_can_fully_replace_role_method_without_changing_role_or_workers(tmp_path, monkeypatch):
