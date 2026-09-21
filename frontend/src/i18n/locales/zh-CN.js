@@ -624,6 +624,8 @@ export const zhCN = {
   'team.skills.files': '文件数',
   'team.skills.size': '大小',
   'team.skills.license': '许可证',
+  'team.skills.author': '作者',
+  'team.skills.fileList': '包文件',
   'team.skills.install': '安装 Skill',
   'team.skills.installedNotBound': '已安装。此 Skill 尚未给任何角色启用。',
   'team.skills.installedTitle': '已安装 Skills',
