@@ -67,6 +67,8 @@ export function buildTeamModel(data) {
     capability: entry.capability || 'unstaffed',
     capabilityTone: capabilityTone(entry.capability),
     skillBinding: {
+      schemaVersion: entry.skill_binding?.schema_version || 'role_skill_bindings.v1',
+      projectKey: entry.skill_binding?.project_key || team.project_key || '',
       subject: entry.skill_binding?.subject || `role:${entry.role}`,
       roleContractRef: entry.skill_binding?.role_contract_ref || '',
       bindingRevision: entry.skill_binding?.binding_revision ?? 0,
@@ -103,6 +105,8 @@ export function buildTeamModel(data) {
       additionalPrompt: managerRuntime.additional_prompt || '',
       runtimeLabel: runtimeLabel(managerRuntime),
       skillBinding: {
+        schemaVersion: team.manager?.skill_binding?.schema_version || 'role_skill_bindings.v1',
+        projectKey: team.manager?.skill_binding?.project_key || team.project_key || '',
         subject: team.manager?.skill_binding?.subject || 'manager:orchestrator',
         roleContractRef: team.manager?.skill_binding?.role_contract_ref || '',
         bindingRevision: team.manager?.skill_binding?.binding_revision ?? 0,
