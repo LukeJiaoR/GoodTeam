@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 import fcntl
 import hashlib
 import json
@@ -24,6 +25,7 @@ from .store import SkillStore
 PROPOSAL_SCHEMA = "skill_install_proposal.v1"
 LOCAL_SCOPE_OWNER = "local-operator"
 PROPOSAL_RE = re.compile(r"proposal-[0-9a-f]{32}")
+PROPOSAL_TTL_SECONDS = 30 * 60
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -74,6 +76,20 @@ def _public_source(source: SkillSource) -> dict[str, str]:
 
 def _diagnostics(items) -> list[dict[str, str]]:
     return [asdict(item) for item in items]
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _proposal_expired(payload: dict[str, Any]) -> bool:
+    if payload.get("status") != "awaiting_confirmation":
+        return False
+    try:
+        expires_at = datetime.fromisoformat(str(payload.get("expires_at", "")))
+    except ValueError:
+        return True
+    return expires_at <= _now()
 
 
 def _copy_package(package: SkillPackage, root: Path) -> None:
@@ -145,10 +161,12 @@ class SkillLibraryService:
         return payload
 
     def _public_proposal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        status = "expired" if _proposal_expired(payload) else payload["status"]
         return {
             "schema_version": payload["schema_version"],
             "proposal_id": payload["proposal_id"],
-            "status": payload["status"],
+            "status": status,
+            "expires_at": payload.get("expires_at", ""),
             "source": {"kind": "local", "label": payload["source_label"]},
             "metadata": dict(payload["metadata"]),
             "package_digest": payload["package_digest"],
@@ -168,6 +186,8 @@ class SkillLibraryService:
             previous = self._load_proposal(proposal_id)
             if previous.get("requested_source") != source_path:
                 raise SkillConflict("operation_conflict", "Install preview key belongs to another source.")
+            if _proposal_expired(previous):
+                raise SkillConflict("proposal_expired", "Skill install preview expired; preview the source again.")
             return self._public_proposal(previous)
 
         source = _source_root(source_path)
@@ -177,10 +197,13 @@ class SkillLibraryService:
             content = stage / "content"
             _copy_package(package, content)
             source_record = SkillSource(kind="local", locator=str(source))
+            created_at = _now()
             payload = {
                 "schema_version": PROPOSAL_SCHEMA,
                 "proposal_id": proposal_id,
                 "status": "awaiting_confirmation",
+                "created_at": created_at.isoformat(),
+                "expires_at": (created_at + timedelta(seconds=PROPOSAL_TTL_SECONDS)).isoformat(),
                 "requested_source": source_path,
                 "source": asdict(source_record),
                 "source_label": source.name,
@@ -222,6 +245,8 @@ class SkillLibraryService:
         payload = self._load_proposal(proposal_id)
         if payload["status"] == "installed":
             return self._public_proposal(payload)
+        if _proposal_expired(payload):
+            raise SkillConflict("proposal_expired", "Skill install preview expired; preview the source again.")
         proposal_root = self._proposal_path(proposal_id)
         captured = capture_package(proposal_root / "content")
         package = package_from_files(
