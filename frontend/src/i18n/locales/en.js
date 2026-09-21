@@ -668,6 +668,7 @@ export const en = {
   'team.roleSkills.onDemand': 'On demand',
   'team.roleSkills.emptyCustom': 'No custom methods selected. This role will be unconfigured for Skill-backed execution; defaults will not be restored automatically.',
   'team.roleSkills.executionNotConnected': 'Saved Skill configuration is not connected to Worker execution yet. Runtime loading lands in a later Skills slice.',
+  'team.roleSkills.executionPending': 'Saved only · execution not connected',
   'team.roleSkills.refresh': 'Refresh current',
   'team.roleSkills.save': 'Save methods',
   'team.roleSkills.restoreDefault': 'Restore default methods',
