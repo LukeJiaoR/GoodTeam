@@ -65,12 +65,20 @@ def _binding_item(raw: object, resolver: BindingResolver | None = None) -> dict[
     enabled = raw.get("enabled", True)
     if type(enabled) is not bool:
         raise SkillError("invalid_binding", "Skill binding enabled must be a boolean.")
-    package_digest = str(raw.get("package_digest", "") or "")
+    supplied_digest = str(raw.get("package_digest", "") or "")
     if resolver is not None:
         resolved = resolver(skill_id, version_id)
-        package_digest = identifier(str(resolved.get("package_digest", "") or ""), "sha256:")
+        resolved_digest = identifier(str(resolved.get("package_digest", "") or ""), "sha256:")
+        if supplied_digest:
+            supplied_digest = identifier(supplied_digest, "sha256:")
+            if supplied_digest != resolved_digest:
+                raise SkillError(
+                    "binding_version_changed",
+                    "Selected Skill version no longer matches the package that was reviewed.",
+                )
+        package_digest = resolved_digest
     else:
-        package_digest = identifier(package_digest, "sha256:")
+        package_digest = identifier(supplied_digest, "sha256:")
     return {
         "skill_id": skill_id,
         "version_id": version_id,
