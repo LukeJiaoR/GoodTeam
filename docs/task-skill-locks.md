@@ -2,10 +2,10 @@
 
 ## Status: core implementation; production wiring is not complete
 
-This change introduces `TaskSkillLockStore`, not a working end-to-end S4 slice.
-Do not close #444 or enable Runtime loading on the strength of these unit tests.
-No current Worker, workflow, Manager, or operator call site is migrated by this
-core module. Existing saved-only Skill configuration remains unchanged.
+This change introduces `TaskSkillLockStore` and `SkillAvailabilityStore`, not a
+working end-to-end S4 slice. Do not close #444 or enable Runtime loading on the
+strength of core tests. No current Worker, workflow, Manager, or operator call
+site is migrated yet. Existing saved-only Skill configuration remains unchanged.
 
 ## Contract
 
@@ -38,28 +38,67 @@ path alone is not immutable evidence. Changing those inputs under the same key
 conflicts; callers must not put the changed payload hash into a new key and
 accidentally schedule twice. Unknown subjects or newly required unbound Skills
 need an explicit bounded change, not a query for the latest project binding.
+Matching snapshot replays also sync the registry directory: a prior visible
+replace is not proof that its directory entry was durably published.
 
 `preflight` verifies the registered job reference, original task/owner, methods,
 job request, loader version, package bytes, and retained pins. It requires a
 trusted current availability/revocation reader with an exact scope, Skill/version,
 boolean availability and revocation state, and a status revision. Missing or
-unknown status fails closed. The reader's implementation and Runtime capability
-checks remain integration work. A successful core preflight does not authorize a
-provider, prove #440 conformance, prevent a later revocation race on its own, or
-prove that a Skill entered a model's context. Dispatch and each resource load
-must enforce their own current checks at the appropriate boundary.
+unknown status fails closed. `SkillAvailabilityStore.current_status` implements
+that reader; production dependency wiring and Runtime capability checks remain
+integration work. A successful core preflight does not authorize a provider,
+prove #440 conformance, prevent a later revocation race on its own, or prove that
+a Skill entered a model's context. Dispatch and each resource load must enforce
+their current checks at the appropriate boundary.
+
+## Current availability and security revocation
+
+`SkillAvailabilityStore` is an Operator-owned service over the existing package
+scope. It is not an HTTP authorization layer, a package-supplied permission flag,
+or a replacement for Runtime conformance. The caller authorizes the root/actor
+and keeps the directory outside Worker-writable roots.
+
+Explicit `initialize()` publishes an initial registry directory with its complete
+index through an atomic rename. Status reads never call initialization. An
+existing registry directory whose metadata is missing, corrupt, from another
+owner, or an unknown schema is rejected; it is not silently reset to unrevoked.
+Within an initialized registry, a valid exact package version without a revocation
+record is available. Missing or corrupt package bytes are unavailable.
+
+`revoke()` serializes an exact-version decision against the current status
+revision. Its receipt binds actor, reason, Skill and version to a stable command
+key. Identical retries return the original receipt; different inputs conflict.
+The CAS revision is a precondition, not part of the semantic replay fingerprint.
+Another explicit command for an already revoked version records a no-op receipt
+without replacing the original security event. Revocation is terminal here; no
+un-revoke operation is provided.
+
+The registry atomically stores the decision and receipt together. Partial writes
+cannot corrupt the visible index. A failed directory sync does not produce a
+successful replay until durability is re-established. Exact package ownership is
+checked using metadata so corrupt package bytes cannot prevent their revocation.
+The current-status reader does not open a revoked package's content.
+
+Revocation does not delete immutable package bytes, rewrite a task lock, or release
+retention pins. A previously valid task snapshot fails its next core preflight
+when its version is revoked. This is distinct from ordinary uninstall, which
+remains #448; the existing package store does not implement uninstall yet. The
+lifecycle UI and authenticated mutation route remain separate integration work.
 
 ## Persistence and limits
 
 The explicitly authorized Operator root must be outside declared Worker-writable
 roots. Namespace ownership comes from the existing `SkillStore.scope`. Anchored
 POSIX operations reject links and unsafe metadata files. Resource objects are
-content-addressed, limited to 2 MiB, and immutable. The bounded 16 MiB registry
+content-addressed, limited to 2 MiB, and immutable. The bounded 16 MiB task registry
 atomically owns both task identities and command receipts; it does not replace
-the Team control-plane ledger. Registry replacement and resource publication
-flush file bytes and their parent directory. Pin acquisition uses the existing
-SkillStore idempotency protocol, then verifies the retained holder before marking
-the task committed. Reads/preflight never recreate a missing retention pin.
+the Team control-plane ledger. The current-availability registry is bounded to
+8 MiB and rejects detached/missing audit receipts. Registry replacement and
+resource publication flush file bytes and their parent directory. Pin acquisition
+uses the existing SkillStore idempotency protocol, then verifies the retained
+holder before marking the task committed. Reads/preflight never recreate a
+missing retention pin.
 
 Immutable objects published before a failed registry commit can be unreferenced.
 They are deliberately retained. No garbage collector or automatic pin release is
@@ -77,7 +116,8 @@ introduced here; #448 must preserve ordinary-uninstall vs security-revoke semant
 | `reviewer_dispatch.py` and reviewer retry | Original task lock; complete original task/context/output/read-only policy, not an abbreviated retry prompt. | Not connected |
 | `manager_execution.py` | Logical message/intent lock, same-message retries stable, new messages capture new bindings. | Not connected |
 | operator/direct dispatch | Explicit bounded scope or an explicit Skill-backed dispatch rejection. | Not connected |
-| availability/revocation source | Trusted, current, versioned control-plane status, including checks at resource loading time. | Reader contract only |
+| availability/revocation source | Trusted current versioned status and explicit security revocation. | Implemented; production wiring pending |
+| dispatch/load revocation enforcement | Recheck current status at every provider/resource boundary, not only at snapshot creation. | Not connected |
 
 The PR must remain Draft until those paths either use the unified contract or
 explicitly block unsupported Skill-backed work, with integration evidence.
@@ -92,8 +132,15 @@ command-input conflicts, empty/default/disabled methods, unavailable unused
 subjects, concurrent capture, prepare/pin/final-commit interruptions, immutable
 resource tampering, missing pins, and current availability failures.
 
+`tests/test_skill_availability.py` connects the real persistent current-status
+reader to core preflight. It covers terminal exact-version revocation, unchanged
+history/pins, semantic replay and CAS conflict, scope/version ownership, concurrent
+commands, missing/corrupt status, corrupted package content, partial writes,
+pre/post-replace failure, repeated directory sync failure, and snapshot replay
+durability. These are core-service integration tests, not Worker dispatch tests.
+
 Tests execute in CI according to the existing CI-only agreement. Full backend,
 Ruff, HTTP recovery, isolated browser acceptance and the final CI gate are still
 required. An unchanged frontend does not imply a frontend Runtime integration.
 No real provider call, Runtime Skill loading, deployment, or product acceptance
-has been performed by this module.
+has been performed by these modules.

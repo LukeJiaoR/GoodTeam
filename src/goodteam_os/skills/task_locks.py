@@ -376,6 +376,9 @@ class TaskSkillLockStore:
                 if entry["fingerprint"] != fingerprint:
                     raise SkillConflict("operation_conflict", "Job key belongs to different task, method, runtime or policy inputs.")
                 self._resource(fd, entry["ref"], SNAPSHOT_SCHEMA)
+                # A previous registry replace can be visible before its directory
+                # sync completes. A matching retry must establish durability too.
+                os.fsync(fd)
                 return deepcopy(entry["ref"])
             frozen = lock["subjects"].get(subject)
             if frozen is None:
