@@ -553,3 +553,38 @@ def test_binding_resource_rejects_cross_project_identity(tmp_path):
     store._write_state(state)
     with pytest.raises(TeamControlPlaneError, match="project/subject"):
         store.read()
+
+
+def test_binding_rejects_command_key_owned_by_unverifiable_legacy_operation(tmp_path):
+    workspace, config = make_project(tmp_path)
+    state = TeamControlPlaneStore(workspace, "DEMO").read()
+    execute_team_commands(
+        workspace,
+        "DEMO",
+        [{"kind": "disable_role", "role": "research"}],
+        actor="user",
+        surface="team_ui",
+        command_key="legacy-key",
+        expected_revision=state["revision"],
+        config_path=config,
+    )
+    current = TeamControlPlaneStore(workspace, "DEMO").read()
+    with pytest.raises(TeamControlPlaneError, match="cannot be verified"):
+        execute_team_commands(
+            workspace,
+            "DEMO",
+            [{
+                "kind": "set_role_skills",
+                "subject": "role:qa",
+                "mode": "custom",
+                "bindings": [],
+                "expected_binding_revision": 0,
+            }],
+            actor="user",
+            surface="team_ui",
+            command_key="legacy-key",
+            expected_revision=current["revision"],
+            config_path=config,
+        )
+    latest = TeamControlPlaneStore(workspace, "DEMO").read()
+    assert latest["skill_bindings"]["role:qa"]["mode"] == "default"
