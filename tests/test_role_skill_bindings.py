@@ -322,3 +322,47 @@ def test_interrupted_audit_append_recovers_once_without_reapplying_binding(tmp_p
     )
     assert replay["replayed"] is True
     assert len([event for event in store.read_events() if event["event"] == "role_skills.changed"]) == 1
+
+
+def test_http_rejects_stale_team_revision_before_binding_mutation(tmp_path):
+    from goodteam_os import web
+
+    workspace, _config = make_project(tmp_path)
+    state = TeamControlPlaneStore(workspace, "DEMO").read()
+    original_revision = state["revision"]
+
+    status, first = web.handle_project_api_post(
+        workspace,
+        "/api/projects/DEMO/team/commands",
+        {
+            "commands": [{"kind": "disable_role", "role": "research"}],
+            "reason": "create a concurrent change",
+            "command_key": "other-tab",
+            "expected_team_revision": original_revision,
+        },
+    )
+    assert status == 200
+    assert first["team_revision"] == original_revision + 1
+
+    with pytest.raises(web.ProjectApiError) as rejected:
+        web.handle_project_api_post(
+            workspace,
+            "/api/projects/DEMO/team/commands",
+            {
+                "commands": [{
+                    "kind": "set_role_skills",
+                    "subject": "role:qa",
+                    "mode": "custom",
+                    "bindings": [],
+                    "expected_binding_revision": 0,
+                }],
+                "reason": "stale skills tab",
+                "command_key": "stale-tab",
+                "expected_team_revision": original_revision,
+            },
+        )
+    assert rejected.value.status == 409
+    assert rejected.value.code == "team_command_rejected"
+    current = TeamControlPlaneStore(workspace, "DEMO").read()
+    assert current["skill_bindings"]["role:qa"]["mode"] == "default"
+    assert current["skill_bindings"]["role:qa"]["binding_revision"] == 0
