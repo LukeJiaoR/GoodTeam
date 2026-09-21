@@ -747,6 +747,10 @@ def preview_team_commands(state: dict[str, object], commands: list[dict[str, obj
                 target.update(name=worker["name"], role=worker["role"], label=role_label(worker["role"]))
             elif target["kind"] == "team_role":
                 target.update(role=target["id"], label=role_label(target["id"]))
+            elif target["kind"] == "role_skill_binding":
+                subject = str(target["id"])
+                role = subject.removeprefix("role:") if subject.startswith("role:") else MANAGER_ROLE
+                target.update(role=role, label=role_label(role) if role != MANAGER_ROLE else "Task Assistant")
             else:
                 target.update(role=MANAGER_ROLE, label="Task Assistant")
             changes.append({
@@ -1409,6 +1413,10 @@ def build_team_capability_view(
                     "updated_at": worker["updated_at"],
                 }
             )
+        binding = normalize_binding(
+            dict(state.get("skill_bindings", {}) or {}).get(role_subject(role), {}),
+            subject=role_subject(role),
+        )
         roles.append(
             {
                 "role": role,
@@ -1420,6 +1428,7 @@ def build_team_capability_view(
                     role_workers,
                     backend_doctor=backend_doctor,
                 ),
+                "skill_binding": project_binding(binding),
                 "workers": projected_workers,
             }
         )
@@ -1433,6 +1442,12 @@ def build_team_capability_view(
             "role": MANAGER_ROLE,
             "label": "Task Assistant",
             "runtime": dict(manager.get("runtime", {}) or {}),
+            "skill_binding": project_binding(
+                normalize_binding(
+                    dict(state.get("skill_bindings", {}) or {}).get(manager_subject(MANAGER_ROLE), {}),
+                    subject=manager_subject(MANAGER_ROLE),
+                )
+            ),
             "updated_at": manager.get("updated_at", ""),
         },
     }
