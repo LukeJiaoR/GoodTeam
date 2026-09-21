@@ -597,6 +597,9 @@
   font-size: 0.7rem;
   line-height: 1.35;
 }
+.team-role-method-status span,
+.team-role-method-status small { display: block; }
+.team-role-method-status small { margin-top: 0.12rem; font-size: 0.64rem; font-weight: 500; }
 .team-role-method-status[data-status="configured"] { color: var(--product-accent-strong); }
 .team-role-method-status[data-status="unconfigured"] { color: var(--product-warning); }
 
