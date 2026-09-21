@@ -143,6 +143,14 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
 
 
+def _command_fingerprint(commands: list[dict[str, object]]) -> str:
+    try:
+        data = json.dumps(commands, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise TeamControlPlaneError("Team commands must be JSON-compatible values") from exc
+    return "sha256:" + hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
 def role_label(role: str) -> str:
     for item in ROLE_CATALOG:
         if item["key"] == role:
@@ -359,10 +367,40 @@ class TeamControlPlaneStore:
     def _append_events(self, events: list[dict[str, object]]) -> None:
         if not events:
             return
+        existing_ids = {str(item.get("id", "")) for item in self.read_events()}
+        pending = [event for event in events if str(event.get("id", "")) not in existing_ids]
+        if not pending:
+            return
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
+        created = not self.events_path.exists()
         with self.events_path.open("a", encoding="utf-8") as handle:
-            for event in events:
+            for event in pending:
                 handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if created:
+            directory = os.open(self.events_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+
+    def _recover_pending_events(self, state: dict[str, object]) -> None:
+        pending = [deepcopy(item) for item in list(state.get("pending_events", []) or [])]
+        if not pending:
+            return
+        self._append_events(pending)
+        state["pending_events"] = []
+        self._write_state(state)
+
+    def reconcile_pending_audit(self) -> dict[str, object] | None:
+        """Recover a committed state mutation whose audit append was interrupted."""
+        with self._locked():
+            state = self.read()
+            if state is None:
+                return None
+            self._recover_pending_events(state)
+            return state
 
     # --------------------------------------------------------------- commands
 
@@ -379,27 +417,29 @@ class TeamControlPlaneStore:
         config_path: Path | None = None,
         expected_revision: int | None = None,
     ) -> dict[str, object]:
-        """Execute one authorized decision (one or more commands).
-
-        Commands in one call share a single ``decision_id``. A repeated
-        ``command_key`` is an idempotent replay: the recorded decision is
-        returned and no new events are appended.
-        """
+        """Execute one authorized decision through one serialized Team truth."""
         if actor not in ACTORS:
             raise TeamControlPlaneError(f"Unknown actor: {actor}")
         if surface not in SURFACES:
             raise TeamControlPlaneError(f"Unknown surface: {surface}")
         if not commands:
             raise TeamControlPlaneError("At least one team command is required")
+        if any(not isinstance(item, dict) for item in commands):
+            raise TeamControlPlaneError("Each team command must be a JSON object")
+        fingerprint = _command_fingerprint(commands)
 
         with self._locked():
             state = self.read()
             if state is None:
                 raise TeamControlPlaneError("Team state is unavailable for this project")
+            self._recover_pending_events(state)
             normalized_key = str(command_key or "").strip()
             if normalized_key:
                 previous = dict(state["executed_commands"]).get(normalized_key)
                 if isinstance(previous, dict) and previous.get("decision_id"):
+                    previous_fingerprint = str(previous.get("fingerprint", "") or "")
+                    if previous_fingerprint and previous_fingerprint != fingerprint:
+                        raise TeamControlPlaneError("Team command key already belongs to different inputs.")
                     return {
                         "ok": True,
                         "changed": False,
@@ -411,10 +451,19 @@ class TeamControlPlaneStore:
                     }
             if expected_revision is not None and expected_revision != state["revision"]:
                 raise TeamControlPlaneError("Team changed since this proposal. Request a new proposal.")
+
+            binding_resolver = None
+            if any(str(item.get("kind", "") or "") == "set_role_skills" for item in commands):
+                from goodteam_os.service import service_state_dir
+                from goodteam_os.skills.library import SkillLibraryService
+
+                library = SkillLibraryService(service_state_dir(), worker_roots=(self.workspace,))
+                binding_resolver = library.binding_reference
+
             decision = decision_id or _new_id("dec")
             events: list[dict[str, object]] = []
             for raw_command in commands:
-                if not isinstance(raw_command, dict) or not str(raw_command.get("kind", "")).strip():
+                if not str(raw_command.get("kind", "")).strip():
                     raise TeamControlPlaneError("Each team command requires a kind")
                 events.extend(
                     _apply_command(
@@ -425,6 +474,7 @@ class TeamControlPlaneStore:
                         decision_id=decision,
                         source_ref=source_ref,
                         reason=reason,
+                        binding_resolver=binding_resolver,
                     )
                 )
             if events:
@@ -437,10 +487,16 @@ class TeamControlPlaneStore:
                     "decision_id": decision,
                     "executed_at": _now(),
                     "event_count": len(events),
+                    "fingerprint": fingerprint,
                 }
                 state["executed_commands"] = executed
+
+            state["pending_events"] = deepcopy(events)
             self._write_state(state)
-            self._append_events(events)
+            if events:
+                self._append_events(events)
+                state["pending_events"] = []
+                self._write_state(state)
             if events and config_path is not None:
                 _sync_legacy_worker_config_view(config_path, state)
             return {
