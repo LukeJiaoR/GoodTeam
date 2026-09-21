@@ -146,7 +146,16 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
                 <div><dt>{t('team.skills.files')}</dt><dd>{summary.count}</dd></div>
                 <div><dt>{t('team.skills.size')}</dt><dd>{summary.bytes} B</dd></div>
                 {preview.metadata?.license ? <div><dt>{t('team.skills.license')}</dt><dd>{String(preview.metadata.license)}</dd></div> : null}
+                {preview.metadata?.author ? <div><dt>{t('team.skills.author')}</dt><dd>{String(preview.metadata.author)}</dd></div> : null}
               </dl>
+              <div className="skill-library__files">
+                <strong>{t('team.skills.fileList')}</strong>
+                <ul>
+                  {(preview.manifest?.files || []).map((item) => (
+                    <li key={item.path}><code>{item.path}</code><span>{Number(item.size || 0)} B</span></li>
+                  ))}
+                </ul>
+              </div>
               {preview.diagnostics?.length ? (
                 <ul className="skill-library__diagnostics">
                   {preview.diagnostics.map((item, index) => <li key={`${item.code}-${index}`}>{item.message}</li>)}
@@ -186,6 +195,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
                       <strong>{skill.name}</strong>
                       <p>{version?.metadata?.description || ''}</p>
                       <small>{skill.source?.label || skill.source?.kind} · {skill.versions?.length || 0} {t('team.skills.versions')}</small>
+                      {version?.version_id ? <code className="skill-library__version">{version.version_id}</code> : null}
                     </div>
                   </li>
                 );
