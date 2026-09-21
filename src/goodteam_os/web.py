@@ -94,6 +94,8 @@ from goodteam_os.resources import (
     resource_to_dict,
 )
 from goodteam_os.service import service_state_dir
+from goodteam_os.skills.library import SkillLibraryService
+from goodteam_os.skills.models import SkillConflict, SkillError
 from goodteam_os.review_provenance import (
     build_reviewer_provenance,
     latest_reviewer_status_for_approval,
@@ -5745,6 +5747,11 @@ def handle_project_api_get(
     workspace: Path,
     path: str,
 ) -> tuple[int, dict[str, object]] | None:
+    if path == "/api/skills":
+        return 200, SkillLibraryService(service_state_dir()).list_library()
+    skill_proposal_match = re.fullmatch(r"/api/skills/proposals/(proposal-[0-9a-f]{32})", path)
+    if skill_proposal_match:
+        return 200, SkillLibraryService(service_state_dir()).get_proposal(skill_proposal_match.group(1))
     if path == "/api/projects":
         return 200, build_project_list(workspace)
     if path == "/api/settings":
@@ -5810,6 +5817,47 @@ def handle_project_api_get(
                 recovery=["reload_project", "retry_readiness"],
             )
         return 200, ProjectReadinessExecutor(workspace).artifact(key, root, str(refs[-1]))
+    return None
+
+
+def handle_skill_api_post(
+    path: str,
+    request: dict[str, object],
+) -> tuple[int, dict[str, object]] | None:
+    service = SkillLibraryService(service_state_dir())
+    try:
+        if path == "/api/skills/local/preview":
+            source_path = str(request.get("path", "") or "")
+            command_key = str(request.get("command_key", "") or "")
+            if not source_path.strip() or not command_key.strip():
+                raise ProjectApiError(
+                    "invalid_request",
+                    "Local Skill preview requires path and command_key.",
+                    400,
+                    recovery=["retry_request"],
+                )
+            return 200, service.preview_local(source_path, command_key=command_key)
+        if path == "/api/skills/local/install":
+            proposal_id = str(request.get("proposal_id", "") or "")
+            if not proposal_id.strip():
+                raise ProjectApiError(
+                    "invalid_request",
+                    "Local Skill install requires proposal_id.",
+                    400,
+                    recovery=["retry_request"],
+                )
+            return 200, service.install(proposal_id)
+    except SkillConflict as exc:
+        raise ProjectApiError(
+            exc.code,
+            str(exc),
+            409,
+            recovery=["reload_skill_library", "retry_request"],
+        ) from exc
+    except SkillError as exc:
+        status = 404 if exc.code == "proposal_missing" else 409 if exc.code in {"proposal_changed"} else 400
+        recovery = ["repreview_skill"] if exc.code == "proposal_changed" else ["retry_request"]
+        raise ProjectApiError(exc.code, str(exc), status, recovery=recovery) from exc
     return None
 
 
@@ -6266,6 +6314,10 @@ def _decode_project_run_id(encoded_run_id: str) -> str:
     return decoded
 
 
+def _is_skill_api_post_path(path: str) -> bool:
+    return path in {"/api/skills/local/preview", "/api/skills/local/install"}
+
+
 def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings"}
@@ -6588,10 +6640,11 @@ def build_dashboard_handler(workspace: Path):
         def do_POST(self) -> None:
             project_path = urlparse(self.path).path
             is_project_path = _is_project_api_post_path(project_path)
+            is_skill_path = _is_skill_api_post_path(project_path)
             normalized_path = project_path
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
-            if not is_project_path and normalized_path not in {
+            if not is_project_path and not is_skill_path and normalized_path not in {
                 "/context-estimate",
                 "/context-generate",
                 "/project-config",
@@ -6611,12 +6664,31 @@ def build_dashboard_handler(workspace: Path):
                     )
                 )
                 return
+            if is_skill_path:
+                try:
+                    client = ipaddress.ip_address(str(self.client_address[0]))
+                except ValueError:
+                    client = None
+                if client is None or not client.is_loopback:
+                    self._send_api_error(
+                        ProjectApiError(
+                            "local_skill_import_requires_loopback",
+                            "Local Skill import is available only from a loopback GoodTeam client.",
+                            403,
+                            recovery=["use_git_skill_source", "retry_from_local_goodteam"],
+                        )
+                    )
+                    return
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length)
-                if is_project_path:
+                if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
-                    response = handle_project_api_post(workspace, project_path, request)
+                    response = (
+                        handle_project_api_post(workspace, project_path, request)
+                        if is_project_path
+                        else handle_skill_api_post(project_path, request)
+                    )
                     assert response is not None
                     status, result = response
                     self._send_json(status, result)
