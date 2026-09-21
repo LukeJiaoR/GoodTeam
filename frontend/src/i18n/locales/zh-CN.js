@@ -673,6 +673,7 @@ export const zhCN = {
   'team.roleSkills.restoreDefault': '恢复默认方法',
   'team.roleSkills.changedWhileEditing': '编辑期间当前角色绑定已变化。你的草稿仍保留；保存前请与刷新后的配置比较。',
   'team.roleSkills.missingVersion': '某个已配置 Skill 版本已不在安装库中，请先移除或恢复后再保存。',
+  'team.roleSkills.remove': '移除',
   'team.roleSkills.status.default': '默认方法',
   'team.roleSkills.status.configured': '自定义方法',
   'team.roleSkills.status.unconfigured': '方法未配置',
