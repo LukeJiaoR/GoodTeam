@@ -624,6 +624,8 @@ export const en = {
   'team.skills.files': 'Files',
   'team.skills.size': 'Size',
   'team.skills.license': 'License',
+  'team.skills.author': 'Author',
+  'team.skills.fileList': 'Package files',
   'team.skills.install': 'Install Skill',
   'team.skills.installedNotBound': 'Installed. This Skill is not enabled for any role yet.',
   'team.skills.installedTitle': 'Installed Skills',
