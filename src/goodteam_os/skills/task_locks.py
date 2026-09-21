@@ -132,6 +132,17 @@ class TaskSkillLockStore:
         try:
             data, _ = regular_file(fd, "index.json", maximum=MAX_REGISTRY_BYTES)
         except FileNotFoundError:
+            # Missing ownership metadata is not an empty store when immutable
+            # resources survived. Recapturing could adopt today's bindings for
+            # an old task. Orphans from an interrupted first prepare are also
+            # ambiguous: keep them and require trusted recovery, never guess.
+            with subdirectory(fd, "objects") as objects:
+                with os.scandir(objects) as entries:
+                    if next(entries, None) is not None:
+                        raise SkillError(
+                            "snapshot_missing",
+                            "Task Skill registry is missing while resources remain; restore trusted metadata before continuing.",
+                        ) from None
             return {"schema_version": REGISTRY_SCHEMA, "scope": asdict(self.scope), "tasks": {}, "commands": {}, "jobs": {}}
         result = _decode(data)
         if (set(result) != {"schema_version", "scope", "tasks", "commands", "jobs"}
