@@ -7,6 +7,7 @@ from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.project_reviewer_profiles import REVIEWER_PROFILE_PHASES, normalize_reviewer_profile_config
 from goodteam_os.review_provenance import reviewer_phase_for_approval
 from goodteam_os.reviewer_profiles import ReviewerProfile, get_reviewer_profile
+from goodteam_os.reviewer_retry_inputs import create_reviewer_retry
 from goodteam_os.workers import SESSION_BACKENDS, WorkerJobStore
 
 
@@ -356,8 +357,9 @@ def retry_failed_reviewer_jobs_for_gate(
             continue
         retry_attempt = _next_retry_attempt(job)
         try:
-            retry_job, _created = store.create_or_reuse_job(
-                **_retry_reviewer_job_spec(job, retry_attempt=retry_attempt)
+            retry_job, _created = create_reviewer_retry(
+                store, job, retry_attempt=retry_attempt,
+                idempotency_key=_retry_idempotency_key(job, retry_attempt=retry_attempt),
             )
         except (OSError, ValueError) as exc:
             errors.append({"job_id": original_job_id, "error": str(exc)})
@@ -438,10 +440,11 @@ def _reviewer_job_spec(
         "worker_name": worker_name,
         "task": _reviewer_task(profile=profile, approval=approval, artifact_key=artifact_key, artifact_path=artifact_path),
         "context": context,
+        "execution_policy": "read_only",
         "constraints": [
             "Act as an advisory reviewer only; do not approve or reject the gate.",
             "Review the named artifact and report findings, evidence, and recommendation.",
-            "Do not modify project files unless the task explicitly requests a patch.",
+            "Do not modify project files. A patch requires a separately authorized implementation task.",
         ],
         "expected_artifacts": [f"reviewer-report-{profile.profile_id}.md"],
         "profile_id": profile.profile_id,
@@ -509,104 +512,6 @@ def _reviewer_task(*, profile: ReviewerProfile, approval: str, artifact_key: str
             "",
             "Required report sections:",
             sections,
-        ]
-    )
-
-
-def _retry_reviewer_job_spec(job: Mapping[str, object], *, retry_attempt: int) -> dict[str, Any]:
-    original_job_id = _job_id(job)
-    profile_id = _clean_text(job.get("profile_id"))
-    approval = _job_gate(job)
-    phase = _clean_text(job.get("phase"))
-    artifact_key = _clean_text(job.get("artifact_key"))
-    artifact_path = _clean_text(job.get("artifact_path"))
-    artifact_version = _clean_text(job.get("artifact_version"))
-    retry_idempotency_key = _retry_idempotency_key(job, retry_attempt=retry_attempt)
-    expected = job.get("expected_artifacts")
-    expected_artifacts = [str(item) for item in expected] if isinstance(expected, list) else []
-    if not expected_artifacts and profile_id:
-        expected_artifacts = [f"reviewer-report-{profile_id}.md"]
-    return {
-        "run_id": _clean_text(job.get("run_id")),
-        "role": _clean_text(job.get("role")) or REVIEWER_ROLE_BY_PHASE.get(phase, "review"),
-        "adapter": _clean_text(job.get("adapter")) or "fake",
-        "model": _clean_text(job.get("model")),
-        "task": _retry_reviewer_task(
-            original_job_id=original_job_id,
-            profile_id=profile_id,
-            approval=approval,
-            artifact_key=artifact_key,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-        ),
-        "context": _retry_reviewer_context(job),
-        "constraints": [
-            "Act as an advisory reviewer only; do not approve or reject the gate.",
-            "Retry only the failed reviewer-dispatch job identity carried by this job.",
-            "Review the named current artifact and report findings, evidence, and recommendation.",
-        ],
-        "expected_artifacts": expected_artifacts,
-        "reasoning_depth": _clean_text(job.get("reasoning_depth")),
-        "additional_prompt": _clean_text(job.get("additional_prompt")),
-        "desired_instances": int(job.get("desired_instances", 1) or 1),
-        "pi_thinking_level": _clean_text(job.get("pi_thinking_level")),
-        "worker_id": _clean_text(job.get("worker_id")),
-        "worker_name": _clean_text(job.get("worker_name")),
-        "profile_id": profile_id,
-        "approval": approval,
-        "gate": approval,
-        "phase": phase,
-        "artifact_key": artifact_key,
-        "artifact_path": artifact_path,
-        "artifact_version": artifact_version,
-        "dispatch_group_id": _clean_text(job.get("dispatch_group_id")),
-        "attempt": retry_attempt,
-        "idempotency_key": retry_idempotency_key,
-        "original_failed_job_id": original_job_id,
-        "retry_attempt": retry_attempt,
-        "retry_of_idempotency_key": _clean_text(job.get("idempotency_key")),
-    }
-
-
-def _retry_reviewer_task(
-    *,
-    original_job_id: str,
-    profile_id: str,
-    approval: str,
-    artifact_key: str,
-    artifact_path: str,
-    artifact_version: str,
-) -> str:
-    return "\n".join(
-        [
-            f"Retry failed reviewer job `{original_job_id}` for `{approval}`.",
-            f"Reviewer profile: `{profile_id}`",
-            f"Artifact key: `{artifact_key}`",
-            f"Artifact path: `{artifact_path}`",
-            f"Artifact version: `{artifact_version}`",
-            "",
-            "This is an explicit operator-controlled retry. It is advisory evidence only.",
-        ]
-    )
-
-
-def _retry_reviewer_context(job: Mapping[str, object]) -> str:
-    return "\n".join(
-        [
-            "Original failed reviewer-dispatch job evidence:",
-            f"- job_id: {_job_id(job)}",
-            f"- profile_id: {_clean_text(job.get('profile_id'))}",
-            f"- approval: {_job_gate(job)}",
-            f"- phase: {_clean_text(job.get('phase'))}",
-            f"- artifact_key: {_clean_text(job.get('artifact_key'))}",
-            f"- artifact_path: {_clean_text(job.get('artifact_path'))}",
-            f"- artifact_version: {_clean_text(job.get('artifact_version'))}",
-            f"- dispatch_group_id: {_clean_text(job.get('dispatch_group_id'))}",
-            f"- idempotency_key: {_clean_text(job.get('idempotency_key'))}",
-            f"- summary: {_clean_text(job.get('summary'))}",
-            f"- result_path: {_clean_text(job.get('result_path'))}",
-            f"- stdout_path: {_clean_text(job.get('stdout_path'))}",
-            f"- stderr_path: {_clean_text(job.get('stderr_path'))}",
         ]
     )
 
