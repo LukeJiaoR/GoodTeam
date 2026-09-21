@@ -110,7 +110,14 @@ def _write_reviewer_dispatch_project(
     return config
 
 
-def _post_web_json(workspace: Path, route: str, payload: dict[str, object], *, origin: str | None = None):
+def _post_web_json(
+    workspace: Path,
+    route: str,
+    payload: dict[str, object],
+    *,
+    origin: str | None = None,
+    host: str | None = None,
+):
     server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(workspace))
     thread = threading.Thread(
         target=server.serve_forever,
@@ -128,6 +135,7 @@ def _post_web_json(workspace: Path, route: str, payload: dict[str, object], *, o
             headers={
                 "Content-Type": "application/json",
                 "Origin": origin or f"http://127.0.0.1:{server.server_port}",
+                **({"Host": host} if host else {}),
             },
         )
         try:
@@ -6007,3 +6015,20 @@ def test_skill_library_http_missing_proposal_has_stable_error(tmp_path: Path, mo
     )
     assert status == 404
     assert payload["error"]["code"] == "proposal_missing"
+
+
+def test_skill_library_http_public_proxy_host_cannot_trigger_local_import(tmp_path: Path, monkeypatch) -> None:
+    state_root = tmp_path.parent / f"{tmp_path.name}-service-state"
+    monkeypatch.setattr(web, "service_state_dir", lambda: state_root)
+    source = _write_local_skill_fixture(tmp_path / "private-skill")
+
+    status, payload = _post_web_json(
+        tmp_path,
+        "/api/skills/local/preview",
+        {"path": str(source), "command_key": "proxied"},
+        origin="https://goodteam.example",
+        host="goodteam.example",
+    )
+    assert status == 403
+    assert payload["error"]["code"] == "local_skill_import_requires_loopback"
+    assert not state_root.exists()
