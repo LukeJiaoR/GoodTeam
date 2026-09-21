@@ -26,7 +26,8 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState('');
-  const handleKeyDown = useTeamDialog(dialogRef, closeRef, () => { if (!busy) onClose(); });
+  const mutating = busy === 'preview' || busy === 'install';
+  const handleKeyDown = useTeamDialog(dialogRef, closeRef, () => { if (!mutating) onClose(); });
 
   const load = useCallback(async ({ signal } = {}) => {
     const payload = await api.getSkillLibrary({ signal });
@@ -79,7 +80,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
   const summary = fileSummary(preview?.manifest);
 
   return (
-    <div className="team-dialog-backdrop" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose(); }}>
+    <div className="team-dialog-backdrop" onMouseDown={(event) => { if (!mutating && event.target === event.currentTarget) onClose(); }}>
       <section
         ref={dialogRef}
         className="team-dialog skill-library"
@@ -94,13 +95,13 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
             <h2 id={titleId}>{t('team.skills.title')}</h2>
             <p>{t('team.skills.description')}</p>
           </div>
-          <button ref={closeRef} className="team-icon-button" type="button" disabled={Boolean(busy)} onClick={onClose} aria-label={t('team.skills.close')}>
+          <button ref={closeRef} className="team-icon-button" type="button" disabled={mutating} onClick={onClose} aria-label={t('team.skills.close')}>
             <X aria-hidden="true" size={18} />
           </button>
         </header>
 
         <div className="skill-library__body">
-          {error ? <ProductError error={error} onRetry={() => setError(null)} t={t} /> : null}
+          {error ? <ProductError error={error} t={t} /> : null}
 
           <form className="skill-library__import" onSubmit={submitPreview}>
             <div>
@@ -189,7 +190,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
         </div>
 
         <footer className="team-dialog__footer">
-          <Button variant="secondary" disabled={Boolean(busy)} onClick={onClose}>{t('team.skills.close')}</Button>
+          <Button variant="secondary" disabled={mutating} onClick={onClose}>{t('team.skills.close')}</Button>
         </footer>
       </section>
     </div>
