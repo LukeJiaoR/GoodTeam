@@ -135,7 +135,10 @@ export default function RoleSkillsDialog({
   };
 
   const selectedIds = new Set(Object.keys(selections));
-  const missingSelections = Object.values(selections).filter((item) => !installedById.has(item.skillId));
+  const missingSelections = Object.values(selections).filter((item) => {
+    const skill = installedById.get(item.skillId);
+    return !skill || !findVersion(skill, item.versionId);
+  });
 
   return (
     <div
