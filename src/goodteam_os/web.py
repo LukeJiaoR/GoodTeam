@@ -5748,10 +5748,10 @@ def handle_project_api_get(
     path: str,
 ) -> tuple[int, dict[str, object]] | None:
     if path == "/api/skills":
-        return 200, SkillLibraryService(service_state_dir()).list_library()
+        return 200, SkillLibraryService(service_state_dir(), worker_roots=(workspace,)).list_library()
     skill_proposal_match = re.fullmatch(r"/api/skills/proposals/(proposal-[0-9a-f]{32})", path)
     if skill_proposal_match:
-        return 200, SkillLibraryService(service_state_dir()).get_proposal(skill_proposal_match.group(1))
+        return 200, SkillLibraryService(service_state_dir(), worker_roots=(workspace,)).get_proposal(skill_proposal_match.group(1))
     if path == "/api/projects":
         return 200, build_project_list(workspace)
     if path == "/api/settings":
@@ -5824,7 +5824,7 @@ def handle_skill_api_post(
     path: str,
     request: dict[str, object],
 ) -> tuple[int, dict[str, object]] | None:
-    service = SkillLibraryService(service_state_dir())
+    service = SkillLibraryService(service_state_dir(), worker_roots=(workspace,))
     try:
         if path == "/api/skills/local/preview":
             source_path = str(request.get("path", "") or "")
