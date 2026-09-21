@@ -6,7 +6,9 @@ publishes only those captured bytes; it never reopens the source directory.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict
+import fcntl
 import hashlib
 import json
 import os
@@ -116,6 +118,20 @@ class SkillLibraryService:
     def _proposal_path(self, proposal_id: str) -> Path:
         return self.proposals / _safe_proposal_id(proposal_id)
 
+    @contextmanager
+    def _proposal_lock(self, proposal_id: str):
+        proposal_id = _safe_proposal_id(proposal_id)
+        flags = os.O_WRONLY | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(self.proposals / f".{proposal_id}.lock", flags, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
     def _load_proposal(self, proposal_id: str) -> dict[str, Any]:
         path = self._proposal_path(proposal_id) / "proposal.json"
         try:
@@ -143,6 +159,10 @@ class SkillLibraryService:
 
     def preview_local(self, source_path: str, *, command_key: str) -> dict[str, Any]:
         proposal_id = self._proposal_id(command_key)
+        with self._proposal_lock(proposal_id):
+            return self._preview_local_locked(source_path, proposal_id)
+
+    def _preview_local_locked(self, source_path: str, proposal_id: str) -> dict[str, Any]:
         final = self._proposal_path(proposal_id)
         if final.exists():
             previous = self._load_proposal(proposal_id)
@@ -194,6 +214,11 @@ class SkillLibraryService:
         return self._public_proposal(self._load_proposal(proposal_id))
 
     def install(self, proposal_id: str) -> dict[str, Any]:
+        proposal_id = _safe_proposal_id(proposal_id)
+        with self._proposal_lock(proposal_id):
+            return self._install_locked(proposal_id)
+
+    def _install_locked(self, proposal_id: str) -> dict[str, Any]:
         payload = self._load_proposal(proposal_id)
         if payload["status"] == "installed":
             return self._public_proposal(payload)
