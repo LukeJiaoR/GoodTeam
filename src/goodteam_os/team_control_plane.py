@@ -41,6 +41,7 @@ from goodteam_os.skills.bindings import (
     normalize_items,
     project_binding,
     role_subject,
+    workflow_role_subject,
 )
 from goodteam_os.skills.models import SkillError
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
@@ -53,6 +54,10 @@ TEAM_CAPABILITY_VIEW_SCHEMA_VERSION = "team_capability_view.v1"
 TEAM_EXECUTION_SNAPSHOT_SCHEMA_VERSION = "team_execution_snapshot.v1"
 
 MANAGER_ROLE = "orchestrator"
+# project_intake is a workflow Role Definition, not a TeamRole. Its Worker
+# identity/runtime is provided by the Research Team capability today; its
+# method configuration remains an independent workflow-role subject.
+WORKFLOW_ROLE_PROVIDERS: dict[str, str] = {"project_intake": "research"}
 
 # Worker runtime providers this product accepts, mirroring the web-layer
 # accepted backend set without importing the web module.
@@ -251,6 +256,7 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
             payload.get("skill_bindings", {}),
             role_keys=ROLE_KEYS,
             manager_role=MANAGER_ROLE,
+            workflow_role_keys=tuple(WORKFLOW_ROLE_PROVIDERS),
         )
     except SkillError as exc:
         raise TeamControlPlaneError(str(exc)) from exc
@@ -638,6 +644,10 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
         "manager": {"runtime": manager_runtime, "updated_at": _now()},
         "skill_bindings": {
             **{role_subject(role): default_binding(role_subject(role)) for role in ROLE_KEYS},
+            **{
+                workflow_role_subject(role): default_binding(workflow_role_subject(role))
+                for role in WORKFLOW_ROLE_PROVIDERS
+            },
             manager_subject(MANAGER_ROLE): default_binding(manager_subject(MANAGER_ROLE)),
         },
         "migrated": {
@@ -880,7 +890,11 @@ def _binding_subject(command: dict[str, object]) -> str:
     subject = str(command.get("subject", "") or "").strip()
     if not subject and command.get("role"):
         subject = role_subject(_command_role(command))
-    allowed = {*(role_subject(role) for role in ROLE_KEYS), manager_subject(MANAGER_ROLE)}
+    allowed = {
+        *(role_subject(role) for role in ROLE_KEYS),
+        *(workflow_role_subject(role) for role in WORKFLOW_ROLE_PROVIDERS),
+        manager_subject(MANAGER_ROLE),
+    }
     if subject not in allowed:
         raise TeamControlPlaneError(f"Unknown Role-Skill binding subject: {subject or '(blank)'}")
     return subject
@@ -1461,6 +1475,20 @@ def build_team_capability_view(
         "project_key": state["project_key"],
         "revision": state["revision"],
         "roles": roles,
+        "workflow_roles": [
+            {
+                "role": role,
+                "label": "Project Intake" if role == "project_intake" else role_label(role),
+                "provided_by_team_role": provider,
+                "skill_binding": project_binding(
+                    normalize_binding(
+                        dict(state.get("skill_bindings", {}) or {}).get(workflow_role_subject(role), {}),
+                        subject=workflow_role_subject(role),
+                    )
+                ),
+            }
+            for role, provider in WORKFLOW_ROLE_PROVIDERS.items()
+        ],
         "manager": {
             "role": MANAGER_ROLE,
             "label": "Task Assistant",
