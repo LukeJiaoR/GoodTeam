@@ -8236,6 +8236,7 @@ def serve(
         def do_POST(self) -> None:
             project_path = urlparse(self.path).path
             is_project_path = _is_project_api_post_path(project_path)
+            is_skill_path = _is_skill_api_post_path(project_path)
             normalized_path = project_path
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
@@ -8243,7 +8244,7 @@ def serve(
                 re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision)", normalized_path)
             )
 
-            if not is_project_path and not is_execution_path and normalized_path not in {
+            if not is_project_path and not is_skill_path and not is_execution_path and normalized_path not in {
                 "/start", "/report-bug", "/context-estimate", "/context-generate",
                 "/intent-commit/start", "/intent-commit/discuss",
                 "/intent-commit/keep-discussing", "/intent-commit/confirm",
@@ -8269,6 +8270,25 @@ def serve(
                     )
                 )
                 return
+            if is_skill_path:
+                try:
+                    client = ipaddress.ip_address(str(self.client_address[0]))
+                except ValueError:
+                    client = None
+                if (
+                    client is None
+                    or not client.is_loopback
+                    or not _request_host_is_loopback(str(self.headers.get("Host", "")))
+                ):
+                    self._send_api_error(
+                        ProjectApiError(
+                            "local_skill_import_requires_loopback",
+                            "Local Skill import is available only from a loopback GoodTeam client.",
+                            403,
+                            recovery=["use_git_skill_source", "retry_from_local_goodteam"],
+                        )
+                    )
+                    return
             if normalized_path == "/fs/choose" and not _native_picker_request_targets_local_server(
                 request_host=str(self.headers.get("Host", "")),
                 port=port,
@@ -8299,12 +8319,12 @@ def serve(
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length)
-                if is_project_path:
+                if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
-                    project_response = handle_project_api_post(
-                        workspace,
-                        project_path,
-                        request,
+                    project_response = (
+                        handle_project_api_post(workspace, project_path, request)
+                        if is_project_path
+                        else handle_skill_api_post(workspace, project_path, request)
                     )
                     assert project_response is not None
                     status, result = project_response
