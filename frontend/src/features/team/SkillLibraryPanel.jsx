@@ -26,7 +26,6 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState('');
-  const [installedNotice, setInstalledNotice] = useState(false);
   const handleKeyDown = useTeamDialog(dialogRef, closeRef, () => { if (!busy) onClose(); });
 
   const load = useCallback(async ({ signal } = {}) => {
@@ -48,7 +47,6 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
     const path = sourcePath.trim();
     if (!path || busy) return;
     setError(null);
-    setInstalledNotice(false);
     setBusy('preview');
     if (previewAttempt.current?.path !== path) {
       previewAttempt.current = { path, key: commandKey() };
@@ -70,7 +68,6 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
     try {
       const result = await api.installLocalSkill(preview.proposal_id);
       setPreview(result);
-      setInstalledNotice(true);
       await load();
     } catch (caught) {
       setError(caught);
@@ -117,8 +114,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
                 onChange={(event) => {
                   setSourcePath(event.target.value);
                   setPreview(null);
-                  setInstalledNotice(false);
-                  if (previewAttempt.current?.path !== event.target.value.trim()) previewAttempt.current = null;
+                                if (previewAttempt.current?.path !== event.target.value.trim()) previewAttempt.current = null;
                 }}
                 placeholder={t('team.skills.pathPlaceholder')}
                 disabled={Boolean(busy)}
@@ -155,7 +151,6 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
               ) : (
                 <Button onClick={install} disabled={Boolean(busy)} busy={busy === 'install'}>{t('team.skills.install')}</Button>
               )}
-              {installedNotice ? <p className="skill-library__installed" role="status">{t('team.skills.installedNotBound')}</p> : null}
             </section>
           ) : null}
 
