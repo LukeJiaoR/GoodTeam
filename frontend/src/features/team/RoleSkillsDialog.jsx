@@ -33,6 +33,7 @@ export default function RoleSkillsDialog({
   onClose,
   onRefresh,
   onSubmit,
+  projectKey,
   role,
   saving,
   t,
@@ -179,6 +180,7 @@ export default function RoleSkillsDialog({
           {loadError ? <ProductError error={loadError} t={t} /> : null}
 
           <div className="team-skills-dialog__status">
+            <span>{t('team.roleSkills.project', { project: projectKey || role.skillBinding.projectKey || '—' })}</span>
             <span>{t(`team.roleSkills.status.${role.skillBinding.status}`)}</span>
             <code>r{role.skillBinding.bindingRevision}</code>
             <span>{t('team.roleSkills.futureOnly')}</span>
