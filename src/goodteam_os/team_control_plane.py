@@ -453,7 +453,12 @@ class TeamControlPlaneStore:
                 raise TeamControlPlaneError("Team changed since this proposal. Request a new proposal.")
 
             binding_resolver = None
-            if any(str(item.get("kind", "") or "") == "set_role_skills" for item in commands):
+            needs_binding_lookup = any(
+                str(item.get("kind", "") or "") == "set_role_skills"
+                and bool(list(item.get("bindings", []) or []))
+                for item in commands
+            )
+            if needs_binding_lookup:
                 from goodteam_os.service import service_state_dir
                 from goodteam_os.skills.library import SkillLibraryService
 
