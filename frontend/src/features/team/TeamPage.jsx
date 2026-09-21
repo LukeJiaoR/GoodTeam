@@ -526,7 +526,10 @@ export default function TeamPage({ api = settingsApi }) {
                           </button>
                         </span>
                         <p className="team-role-method-status" data-status={role.skillBinding.status}>
-                          {t(`team.roleSkills.status.${role.skillBinding.status}`)}
+                          <span>{t(`team.roleSkills.status.${role.skillBinding.status}`)}</span>
+                          {role.skillBinding.executionStatus !== 'connected'
+                            ? <small>{t('team.roleSkills.executionPending')}</small>
+                            : null}
                         </p>
                         {role.capability === 'degraded' ? (
                           <p className="team-role-warning"><AlertTriangle aria-hidden="true" size={13} />{t('team.degradedHint')}</p>
