@@ -456,13 +456,15 @@ class TeamControlPlaneStore:
                         "events": [],
                         "team": build_team_capability_view(state),
                     }
-            if expected_revision is not None and expected_revision != state["revision"]:
-                raise TeamControlPlaneError("Team changed since this proposal. Request a new proposal.")
-
             recoverable_binding_decision = any(
                 str(item.get("kind", "") or "") == "set_role_skills"
                 for item in commands
             )
+            if recoverable_binding_decision and expected_revision is None:
+                raise TeamControlPlaneError("Role-Skill binding changes require the current Team revision.")
+            if expected_revision is not None and expected_revision != state["revision"]:
+                raise TeamControlPlaneError("Team changed since this proposal. Request a new proposal.")
+
             binding_resolver = None
             needs_binding_lookup = any(
                 str(item.get("kind", "") or "") == "set_role_skills"
@@ -899,9 +901,10 @@ def _cmd_set_role_skills(
     bindings = _skill_bindings(state)
     current = normalize_binding(bindings.get(subject, {}), subject=subject)
     expected = command.get("expected_binding_revision")
-    if expected is not None:
-        if type(expected) is not int or expected != current["binding_revision"]:
-            raise TeamControlPlaneError("Skill binding changed since this edit. Reload the Role before saving.")
+    if type(expected) is not int:
+        raise TeamControlPlaneError("Role-Skill binding changes require the current binding revision.")
+    if expected != current["binding_revision"]:
+        raise TeamControlPlaneError("Skill binding changed since this edit. Reload the Role before saving.")
     mode = str(command.get("mode", "custom") or "").strip()
     try:
         items = normalize_items(command.get("bindings", []), resolver=binding_resolver)
