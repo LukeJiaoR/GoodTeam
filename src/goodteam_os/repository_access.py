@@ -297,7 +297,7 @@ def _open_anchored_root(root: Path) -> tuple[int, int, str | None]:
         return descriptor, -1, None
     try:
         for component in components[1:-1]:
-            child = _open_directory_at(descriptor, component, str(root))
+            child = _open_directory_at(descriptor, component, str(root), ancestor=True)
             os.close(descriptor)
             descriptor = child
         root_name = components[-1]
@@ -308,7 +308,9 @@ def _open_anchored_root(root: Path) -> tuple[int, int, str | None]:
         raise
 
 
-def _open_directory_at(parent_fd: int, name: str, path: str) -> int:
+def _open_directory_at(
+    parent_fd: int, name: str, path: str, *, ancestor: bool = False,
+) -> int:
     try:
         before = _lstat_at(parent_fd, name)
     except FileNotFoundError:
@@ -326,7 +328,16 @@ def _open_directory_at(parent_fd: int, name: str, path: str) -> int:
             raise _symlink_rejected(path) from exc
         raise
     try:
-        _require_same_entry(path, before, os.fstat(descriptor))
+        if ancestor:
+            # Sibling activity in /tmp or another ancestor changes directory
+            # mtime/size without changing the repository. Bind traversal to the
+            # directory identity and permissions, not its unrelated contents.
+            _require_same_directory_identity(path, before, os.fstat(descriptor))
+            _require_same_directory_identity(path, before, _lstat_at(parent_fd, name))
+        else:
+            # Keep the existing content-change check inside the repository,
+            # including its root. This is not a general weakening of metadata.
+            _require_same_entry(path, before, os.fstat(descriptor))
         return descriptor
     except BaseException:
         os.close(descriptor)
@@ -403,6 +414,20 @@ def _metadata(value: os.stat_result) -> tuple[int, int, int, int, int]:
         value.st_size,
         value.st_mtime_ns,
     )
+
+
+def _require_same_directory_identity(
+    path: str,
+    listed: os.stat_result,
+    opened: os.stat_result,
+) -> None:
+    fields = ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid")
+    if (
+        not stat.S_ISDIR(listed.st_mode)
+        or not stat.S_ISDIR(opened.st_mode)
+        or any(getattr(listed, key) != getattr(opened, key) for key in fields)
+    ):
+        raise _entry_changed(path)
 
 
 def _require_same_entry(
