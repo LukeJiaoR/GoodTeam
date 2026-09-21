@@ -561,3 +561,29 @@
   .skill-library__preview-header { flex-direction: column; }
   .skill-library__preview dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.skill-library__files { display: grid; gap: 0.45rem; min-width: 0; }
+.skill-library__files > strong { font-size: 0.72rem; }
+.skill-library__files > ul {
+  display: grid;
+  gap: 0;
+  max-height: 10rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--product-border);
+  border-radius: 7px;
+  list-style: none;
+}
+.skill-library__files li {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 0.45rem 0.6rem;
+  border-top: 1px solid var(--product-border);
+  font-size: 0.7rem;
+}
+.skill-library__files li:first-child { border-top: 0; }
+.skill-library__files code { overflow-wrap: anywhere; }
+.skill-library__files span { flex: none; color: var(--product-text-muted); }
+.skill-library__version { display: block; margin-top: 0.28rem; color: var(--product-text-muted); font-size: 0.62rem; overflow-wrap: anywhere; }
