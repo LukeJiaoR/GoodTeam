@@ -84,6 +84,7 @@ test('installs a server-local Skill, binds it to QA, and preserves Role state af
   await expect(page.getByRole('dialog', { name: 'QA methods', exact: true })).toHaveCount(0);
   qa = page.getByRole('article', { name: 'QA', exact: true });
   await expect(qa.getByText('Custom methods', { exact: true })).toBeVisible();
+  await expect(qa.getByText('Saved only · execution not connected', { exact: true })).toBeVisible();
 
   const afterResponse = await page.request.get(`/api/state?project=${fixture.key}`);
   expect(afterResponse.ok()).toBeTruthy();
