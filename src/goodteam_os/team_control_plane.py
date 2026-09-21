@@ -547,17 +547,19 @@ class TeamControlPlaneStore:
                     event["team_revision"] = int(state["revision"])
             if normalized_key:
                 executed = dict(state["executed_commands"])
-                executed[normalized_key] = {
+                receipt = {
                     "decision_id": decision,
                     "executed_at": _now(),
                     "event_count": len(events),
                     "fingerprint": fingerprint,
-                    "result": {
+                }
+                if recoverable_binding_decision:
+                    receipt["result"] = {
                         "changed": bool(events),
                         "team_revision": int(state["revision"]),
                         "events": deepcopy(events),
-                    },
-                }
+                    }
+                executed[normalized_key] = receipt
                 state["executed_commands"] = executed
 
             if recoverable_binding_decision:
