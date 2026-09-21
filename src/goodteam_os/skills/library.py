@@ -6,16 +6,16 @@ publishes only those captured bytes; it never reopens the source directory.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
 import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import tempfile
+from contextlib import contextmanager
+from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from .models import SkillConflict, SkillError, SkillScope, SkillSource, bounded_text, canonical_json
@@ -87,7 +87,9 @@ def _proposal_expired(payload: dict[str, Any]) -> bool:
         return False
     try:
         expires_at = datetime.fromisoformat(str(payload.get("expires_at", "")))
-    except ValueError:
+    except (TypeError, ValueError):
+        return True
+    if expires_at.tzinfo is None:
         return True
     return expires_at <= _now()
 
