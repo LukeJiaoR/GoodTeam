@@ -66,6 +66,16 @@ export function buildTeamModel(data) {
     state: entry.state || 'enabled',
     capability: entry.capability || 'unstaffed',
     capabilityTone: capabilityTone(entry.capability),
+    skillBinding: {
+      subject: entry.skill_binding?.subject || `role:${entry.role}`,
+      roleContractRef: entry.skill_binding?.role_contract_ref || '',
+      bindingRevision: entry.skill_binding?.binding_revision ?? 0,
+      mode: entry.skill_binding?.mode || 'default',
+      status: entry.skill_binding?.status || 'default',
+      items: Array.isArray(entry.skill_binding?.items) ? entry.skill_binding.items : [],
+      executionStatus: entry.skill_binding?.execution_status || 'not_connected',
+      updatedAt: entry.skill_binding?.updated_at || '',
+    },
     workers: (entry.workers || []).map((worker) => ({
       id: worker.id,
       role: entry.role,
@@ -92,6 +102,16 @@ export function buildTeamModel(data) {
       reasoningDepth: managerRuntime.reasoning_depth || 'default',
       additionalPrompt: managerRuntime.additional_prompt || '',
       runtimeLabel: runtimeLabel(managerRuntime),
+      skillBinding: {
+        subject: team.manager?.skill_binding?.subject || 'manager:orchestrator',
+        roleContractRef: team.manager?.skill_binding?.role_contract_ref || '',
+        bindingRevision: team.manager?.skill_binding?.binding_revision ?? 0,
+        mode: team.manager?.skill_binding?.mode || 'default',
+        status: team.manager?.skill_binding?.status || 'default',
+        items: Array.isArray(team.manager?.skill_binding?.items) ? team.manager.skill_binding.items : [],
+        executionStatus: team.manager?.skill_binding?.execution_status || 'not_connected',
+        updatedAt: team.manager?.skill_binding?.updated_at || '',
+      },
     },
   };
 }
