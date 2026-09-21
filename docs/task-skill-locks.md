@@ -1,8 +1,14 @@
 # Task Skill locks (S4 / #444)
 
-## Status: persistence and shared service implemented; dispatch wiring is incomplete
+## Status: S4a foundation; production integration is tracked in #461 (S4b)
 
-This change introduces `TaskSkillLockStore`, `SkillAvailabilityStore`, portable
+The user-approved delivery split is: review and merge the non-activated foundation
+in PR #460, then implement production wiring in a separate PR for #461, and only
+then proceed to #445. #444 remains the complete S4 acceptance contract and stays
+open until both slices pass. Splitting delivery does not remove any acceptance,
+security, identity, recovery or verification requirement.
+
+S4a introduces `TaskSkillLockStore`, `SkillAvailabilityStore`, portable
 `task_skill_context.v1` references, and `ProjectTaskSkillService`. Workflow state
 can preserve the references, and the shared service composes real Team/Library
 truth with current revocation checks. It is not yet a working end-to-end S4 slice.
@@ -10,6 +16,13 @@ Do not close #444 or enable Runtime loading on the strength of these tests.
 Task-start producers and Worker dispatch still need to call the shared service.
 Reviewer retries preserve original inputs, but Skill-backed retries remain
 explicitly blocked until the Worker integration is complete.
+
+S4a can merge only after reviewing its actual changed behavior (including state
+serialization and legacy Reviewer retries) and passing exact-head CI. #461 owns
+the remaining integration map below and must start from the merged main. No
+subsequent Runtime capability is implied by a foundation merge; #440 remains the
+separate live-conformance gate. Existing UI continues to distinguish saved-only
+configuration from active execution.
 
 ## Contract
 
@@ -163,7 +176,7 @@ Immutable objects published before a failed registry commit can be unreferenced.
 They are deliberately retained. No garbage collector or automatic pin release is
 introduced here; #448 must preserve ordinary-uninstall vs security-revoke semantics.
 
-## Mandatory integration map before merge
+## Mandatory S4b integration map (#461; before completing #444)
 
 | Boundary | Required behavior | Current status |
 | --- | --- | --- |
@@ -179,10 +192,11 @@ introduced here; #448 must preserve ordinary-uninstall vs security-revoke semant
 | availability/revocation source | Trusted current versioned status and explicit security revocation. | Implemented and composed into the shared service |
 | dispatch/load revocation enforcement | Recheck current status at every provider/resource boundary, not only at snapshot creation. | Provider/resource callers not connected |
 
-The PR must remain Draft until those paths either use the unified contract or
-explicitly block unsupported Skill-backed work, with integration evidence.
-Do not add monkey patches, weaken CI, or reclassify core-only tests as proof that
-all production dispatch entry points are protected.
+#461 must not be marked complete until those paths either use the unified contract
+or explicitly block unsupported Skill-backed work, with integration evidence.
+S4a does not claim that coverage and does not activate the incomplete pipeline.
+Do not add production monkey patches, weaken CI, or reclassify core-only tests as
+proof that all production dispatch entry points are protected.
 
 ## Validation
 
@@ -211,8 +225,27 @@ confirmation, key/input conflicts, current revocation, untrusted status claims,
 missing status metadata, Manager message identities, owner/project isolation,
 unknown subjects and a closed metadata-loader allowlist. No provider is called.
 
+### CI #991 failure investigation
+
+Both attempts on `ef1fdd8` failed (2501 passed / 1 failed each). The first reported
+a sanitized observation-persistence error. The second exposed ancestor-directory
+mtime churn while opening an anchored repository: the device/inode/mode/size
+matched, but mtime differed. The second trace establishes a false-positive path;
+it does not prove the unexposed cause of the first failure.
+
+The corrective change limits identity-only directory checks to ancestors outside
+the repository. It still compares device/inode/type/mode/owner/group, uses
+no-follow directory opens, and verifies the current entry after opening. Root,
+repository-subdirectory and file-content checks retain their existing strict
+metadata behavior. `tests/test_repository_ancestor_identity.py` injects unrelated
+ancestor churn without sleeps, verifies snapshot and persisted-error behavior,
+and rejects directory/symlink replacement before or after open, permission/owner
+changes, and repository-internal directory churn. Existing file-mutation and
+symlink tests remain unchanged. No retry-until-green or weakened assertions.
+
 Tests execute in CI according to the existing CI-only agreement. Full backend,
 Ruff, HTTP recovery, isolated browser acceptance and the final CI gate are still
 required. An unchanged frontend does not imply a frontend Runtime integration.
 No real provider call, Runtime Skill loading, deployment, or product acceptance
-has been performed by these modules.
+has been performed by these modules. Exact-head results are recorded in the PR,
+not inferred from an earlier head or from this document.
