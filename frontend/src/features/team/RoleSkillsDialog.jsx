@@ -41,7 +41,7 @@ export default function RoleSkillsDialog({
   const titleId = useId();
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
-  const openedBindingRevision = useRef(role.skillBinding.bindingRevision);
+  const [openedBindingRevision] = useState(() => role.skillBinding.bindingRevision);
   const [mode, setMode] = useState(role.skillBinding.mode || 'default');
   const [selections, setSelections] = useState(() => initialSelections(role));
   const [library, setLibrary] = useState({ skills: [] });
@@ -69,7 +69,7 @@ export default function RoleSkillsDialog({
     () => new Map(library.skills.map((skill) => [skill.skill_id, skill])),
     [library.skills],
   );
-  const staleBaseline = openedBindingRevision.current !== role.skillBinding.bindingRevision;
+  const staleBaseline = openedBindingRevision !== role.skillBinding.bindingRevision;
 
   const toggleSkill = (skill, checked) => {
     setSelections((current) => {
