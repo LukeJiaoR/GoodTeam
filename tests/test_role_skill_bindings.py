@@ -427,3 +427,64 @@ def test_workflow_role_preview_keeps_project_intake_identity(tmp_path):
     }]
     assert preview["changes"][0]["before"]["status"] == "default"
     assert preview["changes"][0]["after"]["status"] == "unconfigured"
+
+
+def test_same_named_sources_and_one_skill_can_bind_many_roles(tmp_path, monkeypatch):
+    workspace, config = make_project(tmp_path)
+    state_root = tmp_path / "operator-state"
+    monkeypatch.setattr(service, "service_state_dir", lambda: state_root)
+    library = SkillLibraryService(state_root)
+    items = []
+    for source_name in ("source-a", "source-b"):
+        source = tmp_path / source_name
+        source.mkdir()
+        (source / "SKILL.md").write_text(
+            "---\nname: shared-method\ndescription: Shared display name.\n---\n"
+            f"Method body from {source_name}.\n",
+            encoding="utf-8",
+        )
+        preview = library.preview_local(str(source), command_key=f"preview-{source_name}")
+        installed = library.install(preview["proposal_id"])
+        items.append({
+            "skill_id": installed["installed"]["skill_id"],
+            "version_id": installed["installed"]["version_id"],
+            "package_digest": preview["package_digest"],
+            "activation": "required",
+            "enabled": True,
+        })
+
+    assert items[0]["skill_id"] != items[1]["skill_id"]
+    state = TeamControlPlaneStore(workspace, "DEMO").read()
+    outcome = execute_team_commands(
+        workspace,
+        "DEMO",
+        [
+            {
+                "kind": "set_role_skills",
+                "subject": "role:qa",
+                "mode": "custom",
+                "bindings": items,
+                "expected_binding_revision": 0,
+            },
+            {
+                "kind": "set_role_skills",
+                "subject": "role:code_review",
+                "mode": "custom",
+                "bindings": [items[0]],
+                "expected_binding_revision": 0,
+            },
+        ],
+        actor="user",
+        surface="team_ui",
+        command_key="many-to-many",
+        expected_revision=state["revision"],
+        config_path=config,
+    )
+    roles = {entry["role"]: entry for entry in outcome["team"]["roles"]}
+    assert [item["skill_id"] for item in roles["qa"]["skill_binding"]["items"]] == [
+        items[0]["skill_id"],
+        items[1]["skill_id"],
+    ]
+    assert roles["code_review"]["skill_binding"]["items"][0]["skill_id"] == items[0]["skill_id"]
+    assert roles["qa"]["workers"]
+    assert roles["code_review"]["workers"]
