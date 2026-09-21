@@ -1,11 +1,15 @@
 # Task Skill locks (S4 / #444)
 
-## Status: core implementation; production wiring is not complete
+## Status: persistence and shared service implemented; dispatch wiring is incomplete
 
-This change introduces `TaskSkillLockStore` and `SkillAvailabilityStore`, not a
-working end-to-end S4 slice. Do not close #444 or enable Runtime loading on the
-strength of core tests. No current Worker, workflow, Manager, or operator call
-site is migrated yet. Existing saved-only Skill configuration remains unchanged.
+This change introduces `TaskSkillLockStore`, `SkillAvailabilityStore`, portable
+`task_skill_context.v1` references, and `ProjectTaskSkillService`. Workflow state
+can preserve the references, and the shared service composes real Team/Library
+truth with current revocation checks. It is not yet a working end-to-end S4 slice.
+Do not close #444 or enable Runtime loading on the strength of these tests.
+Task-start producers and Worker dispatch still need to call the shared service.
+Reviewer retries preserve original inputs, but Skill-backed retries remain
+explicitly blocked until the Worker integration is complete.
 
 ## Contract
 
@@ -46,11 +50,66 @@ job request, loader version, package bytes, and retained pins. It requires a
 trusted current availability/revocation reader with an exact scope, Skill/version,
 boolean availability and revocation state, and a status revision. Missing or
 unknown status fails closed. `SkillAvailabilityStore.current_status` implements
-that reader; production dependency wiring and Runtime capability checks remain
-integration work. A successful core preflight does not authorize a provider,
-prove #440 conformance, prevent a later revocation race on its own, or prove that
-a Skill entered a model's context. Dispatch and each resource load must enforce
-their current checks at the appropriate boundary.
+that reader and `ProjectTaskSkillService` supplies it as a trusted dependency.
+A successful preflight does not authorize a provider, prove #440 conformance,
+prevent a later revocation race on its own, or prove that a Skill entered a model's
+context. Dispatch and each resource load must enforce their current checks at
+the appropriate boundary.
+
+## Portable workflow-state references
+
+`task_skill_context.v1` contains exactly its schema version, an explicit bounded
+task identity, and a versioned task-lock reference. It contains no filesystem path,
+caller-selected status reader, or Runtime permission. Structural validation binds
+the task-lock ID to the canonical owner scope and task identity, rejects unknown
+schemas and detached references, and copies mutable input rather than aliasing it.
+This validates the transport contract, not the existence or authenticity of the
+referenced object; trusted-store reads and preflight are still mandatory.
+
+`AgileDevState.task_skill_context` is an explicit supported field. Construction,
+state writes, and checkpoint writes validate its workflow kind, project and run.
+Current-state and archive readers preserve it, and a project-specific read rejects
+a valid context stored under another project's path. An explicit project override
+cannot rehome a task reference. The field survives current/checkpoint/archive
+serialization without adding unknown dataclass fields. API consumers must still
+carry it through any separately maintained projection whitelist.
+
+Only an absent legacy field or the explicit empty object represents legacy state.
+Malformed, null, unknown-version, cross-kind or cross-run references are not
+silently converted to legacy. Reading or serializing state does not query Team,
+open the Operator Skill store, acquire pins, or construct a replacement lock.
+This field alone does not bind a new run: the authorized start producer must call
+`begin` and save its returned context before dispatching the first job.
+
+## Concrete project service
+
+`ProjectTaskSkillService` derives the Operator root from server configuration and
+uses the existing single-operator Library scope. The workspace and all declared
+Worker roots are excluded from managed storage. A job cannot select another store
+root, owner, availability reader or supported-loader allowlist in its payload.
+
+`begin` requires the confirmation's Team revision, a bounded subject inventory,
+exact thin Role contracts, confirmed task input and any explicitly supplied
+default package references. Its lazy resolver takes one serialized Team snapshot;
+all selected roles come from that revision. It does not perform one latest lookup
+per role and does not lazily migrate Team state. An unknown subject or stale new
+confirmation is rejected. The confirmed inventory/contracts/default references
+and revision are fingerprinted with the task input; changing them under the same
+logical start key conflicts. Replaying the original request bypasses that resolver
+and preserves the original lock even after a project update or default restore.
+
+Only the first-time authorized start initializes availability metadata. A replay,
+read or preflight cannot reset missing revocation metadata. `snapshot` preserves
+the caller's logical job key and delegates exact input comparison to the immutable
+registry. `preflight` always supplies the real current-status reader; an availability
+claim inside `job_input` has no authority. The server-owned metadata-loader
+allowlist defaults to empty. Configuring a metadata loader does not establish
+Runtime support or bypass #440/#445.
+
+The common service is a production dependency available for the entrypoints below.
+Its integration tests call real Team commands, Library installation, lock/pin
+persistence and revocation services. They do not call a Worker or prove those
+entrypoints have already been migrated.
 
 ## Current availability and security revocation
 
@@ -108,16 +167,17 @@ introduced here; #448 must preserve ordinary-uninstall vs security-revoke semant
 
 | Boundary | Required behavior | Current status |
 | --- | --- | --- |
-| `web.start_workflow` / confirmed task start | Capture one coherent Team revision before the first dispatch; persist the lock ref in versioned state. | Not connected |
-| `AgileDevState` / state and checkpoint projections | Preserve the validated lock ref through current, archive, checkpoint, and API views. | Not connected |
+| `web.start_workflow` / confirmed task start | Capture one coherent Team revision before the first dispatch; persist the lock ref in versioned state. | Producer not connected |
+| `AgileDevState` / state and checkpoint projections | Preserve the validated lock ref through current, archive, checkpoint, and API views. | State/current/archive/checkpoint implemented; API projection audit pending |
+| shared Team/Library/status composition | One project-owned resolver and trusted current availability reader. | `ProjectTaskSkillService` implemented; dispatch callers pending |
 | `execution/orchestrator.py` | Use explicit issue-execution identity and retain the lock across recovery. | Not connected |
 | `WorkerJobStore.create_job/create_or_reuse_job` | Derive/register snapshot; compare complete immutable request on key replay; reject missing task scope. | Not connected |
 | `WorkerJobStore.run_job` and internal retries | Preflight before every provider attempt; independently enforce adapter capability/conformance. | Not connected |
-| `reviewer_dispatch.py` and reviewer retry | Original task lock; complete original task/context/output/read-only policy, not an abbreviated retry prompt. | Not connected |
-| `manager_execution.py` | Logical message/intent lock, same-message retries stable, new messages capture new bindings. | Not connected |
+| `reviewer_dispatch.py` and reviewer retry | Original task lock; complete original task/context/output/read-only policy, not an abbreviated retry prompt. | Original-input/policy preservation implemented; Skill-backed retry explicitly blocked pending Worker integration |
+| `manager_execution.py` | Logical message/intent lock, same-message retries stable, new messages capture new bindings. | Caller not connected; identity tested at shared-service level only |
 | operator/direct dispatch | Explicit bounded scope or an explicit Skill-backed dispatch rejection. | Not connected |
-| availability/revocation source | Trusted current versioned status and explicit security revocation. | Implemented; production wiring pending |
-| dispatch/load revocation enforcement | Recheck current status at every provider/resource boundary, not only at snapshot creation. | Not connected |
+| availability/revocation source | Trusted current versioned status and explicit security revocation. | Implemented and composed into the shared service |
+| dispatch/load revocation enforcement | Recheck current status at every provider/resource boundary, not only at snapshot creation. | Provider/resource callers not connected |
 
 The PR must remain Draft until those paths either use the unified contract or
 explicitly block unsupported Skill-backed work, with integration evidence.
@@ -138,6 +198,18 @@ history/pins, semantic replay and CAS conflict, scope/version ownership, concurr
 commands, missing/corrupt status, corrupted package content, partial writes,
 pre/post-replace failure, repeated directory sync failure, and snapshot replay
 durability. These are core-service integration tests, not Worker dispatch tests.
+
+`tests/test_task_skill_context_state.py` covers real lock-reference roundtrips,
+state/checkpoint/archive persistence, rejected cross-project/run/kind references,
+malformed/unknown schemas, write-time revalidation, non-aliasing and legacy reads
+without mutation or access to the Operator store.
+
+`tests/test_project_task_skill_service.py` connects real Team changes and Library
+versions to task locks, delayed snapshots and current-status preflight. It covers
+old-task v1/new-task v2, default restoration without old-task downgrade, stale
+confirmation, key/input conflicts, current revocation, untrusted status claims,
+missing status metadata, Manager message identities, owner/project isolation,
+unknown subjects and a closed metadata-loader allowlist. No provider is called.
 
 Tests execute in CI according to the existing CI-only agreement. Full backend,
 Ruff, HTTP recovery, isolated browser acceptance and the final CI gate are still
