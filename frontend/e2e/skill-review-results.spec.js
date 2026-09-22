@@ -35,7 +35,7 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
   const results = [];
   try {
     await importProject(page, fixture);
-    await sendTask(page, fixture, 'Prepare the isolated project before the bounded Reviewer contract test.');
+    await sendTask(page, fixture, 'Implement the baseline task before testing the bounded Reviewer contract.');
     await prepareFirstTask(page, fixture, evidence);
     for (const gate of ['takeover', 'prd', 'rfc', 'security', 'release']) await approveGate(page, fixture, gate);
     const baseline = await workState(page, fixture.key);
@@ -56,7 +56,7 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     await dialog.getByRole('radio', { name: /Custom Skills/ }).check();
     await dialog.getByRole('checkbox', { name: new RegExp(name) }).check();
     await clickMutation(page, dialog.getByRole('button', { name: 'Save methods', exact: true }), `/api/projects/${fixture.key}/team/commands`);
-    await sendTask(page, fixture, 'Review the exact fixture source using only my selected method.');
+    await sendTask(page, fixture, 'Implement the change and review the exact fixture source using only my selected method.');
     await clickMutation(page, page.getByRole('button', { name: 'Start this task', exact: true }), `/api/projects/${fixture.key}/task-assistant/actions`);
     const before = await snapshot(page, fixture, evidence);
     const runId = before.state.run_id;
@@ -78,6 +78,9 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     const endpoint = `/api/projects/${fixture.key}/runs/${runId}/skill-reviews`;
     const received = await (await page.request.get(`${endpoint}/${accepted.job_id}/report`)).json();
     expect(received.report.findings).toEqual([]);
+    expect(received.methods).toHaveLength(1);
+    expect(received.methods[0].skill_id).toBe(installed.installed.skill_id);
+    expect(received.methods[0].version_id).toBe(installed.installed.version_id);
     expect(received.stages.resource_read_observed).toBe('unobserved');
     const historical = await page.request.get(`/api/projects/${fixture.key}/runs/${oldRun}/skill-reviews/${accepted.job_id}/report`);
     expect(historical.status()).toBe(404);
@@ -110,7 +113,13 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     await details.getByRole('button', { name: 'Refresh reviews' }).click();
     await expect(pending.getByText('Report received', { exact: true })).toBeVisible();
     results.push(drive(fixture, runId, 'revoke'));
+    const revokedRefresh = page.waitForResponse((response) => new URL(response.url()).pathname === endpoint);
     await details.getByRole('button', { name: 'Refresh reviews' }).click();
+    const revokedResponse = await revokedRefresh;
+    expect(revokedResponse.status()).toBe(200);
+    const revokedPayload = await revokedResponse.json();
+    expect(revokedPayload.reviews).toHaveLength(3);
+    expect(revokedPayload.reviews.every((entry) => !entry.report_available)).toBe(true);
     await expect(details.getByRole('button', { name: 'Open review report' })).toHaveCount(0);
     const after = await snapshot(page, fixture, evidence);
     expect(after.state).toEqual(before.state); // Report actions never decide or advance gates.

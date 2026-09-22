@@ -113,11 +113,19 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
                             stderr_size += len(chunk)
                             if stderr_size > MAX_CAPTURE_BYTES:
                                 raise SkillError("review_capture_size", "Reviewer diagnostic channel exceeded its limit.")
-            remaining = max(0.01, deadline - time.monotonic())
-            try:
-                returncode = process.wait(timeout=remaining)
-            except subprocess.TimeoutExpired as exc:
-                raise SkillError("review_timeout", "Reviewer did not exit within its wall-time boundary.") from exc
+            # Closed pipes do not mean the process has exited. Keep checking
+            # revocation/cancellation during this phase, not only at the end of
+            # a potentially long wait (a child can close stdio and keep running).
+            while process.poll() is None:
+                check_current()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise SkillError("review_timeout", "Reviewer did not exit within its wall-time boundary.")
+                try:
+                    process.wait(timeout=min(0.05, remaining))
+                except subprocess.TimeoutExpired:
+                    continue
+            returncode = process.returncode
         if _group_exists(process.pid):
             # Descendants can close inherited pipes then remain alive. Never accept such a turn.
             raise SkillError("review_descendants_running", "Reviewer descendants remained after its final output.")

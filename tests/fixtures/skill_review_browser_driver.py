@@ -94,7 +94,7 @@ def main():
     if mode == "revoke":
         item = methods[0]
         services.availability.revoke(item["skill_id"], item["version_id"], actor="user", reason="browser-fixture",
-                                     command_key="fixture-revoke:" + run_id, expected_revision=0)
+                                     command_key="fixture-revoke:" + run_id, expected_revision=services.availability.revision())
         print(json.dumps({"provider_calls": 0, "revoked": True}))
         return
     workers = WorkerJobStore(repo)
