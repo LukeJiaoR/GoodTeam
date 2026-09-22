@@ -91,6 +91,7 @@
 }
 .work-workspace-shell .team-workspace:not(.team-workspace--composing) .team-manager-conversation {
   min-height: 6rem;
+  flex: 1 1 0;
 }
 .work-workspace-shell .team-workspace:not(.team-workspace--composing) .team-manager-dock {
   display: flex;
@@ -105,11 +106,16 @@
   min-height: 0;
 }
 .work-workspace-shell .team-workspace:not(.team-workspace--composing) .conversation-entry-context {
-  min-height: 0;
+  min-height: 2.5rem;
+  flex: 0 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+.work-workspace-shell .team-manager-entry > .project-composer-modes,
 .work-workspace-shell .team-manager-entry > label,
 .work-workspace-shell .conversation-submit-row {
   flex-shrink: 0;
+}
+.work-workspace-shell .conversation-entry-context:empty {
+  display: none;
 }
