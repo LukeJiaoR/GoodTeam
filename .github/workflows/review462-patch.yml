@@ -1,0 +1,44 @@
+name: PR462 bounded projection repair
+on:
+  push:
+    branches: [feat/461-task-skill-dispatch]
+    paths: [.github/workflows/review462-patch.yml]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.repository == 'LukeJiaoR/GoodTeam' && github.ref == 'refs/heads/feat/461-task-skill-dispatch'
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - name: Apply source-hash-bound projection repair
+        env:
+          PATCH_DATA: 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
+        run: |
+          python3 - <<'PY'
+          import ast, base64, hashlib, json, os, pathlib, zlib
+          data = json.loads(zlib.decompress(base64.b64decode(os.environ['PATCH_DATA'])))
+          allowed = {'src/goodteam_os/web.py', 'src/goodteam_os/skills/worker_requests.py', 'tests/test_task_skill_entrypoints.py'}
+          assert {item['path'] for item in data} == allowed
+          prepared = []
+          for item in data:
+              path = pathlib.Path(item['path'])
+              before = path.read_bytes()
+              assert hashlib.sha256(before).hexdigest() == item['before'], str(path)
+              after = before
+              for edit in reversed(item['edits']):
+                  after = after[:edit['start']] + edit['text'].encode() + after[edit['end']:]
+              assert hashlib.sha256(after).hexdigest() == item['after'], str(path)
+              ast.parse(after)
+              prepared.append((path, after))
+          for path, after in prepared:
+              path.write_bytes(after)
+          PY
+          git diff --check
+          test "$(git ls-remote origin refs/heads/feat/461-task-skill-dispatch | cut -f1)" = "$GITHUB_SHA"
+          git config user.name 'Luke_J'
+          git config user.email 'LukeJiaoR@users.noreply.github.com'
+          git add src/goodteam_os/web.py src/goodteam_os/skills/worker_requests.py tests/test_task_skill_entrypoints.py
+          git commit -m 'fix(skills): preserve bound task identity and blocked evidence in public Worker summaries'
+          git push origin HEAD:refs/heads/feat/461-task-skill-dispatch
