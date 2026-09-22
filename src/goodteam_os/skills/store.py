@@ -341,6 +341,15 @@ class SkillStore:
                 raise SkillError("package_corrupt", "Stored metadata does not match package instructions.")
             return record
 
+    def read_package(self, skill_id: str, selected: str) -> SkillPackage:
+        """Read immutable fixed package bytes; no source paths or execution."""
+        with self._locked() as fd:
+            record = self._find_version(self._read_index(fd), skill_id, selected)
+            package = self._load_object(fd, record.package_digest)
+            if package.metadata_json != record.metadata_json:
+                raise SkillError("package_corrupt", "Stored metadata does not match package instructions.")
+            return package
+
     def read_resource(self, skill_id: str, selected: str, relative: str) -> bytes:
         with self._locked() as fd:
             record = self._find_version(self._read_index(fd), skill_id, selected)
