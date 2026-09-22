@@ -17,6 +17,7 @@ import WorkTaskDetailDialog from './WorkTaskDetailDialog';
 import ManagerMissionEntry from './ConversationComposer';
 import { conversationTimeline } from './conversationFeedback';
 import DeliverySummary from './DeliverySummary';
+import SkillReviewExecutions from './SkillReviewExecutions';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
 const MOBILE_TEAM_QUERY = '(max-width: 767px)';
@@ -93,7 +94,7 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 }
 
 
-function ExecutionPane({ actors, navigation, blocker, controls, task, projectScoped, reducedMotion, sectionProps, t }) {
+function ExecutionPane({ actors, navigation, blocker, controls, reviews, task, projectScoped, reducedMotion, sectionProps, t }) {
   return (
     <section className="team-pane team-pane--execution" aria-label={t(projectScoped ? 'assistant.project.tasks' : 'work.team.execution')} {...sectionProps}>
       <header className="team-pane__header">
@@ -132,6 +133,7 @@ function ExecutionPane({ actors, navigation, blocker, controls, task, projectSco
           })}
         </ol>
       ) : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
+      {reviews}
       {controls}
     </section>
   );
@@ -542,6 +544,7 @@ function TeamWorkspace({
             ? <TaskRunControls busy={busy} canCancel onTerminate={onTerminate} t={t} /> : null}
           actors={(workspace.execution_actors || []).filter((actor) => actor.role !== 'orchestrator')}
           reducedMotion={reducedMotion}
+          reviews={<SkillReviewExecutions projectKey={projectKey} runId={mission?.run_id} language={language} />}
           sectionProps={sectionProps('execution')}
           t={t}
         /> : null}

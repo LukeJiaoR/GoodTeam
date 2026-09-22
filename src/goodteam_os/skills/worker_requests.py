@@ -500,7 +500,13 @@ def run_skill_worker_job(store, job_id: str, *, sandbox_context=None) -> dict[st
                 # Preserve the immutable job request even when a caller tampers
                 # with it. Failure reporting must not silently repair job.json.
                 _write_status(fd, result)
-                return result
+    if checked == "verified":
+        from .review_execution import continue_review_worker
+
+        continued = continue_review_worker(store, job_id, snapshot, ref)
+        if continued is not None:
+            return continued
+    return result
 
 
 def reject_unverified_runtime_entry(job_root: Path, job: dict[str, Any]) -> None:

@@ -1,0 +1,97 @@
+"""Decode the parent-owned Codex exec JSONL channel, never a report's claims.
+
+The caller owns the process, stdout pipe and exit status. This decoder does not
+turn a model-written identity or a JSON snippet inside an agent message into
+execution evidence, and it does not certify Runtime isolation or resource reads.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+
+from .models import SkillError, canonical_json, content_digest
+from .review_report import MAX_REPORT_BYTES
+
+MAX_CAPTURE_BYTES = 2 * 1024 * 1024
+MAX_EVENT_BYTES = 512 * 1024
+
+
+@dataclass(frozen=True)
+class CapturedReviewTurn:
+    report_bytes: bytes
+    transcript_digest: str
+    thread_id: str
+    event_count: int
+
+
+def capture_final_turn(stdout: bytes, *, returncode: int) -> CapturedReviewTurn:
+    """Accept one successful new-session turn after the parent reaped the CLI."""
+    if type(returncode) is not int or returncode != 0:
+        raise SkillError("review_process_failed", "The Reviewer process did not exit successfully.")
+    if not isinstance(stdout, bytes) or not stdout or len(stdout) > MAX_CAPTURE_BYTES:
+        raise SkillError("review_capture_size", "The controlled result channel is empty or exceeds its limit.")
+    thread_id = None
+    started = completed = False
+    last_message = None
+    count = 0
+
+    def pairs(entries):
+        value = {}
+        for key, item in entries:
+            if key in value:
+                raise ValueError("duplicate key")
+            value[key] = item
+        return value
+
+    def constant(_value):
+        raise ValueError("nonfinite value")
+
+    for line in stdout.splitlines():
+        if not line.strip() or len(line) > MAX_EVENT_BYTES:
+            raise SkillError("review_capture_json", "The controlled result channel contains an invalid event.")
+        try:
+            event = json.loads(line.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+            canonical_json(event).encode("utf-8")
+        except (ValueError, TypeError, UnicodeError, RecursionError) as exc:
+            raise SkillError("review_capture_json", "The controlled result channel contains invalid JSON.") from exc
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            raise SkillError("review_capture_json", "The controlled result channel requires typed object events.")
+        count += 1
+        kind = event["type"]
+        if completed:
+            raise SkillError("review_capture_order", "Events appeared after the terminal Reviewer turn.")
+        if kind in {"error", "turn.failed"}:
+            raise SkillError("review_turn_failed", "The Reviewer channel reported a failed turn.")
+        if kind == "thread.started":
+            identity = event.get("thread_id")
+            if thread_id is not None or started or not isinstance(identity, str) or not identity.strip() or len(identity) > 256:
+                raise SkillError("review_capture_order", "The Reviewer requires one new bounded thread identity.")
+            thread_id = identity
+        elif kind == "turn.started":
+            if thread_id is None or started:
+                raise SkillError("review_capture_order", "The Reviewer requires exactly one started turn.")
+            started = True
+        elif kind == "turn.completed":
+            if not started or last_message is None:
+                raise SkillError("review_capture_incomplete", "A successful Reviewer turn must contain a final message.")
+            completed = True
+        elif kind in {"item.started", "item.updated", "item.completed"}:
+            if not started:
+                raise SkillError("review_capture_order", "Reviewer items must belong to its started turn.")
+            item = event.get("item")
+            if not isinstance(item, dict) or not isinstance(item.get("type"), str):
+                raise SkillError("review_capture_json", "The Reviewer emitted an invalid item.")
+            if kind == "item.completed" and item["type"] == "agent_message":
+                text = item.get("text")
+                if not isinstance(text, str):
+                    raise SkillError("review_capture_json", "The Reviewer final message must be text.")
+                last_message = text.encode("utf-8")
+                if len(last_message) > MAX_REPORT_BYTES:
+                    raise SkillError("review_report_size", "The Reviewer message exceeds its report limit.")
+        else:
+            # Version-specific drift must be investigated, not interpreted as
+            # a compatible completed turn or an observed resource read.
+            raise SkillError("review_capture_event_unsupported", "This Reviewer channel event is not supported by the pinned adapter.")
+    if not completed or last_message is None:
+        raise SkillError("review_capture_incomplete", "The Reviewer channel ended without a completed result turn.")
+    return CapturedReviewTurn(last_message, content_digest(stdout), thread_id, count)

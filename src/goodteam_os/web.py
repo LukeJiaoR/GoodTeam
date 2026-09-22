@@ -5846,6 +5846,11 @@ def handle_project_api_get(
     workspace: Path,
     path: str,
 ) -> tuple[int, dict[str, object]] | None:
+    from goodteam_os.skills.review_api import handle_review_get
+
+    review_response = handle_review_get(workspace, path)
+    if review_response is not None:
+        return review_response
     if path == "/api/skills":
         return 200, SkillLibraryService(service_state_dir(), worker_roots=(workspace,)).list_library()
     skill_proposal_match = re.fullmatch(r"/api/skills/proposals/(proposal-[0-9a-f]{32})", path)
