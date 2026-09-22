@@ -253,6 +253,8 @@ class SkillContextProvider:
         if (not isinstance(ref, dict) or set(ref) != {"schema_version", "job_id", "context_id", "snapshot_ref", "digest"}
                 or ref["schema_version"] != CONTENT_REF_SCHEMA or ref["job_id"] != self.job_id):
             raise SkillError("content_context_invalid", "Content reference belongs to another schema or Worker.")
+        # Freeze caller-owned identity before preflight or filesystem I/O yields.
+        ref = deepcopy(ref)
         bounded_text(ref["context_id"], maximum=128)
         identifier(ref["digest"], "sha256:")
         operator, packages, snapshot_ref, snapshot = self._validated()
@@ -315,7 +317,8 @@ class SkillContextProvider:
         data = packages.read_resource(skill_id, item["version_id"], relative)
         if len(data) != resource["size"] or content_digest(data) != resource["digest"]:
             raise SkillError("snapshot_corrupt", "Resource differs from its immutable catalog.")
-        receipt = {"schema_version": "skill_broker_read.v1", "context_ref": ref, "call_id": call_id,
+        # The validated record owns receipt identity, not a mutable caller alias.
+        receipt = {"schema_version": "skill_broker_read.v1", "context_ref": self._reference(record), "call_id": call_id,
                    "skill_id": skill_id, "version_id": item["version_id"], "path": relative,
                    "digest": content_digest(data), "size": len(data), "runtime_session": session,
                    "broker_read_completed": True, "runtime_read_observed": False}
