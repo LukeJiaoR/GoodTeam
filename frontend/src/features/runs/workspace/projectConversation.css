@@ -82,3 +82,40 @@
 .work-workspace-shell .team-attention[data-kind="approval"] .team-attention__actions { margin-top: 1rem; flex-wrap: wrap; }
 
 .work-workspace-shell .team-pane--outcomes .team-attention { margin: 1rem; max-width: none; }
+
+/* Reserve transcript space; scroll optional composer context, not the input
+   and Send action, when a short viewport cannot fit the expanded guidance. */
+.work-workspace-shell .conversation-entry-context {
+  display: grid;
+  gap: .5rem;
+}
+.work-workspace-shell .team-workspace:not(.team-workspace--composing) .team-manager-conversation {
+  min-height: 6rem;
+  flex: 1 1 0;
+}
+.work-workspace-shell .team-workspace:not(.team-workspace--composing) .team-manager-dock {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 1;
+  min-height: 0;
+}
+.work-workspace-shell .team-workspace:not(.team-workspace--composing) .team-manager-entry {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.work-workspace-shell .team-workspace:not(.team-workspace--composing) .conversation-entry-context {
+  min-height: 2.5rem;
+  flex: 0 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.work-workspace-shell .team-manager-entry > .project-composer-modes,
+.work-workspace-shell .team-manager-entry > label,
+.work-workspace-shell .conversation-submit-row {
+  flex-shrink: 0;
+}
+.work-workspace-shell .conversation-entry-context:empty {
+  display: none;
+}

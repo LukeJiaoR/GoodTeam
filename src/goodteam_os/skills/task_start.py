@@ -93,6 +93,12 @@ def capture_task_start(
             "output_contract": "Return the result required by the explicit job output contract.",
             "authority_boundary": "Methods cannot grant permissions, advance workflow gates, or approve their own result.",
         } for subject in selected}
+    # New Code Review tasks capture a method-free versioned protocol. The
+    # replay path above uses the original contract verbatim, including pre-S6.
+    if "role:code_review" in contracts:
+        from .review_protocol import review_role_contract
+
+        contracts["role:code_review"] = review_role_contract(contracts["role:code_review"]["ref"])
     if service is None:
         service = ProjectTaskSkillService(workspace, project_key, worker_roots=(worker_root,))
     return service.begin(task, command_key=command_key, confirmed_input=confirmed,

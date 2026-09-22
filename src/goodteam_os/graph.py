@@ -2997,6 +2997,9 @@ def generate_artifact_via_worker(
         job_fields.update(workflow_job_fields(state, role=role,
                                              command_key=f"artifact:{state.run_id}:{operation}:{role}:{artifact_key}"))
         store = WorkerJobStore(runtime_root)
+        from goodteam_os.skills.review_protocol import review_execution_fields
+
+        job_fields.update(review_execution_fields(store, job_fields.get("task_skill_context"), role=role))
         job = store.create_job(
             run_id=state.run_id,
             role=role,

@@ -169,6 +169,13 @@ def _input_files(request: dict[str, Any], contract: dict[str, Any]) -> dict[str,
         "role_prompt.md": canonical_json(contract),
         "role_memory_paths.json": "{}", "role_pickup_packet.json": "{}",
     }
+    if request["role"] == "code_review":
+        from .review_protocol import is_review_contract, review_prompt_base
+
+        if is_review_contract(contract):
+            # Immutable preparation only. run_job and every Runtime entry stay
+            # closed; the base alone cannot satisfy required Skill delivery.
+            files["review_prompt_base.md"] = review_prompt_base(request, contract)
     source = request.get("research_report_source")
     if source:
         if not isinstance(source, str):

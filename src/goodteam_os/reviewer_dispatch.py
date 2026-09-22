@@ -196,6 +196,14 @@ def dispatch_reviewer_jobs_for_gate(
         from goodteam_os.skills.task_start import workflow_job_fields
 
         spec.update(workflow_job_fields(state, role=role, command_key=str(spec["idempotency_key"])))
+        if role == "code_review" and spec.get("task_skill_context"):
+            from goodteam_os.skills.review_protocol import locked_review_contract, review_artifact_task
+
+            if locked_review_contract(store, spec["task_skill_context"]) is not None:
+                # Profiles still select reviewer identity/runtime. Their legacy
+                # methods and templates do not override user-bound Skills.
+                spec["task"] = review_artifact_task(approval=approval, artifact_key=artifact_key,
+                                                     artifact_path=artifact_path, artifact_version=artifact_version)
         job, _created = store.create_or_reuse_job(**spec)
         result = dict(job)
         result.setdefault("job_id", str(job.get("id", "")))

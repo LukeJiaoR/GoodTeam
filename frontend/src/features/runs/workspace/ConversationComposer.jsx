@@ -126,23 +126,25 @@ function Composer({
 
   return (
     <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
-      {onQueueTask ? <div className="project-composer-modes" aria-label={t('assistant.project.inputMode')}>
-        <button type="button" aria-pressed={!queuing} onClick={() => { setEntryMode('message'); if (changeIntent?.id) setModes((current) => ({ ...current, [changeIntent.id]: 'message' })); }}>{t('work.taskAssistant.message')}</button>
-        <button type="button" aria-pressed={queuing} onClick={() => setEntryMode('new_task')}>{t('assistant.project.newTask')}</button>
-      </div> : null}
+      {onQueueTask || (editableIntent && !queuing) ? (
+        <div className="project-composer-modes" aria-label={t('assistant.project.inputMode')}>
+          <button type="button" aria-pressed={!queuing && !changing} onClick={() => {
+            setEntryMode('message');
+            if (changeIntent?.id) setModes((current) => ({ ...current, [changeIntent.id]: 'message' }));
+          }}>{t('work.taskAssistant.message')}</button>
+          {onQueueTask ? <button type="button" aria-pressed={queuing} onClick={() => setEntryMode('new_task')}>
+            {t('assistant.project.newTask')}
+          </button> : null}
+          {editableIntent && !queuing ? <button type="button" aria-pressed={changing} onClick={() => {
+            setEntryMode('message');
+            setModes((current) => ({ ...current, [changeIntent.id]: 'changes' }));
+          }}>{t('work.manager.requestChanges')}</button> : null}
+        </div>
+      ) : null}
+      <div className="conversation-entry-context">
       {queuing ? <p className="product-empty-copy">{t('assistant.project.queueBoundary')}</p> : null}
       <ConversationChangeContext active={!queuing && activeTask} intent={queuing ? null : changeIntent} target={queuing ? null : changeTarget}
         recordedChange={recordedChange} busy={blocked} onBegin={beginChange} t={t} />
-      {editableIntent && !queuing ? (
-        <div className="team-manager-suggestions" aria-label={t('work.manager.intent.question')}>
-          {!onQueueTask ? <button type="button" aria-pressed={!changing} onClick={() => setModes((current) => ({ ...current, [changeIntent.id]: 'message' }))}>
-            {t('work.taskAssistant.message')}
-          </button> : null}
-          <button type="button" aria-pressed={changing} onClick={() => setModes((current) => ({ ...current, [changeIntent.id]: 'changes' }))}>
-            {t('work.manager.requestChanges')}
-          </button>
-        </div>
-      ) : null}
       {changing ? <p className="team-intent-commit__boundary">{t('work.manager.intent.confirmBoundary')}</p> : null}
       {!changing && suggestions.length ? (
         <div className="team-manager-suggestions" aria-label={t('work.taskAssistant.suggestions')}>
@@ -157,6 +159,7 @@ function Composer({
           ))}
         </div>
       ) : null}
+      </div>
       <label>
         <span className="sr-only">{t(queuing ? 'assistant.project.newTask' : changing ? 'work.manager.changeReason' : 'work.taskAssistant.message')}</span>
         <textarea

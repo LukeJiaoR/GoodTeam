@@ -1,7 +1,8 @@
 import { test, expect, importProject } from './fixtures.js';
 import { clickMutation, prepareFirstTask, sendTask } from './business-loop-helpers.js';
 
-test('review editing and change discussion stay in the current task', async ({ page, fixture }, testInfo) => {
+for (const narrow of [false, true]) {
+test(`review editing and change discussion stay in the current task (narrow=${narrow})`, async ({ page, fixture }, testInfo) => {
   await importProject(page, fixture);
   await sendTask(page, fixture, 'Implement title search.');
   await prepareFirstTask(page, fixture, []);
@@ -31,13 +32,18 @@ test('review editing and change discussion stay in the current task', async ({ p
   await expect(editor).toHaveValue(`${original}\n\nUnsaved note.`);
   await editor.fill(original);
   await page.screenshot({ path: testInfo.outputPath('review-panel.png'), fullPage: true });
+  if (narrow) await page.setViewportSize({ width: 390, height: 844 });
   await clickMutation(page, review.getByRole('button', { name: 'Request changes', exact: true }), '/api/intent-commit/start');
   await expect(review).toHaveCount(0);
   expect(page.url()).toBe(url);
   await expect(page.getByRole('textbox', { name: 'What should change?', exact: true })).toBeFocused();
+  // Keyboard input must land without the test first clicking/focusing it.
+  await page.keyboard.type('Keep this exact review change.');
+  await expect(page.getByRole('textbox', { name: 'What should change?', exact: true })).toHaveValue('Keep this exact review change.');
   await page.getByRole('button', { name: 'Message', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue('Keep this separate question.');
 });
+}
 
 test('approval from the document panel stays bound to the displayed run and evidence', async ({ page, fixture }) => {
   await importProject(page, fixture);
