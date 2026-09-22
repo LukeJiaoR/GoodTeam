@@ -131,12 +131,10 @@ exited 1 before the helper ran: **bubblewrap could not create a new namespace**.
 All nine boundary checks in each mode correctly remained **unverified**. The
 positive control was runnable; a setup failure was not mistaken for a denial.
 
-This replaces the vague "no Codex environment" blocker with a concrete platform
-prerequisite: provide a disposable execution envelope that permits Codex's
-unprivileged namespace setup while preserving the outer read/network boundary,
-then rerun both the allowed-read and denied-access controls. This is still
-engineering work, not a reason to request credentials prematurely. No host
-sysctl, Docker daemon policy or existing container was changed.
+This initial result narrowed the environment blocker to namespace setup. The
+follow-up below resolves that prerequisite for an experimental container policy;
+it does not change or reinterpret this default-policy failure. No host sysctl,
+Docker daemon policy or existing container was changed.
 
 The first preparatory attempt used an amd64 Python image on the ARM64 host;
 that mixed-architecture result is excluded from selected-platform evidence.
@@ -157,6 +155,55 @@ under the expected platform prefix. Keep package provenance with the evidence.
 Do not install it into the user's global Codex, overwrite the desktop binary,
 or execute package lifecycle scripts. An x64 CI runner needs its own official
 x64 package and fresh platform-specific evidence.
+
+### Follow-up: working outer filesystem envelope
+
+A later fixed-helper experiment retained network-off, capability-drop,
+no-new-privileges, resource limits and the normal-user/read-only execution
+container. Its per-container seccomp profile derives from the official Moby
+allowlist and adds only `clone`, `unshare`, `mount`, `umount`, `umount2` and
+`pivot_root`, permitting the inner bubblewrap namespace setup. This is an
+**experimental policy**, not an approved production configuration. No unconfined
+mode, added host capability or daemon change was used. The evidence records the
+source profile URL/hash, added rule and resulting policy hash.
+
+The original named profile then failed on read-only temporary-directory setup;
+a directory-layout variant also failed before its helper. A host-bind variant
+allowed private sample reads despite host mode restrictions and was rejected.
+These failures remain in the evidence; their causes are not guessed away.
+
+The successful candidate puts **only generated fixtures** into a pinned image
+as root-owned files, with private sample directories mode0700 and files mode0600.
+It mounts only the pinned runtime and diagnostic modules. A fixed-helper
+positive control uses the same image as UID0 with a writable disposable layer;
+the restricted run uses UID65534, a read-only image and the actual legacy Codex
+sandbox. The parent separately copies fixture bytes from both stopped
+containers, observing positive writes and unchanged restricted-run bytes.
+
+| Observed fixed-helper contract | Result |
+| --- | --- |
+| Exact source and package reads | Both passed |
+| Private control/outside sample reads | Both denied with EACCES |
+| Source/package/control/outside writes | All four denied; original bytes unchanged |
+| Connection to working in-container loopback listener | Denied with EPERM |
+
+All **nine scoped checks** passed. The selected image is
+`sha256:1c53d92470f27e2292cc8dea129a5445fbd3c9e082c76ec43a3750b1fd8addf0`;
+the unchanged diagnostic modules come from source `4e975e99`. The
+[evidence record](runtime-readiness-evidence.json) contains construction inputs,
+actual commands/results, positive controls, policy and image identities, and
+before/after digests. Owned containers were removed; the small derived image and
+non-secret reports are retained for review. An initial Dockerfile using an image
+ID as a registry name failed to resolve; the successful build uses the recorded
+official registry digest and its existing ARM64 image.
+
+This establishes an outer filesystem candidate for further work. It does not
+make legacy read-only deny general reads by itself: confinement here depends on
+the image contents, root ownership and mount policy. Real source/control storage
+must remain outside the Worker view. The candidate still needs native Skill
+inventory, descendant-process/discovery checks, provider egress, enforceable
+request/cost limits and real Worker integration. Network-off cannot carry model
+requests. `strict_binding_supported` and `live_ready` remain false.
 
 ## Concrete Worker integration
 
@@ -182,7 +229,7 @@ No test-only authority or hand-written evidence JSON can authorize a live Worker
 | Required content delivered | Complete context-bound input digest plus actual provider submission witness | No live submission |
 | Optional resource read | Runtime-origin completed tool event identifying the fixed resource and matching returned bytes | No actual model read |
 | Unbound discovery excluded | Exact-version inventory plus controlled repo, ancestor, HOME, admin and bundled-system fixtures; automatic and explicit invocation paths checked | Absent canaries alone are insufficient |
-| Confidential reads and writes denied | Working positive controls and actual OS denials on isolated sentinels in the selected live environment | macOS candidates rejected; Linux must be evaluated separately |
+| Confidential reads and writes denied | Working positive controls and actual OS denials on isolated sentinels in the selected live environment | macOS candidates rejected; Linux outer-image fixed-helper checks passed, broader/live checks remain |
 | Arbitrary egress denied | Enforced no-direct-egress policy plus allowed-provider positive control, denied direct TCP/DNS/IPv6/alternate-host controls, and separate tool/service restrictions | Loopback denial alone is insufficient |
 | Report return and recovery | Parent-observed final report, second context using the original snapshot, stop/revocation evidence | No live execution |
 | Script execution | Actual separately authorized script event | No script execution required or authorized by this work |

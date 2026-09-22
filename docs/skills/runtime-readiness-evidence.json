@@ -464,5 +464,243 @@
       },
       "candidate_config_sha256": "01adde45a9c7f6cb5a5a3e12afda0308a2d407d1af3753b13d62fdae13e45295"
     }
-  ]
+  ],
+  "linux_image_envelope_follow_up": {
+    "schema_version": "skill_image_envelope_observation.v1",
+    "source_commit": "4e975e99a61af3a5c85838bc73d23ec3683c070d",
+    "base_image": "sha256:a3c1fdb42dec69ca84c34f4574aa5bf79d9df36a7ae9220cb2c5eec0c9abda70",
+    "image": "sha256:1c53d92470f27e2292cc8dea129a5445fbd3c9e082c76ec43a3750b1fd8addf0",
+    "seccomp_sha256": "73ff5e897ffba5261601f8254e05eda24ad8acbc946d6e652242efab5ac894b9",
+    "scope": "Fixed-helper-only outer read-only filesystem and root-owned fixture DAC checks; not native discovery, provider egress, model conformance or production authority",
+    "model_invocations": 0,
+    "provider_requests": 0,
+    "provider_cost_usd": 0,
+    "strict_binding_supported": false,
+    "live_ready": false,
+    "policies": {
+      "positive": {
+        "image": "sha256:1c53d92470f27e2292cc8dea129a5445fbd3c9e082c76ec43a3750b1fd8addf0",
+        "user": "0:0",
+        "network": "none",
+        "readonly_root": false,
+        "cap_drop": [
+          "ALL"
+        ],
+        "security_opt": [
+          "no-new-privileges=true",
+          "seccomp=recorded_policy_sha256"
+        ],
+        "mounts": [
+          {
+            "Destination": "/runtime",
+            "RW": false
+          },
+          {
+            "Destination": "/offline",
+            "RW": false
+          }
+        ]
+      },
+      "restricted": {
+        "image": "sha256:1c53d92470f27e2292cc8dea129a5445fbd3c9e082c76ec43a3750b1fd8addf0",
+        "user": "65534:65534",
+        "network": "none",
+        "readonly_root": true,
+        "cap_drop": [
+          "ALL"
+        ],
+        "security_opt": [
+          "no-new-privileges=true",
+          "seccomp=recorded_policy_sha256"
+        ],
+        "mounts": [
+          {
+            "Destination": "/runtime",
+            "RW": false
+          },
+          {
+            "Destination": "/offline",
+            "RW": false
+          }
+        ]
+      }
+    },
+    "observations": {
+      "positive": {
+        "uid": 0,
+        "runtime": {
+          "status": "supported",
+          "reason": "CLI syntax advertised; runtime effects unverified",
+          "version": "0.155.1",
+          "binary": "/runtime/bin/codex",
+          "binary_digest": "sha256:298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335",
+          "help_digest": "sha256:0e82cfde0122715250e93dc65866caa956b2ac5b9d0b20ec4ad4f9e81486509e",
+          "missing_flags": []
+        },
+        "network_positive": true,
+        "network_marker": "NETWORK_0b73505c32414a6689a2cb33e16c6ebf",
+        "command": [
+          "/usr/bin/python3",
+          "-I",
+          "/probe/tools/check.py",
+          "/probe",
+          "36215",
+          "{\"source\": \"repo/source.txt\", \"package\": \"packages/method/references/marker.txt\", \"control\": \"control/state.json\", \"outside\": \"outside/sentinel.txt\"}"
+        ],
+        "result": {
+          "status": "completed",
+          "reason": "",
+          "exit_code": 0,
+          "stdout": "{\"network_loopback\": {\"succeeded\": true, \"value\": \"HTTP/1.0 200 OK\\r\\nServer: BaseHTTP/0.6 Python/3.11.2\\r\\nDate: Tue, 22 Sep 2026 13:00:00 GMT\\r\\n\\r\\nNETWORK_0b73505c32414a6689a2cb33e16c6ebf\"}, \"read_control\": {\"succeeded\": true, \"value\": \"4cddbfd53110045d7cd6c43f14338cec8aff08796baa2d6307b058699a9e881d\"}, \"read_outside\": {\"succeeded\": true, \"value\": \"c54eb29e1b58da9418e68779cf05583b7a3b22e829590f7744982dde9641fd7d\"}, \"read_package\": {\"succeeded\": true, \"value\": \"d1a22ef907beb249b711c0fb5483feab09aba3a68db3ddc0540c2c6a0d9fa1c2\"}, \"read_source\": {\"succeeded\": true, \"value\": \"1523ade3ce92cfdd60771a381f473c63bd7f02e4864e1953eb906c52d168452b\"}, \"write_control\": {\"succeeded\": true, \"value\": true}, \"write_outside\": {\"succeeded\": true, \"value\": true}, \"write_package\": {\"succeeded\": true, \"value\": true}, \"write_source\": {\"succeeded\": true, \"value\": true}}\n",
+          "stderr": ""
+        }
+      },
+      "restricted": {
+        "uid": 65534,
+        "runtime": {
+          "status": "supported",
+          "reason": "CLI syntax advertised; runtime effects unverified",
+          "version": "0.155.1",
+          "binary": "/runtime/bin/codex",
+          "binary_digest": "sha256:298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335",
+          "help_digest": "sha256:0e82cfde0122715250e93dc65866caa956b2ac5b9d0b20ec4ad4f9e81486509e",
+          "missing_flags": []
+        },
+        "network_positive": true,
+        "network_marker": "NETWORK_bb8e6f73d03e49b49852299ace806364",
+        "command": [
+          "/runtime/bin/codex",
+          "sandbox",
+          "-c",
+          "sandbox_mode=\"read-only\"",
+          "--",
+          "/usr/bin/python3",
+          "-I",
+          "/probe/tools/check.py",
+          "/probe",
+          "40115",
+          "{\"source\": \"repo/source.txt\", \"package\": \"packages/method/references/marker.txt\", \"control\": \"control/state.json\", \"outside\": \"outside/sentinel.txt\"}"
+        ],
+        "result": {
+          "status": "completed",
+          "reason": "",
+          "exit_code": 0,
+          "stdout": "{\"network_loopback\": {\"errno\": 1, \"succeeded\": false}, \"read_control\": {\"errno\": 13, \"succeeded\": false}, \"read_outside\": {\"errno\": 13, \"succeeded\": false}, \"read_package\": {\"succeeded\": true, \"value\": \"d1a22ef907beb249b711c0fb5483feab09aba3a68db3ddc0540c2c6a0d9fa1c2\"}, \"read_source\": {\"succeeded\": true, \"value\": \"1523ade3ce92cfdd60771a381f473c63bd7f02e4864e1953eb906c52d168452b\"}, \"write_control\": {\"errno\": 13, \"succeeded\": false}, \"write_outside\": {\"errno\": 13, \"succeeded\": false}, \"write_package\": {\"errno\": 13, \"succeeded\": false}, \"write_source\": {\"errno\": 13, \"succeeded\": false}}\n",
+          "stderr": ""
+        }
+      }
+    },
+    "checks": {
+      "read_source": {
+        "status": "supported",
+        "reason": "Exact allowed bytes read"
+      },
+      "read_package": {
+        "status": "supported",
+        "reason": "Exact allowed bytes read"
+      },
+      "read_control": {
+        "status": "supported",
+        "reason": "Actual permission denial with a working positive control"
+      },
+      "read_outside": {
+        "status": "supported",
+        "reason": "Actual permission denial with a working positive control"
+      },
+      "write_source": {
+        "status": "supported",
+        "reason": "Actual permission denial with a working positive control"
+      },
+      "write_package": {
+        "status": "supported",
+        "reason": "Actual permission denial with a working positive control"
+      },
+      "write_control": {
+        "status": "supported",
+        "reason": "Actual permission denial with a working positive control"
+      },
+      "write_outside": {
+        "status": "supported",
+        "reason": "Actual permission denial with a working positive control"
+      },
+      "network_loopback": {
+        "status": "supported",
+        "reason": "Actual permission denial with a working positive control"
+      }
+    },
+    "originals": {
+      "repo/source.txt": "sha256:1523ade3ce92cfdd60771a381f473c63bd7f02e4864e1953eb906c52d168452b",
+      "packages/method/references/marker.txt": "sha256:d1a22ef907beb249b711c0fb5483feab09aba3a68db3ddc0540c2c6a0d9fa1c2",
+      "control/state.json": "sha256:4cddbfd53110045d7cd6c43f14338cec8aff08796baa2d6307b058699a9e881d",
+      "outside/sentinel.txt": "sha256:c54eb29e1b58da9418e68779cf05583b7a3b22e829590f7744982dde9641fd7d"
+    },
+    "after_digests": {
+      "positive": {
+        "repo/source.txt": "sha256:6471a5ce5c01f4f57a563bd5dbd8788197864533df2ea13a44ae0f2f5ae52eba",
+        "packages/method/references/marker.txt": "sha256:ffe6bd043f36242685940fd7924f38948667654b7950850e4e3e9fd00f58595a",
+        "control/state.json": "sha256:2242fec2ca23a2548c3654a7626bb0a9c06ccb882a6de4a0a97609eaf8746b1b",
+        "outside/sentinel.txt": "sha256:8e0dc14555dc5c8dea0c436411f2a55082d736c5fc1a496c9b37105945961284"
+      },
+      "restricted": {
+        "repo/source.txt": "sha256:1523ade3ce92cfdd60771a381f473c63bd7f02e4864e1953eb906c52d168452b",
+        "packages/method/references/marker.txt": "sha256:d1a22ef907beb249b711c0fb5483feab09aba3a68db3ddc0540c2c6a0d9fa1c2",
+        "control/state.json": "sha256:4cddbfd53110045d7cd6c43f14338cec8aff08796baa2d6307b058699a9e881d",
+        "outside/sentinel.txt": "sha256:c54eb29e1b58da9418e68779cf05583b7a3b22e829590f7744982dde9641fd7d"
+      }
+    },
+    "original_report_sha256": "5367bb4f268b476cc2464f7ddae46c62af61c28b232106654bf4254a52a963e8",
+    "inspection_code": {
+      "readiness": "sha256:68c0aad925ad6952ed8e8926b0619cba767e8af1dbdb668cc0149ca5ad235487",
+      "conformance": "sha256:c97e65ae220787699d63e3ee8ddd6e10d8ddf46079e9dddac14dbf591b883b69"
+    },
+    "construction": {
+      "dockerfile": "FROM node@sha256:0557ac14e0d45d02ed563067b82856ca5e7aa3437fa28d98d4350ea9c3d9494a\nCOPY --chown=0:0 fixtures/ /probe/\nCOPY --chown=0:0 wrapper.py /probe-wrapper.py\nRUN [\"/usr/bin/python3\", \"-I\", \"-c\", \"import os; os.chmod('/probe/control',448); os.chmod('/probe/outside',448); os.chmod('/probe/control/state.json',384); os.chmod('/probe/outside/sentinel.txt',384)\"]\n",
+      "wrapper": "import json,os,sys\nfrom pathlib import Path\nsys.path.insert(0,'/offline')\nfrom goodteam_os import skill_runtime_readiness as r\nroot=Path('/tmp/probe-env'); root.mkdir()\nenv=r.probe.clean_environment(root)\nruntime=r.probe.inspect_runtime('/runtime/bin/codex',root)\nwith r.probe.LoopbackFixture() as network:\n import urllib.request\n network_positive=network.marker in urllib.request.urlopen('http://127.0.0.1:'+str(network.server.server_port),timeout=2).read().decode()\n helper=['/usr/bin/python3','-I','/probe/tools/check.py','/probe',str(network.server.server_port),json.dumps(r.FILES)]\n command=helper if sys.argv[1]=='positive' else ['/runtime/bin/codex','sandbox','-c','sandbox_mode=\"read-only\"','--',*helper]\n result=r.probe.capture(command,cwd=Path('/probe/repo'),env=env,timeout=20)\n print(json.dumps({'uid':os.getuid(),'runtime':runtime,'network_positive':network_positive,'network_marker':network.marker,'command':command,'result':result}))\n",
+      "fixtures": "The unchanged _fixtures helper created fresh non-secret byte challenges before copying into the image as root-owned files. No real user or Operator data was included.",
+      "positive": "Same image, UID0, writable disposable image layer; fixed helper only, without the inner sandbox. Parent copied each image fixture after exit to verify writes occurred.",
+      "restricted": "Same image, UID65534, read-only image, actual codex sandbox read-only command. Parent copied each image fixture after exit and verified all original bytes remained.",
+      "mounts": "Only the pinned runtime and two unchanged diagnostic modules were mounted read-only. No host fixture/private directory was mounted.",
+      "resources": {
+        "pids_limit": 64,
+        "memory_bytes": 805306368,
+        "cpus": 1,
+        "tmpfs": "/tmp:rw,nosuid,nodev,size=128m,mode=1777"
+      }
+    },
+    "seccomp_derivation": {
+      "source_url": "https://raw.githubusercontent.com/moby/profiles/main/seccomp/default.json",
+      "source_sha256": "785b2429264afba4d594320337cb17f144f3c7d51585f9805eef72e28f4f9334",
+      "added_rule": {
+        "names": [
+          "clone",
+          "unshare",
+          "mount",
+          "umount",
+          "umount2",
+          "pivot_root"
+        ],
+        "action": "SCMP_ACT_ALLOW",
+        "comment": "Owned no-model namespace experiment; no host caps, mounts, networking or daemon changes"
+      },
+      "other_changes": false,
+      "scope": "Per-owned-container experiment, not a production-approved seccomp policy; no daemon/host policy change, added capability or unconfined mode."
+    },
+    "earlier_rejected_candidates": [
+      {
+        "name": "namespace_allowed_original_profile",
+        "report_sha256": "1589a7ce61f9ea39c8647449d43d1ee1e4e8d65ce107de1556921fa97d1ffb9b",
+        "finding": "Legacy helper starts, but private reads succeed. Named profile fails before helper: cannot create /tmp/evidence/tmp on read-only filesystem."
+      },
+      {
+        "name": "namespace_allowed_layout_candidate",
+        "report_sha256": "ac4be65bd0b82b8f84f307594652575475ce244f29c63cf0befef2d3262e0788",
+        "finding": "Named profile still fails before helper: cannot create /tmp/evidence/control on read-only filesystem."
+      },
+      {
+        "name": "host_bind_with_dac_candidate",
+        "report_sha256": "5edc4f2cf794e17005d5ba0f4be7b9db9d7957625b5ede633e93b4fd88e0cd12",
+        "finding": "Host private fixture directories were bound into the container; control/outside reads succeeded despite host mode restrictions. Candidate rejected; no claim about cause or host DAC semantics."
+      }
+    ]
+  }
 }
