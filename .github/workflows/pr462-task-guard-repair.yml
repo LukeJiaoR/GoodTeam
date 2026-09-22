@@ -112,3 +112,4 @@ jobs:
           path: ${{ env.EVIDENCE }}/reports/
           retention-days: 14
           if-no-files-found: warn
+# Revalidate after the explicit fixture re-export fixes F811; thresholds unchanged.

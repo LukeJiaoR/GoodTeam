@@ -8,7 +8,10 @@ import pytest
 from goodteam_os.skills.models import SkillError
 from goodteam_os.skills.task_context import task_skill_context
 from goodteam_os.skills.task_locks import TaskSkillIdentity
-from test_worker_skill_requests import ctx  # noqa: F401 - shared isolated fixture
+from test_worker_skill_requests import ctx as _shared_ctx
+
+# Re-export the shared isolated fixture without shadowing an unused import.
+ctx = _shared_ctx
 
 
 def legacy_request(ctx, **changes):
