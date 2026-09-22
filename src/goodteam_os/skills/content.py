@@ -273,6 +273,11 @@ class SkillContextProvider:
     def private_input(self, ref):
         """Internal adapter input; never a public status/HTTP response."""
         _operator, _packages, snapshot, record = self._read(ref)
+        catalog = record["input"]["catalog"]
+        if len(catalog) > self.limits.max_packages:
+            raise SkillError("content_budget_exceeded", "The prepared package count exceeds the current context budget.")
+        if len(_bytes(catalog)) > self.limits.max_catalog_bytes:
+            raise SkillError("content_budget_exceeded", "The complete method catalog exceeds the current context budget.")
         if len(_bytes(record["input"])) > self.limits.max_input_bytes:
             raise SkillError("content_budget_exceeded", "Complete input exceeds the current context budget.")
         if self._session(snapshot, record["context_id"], "input") != record["runtime_session"]:
