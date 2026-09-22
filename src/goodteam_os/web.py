@@ -1589,10 +1589,16 @@ def start_dispatch_track(
             workflow_job_fields(existing, role=str(request.get("role", "")), command_key="worktree-dispatch-reference-check")
             if existing.task_skill_context:
                 raise SkillError("skill_dispatch_track_not_connected", "A method-bound task cannot enter the legacy worktree dispatcher.")
-        else:
-            team = TeamControlPlaneStore(workspace, selected_key).read()
-            if team and team.get("skill_bindings", {}).get(subject_for_role(str(request.get("role", ""))), {}).get("mode") == "custom":
-                raise SkillError("skill_dispatch_track_not_connected", "Custom-method worktree dispatch requires a supported bounded task start.")
+        # This helper creates a NEW dispatch, not a retry of the existing run.
+        # An old legacy run must not hide the selected Role's current methods.
+        team = TeamControlPlaneStore(workspace, selected_key).read()
+        if team and team.get("skill_bindings", {}).get(subject_for_role(str(request.get("role", ""))), {}).get("mode") == "custom":
+            raise SkillError("skill_dispatch_track_not_connected", "Custom-method worktree dispatch requires a supported bounded task start.")
+    else:
+        from goodteam_os.service import service_state_dir
+
+        if (Path(service_state_dir()).expanduser().resolve() / "skills" / "task-locks").exists():
+            raise SkillError("project_scope_unknown", "Skill-aware worktree dispatch requires explicit project scope before creating a branch.")
     name = str(request.get("name", "")).strip()
     role = str(request.get("role", "")).strip()
     adapter = str(request.get("adapter", "")).strip()

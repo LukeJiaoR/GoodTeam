@@ -497,3 +497,39 @@ def test_public_worker_summary_keeps_actual_task_binding_and_blocked_evidence(ct
     altered["skill_execution_snapshot_ref"] = {**altered["skill_execution_snapshot_ref"], "content": "PRIVATE-BODY"}
     altered["invocation_evidence"] = {**altered["invocation_evidence"], "command": "PRIVATE-BODY"}
     assert "PRIVATE-BODY" not in json.dumps(web._serialize_worker_job_items([altered]))
+
+
+@pytest.mark.parametrize("existing_legacy", [False, True])
+def test_new_worktree_dispatch_cannot_hide_custom_methods_behind_legacy_state(ctx, monkeypatch, existing_legacy):
+    from goodteam_os.state import create_initial_state
+
+    bind(ctx, method(ctx), subject="role:implementation")
+    if existing_legacy:
+        state = create_initial_state("old-legacy", "DEMO", "Earlier legacy task")
+        state.current_node = "complete"
+        state.next_node = "complete"
+        StateStore(ctx.workspace).write_project_current(state)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Reject unsupported custom methods before worktree creation")
+
+    monkeypatch.setattr(web, "_ensure_dispatch_worktree", forbidden)
+    with pytest.raises(SkillError, match="Custom-method worktree"):
+        web.start_dispatch_track(ctx.workspace, {"project_key": "DEMO", "name": "new-task",
+                                  "role": "implementation", "adapter": "fake", "task": "New task"})
+    assert ctx.workers.list_jobs() == []
+
+
+def test_unscoped_worktree_dispatch_is_blocked_before_branch_creation(ctx, monkeypatch):
+    # An authority already exists, so dropping project_key cannot opt out of it.
+    bind(ctx, method(ctx))
+    capture(ctx)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Missing project scope must fail before worktree creation")
+
+    monkeypatch.setattr(web, "_ensure_dispatch_worktree", forbidden)
+    with pytest.raises(SkillError, match="explicit project scope"):
+        web.start_dispatch_track(ctx.workspace, {"name": "unscoped-task", "role": "implementation",
+                                  "adapter": "fake", "task": "New task"})
+    assert ctx.workers.list_jobs() == []
