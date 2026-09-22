@@ -1515,7 +1515,7 @@
 
 .work-workspace-shell .team-workspace {
   grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.3fr) minmax(0, 1fr);
-  height: max(26rem, calc(100dvh - 16rem));
+  height: max(26rem, calc(100dvh - 15rem));
   min-height: 26rem;
   gap: 1rem;
   padding: 1rem;
