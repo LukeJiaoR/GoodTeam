@@ -18,7 +18,7 @@ import stat
 from typing import Iterator
 from uuid import uuid4
 
-from .filesystem import directory, regular_file, subdirectory, write_new
+from .filesystem import directory, open_lock_file, regular_file, subdirectory, write_new
 from .models import (
     InstalledSkill, PackageLimits, Publication, SkillConflict, SkillDiagnostic,
     SkillError, SkillPackageVersion, SkillScope, SkillSource, bounded_text,
@@ -92,11 +92,8 @@ class SkillStore:
     def _locked(self) -> Iterator[int]:
         with directory(self.root) as root:
             with subdirectory(root, self.scope.namespace) as fd:
-                lock = os.open(".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+                lock = open_lock_file(fd, ".lock")
                 try:
-                    info = os.fstat(lock)
-                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                        raise SkillError("unsafe_file", "Skill store lock is unsafe.")
                     fcntl.flock(lock, fcntl.LOCK_EX)
                     yield fd
                 finally:
@@ -340,6 +337,15 @@ class SkillStore:
             if package.metadata_json != record.metadata_json:
                 raise SkillError("package_corrupt", "Stored metadata does not match package instructions.")
             return record
+
+    def read_package(self, skill_id: str, selected: str) -> SkillPackage:
+        """Read immutable fixed package bytes; no source paths or execution."""
+        with self._locked() as fd:
+            record = self._find_version(self._read_index(fd), skill_id, selected)
+            package = self._load_object(fd, record.package_digest)
+            if package.metadata_json != record.metadata_json:
+                raise SkillError("package_corrupt", "Stored metadata does not match package instructions.")
+            return package
 
     def read_resource(self, skill_id: str, selected: str, relative: str) -> bytes:
         with self._locked() as fd:

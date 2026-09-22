@@ -70,6 +70,34 @@ def subdirectory(root_fd: int, relative: str, *, create: bool = False) -> Iterat
         os.close(fd)
 
 
+def open_lock_file(fd: int, name: str, *, create: bool = True) -> int:
+    """Open one stable lock inode; caller owns flock and descriptor cleanup.
+
+    Concurrent O_CREAT|O_NOFOLLOW opens of a missing file can fail with ENOENT
+    on macOS. Elect one creator with O_EXCL, then open an existing file without
+    O_CREAT. Never unlink, replace or retry a disappearing lock: that could split
+    callers across different inodes. Missing read-path locks stay missing.
+    """
+    if "/" in resource_path(name):
+        raise SkillError("unsafe_path", "Expected one lock file path component.")
+    flags = os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if create:
+        try:
+            lock = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=fd)
+        except FileExistsError:
+            lock = os.open(name, flags, dir_fd=fd)
+    else:
+        lock = os.open(name, flags, dir_fd=fd)
+    try:
+        info = os.fstat(lock)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SkillError("unsafe_file", "Lock must be a singly linked regular file.")
+        return lock
+    except BaseException:
+        os.close(lock)
+        raise
+
+
 def regular_file(fd: int, name: str, *, maximum: int) -> tuple[bytes, os.stat_result]:
     if "/" in resource_path(name):
         raise SkillError("unsafe_path", "Expected one file path component.")

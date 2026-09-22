@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .filesystem import directory, open_lock_file
 from .models import SkillConflict, SkillError, SkillScope, SkillSource, bounded_text, canonical_json
 from .package import SkillPackage, capture_package, package_from_files
 from .store import SkillStore
@@ -139,16 +140,14 @@ class SkillLibraryService:
     @contextmanager
     def _proposal_lock(self, proposal_id: str):
         proposal_id = _safe_proposal_id(proposal_id)
-        flags = os.O_WRONLY | os.O_CREAT
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(self.proposals / f".{proposal_id}.lock", flags, 0o600)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-            os.close(descriptor)
+        with directory(self.proposals) as fd:
+            descriptor = open_lock_file(fd, f".{proposal_id}.lock")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
 
     def _load_proposal(self, proposal_id: str) -> dict[str, Any]:
         path = self._proposal_path(proposal_id) / "proposal.json"

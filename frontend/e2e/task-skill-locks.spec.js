@@ -85,6 +85,11 @@ test('confirmed custom-method task persists its lock and cannot execute through 
     expect(restored.state.task_skill_context).toEqual(context);
     expect(restored.team.roles.find((role) => role.role === 'qa').skill_binding.mode).toBe('default');
     expect(JSON.parse(fs.readFileSync(objectPath, 'utf8'))).toEqual(lock);
+    // API persistence can settle before React finishes reloading. Capture the
+    // visible blocked task, not a loading skeleton labelled as blocker evidence.
+    const currentTask = page.getByRole('region', { name: 'Current task and next step' });
+    await expect(currentTask).toHaveAttribute('data-state', 'blocked');
+    await expect(currentTask.getByText('Blocked', { exact: true })).toBeVisible();
     await testInfo.attach('method-bound-task-blocked', { body: await page.screenshot(), contentType: 'image/png' });
     expect(fixture.errors).toEqual([]);
   } finally {

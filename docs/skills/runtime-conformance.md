@@ -6,6 +6,12 @@ change Team configuration, start a GoodTeam workflow, or enable strict binding.
 
 ## Decision
 
+The current [Runtime readiness and S5 implementation decision](runtime-readiness.md)
+records the discovered Codex 0.155.1 binaries, credential-free executable
+boundary checks, disposable Linux envelope, remaining Worker changes and the
+request/cost enforcement requirements. A missing binary on the earlier CI runner
+is not a claim that the development host lacks a binary.
+
 Prefer **injected required instructions plus immutable, explicitly addressed
 resources** for the first Reviewer adapter. Keep native discovery as an option
 only after the exact installed Runtime can demonstrate an allowlisted method

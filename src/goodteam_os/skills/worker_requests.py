@@ -15,12 +15,11 @@ import json
 import os
 from pathlib import Path
 import re
-import stat
 from typing import Any
 from uuid import uuid4
 
 from .availability import SkillAvailabilityStore
-from .filesystem import directory, regular_file, subdirectory, write_new
+from .filesystem import directory, open_lock_file, regular_file, subdirectory, write_new
 from .library import LOCAL_SCOPE_OWNER, SkillLibraryService
 from .models import SkillConflict, SkillError, SkillScope, canonical_json, content_digest
 from .task_context import task_skill_context, validate_task_skill_context
@@ -96,11 +95,8 @@ def _request_lock(operator: Path, job_id: str):
     if SKILL_JOB_RE.fullmatch(job_id) is None:
         raise SkillError("worker_skill_identity_invalid", "Worker Skill jobs require a registered stable identity.")
     with directory(operator / "skills" / "worker-requests", create=True) as fd:
-        lock = os.open(job_id + ".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+        lock = open_lock_file(fd, job_id + ".lock")
         try:
-            info = os.fstat(lock)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise SkillError("unsafe_file", "Worker Skill request lock is unsafe.")
             fcntl.flock(lock, fcntl.LOCK_EX)
             yield fd
         finally:

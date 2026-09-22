@@ -15,11 +15,10 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import stat
 from typing import Any
 from uuid import uuid4
 
-from .filesystem import directory, regular_file, subdirectory, write_new
+from .filesystem import directory, open_lock_file, regular_file, subdirectory, write_new
 from .models import SkillConflict, SkillError, SkillScope, bounded_text, canonical_json, content_digest, identifier
 from .store import SkillStore
 
@@ -73,11 +72,8 @@ class SkillAvailabilityStore:
     def _locked(self):
         with directory(self.root) as root_fd:
             with subdirectory(root_fd, self.scope.namespace) as fd:
-                lock = os.open(".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+                lock = open_lock_file(fd, ".lock")
                 try:
-                    info = os.fstat(lock)
-                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                        raise SkillError("unsafe_file", "Skill availability lock is unsafe.")
                     fcntl.flock(lock, fcntl.LOCK_EX)
                     yield fd
                 finally:
