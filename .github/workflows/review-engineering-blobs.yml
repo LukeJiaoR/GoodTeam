@@ -2,7 +2,7 @@ name: Temporary reviewed product blob transport
 on:
   push:
     branches: [feat/445-446-controlled-review-loop]
-    paths: [scripts/ci/review-engineering-transfer.b64]
+    paths: [scripts/ci/review-engineering-transfer.part3]
 permissions:
   contents: write
 jobs:
@@ -19,10 +19,11 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
-          raw = base64.b64decode(pathlib.Path('scripts/ci/review-engineering-transfer.b64').read_bytes(), validate=False)
-          assert hashlib.sha256(raw).hexdigest() == '7e09b9e1910cb2425a90ec7aef00629b11b1d3476792e7b46332954aa4110b73'
-          payload = json.loads(gzip.decompress(raw))
+          import base64, lzma, hashlib, json, os, pathlib, subprocess, urllib.request
+          encoded = ''.join(pathlib.Path(f'scripts/ci/review-engineering-transfer.part{i}').read_text().strip() for i in range(4))
+          raw = base64.b64decode(encoded, validate=True)
+          assert hashlib.sha256(raw).hexdigest() == '99f6f1464609aed19ec28adeeb1f99c9b644e4c0d9045c014f4b7e425826c915'
+          payload = json.loads(lzma.decompress(raw))
           assert payload['schema'] == 'goodteam-engineering-blob-transfer-v1'
           entries = payload['entries']
           assert len(entries) == 17
