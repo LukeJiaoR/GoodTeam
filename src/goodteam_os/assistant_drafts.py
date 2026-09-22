@@ -188,9 +188,38 @@ def confirm_and_prepare(service, *, project_key, root, request):
         state = service._readiness_state(project_key, root)
         if state.get("project_mode") == "unconfirmed":
             raise ValueError("Confirm the project mode before starting the task.")
-        session = store.confirm_task(str(request.get("proposal_id", "")), expected_revision=revision)
+        proposal_id = str(request.get("proposal_id", ""))
+        if (proposal.get("id") != proposal_id or proposal.get("revision") != revision
+                or proposal.get("status") == "cancelled" or proposal.get("pending_change")):
+            raise ValueError("Confirm the current task draft with no unresolved changes.")
+        if proposal.get("confirmed"):
+            # Pre-Skill confirmations are explicitly legacy; never upgrade one
+            # during preparation/recovery because Team configuration changed.
+            context = proposal.get("task_skill_context", {})
+            if not context:
+                from goodteam_os.skills.task_locks import TaskSkillIdentity
+                from goodteam_os.skills.task_start import reject_missing_task_context
+
+                reject_missing_task_context(TaskSkillIdentity("workflow_run", project_key, f"task-{proposal_id}"))
+        else:
+            from goodteam_os.skills.task_locks import TaskSkillIdentity
+            from goodteam_os.skills.task_start import capture_task_start
+
+            context = capture_task_start(
+                workspace=service.workspace, project_key=project_key, worker_root=root,
+                task=TaskSkillIdentity("workflow_run", project_key, f"task-{proposal_id}"),
+                command_key=f"task-confirm:{project_key}:{proposal_id}",
+                confirmed_input={"proposal_id": proposal_id, "proposal_revision": revision,
+                                 "exact_request": proposal["exact_request"]},
+                expected_team_revision=request.get("expected_team_revision"),
+            )
+        session = store.confirm_task(proposal_id, expected_revision=revision, task_skill_context=context)
         proposal = session["proposed_task"]
         if state.get("lifecycle") != "ready" and not isinstance(state.get("execution"), dict):
+            if context:
+                from goodteam_os.skills.models import SkillError
+
+                raise SkillError("skill_preparation_not_connected", "Task methods are locked; preparation needs a supported Skill execution path.")
             inputs = {"goal": proposal["exact_request"], "brief": proposal["exact_request"]} if state.get("project_mode") == "new_project" else {}
             state = service.readiness.start(project_key, root, inputs, idempotency_key=f"task-proposal:{proposal['id']}:{revision}")
         return session, state

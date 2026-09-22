@@ -1466,9 +1466,12 @@ def run_architecture_until_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    from goodteam_os.skills.task_start import workflow_job_fields
+
+    workflow_job_fields(state, role="product_requirement", command_key="validate-workflow-reference")
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     content = render_downstream_artifact_markdown("rfc", state, project_config)
-    if should_generate_artifact_with_worker(project_config, "architect"):
+    if state.task_skill_context or should_generate_artifact_with_worker(project_config, "architect"):
         worker_content = generate_artifact_via_worker(
             state=state,
             workspace=workspace,
@@ -1903,7 +1906,12 @@ def run_worker_job_with_retry(
     retryable_classes = set(retry_on_classes)
     while True:
         attempts += 1
-        job = store.create_job(**job_spec)
+        from goodteam_os.skills.task_start import workflow_job_fields
+
+        operation = str(state.pending_transition.get("id") or "initial")
+        fields = workflow_job_fields(state, role=str(job_spec["role"]),
+                                     command_key=f"workflow:{state.run_id}:{operation}:{state.current_node}:{job_spec['role']}:{attempts}")
+        job = store.create_job(**{**job_spec, **fields})
         job_id = str(job["id"])
         attempt_job_ids.append(job_id)
         result = store.run_job(job_id)
@@ -2510,6 +2518,9 @@ def run_adoption_until_next_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    from goodteam_os.skills.task_start import workflow_job_fields
+
+    workflow_job_fields(state, role="product_requirement", command_key="validate-workflow-reference")
     if project_config is None:
         raise ValueError("Project config is required for existing project adoption.")
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
@@ -2537,7 +2548,7 @@ def run_adoption_until_next_gate(
 
     worker_failure: dict[str, object] = {}
     brief_content = render_takeover_brief_markdown(state, project_config)
-    if should_generate_artifact_with_worker(project_config, "project_intake"):
+    if state.task_skill_context or should_generate_artifact_with_worker(project_config, "project_intake"):
         worker_content = generate_artifact_via_worker(
             state=state,
             workspace=workspace,
@@ -2590,9 +2601,12 @@ def run_until_next_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    from goodteam_os.skills.task_start import workflow_job_fields
+
+    workflow_job_fields(state, role="product_requirement", command_key="validate-workflow-reference")
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     content = render_prd_markdown(state, project_config)
-    if should_generate_artifact_with_worker(project_config, "product_requirement"):
+    if state.task_skill_context or should_generate_artifact_with_worker(project_config, "product_requirement"):
         worker_content = generate_artifact_via_worker(
             state=state,
             workspace=workspace,
@@ -2708,10 +2722,13 @@ def run_fix_until_next_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    from goodteam_os.skills.task_start import workflow_job_fields
+
+    workflow_job_fields(state, role="product_requirement", command_key="validate-workflow-reference")
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
     context = collect_project_context(project_config)
     content = render_fix_plan_markdown(state, context)
-    if should_generate_artifact_with_worker(project_config, "architect"):
+    if state.task_skill_context or should_generate_artifact_with_worker(project_config, "architect"):
         worker_content = generate_artifact_via_worker(
             state=state,
             workspace=workspace,
@@ -2958,14 +2975,27 @@ def generate_artifact_via_worker(
     failure_status: dict[str, object] | None = None,
 ) -> str | None:
     if project_config is None or not project_config.is_file():
+        if state.task_skill_context:
+            from goodteam_os.skills.models import SkillError
+
+            raise SkillError("skill_dispatch_unavailable", "The original task runtime root is unavailable; template fallback is forbidden.")
         return None
     try:
         target = load_project_target(project_config)
         runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
         if runtime_root is None:
+            if state.task_skill_context:
+                from goodteam_os.skills.models import SkillError
+
+                raise SkillError("skill_dispatch_unavailable", "The original task runtime root is unavailable; template fallback is forbidden.")
             return None
 
+        from goodteam_os.skills.task_start import workflow_job_fields
+
         job_fields = _worker_job_fields(target, role, state)
+        operation = str(state.pending_transition.get("id") or "initial")
+        job_fields.update(workflow_job_fields(state, role=role,
+                                             command_key=f"artifact:{state.run_id}:{operation}:{role}:{artifact_key}"))
         store = WorkerJobStore(runtime_root)
         job = store.create_job(
             run_id=state.run_id,
@@ -2983,6 +3013,10 @@ def generate_artifact_via_worker(
             **job_fields,
         )
         status = store.run_job(str(job["id"]))
+        if status.get("skill_error_code"):
+            from goodteam_os.skills.models import SkillError
+
+            raise SkillError(str(status["skill_error_code"]), "Task methods cannot execute; legacy/template fallback is forbidden.")
         if str(status.get("status", "")) != "completed":
             if failure_status is not None:
                 failure_status.update(status)
@@ -3030,6 +3064,12 @@ def generate_artifact_via_worker(
             return render_prd_markdown(state, project_config)
         return render_downstream_artifact_markdown(artifact_key, state, project_config)
     except Exception as exc:
+        from goodteam_os.skills.models import SkillError
+
+        if isinstance(exc, SkillError):
+            raise
+        if state.task_skill_context:
+            raise SkillError("skill_dispatch_unavailable", "The task method dispatch failed; template fallback is forbidden.") from exc
         if failure_status is not None:
             failure_status.update({"status": "failed", "summary": str(exc)})
         return None

@@ -148,6 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--constraints-file", type=Path)
     dispatch.add_argument("--research-report", type=Path)
     dispatch.add_argument("--allow-unsafe", action="store_true")
+    dispatch.add_argument("--task-id", default="", help="Stable bounded direct-task identity for an explicit retry.")
 
     memory_append = subparsers.add_parser("memory-append")
     memory_append.add_argument("--project-root", type=Path, required=True)
@@ -370,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         ]
         verify_commands = dict(parse_dispatch_verify_spec(item) for item in args.verify)
         payload = dispatch_tracks(
+            **({"logical_task_id": args.task_id} if args.task_id else {}),
             project_root=args.project_root,
             tracks=tracks,
             verify_commands=verify_commands,

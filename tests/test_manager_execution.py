@@ -46,11 +46,11 @@ def test_manager_interpretation_runs_one_configured_orchestrator_job(
             captured["project_root"] = project_root
             self.root = project_root / ".goodteam" / "workers" / "jobs"
 
-        def create_job(self, **spec):
+        def create_or_reuse_job(self, **spec):
             captured["spec"] = spec
             job_root = self.root / "job-manager"
             job_root.mkdir(parents=True)
-            return {"id": "job-manager"}
+            return {"id": "job-manager", "status": "queued"}, True
 
         def run_job(self, job_id: str):
             result_path = self.root / job_id / "result.md"
@@ -130,10 +130,10 @@ def test_manager_interpretation_fails_when_worker_does_not_return_structured_out
         def __init__(self, project_root: Path) -> None:
             self.root = project_root / ".goodteam" / "workers" / "jobs"
 
-        def create_job(self, **spec):
+        def create_or_reuse_job(self, **spec):
             job_root = self.root / "job-manager"
             job_root.mkdir(parents=True)
-            return {"id": "job-manager"}
+            return {"id": "job-manager", "status": "queued"}, True
 
         def run_job(self, job_id: str):
             result_path = self.root / job_id / "result.md"

@@ -81,6 +81,17 @@ class ExecutionOrchestrator:
 
         existing_run = self.ledger.read_run(execution_id)
         if existing_run is not None:
+            from goodteam_os.skills.worker_requests import is_skill_job_id, original_worker_request
+            from goodteam_os.skills.models import SkillConflict, SkillError
+
+            if is_skill_job_id(existing_run.worker_job_id):
+                job = _find_worker_job(self.worker_store, existing_run.worker_job_id)
+                if job is None or not job.get("task_skill_context"):
+                    raise SkillError("task_context_missing", "The original issue execution lost its method reference.")
+                original = original_worker_request(self.worker_store, command_key=str(job.get("idempotency_key", "")),
+                                                   context=job["task_skill_context"])
+                if original is None or original["role"] != role or original["adapter"] != adapter:
+                    raise SkillConflict("operation_conflict", "Issue execution already owns another Worker request.")
             return existing_run
 
         task_id = task.task_id if task is not None else task_id_from_github_issue(repo, issue_number)
@@ -105,6 +116,13 @@ class ExecutionOrchestrator:
         if run is None:
             raise ValueError(f"Execution run not found: {execution_id}")
 
+        from goodteam_os.skills.worker_requests import is_skill_job_id
+
+        if is_skill_job_id(run.worker_job_id):
+            # S5 remains closed; validate and record the blocked attempt before
+            # creating a sandbox, probing a CLI, or touching a target checkout.
+            result = self.worker_store.run_job(run.worker_job_id)
+            return self._record_worker_failure(run, result)
         started_at = self._clock()
         self._append_event(
             run,
@@ -204,7 +222,34 @@ class ExecutionOrchestrator:
         adapter: str,
         role: str,
     ) -> ExecutionRun:
-        worker_job = self.worker_store.create_job(
+        from goodteam_os.skills.task_locks import TaskSkillIdentity
+        from goodteam_os.skills.task_start import capture_task_start, registered_project_scope
+        from goodteam_os.skills.worker_requests import WORKER_METADATA_LOADER, subject_for_role
+
+        # Intake already persisted the issue task. Recovery uses that original
+        # body instead of manufacturing a shorter task from an existing binding.
+        if task is None:
+            task = self.ledger.read_task(execution_id)
+        scope = registered_project_scope(self.project_root)
+        skill_fields = {}
+        if scope is not None:
+            workspace, key = scope
+            context = capture_task_start(
+                workspace=workspace, project_key=key, worker_root=self.project_root,
+                task=TaskSkillIdentity("issue_execution", key, execution_id),
+                command_key=f"issue-start:{key}:{execution_id}",
+                confirmed_input={"task_id": task_id, "source": f"github:{repo.strip().lower()}#{issue_number}",
+                                 "task": _worker_task(task, repo=repo, issue_number=issue_number),
+                                 "context": _worker_context(task, repo=task.repo if task is not None else repo, issue_number=issue_number),
+                                 "role": role, "adapter": adapter},
+            )
+            if context:
+                skill_fields = {"task_skill_context": context, "skill_subject": subject_for_role(role),
+                                "skill_loader_version": WORKER_METADATA_LOADER,
+                                "project_key": key, "execution_id": execution_id,
+                                "idempotency_key": f"issue-worker:{key}:{execution_id}"}
+        worker_job, _created = self.worker_store.create_or_reuse_job(
+            **skill_fields,
             run_id=execution_id,
             role=role,
             adapter=adapter,
@@ -243,6 +288,10 @@ class ExecutionOrchestrator:
             "role": role,
             "branch_name": run.branch_name,
         }
+        original_job = _find_worker_job(self.worker_store, run.worker_job_id)
+        if original_job:
+            payload.update({key: original_job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref")
+                            if key in original_job})
         self._append_event(
             run,
             event_type=LedgerEventType.CREATED,

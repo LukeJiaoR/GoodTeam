@@ -1574,6 +1574,25 @@ def start_dispatch_track(
     *,
     response_written: threading.Event | None = None,
 ) -> dict[str, object]:
+    from goodteam_os.skills.models import SkillError
+    from goodteam_os.skills.worker_requests import has_skill_fields, subject_for_role
+
+    if has_skill_fields(request):
+        raise SkillError("skill_dispatch_track_not_connected", "Worktree dispatch does not accept Skill task references; no fallback was started.")
+    selected_key = str(request.get("project_key", "") or "")
+    if selected_key:
+        from goodteam_os.skills.task_start import workflow_job_fields
+        from goodteam_os.team_control_plane import TeamControlPlaneStore
+
+        existing = StateStore(workspace).read_project_current(selected_key)
+        if existing is not None:
+            workflow_job_fields(existing, role=str(request.get("role", "")), command_key="worktree-dispatch-reference-check")
+            if existing.task_skill_context:
+                raise SkillError("skill_dispatch_track_not_connected", "A method-bound task cannot enter the legacy worktree dispatcher.")
+        else:
+            team = TeamControlPlaneStore(workspace, selected_key).read()
+            if team and team.get("skill_bindings", {}).get(subject_for_role(str(request.get("role", ""))), {}).get("mode") == "custom":
+                raise SkillError("skill_dispatch_track_not_connected", "Custom-method worktree dispatch requires a supported bounded task start.")
     name = str(request.get("name", "")).strip()
     role = str(request.get("role", "")).strip()
     adapter = str(request.get("adapter", "")).strip()
@@ -3314,6 +3333,7 @@ def _run_projection(
         "next_node": state.next_node,
         "updated_at": updated_at,
         "reason": reason,
+        "task_skill_context": state.task_skill_context,
     }
 
 
@@ -3495,6 +3515,8 @@ def start_workflow(
     load_profile: str = "greenfield",
     dry_run: bool = False,
     run_id: str = "",
+    expected_team_revision: int | None = None,
+    task_skill_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if not idea.strip():
         raise ValueError("Workflow goal is required.")
@@ -3550,6 +3572,40 @@ def start_workflow(
         team_state = ensure_team_state(workspace, key, project_config)
         if team_state is not None:
             state.team_snapshot = build_team_execution_snapshot(team_state)
+    if not dry_run:
+        from goodteam_os.skills.task_context import workflow_skill_context
+        from goodteam_os.skills.task_locks import TaskSkillIdentity
+        from goodteam_os.skills.task_start import capture_task_start
+
+        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        if task_skill_context is not None:
+            state.task_skill_context = workflow_skill_context(task_skill_context, run_id=state.run_id, project_key=key)
+            if not state.task_skill_context:
+                from goodteam_os.skills.task_start import reject_missing_task_context
+
+                reject_missing_task_context(TaskSkillIdentity("workflow_run", key, state.run_id))
+            if state.task_skill_context:
+                from goodteam_os.skills.task_service import ProjectTaskSkillService
+
+                if runtime_root is None:
+                    raise ValueError("Task Skill execution requires its bound project runtime root.")
+                lock = ProjectTaskSkillService(workspace, key, worker_roots=(runtime_root,)).read(state.task_skill_context)
+                confirmation = lock.get("start_input", {}).get("request", {}).get("confirmed_input", {})
+                if str(confirmation.get("exact_request", "")).strip() != state.idea:
+                    raise ValueError("Workflow input differs from its original task confirmation.")
+                binding = confirmation.get("producer_binding", {})
+                if binding != {"workspace": str(Path(workspace).expanduser().resolve()),
+                               "worker_root": str(Path(runtime_root).expanduser().resolve())}:
+                    raise ValueError("Workflow root differs from its original task confirmation.")
+        elif runtime_root is not None:
+            state.task_skill_context = capture_task_start(
+                workspace=workspace, project_key=key, worker_root=runtime_root,
+                task=TaskSkillIdentity("workflow_run", key, state.run_id),
+                command_key=f"workflow-start:{key}:{state.run_id}",
+                confirmed_input={"exact_request": idea, "source_type": source_type,
+                                 "delivery_mode": state.delivery_mode, "delivery_standards": state.delivery_standards},
+                expected_team_revision=expected_team_revision,
+            )
     profile = resolve_profile(load_profile or "greenfield")
     state.load_profile = profile.name
     use_fix_profile = profile.name == "fix" and source_type != "existing_project"
@@ -3577,12 +3633,26 @@ def start_workflow(
     previous = StateStore(workspace).read_project_current(key)
     if previous is not None and not is_active_run(previous):
         StateStore(workspace).archive_project_current(key, reason="rejected" if previous.next_node == "rejected" else "complete")
-    if source_type == "existing_project":
-        result = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-    elif use_fix_profile:
-        result = run_fix_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-    else:
-        result = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+    if state.task_skill_context:
+        # Lock ownership and the portable reference are durable BEFORE any graph
+        # node may dispatch. Failure leaves an inspectable blocked task, not a
+        # template-generated success or a recapture from current methods.
+        StateStore(workspace).write_project_current(state)
+        StateStore(workspace).write_project_checkpoint(state)
+    from goodteam_os.skills.models import SkillError
+
+    try:
+        if source_type == "existing_project":
+            result = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+        elif use_fix_profile:
+            result = run_fix_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+        else:
+            result = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
+    except SkillError as exc:
+        if not state.task_skill_context:
+            raise
+        state.blockers = [*state.blockers, f"{exc.code}: Task methods are locked but execution is blocked."]
+        result = state
     state_store = StateStore(root=workspace)
     state_store.write_project_current(result)
     state_store.write_project_checkpoint(result)
@@ -4071,6 +4141,8 @@ def discuss_request_changes_intent(
                 run_id=str(dict(intent.get("mission") or {}).get("run_id", "")),
                 project_key=normalize_project_key(project_key),
                 intent_id=intent_id,
+                logical_intent_id=next((str(event["id"]) for event in reversed(intent.get("events", []))
+                                        if event.get("event") in {"change_discussion_started", "change_discussion_continued"}), intent_id),
                 change_request=text,
                 context=(
                     f"Approval: {target.get('approval', '')}\n"
@@ -6102,6 +6174,7 @@ def handle_project_api_post(
                 project_config=project_config,
                 load_profile="greenfield",
                 run_id=start_run_id,
+                task_skill_context=proposal.get("task_skill_context", {}),
             )
         except Exception as exc:
             store.mark_workflow_start_indeterminate(proposal_id, claim_id=claim_id, reason=str(exc))
@@ -8389,6 +8462,7 @@ def serve(
                         project_config=Path(str(request["project_config"])) if str(request.get("project_config", "")).strip() else None,
                         role_model_overrides=[str(value) for value in request.get("role_model_overrides", [])],
                         dry_run=bool(request.get("dry_run", False)),
+                        expected_team_revision=request.get("expected_team_revision"),
                     )
                 elif normalized_path == "/report-bug":
                     result = report_bug(

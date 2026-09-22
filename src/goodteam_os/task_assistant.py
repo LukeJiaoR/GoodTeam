@@ -111,6 +111,12 @@ class TaskAssistantService:
                 pending["status"] = "failed"
         return {**session, "pending_team_decision": pending}
 
+    def _manager_requires_skills(self, project_key, root, message_id):
+        from goodteam_os.skills.task_start import manager_requires_skill_path
+
+        return manager_requires_skill_path(workspace=self.workspace, project_key=project_key,
+                                           worker_root=root, logical_message_id=message_id)
+
     def send_message(
         self, *, project_key: str, root: Path, text: str, message_id: str, context_run_id: str = "",
     ) -> dict[str, object]:
@@ -152,11 +158,12 @@ class TaskAssistantService:
         if detection is not None and detection.candidates:
             # Known ambiguous names must not be resolved to a model-selected first match.
             intent, manager_response = "ambiguous", detection.reply
-        elif self.project_config is not None and not self._manager_runtime_is_builtin():
+        elif self.project_config is not None and (not self._manager_runtime_is_builtin() or self._manager_requires_skills(project_key, root, message_id)):
             turn = self.manager_turn(
                 project_config=self.project_config,
                 project_key=project_key,
                 message_id=attempt_id,
+                logical_message_id=message_id,
                 text=str(text),
                 context=_manager_chat_context(state, mode_hint, store.read(), team_view=team_view),
             )

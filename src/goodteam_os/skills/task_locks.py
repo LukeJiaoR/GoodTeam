@@ -335,11 +335,57 @@ class TaskSkillLockStore:
                     raise SkillConflict("operation_conflict", "This task already owns different confirmed inputs or a different key.")
                 return self._finish(fd, registry, task_id)
             lock = self._capture(task, resolve_plan())
+            # New captures retain the exact start input inside the immutable
+            # object, so an interrupted producer can replay without reconstructing
+            # confirmation data from current Team state. Old v1 locks remain
+            # readable, but cannot invent a missing start request on recovery.
+            lock["start_input"] = {"schema_version": "task_skill_start_input.v1", "request": task_input}
             ref = self._publish(fd, lock)
             registry["tasks"][task_id] = {"ref": ref, "fingerprint": fingerprint, "operation": operation, "status": "preparing"}
             registry["commands"][operation] = task_id
             self._write_registry(fd, registry)
             return self._finish(fd, registry, task_id)
+
+    def registered_task(self, *, task: TaskSkillIdentity) -> bool:
+        """Check an explicit producer task identity without inferring one from a job.
+
+        Presence includes preparing captures. A stripped state reference cannot
+        use legacy dispatch merely because its authoritative capture is pending.
+        """
+        task_id = self._task_id(task)
+        with self._locked() as fd:
+            return task_id in self._registry(fd)["tasks"]
+
+    def find_task(self, *, task: TaskSkillIdentity, command_key: str) -> dict[str, Any] | None:
+        """Inspect a task-start receipt, including preparing state, without repair.
+
+        Only explicit ``begin`` may finish pins. A producer must replay the saved
+        request, not substitute current Team data after reading this receipt.
+        """
+        task_id = self._task_id(task)
+        bounded_text(command_key, maximum=256)
+        operation = _digest(command_key)[7:]
+        with self._locked() as fd:
+            registry = self._registry(fd)
+            entry = registry["tasks"].get(task_id)
+            owner = registry["commands"].get(operation)
+            if owner is not None and owner != task_id:
+                raise SkillConflict("operation_conflict", "Task-start key belongs to another bounded task.")
+            if entry is None:
+                return None
+            if entry["operation"] != operation:
+                raise SkillConflict("operation_conflict", "This task belongs to another start command.")
+            lock = self._resource(fd, entry["ref"], LOCK_SCHEMA)
+            if lock["task"] != asdict(task):
+                raise SkillError("snapshot_scope_mismatch", "Task-start receipt belongs to another identity.")
+            start = lock.get("start_input")
+            if start is not None:
+                if (not isinstance(start, dict) or set(start) != {"schema_version", "request"}
+                        or start["schema_version"] != "task_skill_start_input.v1"
+                        or not isinstance(start["request"], dict)
+                        or _digest({"task": asdict(task), "input": start["request"]}) != entry["fingerprint"]):
+                    raise SkillError("snapshot_corrupt", "Task-start input differs from its registered fingerprint.")
+            return {"ref": deepcopy(entry["ref"]), "status": entry["status"], "lock": lock}
 
     def _read_lock(self, fd: int, registry: dict[str, Any], ref: dict[str, Any], task: TaskSkillIdentity) -> dict[str, Any]:
         self._validate_ref(ref, LOCK_SCHEMA)

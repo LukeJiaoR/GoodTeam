@@ -77,7 +77,11 @@ class ExecutionEvidenceService:
         issue = _issue_ref(task, events)
         pr_number = _pr_number(run, events)
         pr_repo = _repo_from_events(events) or (task.repo if task is not None else "")
+        method_refs = {key: _first_payload_value(events, key) for key in ("task_skill_context", "skill_execution_snapshot_ref")
+                       if _first_payload_value(events, key) is not None}
         return {
+            **({"skill_execution": {"schema_version": "skill_execution_evidence.v1", "state": "captured", **method_refs}}
+               if method_refs else {}),
             "execution_id": execution_id,
             "task_id": run.task_id,
             "issue": issue,

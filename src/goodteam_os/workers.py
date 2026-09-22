@@ -16,6 +16,7 @@ from shutil import copy2, which
 from typing import Any
 from uuid import uuid4
 
+from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
 from goodteam_os.memory import RoleMemoryStore, default_embedder
 from goodteam_os.roles import role_definition, stable_role_prompt
 from goodteam_os.pi_rpc import PiRpcError
@@ -840,11 +841,15 @@ def _invocation_command(command: object) -> str:
     return ""
 
 
+_NO_TASK_SKILL_CONTEXT = object()
+
+
 class WorkerJobStore:
     def __init__(self, project_root: Path):
         self.project_root = project_root
         self.root = project_root / ".goodteam" / "workers" / "jobs"
 
+    @serialized_worker_creation
     def create_job(
         self,
         *,
@@ -887,12 +892,12 @@ class WorkerJobStore:
         execution_policy: str = "standard",
         worker_id: str = "",
         worker_name: str = "",
-        task_skill_context: dict[str, Any] | None = None,
+        task_skill_context: object = _NO_TASK_SKILL_CONTEXT,
         skill_subject: str = "",
         skill_loader_version: str = "goodteam.worker-metadata.v1",
         required_skill_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
-        if task_skill_context is not None:
+        if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
             skill_request = locals().copy()
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
@@ -985,6 +990,7 @@ class WorkerJobStore:
         (job_root / "result.md").write_text("", encoding="utf-8")
         return job
 
+    @serialized_worker_creation
     def create_or_reuse_job(self, **job_spec: Any) -> tuple[dict[str, Any], bool]:
         if job_spec.get("task_skill_context") is not None:
             import inspect
@@ -1027,6 +1033,9 @@ class WorkerJobStore:
             if not job_path.is_file():
                 continue
             job = self._read_json(job_path)
+            # Routing keeps the protected Skill identity even if job.json was altered.
+            if path.name.startswith("job-skill-"):
+                job["id"] = path.name
             status_path = path / "status.json"
             if status_path.is_file():
                 status_payload = self._read_json(status_path)
@@ -1199,6 +1208,9 @@ class WorkerJobStore:
 
     def _run_session_backend(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         """Run a persistent session backend without entering the one-shot CLI loop."""
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         runtime_context = self._worker_runtime_cwd(job)
         config = pi_runtime_config(self.project_root, job)
         preflight = pi_backend_doctor(self.project_root, job)
@@ -1877,6 +1889,9 @@ class WorkerJobStore:
         if not path.is_file():
             raise ValueError(f"Worker job not found: {job_id}")
         job = self._read_json(path)
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         if str(job.get("adapter")) not in SESSION_BACKENDS:
             raise ValueError(f"Worker job {job_id} is not a persistent-session backend")
         return job_root, job
@@ -2000,11 +2015,17 @@ class WorkerJobStore:
         }
 
     def _complete_noop(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         summary = "Completed by noop adapter. No external CLI was invoked."
         (job_root / "result.md").write_text(f"# Worker Result\n\n{summary}\n", encoding="utf-8")
         return self._write_status(job_root, job, "completed", summary)
 
     def _complete_fake(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         summary = "Completed by fake smoke adapter. No external CLI was invoked."
         (job_root / "result.md").write_text(
             f"# Worker Result\n\nStatus: pass\n\n{summary}\n",
@@ -2013,6 +2034,9 @@ class WorkerJobStore:
         return self._write_status(job_root, job, "completed", summary)
 
     def _wait_for_human(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         summary = "Fill result.md manually, then update status.json when ready."
         return self._write_status(job_root, job, "needs_review", summary)
 
@@ -2024,6 +2048,9 @@ class WorkerJobStore:
     ) -> dict[str, Any]:
         """Run any registered agentic coding CLI (codex, claude, ...). Adding a
         new CLI means adding a CliBackendSpec to CLI_BACKENDS — no new branch."""
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         binary = which(spec.which_name) or spec.default_path()
         raw = str(job.get("model", ""))
         bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
@@ -2176,6 +2203,9 @@ class WorkerJobStore:
         ``capture`` controls where the worker result comes from: ``output_file``
         means the CLI wrote it (codex ``--output-last-message``); ``stdout`` means
         the final message is printed to stdout (claude ``-p``)."""
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"

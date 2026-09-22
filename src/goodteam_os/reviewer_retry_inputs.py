@@ -1,8 +1,8 @@
 """Replay persisted Reviewer requests without inventing a new review task.
 
 Legacy job files are the existing input record, not tamper-proof evidence. A
-Skill-backed retry must use the task-lock/Worker integration, which is not wired
-by this module; it is explicitly rejected rather than downgraded to this path.
+Skill-backed retry uses the registered task-lock/Worker path. Malformed Skill
+metadata on a legacy job is rejected rather than downgraded to this path.
 """
 from __future__ import annotations
 
@@ -167,6 +167,10 @@ def create_reviewer_retry(store, selected: Mapping[str, object], *, retry_attemp
     if not isinstance(idempotency_key, str) or re.fullmatch(r"[0-9a-f]{64}", idempotency_key) is None:
         raise SkillError("review_retry_identity", "Reviewer retry requires its stable command key.")
     original_id = _job_id(selected)
+    from goodteam_os.skills.worker_requests import create_skill_reviewer_retry, is_skill_job_id
+
+    if is_skill_job_id(original_id):
+        return create_skill_reviewer_retry(store, selected, retry_attempt=retry_attempt, idempotency_key=idempotency_key)
     with _retry_lock(store, original_id):
         saved, files, research = _load_request(store, selected)
         request = {key: deepcopy(saved[key]) for key in JOB_REQUEST_FIELDS if key in saved}

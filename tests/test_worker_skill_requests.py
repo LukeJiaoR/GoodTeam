@@ -311,3 +311,59 @@ def test_original_unconfigured_context_cannot_fall_back_to_builtin(ctx):
     result = ctx.store.run_job(job["id"])
     assert result["skill_error_code"] == "methods_blocked"
     assert ctx.calls == []
+
+
+def test_explicit_null_context_is_not_an_implicit_legacy_request(ctx):
+    with pytest.raises(SkillError):
+        ctx.store.create_job(**{**ctx.request, "task_skill_context": None})
+    assert ctx.store.list_jobs() == []
+    assert ctx.calls == []
+
+
+def test_cross_mode_concurrent_same_key_cannot_publish_two_jobs(ctx):
+    legacy = {k: v for k, v in ctx.request.items() if not k.startswith(("skill_", "task_skill_"))}
+    def create(request):
+        try:
+            return ctx.store.create_or_reuse_job(**request)[0]["id"]
+        except ValueError:
+            return "conflict"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(create, (legacy, ctx.request)))
+    assert results.count("conflict") == 1
+    assert len(ctx.store.list_jobs()) == 1
+    assert ctx.calls == []
+
+
+
+def test_retry_cannot_name_itself_before_acquiring_request_lock(ctx, monkeypatch):
+    job_id = module._job_id(ctx.repo, ctx.locks.scope, ctx.request["idempotency_key"])
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("A self-retry must be rejected before request locking")
+
+    monkeypatch.setattr(module, "_request_lock", forbidden)
+    with pytest.raises(SkillError, match="own original job"):
+        ctx.store.create_job(**{**ctx.request, "original_failed_job_id": job_id})
+    assert ctx.store.list_jobs() == []
+    assert ctx.calls == []
+
+
+def test_retry_unknown_parent_does_not_acquire_parent_request_lock(ctx, monkeypatch):
+    from contextlib import contextmanager
+
+    actual = module._request_lock
+    acquired = []
+
+    @contextmanager
+    def one_request_lock(operator, job_id):
+        acquired.append(job_id)
+        assert len(acquired) == 1, "An unregistered parent must not acquire a second lock"
+        with actual(operator, job_id) as fd:
+            yield fd
+
+    monkeypatch.setattr(module, "_request_lock", one_request_lock)
+    with pytest.raises(SkillError, match="original Reviewer snapshot"):
+        ctx.store.create_job(**{**ctx.request, "original_failed_job_id": "job-skill-" + "a" * 64})
+    assert len(acquired) == 1
+    assert ctx.store.list_jobs() == []
+    assert ctx.calls == []

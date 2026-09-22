@@ -179,8 +179,7 @@ def dispatch_reviewer_jobs_for_gate(
     )
     results: list[dict[str, Any]] = []
     for profile in profiles:
-        job, _created = store.create_or_reuse_job(
-            **_reviewer_job_spec(
+        spec = {**_reviewer_job_spec(
                 run_id=run_id,
                 profile=profile,
                 approval=approval,
@@ -193,7 +192,11 @@ def dispatch_reviewer_jobs_for_gate(
                 resolution=resolution,
             ),
             **_worker_type_job_settings(target, resolution, role=role, adapter=profile.adapter),
-        )
+        }
+        from goodteam_os.skills.task_start import workflow_job_fields
+
+        spec.update(workflow_job_fields(state, role=role, command_key=str(spec["idempotency_key"])))
+        job, _created = store.create_or_reuse_job(**spec)
         result = dict(job)
         result.setdefault("job_id", str(job.get("id", "")))
         results.append({**result, **_identity_payload(job)})
@@ -375,6 +378,7 @@ def retry_failed_reviewer_jobs_for_gate(
                 "original_failed_job_id": original_job_id,
                 "retry_attempt": _clean_text(retry_job.get("retry_attempt") or retry_attempt),
                 "retry_idempotency_key": _clean_text(retry_job.get("idempotency_key")),
+                **{key: retry_job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref") if key in retry_job},
             }
         )
     return {
