@@ -1,0 +1,114 @@
+name: PR462 task authority repair and red-green evidence
+on:
+  push:
+    branches: [feat/461-task-skill-dispatch]
+    paths: [.github/workflows/pr462-task-guard-repair.yml]
+permissions:
+  contents: write
+jobs:
+  repair:
+    if: github.repository == 'LukeJiaoR/GoodTeam' && github.ref == 'refs/heads/feat/461-task-skill-dispatch'
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 12
+    env:
+      GOODTEAM_DISABLE_TG_NETWORK: '1'
+      GOODTEAM_TG_BOT_TOKEN: ''
+      GOODTEAM_TG_CHAT_ID: ''
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply only exact reviewed source deltas
+        shell: bash
+        run: |
+          python3.12 - <<'PY'
+          import ast, hashlib, pathlib
+          changes = [
+            ('src/goodteam_os/workers.py', 'eb3a0098d44a31066e059c8ee0c04044592142de1f5115f88cbf11fbddccd248', '0b7a9ee12ce8a1be0469ff28f0bf8d6d42c34af1e7fd339d508039f26cf07acd', [
+              ('        job_id = f"job-{uuid4()}"\n', '        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade\n\n        reject_legacy_task_downgrade(self, {"run_id": run_id, "project_key": project_key, "execution_id": execution_id})\n        job_id = f"job-{uuid4()}"\n'),
+              ('        idempotency_key = str(job_spec.get("idempotency_key", "") or "").strip()\n', '        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade\n\n        reject_legacy_task_downgrade(self, job_spec)\n        idempotency_key = str(job_spec.get("idempotency_key", "") or "").strip()\n'),
+              ('        if sandbox_context is not None:\n', '        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade\n\n        reject_legacy_task_downgrade(self, job)\n        if sandbox_context is not None:\n')]),
+            ('tests/test_task_skill_entrypoints.py', '7fd1418448869f62e407788c322a6ea9dab9e6a9d2e7ef984181c22219191ccd', '9195c86978cec81d6c744c93b93ab56bf81458802f1e99c0d43bcabd77619642', [
+              ('from goodteam_os.projects import write_project_config\n', 'from goodteam_os.projects import write_project_config\nfrom goodteam_os.project_registry import ProjectRegistry\n'),
+              ('    ensure_team_state(workspace, "DEMO", config)\n', '    ProjectRegistry().register_project(config, root=repo, key="DEMO")\n    ensure_team_state(workspace, "DEMO", config)\n')])]
+          prepared = []
+          for filename, before_sha, after_sha, edits in changes:
+              path = pathlib.Path(filename)
+              before = path.read_bytes()
+              assert hashlib.sha256(before).hexdigest() == before_sha, filename
+              after = before.decode()
+              for old, new in edits:
+                  assert after.count(old) == 1, (filename, old)
+                  after = after.replace(old, new)
+              assert hashlib.sha256(after.encode()).hexdigest() == after_sha, filename
+              ast.parse(after)
+              prepared.append((path, after))
+          for path, after in prepared:
+              path.write_text(after)
+          PY
+          git diff --check
+      - name: Prepare isolated historical and corrected test inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/pr462-guard-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -m 700 -p "$EVIDENCE/old" "$EVIDENCE/reports"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          git archive a3a9c07ba0ccbcf8d18dfd9c56f0b0b8cb307c6a | tar -x -C "$EVIDENCE/old"
+          cp tests/test_worker_skill_task_guard.py "$EVIDENCE/old/tests/"
+          python3.12 -m venv "$EVIDENCE/venv"
+          "$EVIDENCE/venv/bin/python" -m pip install -e ".[dev]"
+      - name: Demonstrate old failures and corrected contract passes
+        shell: bash
+        run: |
+          python3.12 - <<'PY'
+          import json, os, pathlib, subprocess, time, xml.etree.ElementTree as ET
+          root = pathlib.Path(os.environ['EVIDENCE'])
+          python = str(root/'venv/bin/python')
+          repo = pathlib.Path.cwd()
+          cases = [('old-guard', root/'old', ['-m','pytest','tests/test_worker_skill_task_guard.py','-q','--junitxml='+str(root/'reports/old.xml')]), ('corrected-contracts', repo, ['-m','pytest','tests/test_worker_skill_requests.py','tests/test_task_skill_entrypoints.py','tests/test_project_task_skill_service.py','tests/test_task_skill_context_state.py','tests/test_task_skill_locks.py','tests/test_task_skill_registry_loss.py','tests/test_worker_skill_task_guard.py','-q','--junitxml='+str(root/'reports/corrected.xml')]), ('corrected-ruff',repo,['-m','ruff','check','src/goodteam_os/','tests/','scripts/ci/'])]
+          outcomes=[]
+          for name, cwd, args in cases:
+              start=time.monotonic()
+              with (root/'reports'/f'{name}.log').open('w') as log:
+                  try:
+                      completed=subprocess.run([python,*args],cwd=cwd,env=dict(os.environ,PYTHONPATH=str(cwd/'src')),stdout=log,stderr=subprocess.STDOUT,timeout=240,check=False)
+                      code=completed.returncode
+                  except subprocess.TimeoutExpired:
+                      code=124
+              outcomes.append({'case':name,'exit_code':code,'seconds':time.monotonic()-start})
+              (root/'reports/summary.json').write_text(json.dumps(outcomes,indent=2))
+              print(json.dumps(outcomes[-1]),flush=True)
+              print((root/'reports'/f'{name}.log').read_text()[-20000:],flush=True)
+          suites=list(ET.parse(root/'reports/old.xml').getroot().iter('testsuite'))
+          counts={field:sum(int(s.get(field,0)) for s in suites) for field in ['tests','failures','errors','skipped']}
+          assert counts=={'tests':7,'failures':6,'errors':0,'skipped':0}, counts
+          assert [o['exit_code'] for o in outcomes]==[1,0,0], outcomes
+          PY
+      - name: Publish verified bounded delta and remove temporary workflows
+        env:
+          GH_PUBLISH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth=$(printf 'x-access-token:%s' "$GH_PUBLISH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          test "$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/feat/461-task-skill-dispatch | cut -f1)" = "$GITHUB_SHA"
+          git rm .github/workflows/pr462-diagnose.yml .github/workflows/pr462-task-guard-repair.yml
+          git add src/goodteam_os/workers.py tests/test_task_skill_entrypoints.py
+          git diff --cached --check
+          git config user.name 'Luke_J'
+          git config user.email 'LukeJiaoR@users.noreply.github.com'
+          git commit -m 'fix(skills): prevent alternate-key task downgrades and register real entrypoint fixtures'
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/feat/461-task-skill-dispatch
+          git rev-parse HEAD HEAD^{tree} > "$EVIDENCE/reports/published-identity.txt"
+          git diff a3a9c07ba0ccbcf8d18dfd9c56f0b0b8cb307c6a HEAD -- src/goodteam_os/workers.py tests/test_task_skill_entrypoints.py src/goodteam_os/skills/legacy_task_guard.py tests/test_worker_skill_task_guard.py > "$EVIDENCE/reports/reviewed-delta.diff"
+      - name: Preserve red-green evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr462-task-guard-${{ github.run_id }}
+          path: ${{ env.EVIDENCE }}/reports/
+          retention-days: 14
+          if-no-files-found: warn
