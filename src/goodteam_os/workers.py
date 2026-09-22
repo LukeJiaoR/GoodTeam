@@ -908,6 +908,9 @@ class WorkerJobStore:
             from goodteam_os.skills.worker_requests import reject_legacy_key_collision
 
             reject_legacy_key_collision(self, idempotency_key)
+        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
+
+        reject_legacy_task_downgrade(self, {"run_id": run_id, "project_key": project_key, "execution_id": execution_id})
         job_id = f"job-{uuid4()}"
         job_root = self.root / job_id
         job_root.mkdir(parents=True, exist_ok=True)
@@ -1003,6 +1006,9 @@ class WorkerJobStore:
 
         if has_skill_fields(job_spec) or job_spec.get("required_skill_ids"):
             raise ValueError("Skill Worker input requires its explicit original task context.")
+        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
+
+        reject_legacy_task_downgrade(self, job_spec)
         idempotency_key = str(job_spec.get("idempotency_key", "") or "").strip()
         if idempotency_key:
             from goodteam_os.skills.worker_requests import reject_legacy_key_collision
@@ -1132,6 +1138,9 @@ class WorkerJobStore:
         job = self._read_json(job_root / "job.json")
         if has_skill_fields(job):
             raise ValueError("Unregistered Skill Worker input cannot enter the legacy Runtime path.")
+        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
+
+        reject_legacy_task_downgrade(self, job)
         if sandbox_context is not None:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
         memory_citations = self._memory_citations_from_pickup_packet(job_root)

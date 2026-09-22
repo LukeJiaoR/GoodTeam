@@ -8,6 +8,7 @@ import pytest
 from goodteam_os import manager_execution, service, web
 from goodteam_os.assistant_drafts import confirm_and_prepare
 from goodteam_os.projects import write_project_config
+from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.skills.models import SkillConflict, SkillError
 from goodteam_os.skills.task_locks import TaskSkillIdentity
 from goodteam_os.skills.task_service import ProjectTaskSkillService
@@ -26,6 +27,7 @@ def ctx(tmp_path):
     repo = root / "repo"
     repo.mkdir()
     config = write_project_config(workspace / "projects", "DEMO", "Demo", repo_path=str(repo), worker_mode="fake")
+    ProjectRegistry().register_project(config, root=repo, key="DEMO")
     ensure_team_state(workspace, "DEMO", config)
     composed = ProjectTaskSkillService(workspace, "DEMO", worker_roots=(repo,))
     return SimpleNamespace(root=root, workspace=workspace, repo=repo, config=config, service=composed,
