@@ -271,6 +271,11 @@ class SkillContextProvider:
             raise SkillError("content_budget_exceeded", "Complete input exceeds the current context budget.")
         if self._session(snapshot, record["context_id"], "input") != record["runtime_session"]:
             raise SkillConflict("runtime_identity_changed", "Context cannot be reused by another Runtime session.")
+        # Input capture or adapter authorization may yield while an operator
+        # revokes a package. Recheck before returning complete private content.
+        _operator, _packages, final_ref, _snapshot = self._validated()
+        if final_ref != record["snapshot_ref"]:
+            raise SkillError("snapshot_scope_mismatch", "Content authority changed before input return.")
         return record["input"]  # Freshly decoded value, never shared mutable state.
 
     def read_resource(self, ref, *, skill_id: str, relative: str, call_id: str) -> bytes:

@@ -405,8 +405,11 @@ def test_interrupted_context_publication_replays_without_partial_visible_input(c
 
     with monkeypatch.context() as patch:
         patch.setattr(module.os, "rename", interrupted)
-        with pytest.raises(OSError):
+        with pytest.raises(SkillError) as error:
             selected.prepare("a")
+        assert error.value.code == "filesystem_unavailable"
+        assert isinstance(error.value.__cause__, OSError)
+        assert "simulated interruption" in str(error.value.__cause__)
     directory = ctx.operator / "skills" / "content-contexts" / created["id"]
     assert not list(directory.glob("*.json"))
     ref = selected.prepare("a")
