@@ -222,6 +222,9 @@ def _create_track_job(
         fields = {"task_skill_context": method_context, "skill_subject": subject_for_role(str(track["role"])),
                   "skill_loader_version": WORKER_METADATA_LOADER, "project_key": project_key,
                   "idempotency_key": command_key}
+    from goodteam_os.skills.review_protocol import review_execution_fields
+
+    fields.update(review_execution_fields(store, method_context, role=str(track["role"])))
     job, _created = store.create_or_reuse_job(
         **fields,
         run_id=run_id,

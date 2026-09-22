@@ -2368,6 +2368,12 @@ class WorkerJobStore:
             )
 
     def _worker_prompt(self, job_root: Path, job: dict[str, Any], *, model: str | None = None) -> str:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        # S6 has a captured method-free base, not a complete S5 Skill prompt.
+        # Never append this legacy wrapper, Role/memory methods or templates to
+        # a protected Skill job while the verified Runtime adapter is absent.
+        reject_unverified_runtime_entry(job_root, job)
         configured_model = (model or str(job.get("model", ""))).strip()
         if not configured_model:
             adapter = str(job.get("adapter", ""))
