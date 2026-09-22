@@ -27,7 +27,8 @@ jobs:
           sha256sum "$RUNNER_TEMP/skill-review-source/tracked-source.tar" > "$RUNNER_TEMP/skill-review-source/sha256.txt"
           printf '%s\n' 'Source transport only; not product tests or Runtime acceptance. Provider calls: 0.' > "$RUNNER_TEMP/skill-review-source/purpose.txt"
       - name: Download public development wheels without executing package code
-        run: python3 -m pip download --only-binary=:all: --no-deps --dest "$RUNNER_TEMP/skill-review-source/wheels" pyTelegramBotAPI rank-bm25 ruff
+        run: |
+          python3 -m pip download --only-binary=:all: --no-deps --dest "$RUNNER_TEMP/skill-review-source/wheels" pyTelegramBotAPI rank-bm25 ruff
       - uses: actions/upload-artifact@v4
         with:
           name: skill-review-source-${{ github.run_id }}
