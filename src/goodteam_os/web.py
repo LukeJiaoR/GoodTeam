@@ -7676,7 +7676,9 @@ def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
     return _serialize_worker_job_items(WorkerJobStore(project_root).list_jobs())
 
 
-def _serialize_worker_job_items(worker_jobs: Sequence[Mapping[str, object]]) -> list[dict[str, str]]:
+def _serialize_worker_job_items(worker_jobs: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    from goodteam_os.skills.worker_requests import public_skill_job_fields
+
     items = []
     for job in worker_jobs:
         items.append(
@@ -7689,6 +7691,7 @@ def _serialize_worker_job_items(worker_jobs: Sequence[Mapping[str, object]]) -> 
                 "heartbeat_at": str(job.get("heartbeat_at", "")),
                 "pid": str(job.get("pid", "")),
                 "summary": str(job.get("summary", "")),
+                **public_skill_job_fields(job),
             }
         )
     return items

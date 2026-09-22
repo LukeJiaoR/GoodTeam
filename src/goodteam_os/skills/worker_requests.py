@@ -504,3 +504,45 @@ def reject_unverified_runtime_entry(job_root: Path, job: dict[str, Any]) -> None
     """S5 has not opened any Skill-backed lower-level Runtime entrypoint."""
     if is_skill_job_id(Path(job_root).name) or is_skill_job_id(job.get("id")) or has_skill_fields(job):
         raise SkillError("skill_runtime_not_connected", "Skill Runtime entry requires an independently verified loader; legacy bypass is forbidden.")
+
+
+def public_skill_job_fields(job) -> dict[str, Any]:
+    """Project method identity/evidence, never private request or package bodies.
+
+    This is a read-only display projection, not execution authorization. Missing
+    values remain missing instead of fabricating a successful preflight/load.
+    Legacy summary shapes remain unchanged.
+    """
+    if not is_skill_job_id(job.get("id")) and not has_skill_fields(job):
+        return {}
+    fields = ("run_id", "project_key", "skill_subject", "skill_loader_version",
+              "skill_preflight_status", "skill_preflight_attempt_id",
+              "skill_error_code", "skill_runtime_status")
+    result = {key: job[key] for key in fields if key in job and isinstance(job[key], str)}
+    context = job.get("task_skill_context")
+    if context is not None:
+        try:
+            result["task_skill_context"] = validate_task_skill_context(context)
+        except SkillError:
+            result["skill_error_code"] = "task_context_invalid"
+    ref = job.get("skill_execution_snapshot_ref")
+    if isinstance(ref, dict):
+        # Do not copy unexpected nested fields even from mutable job metadata.
+        result["skill_execution_snapshot_ref"] = {
+            key: ref[key] for key in ("schema_version", "resource_schema", "id", "digest")
+            if key in ref and isinstance(ref[key], str)
+        }
+        if isinstance(ref.get("scope"), dict):
+            result["skill_execution_snapshot_ref"]["scope"] = {
+                key: ref["scope"][key] for key in ("kind", "owner_id", "project_key")
+                if key in ref["scope"] and isinstance(ref["scope"][key], str)
+            }
+    evidence = job.get("invocation_evidence")
+    if isinstance(evidence, dict):
+        result["invocation_evidence"] = {
+            key: evidence[key] for key in ("kind", "adapter", "provider", "reason")
+            if key in evidence and isinstance(evidence[key], str)
+        }
+        if type(evidence.get("external_invocation")) is bool:
+            result["invocation_evidence"]["external_invocation"] = evidence["external_invocation"]
+    return result

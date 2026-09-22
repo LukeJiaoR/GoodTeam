@@ -469,3 +469,31 @@ def test_lost_project_registry_is_not_an_authorization_for_legacy_direct_executi
     with pytest.raises(SkillError, match="missing scope cannot become legacy"):
         registered_project_scope(ctx.repo)
     assert ctx.workers.list_jobs() == []
+
+
+def test_public_worker_summary_keeps_actual_task_binding_and_blocked_evidence(ctx, monkeypatch):
+    bind(ctx, method(ctx))
+    calls = forbid_runtime(monkeypatch)
+    result = web.start_workflow(workspace=ctx.workspace, project_key="DEMO", idea="Original task",
+                                model_config=Path("models.yaml"), model_profile="balanced",
+                                project_config=ctx.config, source_type="new_project", run_id="projection-run")
+    jobs = ctx.workers.list_jobs()
+    projected = web._serialize_worker_job_items(jobs)
+    assert projected and calls == []
+    for source, job in zip(jobs, projected, strict=True):
+        assert job["run_id"] == "projection-run"
+        assert job["project_key"] == "DEMO"
+        assert job["task_skill_context"] == result["task_skill_context"]
+        assert job["skill_execution_snapshot_ref"] == source["skill_execution_snapshot_ref"]
+        assert job["skill_runtime_status"] == "not_connected"
+        assert job["skill_error_code"] == source["skill_error_code"]
+        assert job["invocation_evidence"]["external_invocation"] is False
+        assert "command" not in job["invocation_evidence"]
+        assert "task_source" not in job and "research_report_source" not in job
+        assert "role_prompt" not in job and "task" not in job and "context" not in job
+        assert job["task_skill_context"] is not source["task_skill_context"]
+    altered = dict(jobs[0])
+    altered["private_input"] = "PRIVATE-BODY"
+    altered["skill_execution_snapshot_ref"] = {**altered["skill_execution_snapshot_ref"], "content": "PRIVATE-BODY"}
+    altered["invocation_evidence"] = {**altered["invocation_evidence"], "command": "PRIVATE-BODY"}
+    assert "PRIVATE-BODY" not in json.dumps(web._serialize_worker_job_items([altered]))
