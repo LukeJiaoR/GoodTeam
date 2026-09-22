@@ -1,4 +1,6 @@
 import { Bot } from 'lucide-react';
+import MarkdownView from '../../../components/ui/MarkdownView';
+import ProjectUnderstandingReply from './ProjectUnderstandingReply';
 import { reviewGateName, statusText, translated } from './presentationUtils';
 import { deliveryLabel } from './conversationFeedback';
 
@@ -26,6 +28,7 @@ const SYSTEM_TIMELINE_EVENTS = new Set([
 
 function timelineCopy(item, t) {
   if (item.actor === 'user' && item.event === 'mission_requested') return item.content;
+  if (item.content && ['intent_clarification_requested', 'project_question_answered'].includes(item.event)) return item.content;
   const details = item.details || {};
   return translated(
     t,
@@ -72,9 +75,11 @@ function TimelineItem({ item, language, t }) {
           {item.delivery_status ? <span role="status">{deliveryLabel(language, item.delivery_status)}</span> : null}
           {formatted ? <time dateTime={itemTimestamp}>{formatted}</time> : null}
         </div>
-        <p>{copy}</p>
+        {item.actor === 'user' ? <p>{copy}</p> : <MarkdownView content={copy} />}
         {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
-          <blockquote>{item.content}</blockquote>
+          item.event === 'project_understanding_ready'
+            ? <ProjectUnderstandingReply content={item.content} t={t} />
+            : <MarkdownView content={item.content} />
         ) : null}
       </div>
     </li>

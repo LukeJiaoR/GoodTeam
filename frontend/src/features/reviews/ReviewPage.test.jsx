@@ -75,26 +75,26 @@ function TranslationLayout() {
   return <Outlet context={{ language: 'en', t: (key, params) => translate('en', key, params) }} />;
 }
 
-function routerFor(path) {
+function routerFor(path, props = {}) {
   return createMemoryRouter([
     {
       element: <TranslationLayout />,
       children: [
-        { path: '/projects/:projectKey/review/:reviewId', element: <ReviewPage /> },
+        { path: '/projects/:projectKey/review/:reviewId', element: <ReviewPage {...props} /> },
         {
           path: '/projects/:projectKey/work/runs/:runId',
-          element: <div>Manager Intent Commit</div>,
+          element: props.embedded ? <ReviewPage {...props} /> : <div>Manager Intent Commit</div>,
         },
       ],
     },
   ], { initialEntries: [path] });
 }
 
-function renderReview(path = '/projects/DEMO/review/prd') {
+function renderReview(path = '/projects/DEMO/review/prd', props = {}) {
   mocks.getReviewState.mockResolvedValue(state);
   mocks.getOpenQuestions.mockResolvedValue({ questions: [] });
   mocks.refresh.mockResolvedValue(state);
-  const router = routerFor(path);
+  const router = routerFor(path, props);
   render(<RouterProvider router={router} />);
   return router;
 }
@@ -232,4 +232,36 @@ describe('ReviewPage workflow and navigation', () => {
     expect(screen.getByRole('textbox', { name: 'Should the CLI be the only surface?' })).toHaveValue('');
   });
 
+});
+
+
+test('embedded review refuses to substitute a different run or missing approval', async () => {
+  const view = renderReview('/projects/DEMO/work/runs/run-old', {
+    embedded: true, selectedReviewId: 'prd', expectedRunId: 'run-old', onClose: vi.fn(),
+  });
+  expect(await screen.findByRole('dialog', { name: 'Review', exact: true })).toBeVisible();
+  expect(await screen.findByText(t('work.panel.taskChanged'))).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Approve', exact: true })).not.toBeInTheDocument();
+  expect(view.state.location.pathname).toBe('/projects/DEMO/work/runs/run-old');
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+});
+
+test('embedded review protects edits on close without leaving the task', async () => {
+  const onClose = vi.fn();
+  const user = userEvent.setup();
+  const router = renderReview('/projects/DEMO/work/runs/run-1', {
+    embedded: true, selectedReviewId: 'prd', expectedRunId: 'run-1', onClose,
+  });
+  await user.click(await screen.findByRole('button', { name: 'Edit Source' }));
+  const editor = screen.getByRole('textbox', { name: t('review.artifact.content') });
+  await user.type(editor, ' Keep this edit.');
+  await user.click(screen.getByRole('button', { name: 'Back to task' }));
+  expect(await screen.findByRole('dialog', { name: t('review.dirty.title') })).toBeVisible();
+  expect(onClose).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Keep editing' }));
+  expect(editor).toHaveValue('# PRD\nInitial plan. Keep this edit.');
+  expect(router.state.location.pathname).toBe('/projects/DEMO/work/runs/run-1');
+  await user.click(screen.getByRole('button', { name: 'Back to task' }));
+  await user.click(screen.getByRole('button', { name: 'Discard and leave' }));
+  expect(onClose).toHaveBeenCalledOnce();
 });

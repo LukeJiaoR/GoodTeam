@@ -355,3 +355,14 @@ def test_manager_chat_turn_reuses_completed_job_for_message_retry(
 
     assert repeated == first
     assert run_calls == ["job-chat"]
+
+
+def test_project_question_is_a_valid_read_only_chat_intent():
+    from goodteam_os.manager_execution import _manager_chat_task, _parse_chat_turn
+
+    parsed = _parse_chat_turn('{"intent":"project_question","response":"This project uses Git."}')
+    assert parsed == {"intent": "project_question", "response": "This project uses Git."}
+    prompt = _manager_chat_task("他有git吗")
+    assert "git rev-parse --is-inside-work-tree" in prompt
+    assert "do not initialize, fetch, commit" in prompt
+    assert "current project" in prompt

@@ -2538,11 +2538,17 @@ def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
 
 def test_classify_worker_failure_maps_known_summary_patterns():
     codex_auth = _codex_summary(1, 'ERROR: unexpected status 401 Unauthorized: {"code":"INVALID_API_KEY"}')
+    codex_rate_limit = _codex_summary(
+        1,
+        "ERROR: exceeded retry limit, last status: 429 Too Many Requests, request id: request-123",
+    )
     codex_stream = _codex_summary(1, "stream disconnected before response.completed")
     claude_auth = _claude_summary(1, "Authentication failed")
     claude_rate = _claude_summary(1, "429 rate limit reached")
 
     assert classify_worker_failure(codex_auth, 1) == "auth"
+    assert codex_rate_limit == "Codex CLI exited with code 1: 429 Too Many Requests."
+    assert classify_worker_failure(codex_rate_limit, 1) == "rate_limit"
     assert classify_worker_failure(codex_stream, 1) == "stream_disconnect"
     assert classify_worker_failure(claude_auth, 1) == "auth"
     assert classify_worker_failure(claude_rate, 1) == "rate_limit"

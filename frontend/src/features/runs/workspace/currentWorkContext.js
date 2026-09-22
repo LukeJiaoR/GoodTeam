@@ -1,3 +1,4 @@
+import { blockerSummary } from './blockerPresentation';
 // Presentation only. Never interpret a message or manufacture an executable action.
 import { statusText, translated } from './presentationUtils';
 
@@ -18,8 +19,11 @@ export function currentWorkContext({ workspace, projectKey, title, freshness = '
   if (intent && ['stale', 'ambiguous', 'committing'].includes(intent.status)) {
     return result('needs_input', t(`work.current.intent.${intent.status}`), 'attention');
   }
+  if (attention?.kind === 'blocker' && (workspace.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working')) {
+    return result('working', t('work.blocker.workerActive'), 'execution');
+  }
   if (attention?.kind === 'blocker') {
-    return result('blocked', translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason || t('work.current.blocked')), 'attention');
+    return result('blocked', blockerSummary(attention, t), 'blocker');
   }
   if (['pending', 'stale', 'failed'].includes(workspace.pending_team_decision?.status)) {
     return result('needs_input', t(workspace.pending_team_decision.status === 'pending'
@@ -56,6 +60,8 @@ export function currentWorkContext({ workspace, projectKey, title, freshness = '
 
 // Find the existing surface; this deliberately does not invoke an API mutation.
 export const WORK_CONTEXT_TARGETS = {
+  approval: { tab: 'outcomes', selector: '.team-pane--outcomes .team-attention' },
+  blocker: { tab: 'execution', selector: '.task-blocker' },
   attention: { tab: 'manager', selector: '.team-attention, .assistant-project-mode, .team-task-proposal' },
   team: { tab: 'manager', selector: '.assistant-team-decision' },
   draft: { tab: 'manager', selector: '.team-task-proposal' },
@@ -66,7 +72,8 @@ export const WORK_CONTEXT_TARGETS = {
 };
 
 export function focusWorkContext(root, target, { reducedMotion = false } = {}) {
-  const destination = WORK_CONTEXT_TARGETS[target];
+  const destination = target === 'attention' && root?.querySelector('.team-pane--outcomes .team-attention')
+    ? WORK_CONTEXT_TARGETS.approval : WORK_CONTEXT_TARGETS[target];
   if (!root || !destination) return;
   const scope = root.dataset.contextScope;
   const tab = root.querySelector(`#team-tab-${destination.tab}`);

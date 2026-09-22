@@ -26,13 +26,13 @@ function QueuedTask({ task, busy, canSelect, onAction, t }) {
   </li>;
 }
 
-export default function TaskNavigation({ runs, selectedRunId, onSelect, assistant, busy, onAction, t }) {
+export default function TaskNavigation({ currentRunId, currentBlocked = false, runs, selectedRunId, onSelect, assistant, busy, onAction, t }) {
   const queued = assistant?.queued_tasks || [];
   return <nav className="project-task-navigation" aria-label={t('assistant.project.tasks')}>
     <button type="button" aria-current={!selectedRunId ? 'page' : undefined} onClick={() => onSelect('')}>{t('assistant.project.projectContext')}</button>
     {runs.length ? <ul>{runs.map((run) => <li key={run.run_id}>
       <button type="button" aria-current={selectedRunId === run.run_id ? 'page' : undefined} onClick={() => onSelect(run.run_id)}>
-        <span title={run.idea}>{String(run.title || run.idea || run.run_id).split('\n')[0].slice(0, 120)}</span><small>{run.status === 'archived' ? t('assistant.project.archived') : statusText(run.status, t)}</small>
+        <span title={run.idea}>{String(run.title || run.idea || run.run_id).split('\n')[0].slice(0, 120)}</span><small>{run.status === 'archived' ? t('assistant.project.archived') : currentBlocked && run.run_id === currentRunId ? t('work.blocker.title') : statusText(run.status, t)}</small>
       </button>
     </li>)}</ul> : null}
     {queued.length ? <section aria-label={t('assistant.project.queuedTasks')}>

@@ -63,7 +63,7 @@ function ArtifactReport({ artifact, summary, t }) {
         {!readable ? <span>{t('work.deliverySummary.unavailable')}</span> : null}
         {result || busy ? <button type="button" aria-label={t('work.plan.close')} onClick={close}><X size={15} aria-hidden="true" /></button> : null}
       </div>
-      {artifact.version ? <code className="delivery-version">{artifact.version}</code> : null}
+      {artifact.version ? <details className="delivery-evidence"><summary>{t('work.deliverySummary.version')}</summary><code className="delivery-version">{artifact.version}</code></details> : null}
       {busy ? <p role="status">{t('work.deliverySummary.loading')}</p> : null}
       {result?.error ? <ProductError error={result.error} t={t} /> : null}
       {result?.content ? <div className="delivery-report-content" tabIndex={0}><MarkdownView content={result.content} /></div> : null}
@@ -71,22 +71,26 @@ function ArtifactReport({ artifact, summary, t }) {
   );
 }
 
-export default function DeliverySummary({ summary, t }) {
+export default function DeliverySummary({ summary, historical = false, t }) {
   if (!summary) return null;
   const failed = summary.status === 'blocked';
   const artifacts = Array.isArray(summary.artifacts) ? summary.artifacts : [];
   const attempts = Array.isArray(summary.attempts) ? summary.attempts : [];
   return (
     <section className="delivery-summary" aria-label={t('work.deliverySummary.title')}>
+      <p className="delivery-scope">{t(historical ? 'work.deliverySummary.historical' : 'work.deliverySummary.current')}</p>
       <header><h3>{t('work.deliverySummary.title')}</h3><StatusBadge tone={failed ? 'danger' : 'neutral'}>{t(`work.deliverySummary.status.${summary.status}`)}</StatusBadge></header>
+      <h4>{t('work.deliverySummary.verification')}</h4>
       <p>{t('work.deliverySummary.unverified')}</p>
       {summary.simulated ? <p role="status">{t('work.deliverySummary.simulated')}</p> : null}
+      <h4>{t('work.deliverySummary.nextStep')}</h4>
       <p>{t(`work.deliverySummary.next.${summary.status}`)}</p>
+      <h4>{t('work.deliverySummary.reports')}</h4>
       {artifacts.length ? <ul className="delivery-report-list">{artifacts.map((artifact) => (
         <ArtifactReport key={JSON.stringify([summary.project_key, summary.run_id, artifact.key, artifact.version, artifact.href])}
           artifact={artifact} summary={summary} t={t} />
       ))}</ul> : <p>{t('work.deliverySummary.noArtifacts')}</p>}
-      <details><summary>{t('work.deliverySummary.attempts')}</summary><ul>{attempts.map((attempt) => <li key={attempt.id}><span>{t(`work.plan.role.${attempt.role}`)} · {attempt.adapter} · {attempt.status}</span><code className="delivery-version">{attempt.id}</code></li>)}</ul></details>
+      <details className="delivery-evidence"><summary>{t('work.deliverySummary.attempts')}</summary><code className="delivery-version">{summary.run_id}</code><ul>{attempts.map((attempt) => <li key={attempt.id}><span>{t(`work.plan.role.${attempt.role}`)} · {attempt.adapter} · {attempt.status}</span><code className="delivery-version">{attempt.id}</code></li>)}</ul></details>
     </section>
   );
 }

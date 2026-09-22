@@ -6,26 +6,30 @@ import { routes } from '../../../lib/routing/routes';
 import TeamDecisionPreview from './TeamDecisionPreview';
 import './assistantControls.css';
 
-function RuntimeControls({ runtime, busy, onAction, projectKey, t }) {
+function RuntimeControls({ onConfigureRuntime, runtime, busy, onAction, projectKey, t }) {
   const [consent, setConsent] = useState(false);
   if (!runtime) return null;
   return (
     <section className="assistant-runtime" aria-label={t('assistant.runtime')}>
-      <strong>{t('assistant.runtime')}: {runtime.provider} / {runtime.model || 'builtin'} / {runtime.reasoning_depth}</strong>
-      <span role="status">{t(`assistant.status.${runtime.status}`)}</span>
-      {runtime.error ? <p>{t(`assistant.error.${runtime.error.code}`)}</p> : null}
-      <Link to={routes.projectTeam(projectKey)}><Settings size={14} aria-hidden="true" />{t('assistant.configure')}</Link>
-      <label><input type="checkbox" checked={consent} disabled={Boolean(busy)} onChange={(event) => setConsent(event.target.checked)} />{t('assistant.costConsent')}</label>
-      <Button disabled={!consent || Boolean(busy)} onClick={() => {
-        setConsent(false);
-        onAction?.({ action: 'check_runtime', confirmed: true, message_id: globalThis.crypto?.randomUUID?.() || `check-${Date.now()}` });
-      }}><Plug size={14} aria-hidden="true" />{t('assistant.check')}</Button>
+      <details className="assistant-runtime-details" open={!['verified', 'simulated'].includes(runtime.status)}>
+        <summary>{t('assistant.runtime')} · {t(`assistant.status.${runtime.status}`)}</summary>
+        <div className="assistant-runtime-details__body">
+          <strong>{runtime.provider} / {runtime.model || 'builtin'} / {runtime.reasoning_depth}</strong>
+          {runtime.error ? <p>{t(`assistant.error.${runtime.error.code}`)}</p> : null}
+          <label><input type="checkbox" checked={consent} disabled={Boolean(busy)} onChange={(event) => setConsent(event.target.checked)} />{t('assistant.costConsent')}</label>
+          <Button disabled={!consent || Boolean(busy)} onClick={() => {
+            setConsent(false);
+            onAction?.({ action: 'check_runtime', confirmed: true, message_id: globalThis.crypto?.randomUUID?.() || `check-${Date.now()}` });
+          }}><Plug size={14} aria-hidden="true" />{t('assistant.check')}</Button>
+        </div>
+      </details>
+      {onConfigureRuntime ? <Button variant="secondary" disabled={Boolean(busy)} onClick={onConfigureRuntime}><Settings size={14} aria-hidden="true" />{t('assistant.configure')}</Button> : <Link to={routes.projectTeam(projectKey)}><Settings size={14} aria-hidden="true" />{t('assistant.configure')}</Link>}
     </section>
   );
 }
 
 function RequestRecovery({ requests = {}, busy, onAction, t }) {
-  return Object.entries(requests).filter(([, request]) => request.status !== 'succeeded').map(([id, request]) => (
+  return Object.entries(requests).filter(([, request]) => !['succeeded', 'running'].includes(request.status)).map(([id, request]) => (
     <section className="assistant-request" key={id} aria-label={t('assistant.request')}>
       <strong role="status">{t(`assistant.status.${request.status}`)}</strong>
       <p>{request.text}</p>
@@ -59,12 +63,12 @@ function TeamDecision({ pending, busy, onAction, t }) {
   );
 }
 
-export default function AssistantControls({ runtime, requests, pending, busy, readOnly, onAction, projectKey, t }) {
+export default function AssistantControls({ showRuntime = true, onConfigureRuntime, runtime, requests, pending, busy, readOnly, onAction, projectKey, t }) {
   if (readOnly) return null;
   const locked = busy || Object.values(requests || {}).some((request) => request.status === 'running') || runtime?.status === 'checking';
   return <div className="assistant-controls">
     <RequestRecovery requests={requests} busy={locked} onAction={onAction} t={t} />
     <TeamDecision pending={pending} busy={locked} onAction={onAction} t={t} />
-    <RuntimeControls runtime={runtime} busy={locked} onAction={onAction} projectKey={projectKey} t={t} />
+    {showRuntime ? <RuntimeControls onConfigureRuntime={onConfigureRuntime} runtime={runtime} busy={locked} onAction={onAction} projectKey={projectKey} t={t} /> : null}
   </div>;
 }

@@ -44,6 +44,12 @@ test('project Manager keeps chatting across tasks and saves future work without 
   await expect(page).toHaveURL(new RegExp(`/runs/${firstRun}$`));
   await expect(composer).toHaveAttribute('data-continuity', 'same-project-composer');
   await expect(composer).toHaveValue('Explain the earlier task.');
+  await manager.getByRole('button', { name: 'Configure runtime', exact: true }).click();
+  const runtime = page.getByRole('dialog', { name: 'Task Assistant settings' });
+  await expect(runtime).toBeVisible();
+  await runtime.getByRole('button', { name: 'Close dialog', exact: true }).first().click();
+  await expect(composer).toHaveAttribute('data-continuity', 'same-project-composer');
+  await expect(composer).toHaveValue('Explain the earlier task.');
   await expect(manager.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
   const current = await snapshot(page, fixture, evidence);
   const reply = await clickMutation(page, manager.getByRole('button', { name: 'Send', exact: true }),

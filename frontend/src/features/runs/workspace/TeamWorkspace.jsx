@@ -1,6 +1,6 @@
 import ProjectConversation from './ProjectConversation';
 import { TeamAvatar } from './ConversationTimeline';
-import { TaskRunControls } from './TaskAttention';
+import { TaskAttention, TaskRunControls } from './TaskAttention';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   ChevronRight,
@@ -93,7 +93,7 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 }
 
 
-function ExecutionPane({ actors, navigation, controls, task, projectScoped, reducedMotion, sectionProps, t }) {
+function ExecutionPane({ actors, navigation, blocker, controls, task, projectScoped, reducedMotion, sectionProps, t }) {
   return (
     <section className="team-pane team-pane--execution" aria-label={t(projectScoped ? 'assistant.project.tasks' : 'work.team.execution')} {...sectionProps}>
       <header className="team-pane__header">
@@ -101,10 +101,11 @@ function ExecutionPane({ actors, navigation, controls, task, projectScoped, redu
           <h2 id="team-execution-title">{t(projectScoped ? 'assistant.project.tasks' : 'work.team.execution')}</h2>
           <span className="team-pane__eyebrow">{t(projectScoped ? 'assistant.project.taskHelp' : 'work.team.liveExecution')}</span>
         </div>
-        <span className="team-pane__count">{actors.length}</span>
+        <span className="team-pane__count">{t('work.team.workerCount', { count: actors.length })}</span>
       </header>
       {navigation}
-      {task ? <div className="project-task-identity"><small>{t('work.team.execution')}</small><strong>{task.objective || task.title}</strong></div> : null}
+      {task && !projectScoped ? <div className="project-task-identity"><small>{t('work.team.execution')}</small><strong>{task.objective || task.title}</strong></div> : null}
+      {blocker}
       {actors.length ? (
         <ol className="team-actor-list">
           {actors.map((actor) => {
@@ -137,6 +138,8 @@ function ExecutionPane({ actors, navigation, controls, task, projectScoped, redu
 }
 
 function OutcomesPane({
+  approval,
+  historical,
   deliverySummary,
   activeReviewTaskId,
   attentionTaskId,
@@ -153,11 +156,13 @@ function OutcomesPane({
       <header className="team-pane__header">
         <div>
           <h2 id="team-outcomes-title">{t('work.team.deliveryBoard')}</h2>
-          <span className="team-pane__eyebrow">{t('work.team.convergence')}</span>
+          <span className="team-pane__eyebrow">{t('work.team.resultsHelp')}</span>
         </div>
-        <span className="team-pane__count">{outcomes.length}</span>
+        {outcomes.length ? <span className="team-pane__count">{t('work.team.outcomeCount', { count: outcomes.length })}</span> : null}
       </header>
-      <DeliverySummary summary={deliverySummary} t={t} />
+      <div className="team-outcomes-scroll">
+      {approval}
+      <DeliverySummary summary={deliverySummary} historical={historical} t={t} />
       {outcomes.length ? (
         <ol className="team-outcome-list">
           {outcomes.map((task, index) => {
@@ -243,7 +248,8 @@ function OutcomesPane({
             );
           })}
         </ol>
-      ) : <p className="team-pane__empty">{t('work.team.outcomesEmpty')}</p>}
+      ) : !deliverySummary ? <p className="team-pane__empty">{t('work.team.noResults')}</p> : null}
+      </div>
     </section>
   );
 }
@@ -299,6 +305,8 @@ function AdvancedInspector({
 }
 
 function TeamWorkspace({
+  onConfigureRuntime,
+  onOpenReview,
   conversationDelivery = null,
   projectAssistant,
   assistantBusy,
@@ -331,6 +339,10 @@ function TeamWorkspace({
   view,
 }) {
   const mobileWorkspace = useMobileTeamWorkspace();
+  const composing = !projectAssistant && !data.active_run && !(data.team_workspace?.execution_actors || []).length
+    && !(data.team_workspace?.outcome_tasks || []).length && !data.delivery_summary
+    && !['blocker', 'approval'].includes(data.team_workspace?.attention_request?.kind)
+    && data.team_workspace?.mission?.source !== 'workflow';
   const [mobileTab, setMobileTab] = useState('manager');
   const [expandedTaskId, setExpandedTaskId] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState('');
@@ -346,6 +358,8 @@ function TeamWorkspace({
   const outcomes = workspace.outcome_tasks || [];
   const selectedTask = outcomes.find((task) => task.id === selectedTaskId) || null;
   const attention = workspace.attention_request;
+  const activeAttemptIds = new Set((workspace.execution_actors || []).filter(actor => actor.role !== 'orchestrator').map(actor => actor.current_attempt_id));
+  const activeJobs = (data.worker_jobs || []).filter(job => activeAttemptIds.has(job.id) && job.status === 'running');
   const attentionReviewTask = attention?.target_type === 'review' && attention?.target_id
     ? outcomes.find((task) => (
       task.id === attention.task_id
@@ -439,7 +453,7 @@ function TeamWorkspace({
   ];
   return (
     <>
-      <div
+      {!composing ? <div
         aria-label={t('work.team.navigation')}
         aria-orientation="horizontal"
         className="team-mobile-nav"
@@ -447,7 +461,7 @@ function TeamWorkspace({
       >
         {mobileTabs.map((tab) => {
           const selected = mobileTab === tab.id;
-          const hasAttention = tab.id === 'manager' && Boolean(attention);
+          const hasAttention = tab.id === (attention?.kind === 'blocker' ? 'execution' : attention?.kind === 'approval' ? 'outcomes' : 'manager') && Boolean(attention);
           return (
             <button
               aria-controls={`team-panel-${tab.id}`}
@@ -475,13 +489,20 @@ function TeamWorkspace({
             </button>
           );
         })}
-      </div>
+      </div> : null}
       <div
-        className="team-workspace"
+        className={`team-workspace${composing ? ' team-workspace--composing' : ''}`}
         aria-label={t('work.team.workspace')}
         data-read-only={readOnly ? 'true' : undefined}
       >
         <ProjectConversation
+          executionRunning={activeJobs.length > 0}
+          canManageTasks={!composing}
+          onConfigureRuntime={onConfigureRuntime}
+          acceptedMessage={conversationDelivery && conversationDelivery.projectKey === projectKey && !conversationDelivery.intentId
+            && (conversationDelivery.contextKey || '').startsWith('message:')
+            && (assistant.timeline || workspace.manager_timeline || []).some(item => item.actor === 'user' && (item.id === conversationDelivery.id || item.message_id === conversationDelivery.id))
+            ? conversationDelivery : null}
           assistantState={assistant}
           onAssistantAction={onAssistantAction}
           attention={workspace.attention_request}
@@ -494,14 +515,14 @@ function TeamWorkspace({
           onDecide={onDecide}
           onDiscussChangeIntent={onDiscussChangeIntent}
           onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
-          onReview={attentionReviewTask ? reviewAttentionOutcome : undefined}
+          onReview={attentionReviewTask ? reviewAttentionOutcome : onOpenReview && attention?.target_id ? () => onOpenReview(attention.target_id) : undefined}
           onRetry={onRetry}
           onConfirmTask={onConfirmTask}
           onContinuePreparation={onContinuePreparation}
           onStart={onStart}
           onStartChangeIntent={onStartChangeIntent}
           projectKey={projectKey}
-          sectionProps={sectionProps('manager')}
+          sectionProps={composing ? {} : sectionProps('manager')}
           timeline={conversationTimeline(assistant.timeline || workspace.manager_timeline || [], conversationDelivery, {
             projectKey, runId: projectAssistant ? '' : data.state?.run_id || '', readOnly: readOnly && !onStart,
           })}
@@ -512,7 +533,8 @@ function TeamWorkspace({
           contextTitle={contextTitle}
           onClearContext={onClearContext}
         />
-        <ExecutionPane
+        {!composing ? <ExecutionPane
+          blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} t={t} /> : null}
           task={mission}
           projectScoped={projectAssistant?.schema_version === 'project_assistant.v1'}
           navigation={taskNavigation}
@@ -522,8 +544,15 @@ function TeamWorkspace({
           reducedMotion={reducedMotion}
           sectionProps={sectionProps('execution')}
           t={t}
-        />
-        <OutcomesPane
+        /> : null}
+        {!composing ? <OutcomesPane
+          approval={attention?.kind === 'approval' ? <TaskAttention
+            attention={attention} busy={busy} onConfirmChangeIntent={onConfirmChangeIntent}
+            onDecide={readOnly ? undefined : onDecide} onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
+            onReview={attentionReviewTask ? reviewAttentionOutcome : onOpenReview && attention?.target_id ? () => onOpenReview(attention.target_id) : undefined}
+            onStartChangeIntent={onStartChangeIntent} projectKey={projectKey} t={t}
+          /> : null}
+          historical={readOnly}
           deliverySummary={data.delivery_summary}
           activeReviewTaskId={activeReviewTargetId}
           attentionTaskId={attentionReviewTask?.id || ''}
@@ -534,11 +563,12 @@ function TeamWorkspace({
           outcomes={outcomes}
           sectionProps={sectionProps('outcomes')}
           t={t}
-        />
+        /> : null}
       </div>
       {taskForModal ? (
         <WorkTaskDetailDialog
           language={language}
+          onOpenReview={onOpenReview ? (approval) => { closeTaskModal(); onOpenReview(approval); } : undefined}
           task={taskForModal}
           tasks={outcomes}
           reviews={readOnly ? (data.approval_reviews || []).map((review) => ({ ...review, is_actionable: false })) : data.approval_reviews || []}

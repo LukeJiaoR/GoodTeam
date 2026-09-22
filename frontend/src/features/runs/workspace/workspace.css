@@ -620,33 +620,38 @@
   border-bottom: 1px solid var(--work-border);
 }
 
-.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer {
-  position: absolute;
-  z-index: 12;
-  top: 0.5rem;
-  inset-inline: 0;
-  max-height: min(24rem, calc(100dvh - 8rem));
-  margin: 0;
-  padding: 1.2rem;
-  overflow: auto;
-  background: var(--work-material);
+.work-workspace-shell .work-context-disclosure {
+  margin-bottom: 0.75rem;
   border: 1px solid var(--work-border);
-  border-radius: 20px;
-  box-shadow: var(--work-shadow-raised);
-  transform-origin: top;
-  transition:
-    opacity 160ms ease-out,
-    transform var(--work-motion-reveal) var(--work-ease),
-    visibility 0s linear 0s;
+  border-radius: 14px;
+  background: var(--work-material);
 }
 
-.work-workspace-shell .product-work-page > .product-page-header.work-context-drawer[data-open="false"] {
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-0.35rem) scale(0.99);
-  transition-duration: 140ms, 140ms, 0s;
-  transition-delay: 0s, 0s, 140ms;
+.work-workspace-shell .work-context-disclosure > summary {
+  padding: 0.65rem 1rem;
+  color: var(--work-text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.work-workspace-shell .work-context-disclosure > summary:hover {
+  color: var(--work-text);
+}
+
+.work-workspace-shell .work-context-disclosure > summary:focus-visible {
+  outline: 2px solid var(--work-accent);
+  outline-offset: 3px;
+  border-radius: 14px;
+}
+
+.work-workspace-shell .work-context-disclosure .work-context-drawer {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 1rem;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--work-border);
 }
 
 .work-workspace-shell .product-page-header__meta {
@@ -1509,9 +1514,9 @@
 }
 
 .work-workspace-shell .team-workspace {
-  grid-template-columns: minmax(15rem, 0.78fr) minmax(28rem, 1.3fr) minmax(19rem, 1fr);
-  height: max(40rem, calc(100dvh - 10rem));
-  min-height: 40rem;
+  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.3fr) minmax(0, 1fr);
+  height: max(26rem, calc(100dvh - 15rem));
+  min-height: 26rem;
   gap: 1rem;
   padding: 1rem;
   overflow: visible;
@@ -2445,3 +2450,45 @@
   scrollbar-color: var(--work-border-strong) transparent;
   scrollbar-gutter: stable;
 }
+
+.work-workspace-shell .conversation-keyboard-hint {
+  color: var(--work-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+/* Until there is work or evidence, give the conversation the available space. */
+.work-workspace-shell .team-workspace.team-workspace--composing {
+  grid-template-areas: "manager";
+  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 54rem);
+  margin-inline: auto;
+  height: auto;
+  min-height: 0;
+  padding-bottom: 0;
+}
+.work-workspace-shell .team-workspace--composing .team-pane--manager {
+  height: auto;
+  min-height: 0;
+}
+.work-workspace-shell .team-workspace--composing .team-manager-conversation {
+  max-height: 40dvh;
+  min-height: 8rem;
+  overflow-y: auto;
+}
+.work-workspace-shell .team-workspace--composing .team-manager-dock { flex-shrink: 0; }
+
+/* Keep the composer outside the conversation scroll, and results in one scroll. */
+.work-workspace-shell .team-manager-dock,
+.work-workspace-shell .team-pane__header { flex-shrink: 0; }
+.work-workspace-shell .team-outcomes-scroll { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+.work-workspace-shell .team-outcomes-scroll .team-outcome-list { overflow: visible; }
+
+.work-workspace-shell .team-manager-dock { padding: .75rem 1rem; max-height: 65%; overflow-y: auto; }
+.work-workspace-shell .team-manager-entry { gap: .5rem; }
+.work-workspace-shell .team-manager-entry textarea { height: 4rem; min-height: 4rem; max-height: 10rem; padding: .6rem .8rem; }
+.work-workspace-shell .conversation-submit-row { display: flex; gap: .75rem; align-items: center; justify-content: space-between; }
+.work-workspace-shell .team-manager-entry .conversation-submit-row .product-button { flex-shrink: 0; width: auto; }
+.work-workspace-shell .team-change-context-help summary { font-weight: 650; cursor: pointer; }
+.work-workspace-shell .team-change-context-help summary:focus-visible { outline: 2px solid var(--work-accent); outline-offset: 2px; }
+.work-workspace-shell .team-workspace--composing .team-manager-dock { max-height: none; }
