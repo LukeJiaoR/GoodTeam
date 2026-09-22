@@ -150,4 +150,3 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
     </div>
   );
 }
-

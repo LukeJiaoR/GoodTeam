@@ -159,3 +159,24 @@ test('running execution replaces the stale blocker and prevents retry after relo
   await expect(page.locator('.conversation-blocker-notice')).toContainText('A Worker has started');
   await expect(task.getByText('old failure', { exact: true })).not.toBeVisible();
 });
+
+test('new-project discovery remains a conversation instead of a proposed task', async ({ page, fixture }) => {
+  await importProject(page, fixture);
+  const manager = page.getByRole('region', { name: 'Task Assistant', exact: true });
+  for (const text of [
+    'This is a new project. Help me shape and start it.',
+    'This is a new project. Help me clarify the product idea first.',
+  ]) {
+    await page.getByRole('textbox', { name: 'Message', exact: true }).fill(text);
+    const response = page.waitForResponse((item) => item.request().method() === 'POST'
+      && item.url().endsWith(`/api/projects/${fixture.key}/task-assistant/messages`));
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const result = await response;
+    expect(result.ok(), await result.text()).toBe(true);
+    const data = await result.json();
+    expect(data.workflow_started).toBe(false);
+    expect(data.session.proposed_task).toBeNull();
+    await expect(page.getByRole('region', { name: 'Proposed task', exact: true })).toHaveCount(0);
+    await expect(manager).toContainText('what product do you want to make, and who is it for?');
+  }
+});
