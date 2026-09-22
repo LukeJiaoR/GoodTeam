@@ -1,18 +1,39 @@
 import json
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 
 
 ModelProfile = dict[str, dict[str, str]]
 
+# Only pure model-profile parsing is reused. Always read the current file first;
+# filesystem metadata, project Team state, Skill locks and authorization are not
+# cache keys or cached results. Keep retained source versions and size bounded.
+_MODEL_CONFIG_CACHE_SIZE = 8
+_MAX_CACHED_MODEL_CONFIG_CHARS = 131_072
+
+
+def _read_model_config(path: Path) -> dict[str, object]:
+    source = path.read_text(encoding="utf-8")
+    if len(source) > _MAX_CACHED_MODEL_CONFIG_CHARS:
+        return _parse_yaml_source(source)
+    return _cached_model_config(source)
+
+
+@lru_cache(maxsize=_MODEL_CONFIG_CACHE_SIZE)
+def _cached_model_config(source: str) -> dict[str, object]:
+    # Private read-only parse tree; public model accessors return selected copies
+    # or new key lists so caller overrides cannot mutate another task's models.
+    return _parse_yaml_source(source)
+
 
 def list_model_profiles(config_path: Path) -> list[str]:
-    config = _parse_simple_yaml(config_path)
+    config = _read_model_config(config_path)
     return sorted(dict(config.get("profiles", {})).keys())
 
 
 def load_model_profile(config_path: Path, profile_name: str) -> ModelProfile:
-    config = _parse_simple_yaml(config_path)
+    config = _read_model_config(config_path)
     profiles = config.get("profiles", {})
     if profile_name not in profiles:
         available = ", ".join(sorted(profiles))
@@ -65,7 +86,11 @@ YamlLine = tuple[int, str, str]
 
 
 def _parse_simple_yaml(path: Path) -> dict[str, object]:
-    lines = _read_yaml_lines(path)
+    return _parse_yaml_source(path.read_text(encoding="utf-8"))
+
+
+def _parse_yaml_source(source: str) -> dict[str, object]:
+    lines = _yaml_source_lines(source)
     if not lines:
         return {}
     parsed, index = _parse_yaml_block(lines, 0)
@@ -77,8 +102,12 @@ def _parse_simple_yaml(path: Path) -> dict[str, object]:
 
 
 def _read_yaml_lines(path: Path) -> list[YamlLine]:
+    return _yaml_source_lines(path.read_text(encoding="utf-8"))
+
+
+def _yaml_source_lines(source: str) -> list[YamlLine]:
     lines: list[YamlLine] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in source.splitlines():
         if not raw_line.strip() or raw_line.lstrip().startswith("#"):
             continue
         indent = len(raw_line) - len(raw_line.lstrip(" "))
