@@ -1,5 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { focusWorkContext } from './workspace/currentWorkContext';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
 import Button from '../../components/ui/Button';
@@ -727,6 +729,7 @@ export default function WorkPage() {
   const { data, error, refresh, status } = useProjectState(projectKey);
   const [mutationError, setMutationError] = useState(null);
   const [panel, setPanel] = useState(null);
+  const workspaceRef = useRef(null);
   const [busy, setBusy] = useState('');
   const [runHistory, setRunHistory] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('loading');
@@ -1037,7 +1040,7 @@ export default function WorkPage() {
   };
 
   return (
-    <main id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
+    <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
       <CurrentWorkContext
         projectKey={projectKey}
         projectName={projectName}
@@ -1197,9 +1200,14 @@ export default function WorkPage() {
         selectedReviewId={panel.approval} expectedRunId={panel.runId}
         onClose={() => setPanel(null)} onUpdated={refresh}
         onChangeDiscussion={async () => {
+          const workspace = workspaceRef.current;
           await refresh();
-          setPanel(null);
-          requestAnimationFrame(() => document.querySelector('.team-manager-dock textarea')?.focus());
+          if (!workspace?.isConnected || workspace !== workspaceRef.current
+              || workspace.dataset.contextScope !== `${projectKey}:${runId}`) return;
+          // Finish native dialog teardown and its focus restoration before
+          // handing focus to the composer. A frame alone can precede cleanup.
+          flushSync(() => setPanel(null));
+          focusWorkContext(workspace, 'composer', { reducedMotion });
         }} /> : null}
       </Suspense>
     </main>

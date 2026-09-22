@@ -126,6 +126,7 @@ function Composer({
 
   return (
     <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
+      <div className="conversation-entry-context">
       {onQueueTask ? <div className="project-composer-modes" aria-label={t('assistant.project.inputMode')}>
         <button type="button" aria-pressed={!queuing} onClick={() => { setEntryMode('message'); if (changeIntent?.id) setModes((current) => ({ ...current, [changeIntent.id]: 'message' })); }}>{t('work.taskAssistant.message')}</button>
         <button type="button" aria-pressed={queuing} onClick={() => setEntryMode('new_task')}>{t('assistant.project.newTask')}</button>
@@ -157,6 +158,7 @@ function Composer({
           ))}
         </div>
       ) : null}
+      </div>
       <label>
         <span className="sr-only">{t(queuing ? 'assistant.project.newTask' : changing ? 'work.manager.changeReason' : 'work.taskAssistant.message')}</span>
         <textarea
