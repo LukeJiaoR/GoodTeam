@@ -406,6 +406,21 @@ class TaskSkillLockStore:
             self._write_registry(fd, registry)
             return result
 
+    def find_snapshot(self, *, command_key: str) -> dict[str, Any] | None:
+        """Read a registered job by its stable key, not Worker-supplied refs.
+
+        This is trusted metadata lookup only, never Runtime permission. Callers
+        must still compare inputs and run current preflight before invocation.
+        Reads cannot repair a lost registry or acquire replacement pins.
+        """
+        bounded_text(command_key, maximum=256)
+        with self._locked() as fd:
+            entry = self._registry(fd)["jobs"].get(_digest(command_key)[7:])
+            if entry is None:
+                return None
+            snapshot = self._resource(fd, entry["ref"], SNAPSHOT_SCHEMA)
+            return {"ref": deepcopy(entry["ref"]), "snapshot": snapshot}
+
     def preflight(self, ref: dict[str, Any], *, task: TaskSkillIdentity, command_key: str,
                   job_input: dict[str, Any], supported_loaders: tuple[str, ...],
                   current_availability: Callable[[SkillScope, str, str], dict[str, Any]]) -> dict[str, Any]:
