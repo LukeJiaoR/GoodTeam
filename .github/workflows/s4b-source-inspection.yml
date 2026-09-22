@@ -1,0 +1,32 @@
+name: S4b source inspection
+
+on:
+  push:
+    branches: [feat/461-task-skill-dispatch]
+    paths: [.github/workflows/s4b-source-inspection.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.repository == 'LukeJiaoR/GoodTeam'
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: c2a2b435338a9221a358fa02a817ff1a09aa3183
+          persist-credentials: false
+      - name: Archive the exact reviewed baseline without executing repository code
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = c2a2b435338a9221a358fa02a817ff1a09aa3183
+          git archive --format=tar HEAD > "$RUNNER_TEMP/goodteam-s4b-source.tar"
+          sha256sum "$RUNNER_TEMP/goodteam-s4b-source.tar"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s4b-source-c2a2b435
+          path: ${{ runner.temp }}/goodteam-s4b-source.tar
+          retention-days: 1
+          if-no-files-found: error
