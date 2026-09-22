@@ -46,7 +46,7 @@ def _terminal_run_status(state_store, project_key, run_id):
     return ""
 
 
-def stage_draft(store, *, text, message_id):
+def stage_draft(store, *, text, message_id, source_messages=None):
     proposal = dict(store.read().get("proposed_task") or {})
     if proposal.get("confirmed") or proposal.get("run_id"):
         return "task_draft_locked"
@@ -57,25 +57,29 @@ def stage_draft(store, *, text, message_id):
         return "intent_clarification_requested"
     if _DISCUSSION.search(text):
         return "intent_clarification_requested"
+    sources = source_messages or [{"message_id": message_id, "content": text}]
+    source_ids = [item["message_id"] for item in sources]
+    exact_text = "\n\n".join(item["content"] for item in sources)
     if not proposal or proposal.get("status") == "cancelled":
-        store.propose_task([message_id], text)
+        store.propose_task(source_ids, exact_text)
         return "task_proposed"
     if message_id in proposal.get("source_message_ids", []):
         return "task_proposed"
     if _APPEND.search(text.strip()) and not proposal.get("pending_change"):
-        store.revise_task(proposal["id"], proposal["exact_request"] + "\n\n" + text,
-                          expected_revision=proposal["revision"], source_message_ids=[*proposal["source_message_ids"], message_id])
+        store.revise_task(proposal["id"], proposal["exact_request"] + "\n\n" + exact_text,
+                          expected_revision=proposal["revision"], source_message_ids=[*proposal["source_message_ids"], *source_ids])
         return "task_revised"
-    _stage_change(store, proposal, text=text, message_id=message_id, kind="resolve")
+    _stage_change(store, proposal, text=exact_text, message_id=message_id, kind="resolve", source_message_ids=source_ids)
     return "task_change_requested"
 
 
-def _stage_change(store, proposal, *, text, message_id, kind):
+def _stage_change(store, proposal, *, text, message_id, kind, source_message_ids=None):
     def mutate(session):
         current = _editable(session, proposal["id"], proposal["revision"])
         if current.get("pending_change"):
             raise ValueError("Resolve the pending draft change before sending another task request.")
-        current["pending_change"] = {"text": text, "message_id": message_id, "kind": kind}
+        current["pending_change"] = {"text": text, "message_id": message_id, "kind": kind,
+                                     "source_message_ids": source_message_ids or [message_id]}
         current["revision"] += 1
         session["proposed_task"] = current
         return session
@@ -108,6 +112,7 @@ def edit_draft(store, request):
                                     "event": "task_draft_edited", "details": {"proposal_id": proposal["id"]}})
         proposal.update(exact_request=text, revision=proposal["revision"] + 1,
                         source_message_ids=[*proposal["source_message_ids"], message_id], pending_change=None)
+        proposal.pop("needs_clarification", None)
         session["proposed_task"] = proposal
         return session
     return store._mutate(mutate)
@@ -128,7 +133,9 @@ def resolve_draft(store, request):
             raise ValueError("Draft change is unavailable")
         elif choice != "discard":
             proposal["exact_request"] = (proposal["exact_request"] + "\n\n" if choice == "append" else "") + change["text"]
-            proposal["source_message_ids"] = ([*proposal["source_message_ids"]] if choice == "append" else []) + [change["message_id"]]
+            proposal["source_message_ids"] = (([*proposal["source_message_ids"]] if choice == "append" else [])
+                                              + change.get("source_message_ids", [change["message_id"]]))
+            proposal.pop("needs_clarification", None)
         proposal.update(revision=proposal["revision"] + 1, pending_change=None)
         session["proposed_task"] = proposal
         session["timeline"].append({"message_id": f"draft:{proposal['id']}:{proposal['revision']}", "actor": "system",
@@ -190,7 +197,8 @@ def confirm_and_prepare(service, *, project_key, root, request):
             raise ValueError("Confirm the project mode before starting the task.")
         proposal_id = str(request.get("proposal_id", ""))
         if (proposal.get("id") != proposal_id or proposal.get("revision") != revision
-                or proposal.get("status") == "cancelled" or proposal.get("pending_change")):
+                or proposal.get("status") == "cancelled" or proposal.get("pending_change")
+                or proposal.get("needs_clarification")):
             raise ValueError("Confirm the current task draft with no unresolved changes.")
         if proposal.get("confirmed"):
             # Pre-Skill confirmations are explicitly legacy; never upgrade one

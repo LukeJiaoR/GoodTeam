@@ -41,7 +41,7 @@ test('task context opens explicitly on desktop and narrow screens', async ({ pag
 
 test('assistant settings save in place while the conversation and draft remain', async ({ page, fixture }, testInfo) => {
   await importProject(page, fixture);
-  await expect(page.getByRole('navigation', { name: 'Project tasks', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Project tasks', exact: true })).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Continue this after configuration.');
   const url = page.url();
   await expect(page.locator('.team-manager-conversation .assistant-runtime')).toHaveCount(0);
@@ -87,6 +87,14 @@ test('running workspace keeps the composer usable on short and narrow screens', 
     const input = page.getByRole('textbox', { name: 'Message', exact: true });
     await expect(input).toBeVisible();
     await input.fill('Keep this draft while inspecting progress.');
+    const navigation = page.getByRole('navigation', { name: 'Project tasks', exact: true });
+    await expect(navigation).toHaveCount(0);
+    await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
+    await expect(navigation).toBeVisible();
+    await navigation.getByRole('button', { name: 'Close task list', exact: true }).click();
+    await expect(navigation).toHaveCount(0);
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue('Keep this draft while inspecting progress.');
     const conversationBox = await page.locator('.team-manager-conversation').boundingBox();
     expect(conversationBox.height).toBeGreaterThanOrEqual(90);
     const box = await input.boundingBox();

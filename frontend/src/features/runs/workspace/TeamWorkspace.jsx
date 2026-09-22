@@ -312,6 +312,8 @@ function TeamWorkspace({
   assistantBusy,
   assistantError,
   taskNavigation,
+  taskManagementOpen,
+  onManageTasks,
   contextTitle,
   onClearContext,
   onQueueTask,
@@ -498,6 +500,8 @@ function TeamWorkspace({
         <ProjectConversation
           executionRunning={activeJobs.length > 0}
           canManageTasks={!composing}
+          taskManagementOpen={taskManagementOpen}
+          onManageTasks={onManageTasks}
           onConfigureRuntime={onConfigureRuntime}
           acceptedMessage={conversationDelivery && conversationDelivery.projectKey === projectKey && !conversationDelivery.intentId
             && (conversationDelivery.contextKey || '').startsWith('message:')
