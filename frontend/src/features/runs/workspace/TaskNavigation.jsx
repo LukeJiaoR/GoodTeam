@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { X } from 'lucide-react';
 import Button from '../../../components/ui/Button';
 import { statusText } from './presentationUtils';
 
@@ -26,9 +27,13 @@ function QueuedTask({ task, busy, canSelect, onAction, t }) {
   </li>;
 }
 
-export default function TaskNavigation({ currentRunId, currentBlocked = false, runs, selectedRunId, onSelect, assistant, busy, onAction, t }) {
+export default function TaskNavigation({ currentRunId, currentBlocked = false, runs, selectedRunId, onSelect, onClose, assistant, busy, onAction, t }) {
   const queued = assistant?.queued_tasks || [];
-  return <nav className="project-task-navigation" aria-label={t('assistant.project.tasks')}>
+  return <nav id="project-task-navigation" className="project-task-navigation" aria-label={t('assistant.project.tasks')}>
+    <div className="project-task-navigation__heading">
+      <strong>{t('work.manager.manageTasks')}</strong>
+      {onClose ? <button type="button" className="project-task-navigation__close" aria-label={t('assistant.project.closeTasks')} onClick={onClose}><X size={16} aria-hidden="true" /></button> : null}
+    </div>
     <button type="button" aria-current={!selectedRunId ? 'page' : undefined} onClick={() => onSelect('')}>{t('assistant.project.projectContext')}</button>
     {runs.length ? <ul>{runs.map((run) => <li key={run.run_id}>
       <button type="button" aria-current={selectedRunId === run.run_id ? 'page' : undefined} onClick={() => onSelect(run.run_id)}>

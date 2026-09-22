@@ -28,7 +28,10 @@ failure. New business task creation/reassignment rejects `orchestrator`.
 ## Conversation and navigation
 
 `/projects/KEY/work` stays a project conversation instead of redirecting to the
-active run. The task list selects task context and worker/result details. The
+active run. **Manage tasks** opens the otherwise hidden task/history list in the
+execution pane, including saved future drafts. Closing it returns to the composer;
+selecting a task or preparing a saved draft closes it automatically. Desktop and
+mobile keep the same explicit entry point. The list selects task context and worker/result details. The
 same conversation component and composer remain mounted when selecting history;
 unsent text and project messages remain available. Historical task activity is
 separately inspectable. Historical detail dialogs and inspectors cannot expose

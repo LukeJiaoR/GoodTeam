@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from goodteam_os import assistant_requests
 from goodteam_os.assistant_drafts import archive_terminal_proposal, is_conversation_only, stage_draft
+from goodteam_os.assistant_intake import intake_source_messages, mark_draft_needs_clarification, resolve_intake_sources
 from goodteam_os.assistant_runtime import runtime_view
 from goodteam_os.manager_execution import run_manager_chat_turn
 from goodteam_os.project_import import confirm_project_mode, import_project
@@ -163,6 +164,7 @@ class TaskAssistantService:
         team_view = self.team_view(project_key)
         team_commands: list[dict[str, object]] = []
         team_authorization = ""
+        task_intake = None
         detection = detect_team_commands(text, team_view)
         if str(text).strip() in _DISCOVERY_STARTERS:
             intent = "ambiguous"
@@ -181,13 +183,14 @@ class TaskAssistantService:
                 message_id=attempt_id,
                 logical_message_id=message_id,
                 text=str(text),
-                context=_manager_chat_context(state, mode_hint, store.read(), team_view=team_view),
+                context=_manager_chat_context(state, mode_hint, store.read(), team_view=team_view, current_message_id=message_id),
             )
             intent = str(turn.get("intent", ""))
             manager_response = str(turn.get("response", ""))
             manager_execution = dict(turn.get("manager_execution") or {})
             team_commands = [dict(item) for item in turn.get("team_commands") or [] if isinstance(item, dict)]
             team_authorization = str(turn.get("team_authorization", ""))
+            task_intake = turn.get("task_intake")
         else:
             # Deterministic path: builtin manager runtime (fake/noop/human)
             # cannot classify language, so the bounded classifier owns intent
@@ -200,8 +203,12 @@ class TaskAssistantService:
             else:
                 intent = classify_task_assistant_intent(text)
 
+        draft_sources = None
+        if intent == "work_request" and not is_conversation_only(text):
+            draft_sources = resolve_intake_sources(store.read(), message_id, task_intake)
         assistant_requests.update_request(store, message_id, phase="applying", interpretation={
             "intent": intent, "response": manager_response, "manager_execution": manager_execution,
+            "task_intake": task_intake,
         })
         if is_conversation_only(text):
             intent, team_commands = "work_request", []
@@ -277,7 +284,7 @@ class TaskAssistantService:
                 details={"manager_execution": manager_execution},
             )
         elif intent == "work_request":
-            event = stage_draft(store, text=str(text), message_id=message_id)
+            event = stage_draft(store, text=str(text), message_id=message_id, source_messages=draft_sources)
             session = store.read()
             session = store.append_event(
                 f"reply:{message_id}",
@@ -289,6 +296,7 @@ class TaskAssistantService:
                 },
             )
         else:
+            mark_draft_needs_clarification(store, task_intake)
             session = store.append_event(
                 f"reply:{message_id}",
                 "intent_clarification_requested",
@@ -868,6 +876,7 @@ def _manager_chat_context(
     session: dict[str, object],
     *,
     team_view: dict[str, object] | None = None,
+    current_message_id: str = "",
 ) -> str:
     recent = []
     for item in list(session.get("timeline", []) or [])[-12:]:
@@ -876,6 +885,7 @@ def _manager_chat_context(
         recent.append(
             {
                 "actor": str(item.get("actor", "")),
+                "message_id": str(item.get("message_id", "")),
                 "event": str(item.get("event", "")),
                 "content": str(item.get("content", ""))[:2_000],
             }
@@ -886,6 +896,7 @@ def _manager_chat_context(
         f"Readiness lifecycle: {readiness.get('lifecycle', '')}",
         f"Recent conversation: {json.dumps(recent, ensure_ascii=False)}",
         f"Pending proposal: {json.dumps(proposal, ensure_ascii=False)}",
+        f"Task intake source messages: {json.dumps(intake_source_messages(session, current_message_id=current_message_id), ensure_ascii=False)}",
     ]
     if team_view is not None:
         lines.append(f"Team capability summary: {json.dumps(_compact_team_view(team_view), ensure_ascii=False)}")

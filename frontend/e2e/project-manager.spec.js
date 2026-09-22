@@ -22,14 +22,18 @@ test('project Manager keeps chatting across tasks and saves future work without 
   expect(afterSave.task_assistant_session.proposed_task).toEqual(before.task_assistant_session.proposed_task);
   expect(decisions(afterSave)).toEqual(decisions(before));
   expect(afterSave.team_workspace.execution_actors.every((actor) => actor.role !== 'orchestrator')).toBe(true);
+  await expect(page.getByRole('navigation', { name: 'Project tasks', exact: true })).toHaveCount(0);
+  await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Prepare this draft', exact: true })).toBeDisabled();
 
   // Termination is exercised through the real API in the fixture-owned workspace.
   const stopped = await page.request.post('/api/terminate', { data: { project_key: fixture.key } });
   expect(stopped.ok(), await stopped.text()).toBe(true);
   await page.reload();
+  await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Prepare this draft', exact: true })).toBeEnabled();
   await clickMutation(page, page.getByRole('button', { name: 'Prepare this draft', exact: true }), endpoint);
+  await expect(page.getByRole('navigation', { name: 'Project tasks', exact: true })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Proposed task', exact: true })).toContainText(future);
   const selected = await snapshot(page, fixture, evidence);
   expect(selected.task_assistant_session.proposed_task.confirmed).toBe(false);
@@ -40,7 +44,9 @@ test('project Manager keeps chatting across tasks and saves future work without 
   const composer = manager.getByRole('textbox', { name: 'Message', exact: true });
   await composer.fill('Explain the earlier task.');
   await composer.evaluate((node) => { node.dataset.continuity = 'same-project-composer'; });
+  await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
   await page.getByRole('navigation', { name: 'Project tasks' }).getByRole('button', { name: /Implement a searchable project list/ }).click();
+  await expect(page.getByRole('navigation', { name: 'Project tasks', exact: true })).toHaveCount(0);
   await expect(page).toHaveURL(new RegExp(`/runs/${firstRun}$`));
   await expect(composer).toHaveAttribute('data-continuity', 'same-project-composer');
   await expect(composer).toHaveValue('Explain the earlier task.');

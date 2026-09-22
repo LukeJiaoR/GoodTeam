@@ -49,6 +49,7 @@ export default function TaskDraftControls({ draft, busy, modeRequired, resumeRea
     {editing ? <label className="assistant-draft-editor">{t('assistant.taskDraft')}
       <textarea value={text} rows={5} disabled={Boolean(busy)} onChange={(event) => setText(event.target.value)} />
     </label> : <p className="assistant-draft-text">{draft.exact_request}</p>}
+    {draft.needs_clarification ? <p role="status">{t('assistant.needsClarification')}</p> : null}
     {!readOnly ? <>
       <PendingChange change={draft.pending_change} busy={busy} resolve={resolve} t={t} />
       <div className="assistant-control-actions">
@@ -56,7 +57,7 @@ export default function TaskDraftControls({ draft, busy, modeRequired, resumeRea
           <Button disabled={Boolean(busy) || !text.trim()} onClick={save}><Save size={14} aria-hidden="true" />{t('assistant.saveDraft')}</Button>
           <Button variant="secondary" disabled={Boolean(busy)} onClick={() => setEditing(false)}><X size={14} aria-hidden="true" />{t('assistant.cancelEdit')}</Button>
         </> : <>
-          <Button busy={busy === 'task-confirm'} disabled={Boolean(busy || (draft.confirmed && !resumeReady) || draft.pending_change || modeRequired)} onClick={() => onConfirm?.(draft.id, draft.revision)}>
+          <Button busy={busy === 'task-confirm'} disabled={Boolean(busy || (draft.confirmed && !resumeReady) || draft.pending_change || draft.needs_clarification || modeRequired)} onClick={() => onConfirm?.(draft.id, draft.revision)}>
             <Play size={14} aria-hidden="true" />{t(resumeReady ? 'assistant.resumeTask' : draft.confirmed ? 'work.taskAssistant.preparing' : 'work.taskAssistant.startTask')}
           </Button>
           {!draft.confirmed ? <>

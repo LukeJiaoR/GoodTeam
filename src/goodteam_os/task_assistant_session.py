@@ -279,6 +279,7 @@ class TaskAssistantSessionStore:
                     raise ValueError("Task proposal references an unknown user message")
                 proposal["source_message_ids"] = list(source_message_ids)
             proposal["exact_request"] = request
+            proposal.pop("needs_clarification", None)
             proposal["revision"] = int(proposal.get("revision", 0)) + 1
             session["proposed_task"] = proposal
             return session
@@ -299,6 +300,8 @@ class TaskAssistantSessionStore:
                 raise ValueError("Task proposal changed. Reload the latest draft before confirming.")
             if proposal.get("pending_change"):
                 raise ValueError("Resolve the pending draft change before confirming.")
+            if proposal.get("needs_clarification"):
+                raise ValueError("Clarify the task scope and acceptance criteria or edit the draft before confirming.")
             if proposal.get("run_id") or proposal.get("confirmed"):
                 if context is not None and proposal.get("task_skill_context", {}) != context:
                     raise ValueError("Confirmed task methods cannot be replaced during retry.")

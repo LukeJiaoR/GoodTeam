@@ -22,6 +22,7 @@ function isNearBottom(element) {
 
 export default function ProjectConversation({
   onConfigureRuntime, canManageTasks = false, executionRunning = false,
+  taskManagementOpen = false, onManageTasks,
   assistantState,
   onAssistantAction,
   attention, acceptedMessage,
@@ -115,7 +116,10 @@ export default function ProjectConversation({
         </button> : null}
       </header>
       <div className="project-conversation-scope">
-        {canManageTasks ? <button type="button" onClick={event => focusWorkContext(event.currentTarget.closest('.product-work-page'), 'execution')}>{t('work.manager.manageTasks')}</button> : null}
+        {canManageTasks ? <button type="button" aria-expanded={taskManagementOpen} aria-controls="project-task-navigation" onClick={event => {
+          onManageTasks?.();
+          focusWorkContext(event.currentTarget.closest('.product-work-page'), onManageTasks ? 'tasks' : 'execution');
+        }}>{t('work.manager.manageTasks')}</button> : null}
         <span>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</span>
         {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
       </div>

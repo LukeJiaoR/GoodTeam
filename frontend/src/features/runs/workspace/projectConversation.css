@@ -34,6 +34,8 @@
 .work-workspace-shell .project-queued-task p { overflow-wrap: anywhere; white-space: pre-wrap; }
 .work-workspace-shell .project-task-navigation small { opacity: 0.7; }
 .work-workspace-shell .project-task-navigation h3 { font-size: 0.85rem; margin: 1rem 0 0.5rem; }
+.work-workspace-shell .project-task-navigation__heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .5rem; }
+.work-workspace-shell .project-task-navigation button.project-task-navigation__close { display: inline-flex; width: auto; padding: .5rem; }
 .work-workspace-shell .project-queued-task { padding: 0.6rem 0; border-top: 1px solid var(--work-border, #d7e1ef); }
 .work-workspace-shell .project-queued-task textarea { width: 100%; min-height: 5rem; color: inherit; background: transparent; }
 .work-workspace-shell .project-assistant-activity { margin: 0.75rem 0; font-size: 0.75rem; overflow-wrap: anywhere; }

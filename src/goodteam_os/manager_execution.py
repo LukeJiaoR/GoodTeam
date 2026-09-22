@@ -15,6 +15,9 @@ from goodteam_os.projects import load_project_target
 from goodteam_os.workers import WorkerJobStore
 
 
+_TASK_INTAKE_CONTRACT = "Task intake contract: v1"
+
+
 class ManagerExecutionError(RuntimeError):
     """Raised when a configured Task Assistant cannot produce a safe interpretation."""
 
@@ -87,7 +90,15 @@ def run_manager_chat_turn(
         output = result_path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ManagerExecutionError("The configured Task Assistant did not return a readable result.") from exc
-    parsed = _parse_chat_turn(output)
+    require_task_intake = True
+    if not created:
+        try:
+            captured_task = (store.root / job_id / "task.md").read_text(encoding="utf-8")
+        except OSError:
+            pass  # Missing prompt evidence cannot relax the current contract.
+        else:
+            require_task_intake = _TASK_INTAKE_CONTRACT in captured_task
+    parsed = _parse_chat_turn(output, require_task_intake=require_task_intake)
     return {
         "schema_version": "task_assistant_turn.v1",
         **parsed,
@@ -376,8 +387,15 @@ def _manager_chat_task(text: str) -> str:
     return "\n".join(
         [
             "Respond as the project's Task Assistant and classify the user's current message.",
+            _TASK_INTAKE_CONTRACT,
             "Use intent work_request only when the requested product, change or deliverable is concrete enough to draft a task from the current message and conversation context.",
             "A new-project introduction or request to brainstorm/shape an unspecified idea is discovery, even if it says start building. Use ambiguous and ask one concrete question about the product or intended users. Do not propose a task or invent scope until the user supplies a concrete outcome.",
+            "A product category plus an audience and an aspirational quality claim is still discovery. Naming a Web app, its users, or a technology does not establish an executable first version. Do not equate a clear direction with a ready task.",
+            "For a new product or broad feature, establish the primary user/scenario, the core input-to-output flow, the first-version scope, and observable acceptance criteria. Use facts already supplied in the conversation or project; ask only about missing decisions that materially change the result. Technical implementation choices can be left to the team.",
+            "Use intent ambiguous while such decisions remain. Briefly state what is understood, identify the most consequential gap, and ask one or two focused questions with concrete examples/options and, when useful, a recommendation. Suggested defaults remain proposals until the user accepts them or explicitly delegates the choice. Never silently turn them into requirements.",
+            "For example, 'a product-image Web app for online merchants with photo-realistic promotional images' still leaves the initial product category/use case, uploaded input, output, and product-fidelity standard open. Ask which product/use case to serve first and whether the flow is upload a real product photo and change its scene while preserving its appearance, or generate from text. In later turns clarify the smallest useful workflow and what quality would count as success; do not ask everything at once.",
+            "A narrow existing-project fix or clearly scoped deliverable can be ready immediately. Do not force a product questionnaire on 'change this button label' or on a request explicitly limited to writing an MVP proposal. Distinguish a planning deliverable from permission to build the product.",
+            "When the user says the idea/draft is not specific enough, continue discovery with concrete missing decisions. Do not defend the previous readiness judgment or repeat the same draft. Resolve short follow-up answers using the preceding question and retain the earlier goal and constraints.",
             "Use intent project_understanding for a broad request to inspect or explain the current project.",
             "Use intent project_question for a factual question about the current project (Git, framework, files, commands). Answer it directly using read-only inspection or supplied evidence; do not start preparation or propose a task.",
             "Resolve short references such as 'it', 'this', '它' or '他' to the current project when conversation context supports that reading. For example '他有git吗' asks whether this project uses Git, not whether a Worker can operate Git.",
@@ -389,6 +407,9 @@ def _manager_chat_task(text: str) -> str:
             "Only an explicit request to inspect the repository is project_understanding; discussing the task draft does not request inspection.",
             "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation.",
             'The JSON shape must be: {"intent": "work_request|project_understanding|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
+            'For product discovery and every work_request, also include "task_intake": {"ready": true|false, "missing_decisions": ["concrete user-facing question in the user\'s language"], "source_message_ids": ["exact user message ID"]}. A ready task has no missing_decisions; otherwise ready must be false and include at least one focused question.',
+            "For a ready task, select all relevant exact user message IDs from Task intake source messages, including the current message, earlier goal and clarifications. Do not select assistant suggestions, unrelated questions or earlier tasks. When refining an existing draft, select all relevant follow-up messages including the current one; the existing draft is already preserved by revision controls. Never invent IDs or replace source text with a model summary.",
+            "For a ready task, the response must summarize the agreed goal, first-version scope, constraints and observable acceptance criteria in a short readable outline. Only include supported or explicitly delegated decisions. The visible draft will retain the selected user messages verbatim; do not merely say the direction is specific enough.",
             "team_commands and team_authorization are required only for intent team_management; omit them otherwise.",
             "Every team command is a proposal requiring a separate user confirmation. The team_authorization field is descriptive and never grants execution authority.",
             "Use exact Worker IDs from the Team summary. When names match multiple Workers, list their roles, names and IDs and ask the user to select; never choose the first match.",
@@ -403,7 +424,7 @@ def _manager_chat_task(text: str) -> str:
     )
 
 
-def _parse_chat_turn(output: str) -> dict[str, object]:
+def _parse_chat_turn(output: str, *, require_task_intake: bool = True) -> dict[str, object]:
     text = str(output or "").strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
     candidate = fenced.group(1) if fenced else text
@@ -418,6 +439,15 @@ def _parse_chat_turn(output: str) -> dict[str, object]:
     if intent not in {"work_request", "project_understanding", "project_question", "team_management", "ambiguous"} or not response or len(response) > 4_000:
         raise ManagerExecutionError("The configured Task Assistant returned an invalid structured chat response.")
     parsed: dict[str, object] = {"intent": intent, "response": response}
+    if intent == "work_request" and require_task_intake and "task_intake" not in payload:
+        raise ManagerExecutionError("The Task Assistant did not assess whether the task is ready to draft.")
+    if intent in {"work_request", "ambiguous"} and "task_intake" in payload:
+        intake = _parse_task_intake(payload["task_intake"])
+        parsed["task_intake"] = intake
+        if intent == "work_request" and not intake["ready"]:
+            # An incomplete assessment cannot expose a Start task action, even
+            # when the model contradicts itself with a work_request label.
+            parsed.update(intent="ambiguous", response="\n\n".join(intake["missing_decisions"]))
     if intent == "team_management":
         commands = _parse_team_commands(payload.get("team_commands"))
         authorization = str(payload.get("team_authorization", "") or "").strip()
@@ -428,6 +458,21 @@ def _parse_chat_turn(output: str) -> dict[str, object]:
         parsed["team_commands"] = commands
         parsed["team_authorization"] = authorization
     return parsed
+
+
+def _parse_task_intake(raw: object) -> dict[str, object]:
+    if not isinstance(raw, dict) or type(raw.get("ready")) is not bool:
+        raise ManagerExecutionError("The Task Assistant returned an invalid task intake assessment.")
+    questions = raw.get("missing_decisions")
+    sources = raw.get("source_message_ids")
+    for values, limit, width in ((questions, 8, 1_000), (sources, 24, 256)):
+        if (not isinstance(values, list) or len(values) > limit
+                or any(not isinstance(value, str) or not value.strip() or len(value) > width for value in values)):
+            raise ManagerExecutionError("The Task Assistant returned an invalid task intake assessment.")
+    ready = raw["ready"] and not questions
+    if (not ready and not questions) or (ready and not sources):
+        raise ManagerExecutionError("The Task Assistant returned an incomplete task intake assessment.")
+    return {"ready": ready, "missing_decisions": questions, "source_message_ids": sources}
 
 
 TEAM_COMMAND_KINDS = {

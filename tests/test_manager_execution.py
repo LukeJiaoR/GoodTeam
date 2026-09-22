@@ -175,6 +175,7 @@ def test_manager_chat_turn_runs_configured_orchestrator_and_returns_decision(
                     {
                         "intent": "work_request",
                         "response": "我会先把登录问题整理成一个可确认的任务。",
+                        "task_intake": {"ready": True, "missing_decisions": [], "source_message_ids": ["message-1"]},
                     },
                     ensure_ascii=False,
                 ),
@@ -334,7 +335,8 @@ def test_manager_chat_turn_reuses_completed_job_for_message_retry(
             run_calls.append(job_id)
             result_path = self.root / job_id / "result.md"
             result_path.write_text(
-                '{"intent":"work_request","response":"已整理为待确认任务。"}',
+                json.dumps({"intent": "work_request", "response": "已整理为待确认任务。",
+                            "task_intake": {"ready": True, "missing_decisions": [], "source_message_ids": ["message-retry"]}}),
                 encoding="utf-8",
             )
             result = {"id": job_id, "status": "completed", "result_path": str(result_path)}
@@ -366,3 +368,30 @@ def test_project_question_is_a_valid_read_only_chat_intent():
     assert "git rev-parse --is-inside-work-tree" in prompt
     assert "do not initialize, fetch, commit" in prompt
     assert "current project" in prompt
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_cached_chat_job_keeps_its_original_intake_contract(tmp_path, monkeypatch, legacy):
+    class CachedStore:
+        def __init__(self, project_root):
+            self.root = project_root / ".goodteam" / "workers" / "jobs"
+
+        def create_or_reuse_job(self, **spec):
+            job_root = self.root / "cached-chat"
+            job_root.mkdir(parents=True)
+            (job_root / "task.md").write_text("Legacy classification prompt" if legacy else spec["task"])
+            result = job_root / "result.md"
+            result.write_text('{"intent":"work_request","response":"Task ready."}')
+            return {"id": "cached-chat", "status": "completed", "result_path": str(result)}, False
+
+        def run_job(self, job_id):
+            pytest.fail("A completed model call must not run again")
+
+    monkeypatch.setattr(manager_execution, "WorkerJobStore", CachedStore)
+    values = dict(project_config=_project_config(tmp_path), project_key="DEMO", message_id="cached-message",
+                  text="Add search.", context="Project mode: existing_project")
+    if legacy:
+        assert manager_execution.run_manager_chat_turn(**values)["intent"] == "work_request"
+    else:
+        with pytest.raises(manager_execution.ManagerExecutionError, match="did not assess"):
+            manager_execution.run_manager_chat_turn(**values)

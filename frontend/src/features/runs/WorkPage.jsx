@@ -730,6 +730,8 @@ export default function WorkPage() {
   const [mutationError, setMutationError] = useState(null);
   const [panel, setPanel] = useState(null);
   const workspaceRef = useRef(null);
+  const [taskManagementProject, setTaskManagementProject] = useState('');
+  const taskManagementOpen = taskManagementProject === projectKey;
   const [busy, setBusy] = useState('');
   const [runHistory, setRunHistory] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('loading');
@@ -946,7 +948,10 @@ export default function WorkPage() {
   const sendTaskAssistantMessage = conversation.send;
   const handleAssistantAction = async (request) => {
     const result = await conversation.act(request);
-    if (result !== false && request.action === 'select_queued_task') navigate(routes.projectWork(projectKey));
+    if (result !== false && request.action === 'select_queued_task') {
+      setTaskManagementProject('');
+      navigate(routes.projectWork(projectKey));
+    }
     return result;
   };
 
@@ -1024,7 +1029,10 @@ export default function WorkPage() {
     </label>
   ) : null;
 
-  const selectTask = (selected) => navigate(selected ? routes.projectRun(projectKey, selected) : routes.projectWork(projectKey));
+  const selectTask = (selected) => {
+    setTaskManagementProject('');
+    navigate(selected ? routes.projectRun(projectKey, selected) : routes.projectWork(projectKey));
+  };
   const conversationProps = {
     projectAssistant: data.project_assistant || { ...data.team_workspace, timeline: data.team_workspace?.manager_timeline || [] },
     conversationDelivery: conversation.delivery,
@@ -1035,8 +1043,14 @@ export default function WorkPage() {
     onAssistantAction: handleAssistantAction,
     contextTitle: runId ? contextTitle : '',
     onClearContext: () => selectTask(''),
-    taskNavigation: <TaskNavigation currentRunId={data.state?.run_id} currentBlocked={data.team_workspace?.attention_request?.kind === 'blocker' && !(data.team_workspace?.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working')} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
-      assistant={data.project_assistant} busy={conversation.busy} onAction={handleAssistantAction} t={t} />,
+    taskManagementOpen,
+    onManageTasks: () => setTaskManagementProject(projectKey),
+    taskNavigation: taskManagementOpen ? <TaskNavigation currentRunId={data.state?.run_id} currentBlocked={data.team_workspace?.attention_request?.kind === 'blocker' && !(data.team_workspace?.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working')} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
+      assistant={data.project_assistant} busy={conversation.busy} onAction={handleAssistantAction} t={t}
+      onClose={(event) => {
+        setTaskManagementProject('');
+        focusWorkContext(event.currentTarget.closest('.product-work-page'), 'composer', { reducedMotion });
+      }} /> : null,
   };
 
   return (

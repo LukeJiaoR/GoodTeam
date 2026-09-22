@@ -35,6 +35,41 @@ of persisted task, Team and readiness state. This is intentionally fail-closed.
 
 ## Task Drafts
 
+### Discovery before a draft
+
+A product category, audience and aspirational quality claim do not establish an
+executable first version. The Assistant should clarify the primary scenario,
+input/output flow, first-version scope and observable acceptance criteria. It
+uses facts already provided and asks one or two consequential questions per
+turn. A narrow fix or an explicitly requested planning deliverable can be ready
+immediately; implementation details may be delegated to the team.
+
+New model jobs require a `task_intake` assessment for `work_request`, with a
+boolean `ready`, `missing_decisions` questions and `source_message_ids`. Missing
+or malformed assessments fail before draft mutation. An incomplete assessment
+overrides a contradictory `work_request` label and returns clarification. Cached
+legacy jobs retain their original contract based on their saved `task.md`;
+builtin runtimes still use the bounded, simulated classifier.
+
+The model can select only complete user messages exposed in the current intake
+context, up to 24 messages / 32,000 characters since the last task boundary.
+Unknown, assistant, earlier-task or duplicate IDs and omission of the current
+message are rejected before applying a draft. Selected messages are joined in
+conversation order without paraphrasing. The model's readable goal/scope/criteria
+outline remains explanatory; the visible exact request is the execution contract.
+This verifies source identity, not semantic completeness: model selection and
+readiness judgments still need human review.
+
+When an unconfirmed draft needs more clarification, its text is retained and
+its revision advances once to invalidate old Start buttons. Both the API and UI
+block confirmation while `needs_clarification` is set. Multi-turn refinements
+retain all selected exact source messages in the existing append/replace choice;
+accepting them, an explicit addition, or saving a human edit clears that flag.
+Keeping the old draft does not clear it. Confirmed/running contracts stay under
+their existing conversation-only and change-intent boundaries.
+
+### Selected proposal
+
 The [project Manager contract](project-manager-conversation.md) separates the
 project coordinator from business assignments and adds an independent queue of
 future drafts. The rules below still govern the one selected proposal.

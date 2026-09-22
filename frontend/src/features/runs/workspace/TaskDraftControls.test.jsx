@@ -14,6 +14,18 @@ describe('Task draft controls', () => {
     expect(onConfirm).toHaveBeenCalledWith('p1', 2);
   });
 
+  it('blocks an incomplete draft until a clarified revision arrives', () => {
+    const onConfirm = vi.fn();
+    const view = render(<TaskDraftControls draft={{ ...draft, needs_clarification: true }} onConfirm={onConfirm} t={t} />);
+    const start = screen.getByRole('button', { name: 'Start this task' });
+    expect(start).toBeDisabled();
+    fireEvent.click(start);
+    expect(onConfirm).not.toHaveBeenCalled();
+    view.rerender(<TaskDraftControls draft={{ ...draft, revision: 3 }} onConfirm={onConfirm} t={t} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start this task' }));
+    expect(onConfirm).toHaveBeenCalledExactlyOnceWith('p1', 3);
+  });
+
   it('edits exact text with expected revision and preserves input on failure', async () => {
     const onAction = vi.fn().mockResolvedValue(false);
     render(<TaskDraftControls draft={draft} onAction={onAction} t={t} />);

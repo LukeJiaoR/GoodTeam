@@ -43,6 +43,7 @@ export function currentWorkContext({ workspace, projectKey, title, freshness = '
   }
   const draft = workspace.proposed_task;
   if (draft && !draft.run_id && draft.status !== 'cancelled') {
+    if (draft.needs_clarification) return result('needs_input', t('assistant.needsClarification'), 'composer');
     return result('needs_input', t('work.current.draftPending'), 'draft');
   }
   if (Object.values(workspace.assistant_requests || {}).some((request) => ['failed', 'interrupted'].includes(request.status))) {
@@ -69,6 +70,7 @@ export const WORK_CONTEXT_TARGETS = {
   composer: { tab: 'manager', selector: '.team-manager-dock textarea, .work-start-panel textarea' },
   outcomes: { tab: 'outcomes', selector: '.team-pane--outcomes' },
   execution: { tab: 'execution', selector: '.team-pane--execution' },
+  tasks: { tab: 'execution', selector: '#project-task-navigation' },
 };
 
 export function focusWorkContext(root, target, { reducedMotion = false } = {}) {
