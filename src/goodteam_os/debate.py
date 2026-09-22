@@ -199,6 +199,13 @@ def default_debate_dispatch(
         workflow_job_fields(original_state, role="review", command_key="debate-reference-check")
         if original_state.task_skill_context:
             raise SkillError("skill_debate_not_connected", "Skill-backed debate is not connected; no legacy discussion was dispatched.")
+    else:
+        from goodteam_os.skills.task_locks import TaskSkillIdentity
+        from goodteam_os.skills.task_start import reject_missing_task_context
+
+        # Missing/currently different state cannot erase a registered task's
+        # method identity, even after the project restores default methods.
+        reject_missing_task_context(TaskSkillIdentity("workflow_run", project_key, run_id))
 
     def dispatch(**kwargs: Any) -> list[str]:
         try:

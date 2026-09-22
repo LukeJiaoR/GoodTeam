@@ -533,3 +533,20 @@ def test_unscoped_worktree_dispatch_is_blocked_before_branch_creation(ctx, monke
         web.start_dispatch_track(ctx.workspace, {"name": "unscoped-task", "role": "implementation",
                                   "adapter": "fake", "task": "New task"})
     assert ctx.workers.list_jobs() == []
+
+
+@pytest.mark.parametrize("replacement_state", [False, True])
+def test_debate_cannot_downgrade_a_registered_task_when_current_state_is_absent_or_different(ctx, monkeypatch, replacement_state):
+    from goodteam_os.debate import default_debate_dispatch
+    from goodteam_os.state import create_initial_state
+
+    bind(ctx, method(ctx))
+    capture(ctx, "registered-run")
+    bind(ctx, None, key="restore-before-debate")
+    if replacement_state:
+        StateStore(ctx.workspace).write_project_current(create_initial_state("new-legacy-run", "DEMO", "Another task"))
+    calls = forbid_runtime(monkeypatch)
+    with pytest.raises(SkillError, match="cannot become legacy"):
+        default_debate_dispatch(ctx.workspace, "DEMO", "registered-run", adapter="fake")
+    assert ctx.workers.list_jobs() == []
+    assert calls == []
