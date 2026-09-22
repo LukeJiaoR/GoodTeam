@@ -1,0 +1,95 @@
+name: PR462 bounded capacity observation
+on:
+  push:
+    branches: [feat/461-task-skill-dispatch]
+    paths: [.github/workflows/pr462-capacity-observation.yml]
+permissions: {}
+jobs:
+  observe:
+    if: github.repository == 'LukeJiaoR/GoodTeam' && github.ref == 'refs/heads/feat/461-task-skill-dispatch'
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 3
+    steps:
+      - name: Inspect effective limits without changing the runner
+        shell: bash
+        run: |
+          python3.12 - <<'PY'
+          import collections, hashlib, json, os, pathlib, subprocess, tempfile, time
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / ('pr462-capacity-' + os.environ['GITHUB_RUN_ID'])
+          root.mkdir(mode=0o700)
+          def read(path):
+              try:
+                  return pathlib.Path(path).read_text()[:8192]
+              except OSError as error:
+                  return {'unavailable_errno': error.errno}
+          membership = read('/proc/self/cgroup')
+          cgroups = []
+          if isinstance(membership, str):
+              for line in membership.splitlines():
+                  fields = line.split(':', 2)
+                  if fields[:2] == ['0', '']:
+                      base = pathlib.Path('/sys/fs/cgroup').resolve()
+                      current = (base / fields[2].lstrip('/')).resolve()
+                      while current.is_relative_to(base):
+                          cgroups.append(current)
+                          if current == base:
+                              break
+                          current = current.parent
+          names = ['cpu.max', 'cpu.stat', 'cpu.weight', 'cpuset.cpus.effective',
+                   'memory.current', 'memory.high', 'memory.max', 'memory.events',
+                   'memory.swap.current', 'memory.swap.max', 'memory.pressure',
+                   'cpu.pressure', 'io.pressure', 'pids.current', 'pids.max']
+          def sample():
+              return {'monotonic': time.monotonic(), 'load_average': os.getloadavg(),
+                      'cpu_stat': read('/proc/stat').splitlines()[:1],
+                      'pressure': {key: read('/proc/pressure/' + key) for key in ('cpu', 'io', 'memory')},
+                      'memory': [line for line in read('/proc/meminfo').splitlines() if line.split(':')[0] in {'MemTotal', 'MemAvailable', 'SwapTotal', 'SwapFree'}],
+                      'cgroups': {str(path): {name: read(path / name) for name in names} for path in cgroups}}
+          result = {'product_head': '3050cfa3d8547b6cd32f9d5977e5f42afeb72693',
+                    'failed_run': 35701789981, 'membership': membership,
+                    'cpu_affinity_count': len(os.sched_getaffinity(0)),
+                    'nice': os.getpriority(os.PRIO_PROCESS, 0), 'before': sample()}
+          wall, cpu = time.monotonic(), time.process_time()
+          for _ in range(100000):
+              hashlib.sha256(b'bounded PR462 numeric diagnostic' * 128).digest()
+          result['hash_benchmark'] = {'wall_seconds': time.monotonic()-wall, 'cpu_seconds': time.process_time()-cpu}
+          result['fsync'] = {}
+          for label, parent in [('runner_temp', root), ('system_temp', pathlib.Path('/tmp'))]:
+              wall = time.monotonic()
+              with tempfile.TemporaryDirectory(prefix='pr462-capacity-', dir=parent) as tmp:
+                  for index in range(8):
+                      with (pathlib.Path(tmp) / str(index)).open('wb') as stream:
+                          stream.write(b'0' * 4096)
+                          stream.flush()
+                          os.fsync(stream.fileno())
+              result['fsync'][label] = time.monotonic()-wall
+          counts = collections.Counter()
+          for path in pathlib.Path('/proc').iterdir():
+              if path.name.isdecimal():
+                  try:
+                      if path.stat().st_uid == os.getuid():
+                          counts[(path / 'comm').read_text().strip()] += 1
+                  except OSError:
+                      pass
+          result['own_uid_process_names_only'] = dict(counts)
+          for unit in ['actions.runner.LukeJiaoR-GoodTeam.goodteam-ci-01.service', 'goodteam-shared-ci.slice']:
+              try:
+                  command = ['systemctl', 'show', unit, '--no-pager', '--property=ControlGroup,CPUQuotaPerSecUSec,CPUWeight,MemoryHigh,MemoryMax,MemoryCurrent,MemorySwapCurrent,TasksCurrent,Nice']
+                  done = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+                  result[unit] = {'returncode': done.returncode, 'stdout': done.stdout[:8192]}
+              except (OSError, subprocess.TimeoutExpired):
+                  result[unit] = {'unavailable': True}
+          result['after'] = sample()
+          output = root / 'capacity.json'
+          output.write_text(json.dumps(result, indent=2))
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('PR462_CAPACITY=' + str(output) + '\n')
+          print(json.dumps(result, indent=2))
+          PY
+      - name: Preserve bounded numerical evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr462-capacity-${{ github.run_id }}
+          path: ${{ env.PR462_CAPACITY }}
+          if-no-files-found: error
+          retention-days: 2
