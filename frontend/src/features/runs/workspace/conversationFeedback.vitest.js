@@ -39,7 +39,7 @@ describe('conversation delivery, not execution authority', () => {
     expect(conversationTimeline(timeline, message, scope)).toHaveLength(2);
     const recorded = [...timeline, { id: 'm1', actor: 'user', content: message.text }];
     expect(conversationTimeline(recorded, message, scope)).toHaveLength(2);
-    expect(conversationTimeline(recorded, message, scope)[1].delivery_status).toBe('sending');
+    expect(conversationTimeline(recorded, message, scope)[1].delivery_status).toBeUndefined();
     expect(conversationTimeline(recorded, { ...message, status: 'recorded' }, scope)).toBe(recorded);
     expect(recorded[1].delivery_status).toBeUndefined();
   });

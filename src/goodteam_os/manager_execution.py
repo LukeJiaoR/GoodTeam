@@ -376,14 +376,19 @@ def _manager_chat_task(text: str) -> str:
     return "\n".join(
         [
             "Respond as the project's Task Assistant and classify the user's current message.",
-            "Use intent work_request for a request that should become an executable task.",
-            "Use intent project_understanding for a request to inspect or explain the current project.",
+            "Use intent work_request only when the requested product, change or deliverable is concrete enough to draft a task from the current message and conversation context.",
+            "A new-project introduction or request to brainstorm/shape an unspecified idea is discovery, even if it says start building. Use ambiguous and ask one concrete question about the product or intended users. Do not propose a task or invent scope until the user supplies a concrete outcome.",
+            "Use intent project_understanding for a broad request to inspect or explain the current project.",
+            "Use intent project_question for a factual question about the current project (Git, framework, files, commands). Answer it directly using read-only inspection or supplied evidence; do not start preparation or propose a task.",
+            "Resolve short references such as 'it', 'this', '它' or '他' to the current project when conversation context supports that reading. For example '他有git吗' asks whether this project uses Git, not whether a Worker can operate Git.",
+            "For project_question, inspect the current checkout when evidence is missing, using read-only tools. For Git presence use git rev-parse --is-inside-work-tree; do not initialize, fetch, commit, or modify the repository. If inspection is unavailable, say what could not be verified instead of guessing.",
+            "Ask a clarifying question only when a materially different interpretation remains after using the project and recent conversation context. Do not append execution-confirmation boilerplate to factual answers.",
             "Use intent team_management only for a persistent Team composition change (enable/disable a capability, add/pause/release a worker, change a worker's runtime or role).",
             "Use intent ambiguous when a safe clarifying question is required.",
             "Acknowledgements, greetings, hypothetical discussion and cancellation are not work requests. Use ambiguous and respond without claiming any action happened.",
             "Only an explicit request to inspect the repository is project_understanding; discussing the task draft does not request inspection.",
             "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation.",
-            'The JSON shape must be: {"intent": "work_request|project_understanding|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
+            'The JSON shape must be: {"intent": "work_request|project_understanding|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
             "team_commands and team_authorization are required only for intent team_management; omit them otherwise.",
             "Every team command is a proposal requiring a separate user confirmation. The team_authorization field is descriptive and never grants execution authority.",
             "Use exact Worker IDs from the Team summary. When names match multiple Workers, list their roles, names and IDs and ask the user to select; never choose the first match.",
@@ -410,7 +415,7 @@ def _parse_chat_turn(output: str) -> dict[str, object]:
         raise ManagerExecutionError("The configured Task Assistant did not return a structured chat response.")
     intent = str(payload.get("intent", "") or "").strip()
     response = str(payload.get("response", "") or "").strip()
-    if intent not in {"work_request", "project_understanding", "team_management", "ambiguous"} or not response or len(response) > 4_000:
+    if intent not in {"work_request", "project_understanding", "project_question", "team_management", "ambiguous"} or not response or len(response) > 4_000:
         raise ManagerExecutionError("The configured Task Assistant returned an invalid structured chat response.")
     parsed: dict[str, object] = {"intent": intent, "response": response}
     if intent == "team_management":

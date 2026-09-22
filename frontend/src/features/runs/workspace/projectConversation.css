@@ -41,3 +41,44 @@
 
 .work-workspace-shell .project-task-identity { display: grid; gap: 0.35rem; padding: 1rem; font-size: 0.8rem; overflow-wrap: anywhere; }
 .work-workspace-shell .project-task-identity small { opacity: 0.7; }
+
+/* Keep project scope and entry modes visible without consuming the conversation. */
+.work-workspace-shell .project-conversation-scope { padding-block: .3rem; flex-shrink: 0; }
+.work-workspace-shell .project-composer-modes { padding: 0 0 .25rem; }
+.work-workspace-shell .project-composer-modes button { padding: .3rem .65rem; }
+.work-workspace-shell .team-change-context[data-state="message"] { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.work-workspace-shell .team-change-context[data-state="message"] button { margin-top: 0; }
+
+.work-workspace-shell .project-assistant-settings {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 2.5rem; height: 2.5rem; margin-left: auto;
+  border: 1px solid var(--work-border); border-radius: 12px;
+  background: var(--work-material); color: var(--work-text); cursor: pointer;
+}
+
+.work-workspace-shell .conversation-blocker-notice { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; padding: .6rem 1rem; color: var(--work-text-muted); font-size: .82rem; }
+.work-workspace-shell .conversation-blocker-notice button { color: var(--work-accent-strong); background: transparent; border: 0; text-decoration: underline; cursor: pointer; font: inherit; }
+.work-workspace-shell .task-blocker { margin: .75rem 1rem; padding: 1rem; border: 1px solid var(--work-border); border-radius: 12px; color: var(--work-text); background: var(--work-material); }
+.work-workspace-shell .task-blocker h3 { margin: 0; font-size: .95rem; }
+.work-workspace-shell .task-blocker p { font-size: .875rem; line-height: 1.6; }
+.work-workspace-shell .task-blocker details { margin: .75rem 0; font-size: .8rem; }
+.work-workspace-shell .task-blocker summary { cursor: pointer; color: var(--work-text-muted); }
+.work-workspace-shell .task-blocker pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
+
+.work-workspace-shell .team-attention[data-kind="approval"] { max-width: min(92%, 40rem); padding: 1.1rem 1.25rem; border: 1px solid var(--work-border); box-shadow: none; background: var(--work-material); }
+.work-workspace-shell .approval-decision-summary { display: grid; gap: .85rem; color: var(--work-text); font-size: .875rem; line-height: 1.6; }
+.work-workspace-shell .approval-decision-summary p { margin: 0; }
+.work-workspace-shell .approval-decision-summary__decision { font-weight: 550; }
+.work-workspace-shell .approval-decision-summary__warning { padding: .7rem .85rem; border-left: 3px solid var(--work-accent-strong); background: var(--work-material-deep); border-radius: 6px; }
+.work-workspace-shell .approval-decision-summary__warning p { margin-top: .3rem; }
+.work-workspace-shell .approval-decision-summary__checks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: 0; margin: 0; list-style: none; }
+.work-workspace-shell .approval-decision-summary__checks li { display: flex; gap: .5rem; }
+.work-workspace-shell .approval-decision-summary__checks strong { color: var(--work-text-muted); font-weight: 500; }
+.work-workspace-shell .approval-decision-summary__consequence { display: grid; gap: .25rem; }
+.work-workspace-shell .approval-decision-summary__advice { color: var(--work-text-muted); font-size: .8rem; }
+.work-workspace-shell .approval-decision-summary__details { border-top: 1px solid var(--work-border); padding-top: .65rem; }
+.work-workspace-shell .approval-decision-summary__details > summary { color: var(--work-accent-strong); cursor: pointer; }
+.work-workspace-shell .approval-decision-summary__details[open] > summary { margin-bottom: 1rem; }
+.work-workspace-shell .team-attention[data-kind="approval"] .team-attention__actions { margin-top: 1rem; flex-wrap: wrap; }
+
+.work-workspace-shell .team-pane--outcomes .team-attention { margin: 1rem; max-width: none; }

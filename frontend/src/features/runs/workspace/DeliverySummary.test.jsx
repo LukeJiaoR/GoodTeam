@@ -20,6 +20,14 @@ function deferred() {
 }
 
 describe('Delivery summary', () => {
+  it('labels historical delivery and keeps technical evidence collapsed', () => {
+    render(<DeliverySummary summary={summary} historical t={t} />);
+    expect(screen.getByText('Historical task delivery · read-only')).toBeVisible();
+    expect(screen.getByText('Report version').closest('details')).not.toHaveAttribute('open');
+    expect(screen.getByText('Worker attempts for this run').closest('details')).not.toHaveAttribute('open');
+    expect(screen.getByText('Verification')).toBeVisible();
+    expect(screen.getByText('Next step')).toBeVisible();
+  });
   it('opens the exact report only on request and does not claim verified completion', async () => {
     requestJson.mockResolvedValue(response);
     render(<DeliverySummary summary={summary} t={t} />);

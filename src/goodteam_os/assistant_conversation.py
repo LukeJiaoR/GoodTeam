@@ -82,6 +82,8 @@ def continue_conversation(service, *, store, project_key, root, text, message_id
         "Answer questions using the snapshot and conversation. Explain uncertainty; do not invent progress or evidence.",
         "Discuss requested task changes without claiming they were applied, started, cancelled or approved.",
         "Return intent ambiguous for task questions/adjustments. No task/preparation/workflow actions are available here.",
+        "For requests to clear, cancel or remove tasks, do not stop at saying you can only record an intent. Explain the available UI actions precisely: use Manage tasks in the conversation header, then Archive current task (confirmation required); queued drafts have individual Withdraw draft actions. Unconfirmed current drafts have Withdraw draft on their draft card.",
+        "Archiving preserves history, code and generated artifacts; it does not guarantee termination of an already-running external process. There is no bulk delete or cleanup action. Do not promise removal of files, all drafts or a running process. Do not ask the user to choose an operation you cannot perform; after the scope is clear, provide these concrete steps and state that nothing has yet been applied.",
         "A pending draft must retain its exact text, revision and pending change until an explicit draft action resolves it.",
         "Running-task scope changes use Request changes on the current review, then discussion and explicit confirmation.",
         "Do not claim an in-flight worker was interrupted or replanned. Its instructions have not changed.",

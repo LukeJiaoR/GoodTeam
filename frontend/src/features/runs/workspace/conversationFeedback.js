@@ -43,7 +43,7 @@ export function conversationTimeline(timeline, delivery, { projectKey, runId = '
     const hasReply = !delivery.intentId && timeline.some((item) => (
       item.actor !== 'user' && (item.id === `reply:${delivery.id}` || item.message_id === `reply:${delivery.id}`)
     ));
-    if (delivery.status === 'recorded' || hasReply) return timeline;
+    if (delivery.status === 'recorded' || hasReply || !delivery.intentId) return timeline;
     return timeline.map((item) => item.id === serverId || item.message_id === serverId
       ? { ...item, delivery_status: delivery.status } : item);
   }

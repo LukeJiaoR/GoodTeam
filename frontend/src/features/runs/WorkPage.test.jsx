@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+vi.mock('../reviews/ReviewPage', () => ({ default: ({ selectedReviewId, onClose }) => (
+  <section role="dialog" aria-label="Review document"><p>{selectedReviewId}</p><button onClick={onClose}>Back to task</button></section>
+) }));
+
 vi.mock('@xyflow/react', async () => {
   const React = await import('react');
   return {
@@ -457,6 +461,7 @@ test('keeps an active Operator mission on Work when workflow history has a stale
   expect(await screen.findByRole('region', { name: 'Task Assistant' })).toBeVisible();
   expect(screen.getByText('Keep the current Operator mission visible through review.')).toBeVisible();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work');
+  if (!document.querySelector('.work-context-disclosure').open) fireEvent.click(screen.getByText('Task & history'));
   const selector = await screen.findByRole('combobox', { name: 'Select run' });
   expect(selector.closest('.work-run-context')).toBeInTheDocument();
   expect(selector.closest('.work-run-context__actions')).toBeNull();
@@ -731,7 +736,7 @@ test('submits the exact version-bound approval from the Task Assistant', async (
 
   renderWorkPage();
 
-  const manager = screen.getByRole('region', { name: 'Task Assistant' });
+  const manager = document.querySelector('.team-pane--outcomes');
   const attention = manager.querySelector('.team-attention');
   await user.click(within(attention).getByRole('button', { name: 'Approve and continue' }));
 
@@ -768,7 +773,7 @@ test('refreshes the Task Assistant brief when exact approval binding is stale', 
 
   renderWorkPage();
 
-  const manager = screen.getByRole('region', { name: 'Task Assistant' });
+  const manager = document.querySelector('.team-pane--outcomes');
   await user.click(within(manager).getByRole('button', { name: 'Approve and continue' }));
 
   await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
@@ -829,7 +834,7 @@ test('does not lend an actionable review to another same-role Outcome', async ()
   expect(within(dialog).queryByText('work.plan.status.waiting')).not.toBeInTheDocument();
 });
 
-test('opens exact Task Assistant review from the mobile Task Assistant tab and retains its Outcome target', async () => {
+test('opens exact review from the mobile Outcomes tab and retains its Outcome target', async () => {
   const data = managerReviewData();
   const scrollIntoView = vi.fn();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -844,32 +849,34 @@ test('opens exact Task Assistant review from the mobile Task Assistant tab and r
   renderWorkPage('/projects/DEMO/work/runs/run-active?mobile=manager-first');
   const tablist = screen.getByRole('tablist', { name: 'Team panes' });
   const managerTab = within(tablist).getByRole('tab', { name: /Task Assistant/ });
-  const outcomesTab = within(tablist).getByRole('tab', { name: 'Outcomes' });
+  const outcomesTab = within(tablist).getByRole('tab', { name: /Outcomes/ });
   const managerPanel = document.getElementById('team-panel-manager');
   const outcomesPanel = document.getElementById('team-panel-outcomes');
-  const reviewButton = within(managerPanel).getByRole('button', { name: 'Inspect details →' });
+  await user.click(outcomesTab);
+  const reviewButton = within(outcomesPanel).getByRole('button', { name: 'Inspect details →' });
 
   await user.click(reviewButton);
 
   const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
   expect(dialog).toBeVisible();
   expect(within(dialog).getByText('Architecture security review')).toBeVisible();
-  expect(managerTab).toHaveAttribute('aria-selected', 'true');
-  expect(managerPanel).toBeVisible();
-  expect(outcomesPanel).not.toBeVisible();
+  expect(outcomesTab).toHaveAttribute('aria-selected', 'true');
+  expect(outcomesPanel).toBeVisible();
+  expect(managerPanel).not.toBeVisible();
   expect(document.querySelector('[data-task-id="DEMO-ARCH"]')).toHaveAttribute('data-active-review', 'true');
   expect(document.querySelector('[data-task-id="DEMO-SEC"]')).not.toHaveAttribute('data-active-review');
-  expect(scrollIntoView).not.toHaveBeenCalled();
+  expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
 
   await user.click(within(dialog).getAllByRole('button', { name: 'Close' })[0]);
 
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(managerTab).toHaveAttribute('aria-selected', 'true');
-  expect(managerPanel).toBeVisible();
+  expect(outcomesTab).toHaveAttribute('aria-selected', 'true');
+  expect(outcomesPanel).toBeVisible();
   expect(reviewButton).toHaveFocus();
   expect(document.querySelector('[data-task-id="DEMO-ARCH"]')).toHaveAttribute('data-active-review', 'true');
 
+  await user.click(managerTab);
   await user.click(outcomesTab);
 
   expect(outcomesTab).toHaveAttribute('aria-selected', 'true');
@@ -891,10 +898,10 @@ test('requires confirmation before the Task Assistant cancels a mission', async 
 
   renderWorkPage();
 
-  await userEvent.click(screen.getByRole('button', { name: 'Cancel mission' }));
-  expect(screen.getByText(/Cancel the whole mission/)).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: 'Archive current task' }));
+  expect(screen.getByText(/moves the current task to history/)).toBeVisible();
   expect(mocks.terminateRun).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole('button', { name: 'Terminate this run' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Archive current task' }));
   expect(mocks.terminateRun).toHaveBeenCalledWith('DEMO');
 });
 

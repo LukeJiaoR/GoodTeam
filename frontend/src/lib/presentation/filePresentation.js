@@ -8,6 +8,7 @@ export function isAbsoluteFilePath(value) {
 }
 
 const DOCUMENT_KINDS = new Set([
+  'implementation_handoff', 'qa_report', 'review_report', 'release_notes',
   'takeover_context', 'task_ledger', 'takeover', 'prd', 'rfc', 'qa',
   'security_review', 'implementation', 'release', 'plan', 'review',
 ]);

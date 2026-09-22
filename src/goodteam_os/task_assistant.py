@@ -56,6 +56,15 @@ _UNDERSTANDING_TERMS = (
 )
 
 
+# Both historical and current onboarding suggestions express discovery, not a task.
+_DISCOVERY_STARTERS = {
+    "这是一个新项目，请帮我梳理想法并开始搭建。",
+    "这是一个新项目，请先帮我梳理产品想法。",
+    "This is a new project. Help me shape and start it.",
+    "This is a new project. Help me clarify the product idea first.",
+}
+
+
 class TaskAssistantService:
     def __init__(
         self,
@@ -155,7 +164,14 @@ class TaskAssistantService:
         team_commands: list[dict[str, object]] = []
         team_authorization = ""
         detection = detect_team_commands(text, team_view)
-        if detection is not None and detection.candidates:
+        if str(text).strip() in _DISCOVERY_STARTERS:
+            intent = "ambiguous"
+            manager_response = (
+                "我们先明确产品想法：你希望做什么产品，主要给谁使用？"
+                if re.search(r"[\u4e00-\u9fff]", text)
+                else "Let's clarify the idea first: what product do you want to make, and who is it for?"
+            )
+        elif detection is not None and detection.candidates:
             # Known ambiguous names must not be resolved to a model-selected first match.
             intent, manager_response = "ambiguous", detection.reply
         elif self.project_config is not None and (not self._manager_runtime_is_builtin() or self._manager_requires_skills(project_key, root, message_id)):
@@ -252,6 +268,13 @@ class TaskAssistantService:
                 state,
                 project_key,
                 root,
+            )
+        elif intent == "project_question":
+            session = store.append_event(
+                f"reply:{message_id}",
+                "project_question_answered",
+                content=manager_response,
+                details={"manager_execution": manager_execution},
             )
         elif intent == "work_request":
             event = stage_draft(store, text=str(text), message_id=message_id)

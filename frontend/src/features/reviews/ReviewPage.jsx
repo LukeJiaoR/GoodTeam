@@ -3,6 +3,7 @@ import { CheckCircle2, FileDiff, FileText, ListChecks, PencilLine } from 'lucide
 import { Link, useBlocker, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import MarkdownToc from '../../components/MarkdownToc';
 import Button from '../../components/ui/Button';
+import WorkspacePanel from '../../components/ui/WorkspacePanel';
 import DecisionActions from '../../components/DecisionActions';
 import EvidenceSummary from '../../components/EvidenceSummary';
 import MarkdownView from '../../components/ui/MarkdownView';
@@ -200,19 +201,19 @@ function ArtifactPanel({ baseline, canEdit, onChange, review, t, value }) {
   );
 }
 
-function DecisionResult({ decisionNote, projectKey, t }) {
+function DecisionResult({ decisionNote, projectKey, onReturn, t }) {
   if (!decisionNote) return null;
   const decision = decisionNote.decision || 'approved';
   return (
     <div className="review-decision-result" role="status">
       <strong>{t(`review.decision.result.${decision}`, { gate: String(decisionNote.gate || '').toUpperCase() })}</strong>
       {decisionNote.nextLabel ? <span>{t('review.decision.next', { node: decisionNote.nextLabel })}</span> : null}
-      <Link to={routes.projectWork(projectKey)}>{t('review.decision.viewNext')}</Link>
+      {onReturn ? <Button variant="secondary" onClick={onReturn}>{t('review.decision.viewNext')}</Button> : <Link to={routes.projectWork(projectKey)}>{t('review.decision.viewNext')}</Link>}
     </div>
   );
 }
 
-function Inspector({ answers, approveDisabled, artifactConflict, artifactReady, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onReloadArtifact, onRequestChanges, onRetryError, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
+function Inspector({ onReturn, answers, approveDisabled, artifactConflict, artifactReady, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onReloadArtifact, onRequestChanges, onRetryError, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
   const evidence = asObject(review.evidence_snapshot);
   const provenance = asObject(review.reviewer_provenance);
   const recommendation = asObject(review.recommendation);
@@ -237,7 +238,7 @@ function Inspector({ answers, approveDisabled, artifactConflict, artifactReady, 
       {review.artifact_path ? <div className="review-editor-actions"><Button variant="secondary" busy={busy === 'save'} disabled={!artifactReady} onClick={onSave}>{t('review.actions.save')}</Button><Button variant="secondary" busy={busy === 'refine'} disabled={!artifactReady} onClick={onRefine}>{t('review.actions.refine')}</Button></div> : <p className="product-boundary-note">{t('review.artifact.notGenerated')}</p>}
       {proposed ? <section className="review-proposal"><h3>{t('review.refinement.title')}</h3><div className="review-proposal-content"><MarkdownView content={proposed.content} /></div><div className="review-editor-actions"><Button busy={busy === 'accept'} onClick={onAccept}>{t('review.refinement.accept')}</Button><Button variant="secondary" busy={busy === 'discard'} onClick={onDiscard}>{t('review.refinement.discard')}</Button></div></section> : null}
       {error ? <ProductError error={error} onRetry={onRetryError} t={t} /> : null}
-      <DecisionResult decisionNote={decisionNote} projectKey={projectKey} t={t} />
+      <DecisionResult decisionNote={decisionNote} projectKey={projectKey} onReturn={onReturn} t={t} />
       {review.is_actionable ? (
         <DecisionActions
           approveDisabled={approveDisabled}
@@ -254,33 +255,38 @@ function Inspector({ answers, approveDisabled, artifactConflict, artifactReady, 
 
 function DirtyDialog({ onLeave, onStay, t }) {
   return (
-    <div className="product-dialog-backdrop">
-      <div className="product-dialog" role="dialog" aria-modal="true" aria-labelledby="review-dirty-title">
-        <h2 id="review-dirty-title">{t('review.dirty.title')}</h2>
-        <p>{t('review.dirty.description')}</p>
-        <div className="product-dialog-actions">
-          <Button variant="secondary" onClick={onLeave}>{t('review.dirty.leave')}</Button>
-          <Button variant="primary" onClick={onStay}>{t('review.dirty.stay')}</Button>
-        </div>
+    <WorkspacePanel compact title={t('review.dirty.title')} closeLabel={t('work.plan.close')} onClose={onStay}>
+      <p>{t('review.dirty.description')}</p>
+      <div className="product-dialog-actions">
+        <Button variant="secondary" onClick={onLeave}>{t('review.dirty.leave')}</Button>
+        <Button variant="primary" onClick={onStay}>{t('review.dirty.stay')}</Button>
       </div>
-    </div>
+    </WorkspacePanel>
   );
 }
 
-export default function ReviewPage() {
-  const { projectKey = '', reviewId = '' } = useParams();
+function ReviewSurface({ embedded, onClose, busy, t, children }) {
+  return embedded
+    ? <WorkspacePanel title={t('review.title')} closeLabel={t('work.panel.back')} busy={busy} onClose={onClose}>{children}</WorkspacePanel>
+    : children;
+}
+
+export default function ReviewPage({ embedded = false, selectedReviewId = '', expectedRunId = '', onClose, onUpdated, onChangeDiscussion }) {
+  const params = useParams();
+  const projectKey = params.projectKey || '';
+  const reviewId = embedded ? selectedReviewId : params.reviewId || '';
   const { t } = useOutletContext();
   const toast = useToast();
   const navigate = useNavigate();
   const api = useMemo(() => ({ getProjectState: reviewApi.getReviewState }), []);
   const { data, error, refresh, status } = useProjectState(projectKey, { api });
   const runId = data?.state?.run_id || data?.active_run?.run_id || data?.team_workspace?.mission?.run_id || '';
-  const reviews = (data?.approval_reviews || [])
+  const boundRunMatches = !embedded || Boolean(expectedRunId && expectedRunId === runId);
+  const reviews = (boundRunMatches ? data?.approval_reviews || [] : [])
     .filter((review) => review.is_actionable || review.artifact_path || review.content || !review.is_pending)
     .sort((left, right) => reviewPriority(left) - reviewPriority(right));
   const selected = reviews.find((item) => item.approval === reviewId)
-    || reviews.find((item) => item.is_actionable)
-    || reviews[0];
+    || (!embedded ? reviews.find((item) => item.is_actionable) || reviews[0] : null);
   const artifactRunId = runId || selected?.run_id || '';
   const artifactDraft = useReviewArtifactDraft(projectKey, artifactRunId, selected);
   const { content, baseline, artifactVersion, full: artifactFull, identity: artifactIdentity } = artifactDraft;
@@ -332,8 +338,8 @@ export default function ReviewPage() {
   }, [submittedCount]);
 
   useEffect(() => {
-    if (!reviewId && selected?.approval) navigate(routes.projectReviewItem(projectKey, selected.approval), { replace: true });
-  }, [navigate, projectKey, reviewId, selected?.approval]);
+    if (!embedded && !reviewId && selected?.approval) navigate(routes.projectReviewItem(projectKey, selected.approval), { replace: true });
+  }, [embedded, navigate, projectKey, reviewId, selected?.approval]);
 
   useEffect(() => {
     if (selected?.recovery?.available) { queueMicrotask(() => setQuestions([])); return undefined; }
@@ -350,6 +356,7 @@ export default function ReviewPage() {
     try {
       const result = await operation();
       await refresh();
+      await onUpdated?.();
       return result;
     } catch (caught) {
       setMutationError(caught);
@@ -458,6 +465,7 @@ export default function ReviewPage() {
     });
   };
   const requestChanges = async (note = '') => {
+    if (embedded && dirty) { setMutationError(new Error(t('work.panel.saveBeforeChange'))); return; }
     const runId = data?.state?.run_id || '';
     const expectedTarget = {
       run_id: runId,
@@ -470,17 +478,25 @@ export default function ReviewPage() {
       runApi.startChangeIntent(projectKey, selected.approval, expectedTarget, { initialText: note })
     ));
     if (!result) return;
+    if (embedded) { await onChangeDiscussion?.(); return; }
     navigate(runId ? routes.projectRun(projectKey, runId) : routes.projectWork(projectKey));
   };
 
-  if (status === 'loading') return <main id="main-content" className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></main>;
-  if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty) setConfirmOpen(true);
+    else onClose?.();
+  };
+  const Page = embedded ? 'section' : 'main';
+  if (status === 'loading') return <ReviewSurface embedded={embedded} onClose={requestClose} t={t}><Page id={embedded ? undefined : 'main-content'} className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></Page></ReviewSurface>;
+  if (status === 'error' && !data) return <ReviewSurface embedded={embedded} onClose={requestClose} t={t}><Page id={embedded ? undefined : 'main-content'} className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></Page></ReviewSurface>;
   const displayedError = mutationError || artifactDraft.error;
   const steps = data?.workflow_steps || [];
   const stepIndex = steps.findIndex((step) => step.approval === selected?.approval);
   const actionableCount = reviews.filter((review) => review.is_actionable || review.recovery?.available).length;
   return (
-    <main id="main-content" className="product-page product-review-page">
+    <ReviewSurface embedded={embedded} onClose={requestClose} busy={Boolean(busy)} t={t}>
+    <Page id={embedded ? undefined : 'main-content'} className="product-page product-review-page">
       <header className="review-page-header">
         <div>
           <p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p>
@@ -493,14 +509,14 @@ export default function ReviewPage() {
           <div><dt>{t('review.workspace.stage')}</dt><dd>{stepIndex >= 0 ? `${stepIndex + 1}/${steps.length}` : '—'}</dd></div>
         </dl>
       </header>
-      {!selected ? <p className="product-empty-copy">{t('review.empty')}</p> : (
+      {!selected ? <p className="product-empty-copy">{t(boundRunMatches ? 'review.empty' : 'work.panel.taskChanged')}</p> : (
         <div className="review-workspace">
-          <ReviewList projectKey={projectKey} reviews={reviews} selected={selected.approval} t={t} />
+          {!embedded ? <ReviewList projectKey={projectKey} reviews={reviews} selected={selected.approval} t={t} /> : null}
           {selected.recovery?.available ? <TakeoverRecovery key={selected.approval} busy={busy} error={mutationError} review={selected} t={t}
             onRecover={(note) => mutate('recover', () => reviewApi.recoverTakeoverBrief(projectKey, note))}
           /> : <>
             <ArtifactPanel key={`${projectKey}:${runId}:${selected.approval}`} baseline={baseline} canEdit={artifactFull} review={selected} value={content} onChange={artifactDraft.setContent} t={t} />
-            <Inspector answers={answers} approveDisabled={approveDisabled} artifactConflict={artifactDraft.conflict} artifactReady={artifactFull && Boolean(artifactVersion && artifactRunId)} busy={busy} decisionNote={decisionNote} error={displayedError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} submittedCount={submittedCount} t={t}
+            <Inspector onReturn={embedded ? requestClose : undefined} answers={answers} approveDisabled={approveDisabled} artifactConflict={artifactDraft.conflict} artifactReady={artifactFull && Boolean(artifactVersion && artifactRunId)} busy={busy} decisionNote={decisionNote} error={displayedError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} submittedCount={submittedCount} t={t}
               projectKey={projectKey}
               onSave={save}
               onRefine={refine}
@@ -518,7 +534,8 @@ export default function ReviewPage() {
           </>}
         </div>
       )}
-      {confirmOpen ? <DirtyDialog t={t} onLeave={() => { blocker.proceed(); setConfirmOpen(false); }} onStay={() => { blocker.reset(); setConfirmOpen(false); }} /> : null}
-    </main>
+      {confirmOpen ? <DirtyDialog t={t} onLeave={() => { if (blocker.state === 'blocked') blocker.proceed(); else onClose?.(); setConfirmOpen(false); }} onStay={() => { if (blocker.state === 'blocked') blocker.reset(); setConfirmOpen(false); }} /> : null}
+    </Page>
+    </ReviewSurface>
   );
 }

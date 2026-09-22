@@ -1,10 +1,14 @@
+import { blockerSummary } from './blockerPresentation';
+import { focusWorkContext } from './currentWorkContext';
 import { useEffect, useRef } from 'react';
+import { Settings } from 'lucide-react';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import { availableChangeTarget } from './conversationChangeContext';
 import { TeamAvatar, TimelineItem } from './ConversationTimeline';
 import { TaskAttention, ProjectPreparationAttention } from './TaskAttention';
 import AssistantControls from './AssistantControls';
+import AssistantPendingReply from './AssistantPendingReply';
 import ConversationComposer from './ConversationComposer';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 
@@ -17,9 +21,10 @@ function isNearBottom(element) {
 }
 
 export default function ProjectConversation({
+  onConfigureRuntime, canManageTasks = false, executionRunning = false,
   assistantState,
   onAssistantAction,
-  attention,
+  attention, acceptedMessage,
   busy,
   assistantBusy = busy,
   error,
@@ -82,7 +87,7 @@ export default function ProjectConversation({
 
   useEffect(() => {
     const node = conversationRef.current;
-    const target = node?.querySelector('.assistant-team-decision, .assistant-request');
+    const target = node?.querySelector('.assistant-team-decision, .assistant-request, .assistant-pending-reply');
     if (target) node.scrollTop += target.getBoundingClientRect().top - node.getBoundingClientRect().top - 16;
   }, [assistantState?.pending_team_decision?.id, requestStatus]);
 
@@ -104,8 +109,13 @@ export default function ProjectConversation({
             <span className="team-pane__eyebrow">{t('work.manager.subtitle')}</span>
           </div>
         </div>
+        {onConfigureRuntime ? <button type="button" className="project-assistant-settings"
+          aria-label={t('assistant.configure')} title={t('assistant.configure')} onClick={onConfigureRuntime}>
+          <Settings size={18} aria-hidden="true" />
+        </button> : null}
       </header>
       <div className="project-conversation-scope">
+        {canManageTasks ? <button type="button" onClick={event => focusWorkContext(event.currentTarget.closest('.product-work-page'), 'execution')}>{t('work.manager.manageTasks')}</button> : null}
         <span>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</span>
         {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
       </div>
@@ -114,12 +124,12 @@ export default function ProjectConversation({
             {error && !(error.code === 'manager_execution_failed' && requestStatus) ? <ProductError error={error} t={t} /> : null}
             <ol className="team-manager-timeline" aria-label={t('assistant.project.history')}>
               {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t} />)}
+              {Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => request.status === 'running').map(([id, request]) => (
+                <AssistantPendingReply key={`${id}:${request.attempt}`} request={request} t={t} />
+              ))}
             </ol>
-            {assistantState?.activity?.length ? <details className="project-assistant-activity">
-              <summary>{t('assistant.project.activity')}</summary>
-              <ul>{assistantState.activity.map((item) => <li key={item.id}><code>{item.id}</code> · {item.status}</li>)}</ul>
-            </details> : null}
             <AssistantControls
+              showRuntime={false}
               runtime={assistantState?.runtime}
               requests={assistantState?.assistant_requests}
               pending={assistantState?.pending_team_decision}
@@ -143,7 +153,17 @@ export default function ProjectConversation({
               onConfirm={onConfirmTask}
               t={t}
             />
-            {attention?.kind === 'project_preparation' ? (
+            {attention?.kind === 'approval' ? (
+              <div className="conversation-blocker-notice">
+                <span>{t('work.approvalCard.pending')}</span>
+                <button type="button" onClick={event => focusWorkContext(event.currentTarget.closest('.product-work-page'), 'approval')}>{t('work.approvalCard.view')}</button>
+              </div>
+            ) : attention?.kind === 'blocker' ? (
+              <div className="conversation-blocker-notice" role="status">
+                <span>{executionRunning ? t('work.blocker.workerActive') : blockerSummary(attention, t)}</span>
+                <button type="button" onClick={(event) => focusWorkContext(event.currentTarget.closest('.product-work-page'), 'blocker')}>{t('work.blocker.view')}</button>
+              </div>
+            ) : attention?.kind === 'project_preparation' ? (
               <ProjectPreparationAttention
                 attention={attention}
                 busy={busy}
@@ -169,7 +189,10 @@ export default function ProjectConversation({
       {!mission?.read_only || onStart ? (
         <footer className="team-manager-dock">
           <ConversationComposer
+            acceptedMessage={acceptedMessage}
+            awaitingReply={Object.values(assistantState?.assistant_requests || {}).some(request => request.status === 'running')}
             key={projectKey}
+            draftKey={JSON.stringify([projectKey, 'project-conversation'])}
             busy={Boolean(assistantBusy) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
             onStart={onStart}
             onQueueTask={onQueueTask}

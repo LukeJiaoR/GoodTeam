@@ -6,13 +6,49 @@ import { shouldSubmitConversationOnEnter } from './conversationFeedback';
 import ConversationChangeContext from './ConversationChangeContext.jsx';
 import { matchesSavedChange } from './conversationChangeContext';
 
-export default function ConversationComposer({
+function Composer({
+  draftKey, acceptedMessage, awaitingReply = false,
   busy, embedded = true, error, onStart, onQueueTask, suggestions = [], t,
   changeIntent, onDiscussChangeIntent, onKeepDiscussingChangeIntent,
   activeTask = false, changeTarget = null, recordedChange, onStartChangeIntent,
 }) {
   const [entryMode, setEntryMode] = useState('message');
-  const [drafts, setDrafts] = useState({});
+  const storageKey = draftKey ? `goodteam:conversation-draft:${draftKey}` : '';
+  const [drafts, setDrafts] = useState(() => {
+    try {
+      const saved = storageKey ? JSON.parse(sessionStorage.getItem(storageKey)) : null;
+      return saved && typeof saved === 'object' && !Array.isArray(saved)
+        ? Object.fromEntries(Object.entries(saved).filter(([, value]) => typeof value === 'string'))
+        : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const unsent = Object.fromEntries(Object.entries(drafts).filter(([, value]) => value.length));
+      if (Object.keys(unsent).length) sessionStorage.setItem(storageKey, JSON.stringify(unsent));
+      else sessionStorage.removeItem(storageKey);
+    } catch { /* The composer stays usable when browser storage is unavailable. */ }
+  }, [drafts, storageKey]);
+  const clearDeliveredDraft = (scope, sent) => {
+    // A request may complete after the user navigates away. Clear the saved
+    // text only if it still matches this request, preserving any newer edit.
+    if (!storageKey) return;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(storageKey));
+      if (!saved || saved[scope] !== sent) return;
+      delete saved[scope];
+      if (Object.keys(saved).length) sessionStorage.setItem(storageKey, JSON.stringify(saved));
+      else sessionStorage.removeItem(storageKey);
+    } catch { /* Storage availability must not change delivery semantics. */ }
+  };
+  const acceptedId = useRef(null);
+  useEffect(() => {
+    if (!acceptedMessage?.id || acceptedId.current === acceptedMessage.id) return;
+    acceptedId.current = acceptedMessage.id;
+    setDrafts(current => current.message === acceptedMessage.text
+      ? { ...current, message: '' } : current);
+  }, [acceptedMessage]);
   const [modes, setModes] = useState({});
   const [sending, setSending] = useState(false);
   const [submitError, setSubmitError] = useState(null);
@@ -49,6 +85,7 @@ export default function ConversationComposer({
         onKeepDiscussing: onKeepDiscussingChangeIntent,
       });
       if (result !== false) {
+        clearDeliveredDraft(scopeKey, sent);
         setDrafts((current) => (current[scopeKey] ?? seed) === sent
           ? { ...current, [scopeKey]: '' } : current);
       }
@@ -74,6 +111,7 @@ export default function ConversationComposer({
       if (!matchesSavedChange(result, changeTarget, sent)) {
         throw new Error(t('work.changeContext.unconfirmed'));
       }
+      clearDeliveredDraft(scopeKey, sent);
       setModes((current) => ({ ...current, [result.intent_commit.id]: 'changes' }));
       setDrafts((current) => (current[scopeKey] ?? seed) === sent
         ? { ...current, [scopeKey]: '' } : current);
@@ -137,9 +175,18 @@ export default function ConversationComposer({
         />
       </label>
       {error || submitError ? <ProductError error={error || submitError} t={t} /> : null}
-      <Button busy={blocked} disabled={blocked || !goal.trim()} type="submit">
-        {t(queuing ? 'assistant.project.saveTask' : changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}
+      <div className="conversation-submit-row">
+      <small className="conversation-keyboard-hint">{t('work.composer.keyboardHint')}</small>
+      <Button busy={sending && !awaitingReply} disabled={blocked || !goal.trim()} type="submit">
+        {t(awaitingReply && !queuing && !changing ? 'work.composer.awaitingReply' : queuing ? 'assistant.project.saveTask' : changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}
       </Button>
+      </div>
     </form>
   );
+}
+
+// The caller owns the draft scope: project chat stays mounted across task
+// contexts, while changing projects restores that project's tab-local draft.
+export default function ConversationComposer(props) {
+  return <Composer key={props.draftKey || 'transient'} {...props} />;
 }

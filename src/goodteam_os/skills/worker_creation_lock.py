@@ -12,11 +12,9 @@ from functools import wraps
 import hashlib
 import os
 from pathlib import Path
-import stat
 import threading
 
-from .filesystem import directory
-from .models import SkillError
+from .filesystem import directory, open_lock_file
 
 _GUARD = threading.Lock()
 _LOCKS: dict[str, threading.RLock] = {}
@@ -36,12 +34,8 @@ def _creation_lock(root: Path, key: str):
             yield
             return
         with directory(location, create=True) as fd:
-            descriptor = os.open(digest + ".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
-                                 0o600, dir_fd=fd)
+            descriptor = open_lock_file(fd, digest + ".lock")
             try:
-                info = os.fstat(descriptor)
-                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                    raise SkillError("unsafe_file", "Worker creation lock is unsafe.")
                 fcntl.flock(descriptor, fcntl.LOCK_EX)
                 _HELD.keys = held | {identity}
                 try:

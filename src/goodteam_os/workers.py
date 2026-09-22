@@ -611,6 +611,8 @@ def _codex_summary(exit_code: int, stderr: str) -> str:
     if "401 unauthorized" in normalized:
         return f"Codex CLI exited with code {exit_code}: 401 Unauthorized."
     status_match = re.search(r"unexpected status\s+(\d{3})\s+([^:,.\n]+(?:\s+[^:,.\n]+)?)", relevant_error, re.IGNORECASE)
+    if status_match is None:
+        status_match = re.search(r"last status:?\s*(\d{3})\s+([^\n,:]+)", relevant_error, re.IGNORECASE)
     if status_match:
         return f"Codex CLI exited with code {exit_code}: {status_match.group(1)} {status_match.group(2).strip()}."
     if "stream disconnected" in normalized:

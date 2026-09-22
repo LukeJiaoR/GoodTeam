@@ -1,10 +1,11 @@
 # Code Review protocol preparation (S6 / #446)
 
 Status: **non-activated S6 preparation, not complete S6 or real review acceptance**.
-The user authorized proceeding to the next independent development step while
-#440/#445 remain blocked. This branch starts from main after #462; it neither
-includes nor merges #463. #446 remains Open. Do not turn passing CI into proof of
-actual Codex loading, read-only isolation, report delivery or review quality.
+The content/readiness groundwork from #463 is merged at `ed70a0f0`, and this
+preparation is integrated with main `6761209f` (including #464). The earlier
+missing-merge dependency is resolved. #440/#445 still track real Runtime
+activation separately; #446 remains Open. Passing preparation tests is not
+proof of actual Codex loading, sandbox isolation, report delivery or review quality.
 
 ## Captured protocol versus replaceable methods
 
@@ -98,10 +99,14 @@ Tier 3/4. Focused tests exercise actual task capture, Worker publication, parall
 review creation, direct dispatch, historical replay, retries, readonly/session
 rejection and legacy-wrapper rejection. They preserve explicit user inputs and
 require zero Runtime calls. A package test checks optional installation without
-implicit binding. Existing legacy regression assertions are retained.
+implicit binding. Integration tests also pass the captured S6 protocol through
+the merged S5 provider, covering required/on-demand/task-required content,
+provider restart, new contexts, changed defaults/source bytes, and protocol-file
+tampering. Their authority is explicitly a fixture, not a live Runtime. Existing
+legacy regression assertions are retained.
 
-Product tests run only in the authorized CI environment. Full backend/Ruff and
-unchanged HTTP/browser/frontend validation remain required, with exact head/base
-and logs recorded in the PR. Synthetic fixtures are not real-model evidence.
+Follow the current repository verification tiers for isolated local and CI
+validation. Full backend/Ruff and HTTP/browser/frontend validation remain
+required, with exact head/base and logs recorded in the PR. Synthetic fixtures are not real-model evidence.
 No deployment, provider calls, credential reuse, host/global settings or runtime
 activation are authorized by this document.

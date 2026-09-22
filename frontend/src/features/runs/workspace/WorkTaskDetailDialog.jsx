@@ -232,6 +232,7 @@ export default function WorkTaskDetailDialog({
   onDecide,
   onClose,
   onRequestChanges,
+  onOpenReview,
   t,
 }) {
   const dialogRef = useRef(null);
@@ -589,7 +590,9 @@ export default function WorkTaskDetailDialog({
                     </button>
                   ) : null}
                   {projectKey && review?.approval ? (
-                    <Link
+                    onOpenReview ? <button type="button" className="task-detail-workbench-link" onClick={() => onOpenReview(review.approval)}>
+                      <FileText size={13} aria-hidden="true" />{t('work.panel.reviewDetails')}
+                    </button> : <Link
                       to={routes.projectReviewItem(projectKey, review.approval)}
                       className="task-detail-workbench-link"
                     >
@@ -718,13 +721,15 @@ export default function WorkTaskDetailDialog({
 
               {projectKey && review?.approval ? (
                 <div className="task-detail-workbench-footer">
-                  <Link
+                  {onOpenReview ? <button type="button" className="task-detail-workbench-link" onClick={() => onOpenReview(review.approval)}>
+                      <FileText size={13} aria-hidden="true" />{t('work.panel.reviewDetails')}
+                    </button> : <Link
                     to={routes.projectReviewItem(projectKey, review.approval)}
                     className="task-detail-workbench-link"
                   >
                     <ExternalLink size={13} />
                     {t('work.plan.approval.openWorkbench')} →
-                  </Link>
+                  </Link>}
                 </div>
               ) : null}
             </section>
