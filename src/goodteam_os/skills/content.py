@@ -240,6 +240,12 @@ class SkillContextProvider:
             _operator, _packages, final_ref, final_snapshot = self._validated()
             if final_ref != ref or self._session(final_snapshot, context_id, "prepare") != session:
                 raise SkillConflict("runtime_identity_changed", "Content authority changed during preparation.")
+            # Authorization itself can yield while the Operator revokes a
+            # version or invalidates this Worker. Session equality is not a
+            # substitute for a fresh protected preflight after that callback.
+            _operator, _packages, return_ref, _snapshot = self._validated()
+            if return_ref != ref:
+                raise SkillError("snapshot_scope_mismatch", "Content authority changed before context publication.")
             _publish_immutable(fd, name, encoded, code="content_context_conflict")
         return self._reference(record)
 
@@ -312,6 +318,11 @@ class SkillContextProvider:
             _operator, _packages, _ref, final_snapshot = self._validated()
             if self._session(final_snapshot, record["context_id"], "resource") != session:
                 raise SkillConflict("runtime_identity_changed", "Resource authority changed before return.")
+            # Recheck after the final authorization pause, not only before
+            # it. An invalidated request must publish no successful receipt.
+            _operator, _packages, return_ref, _snapshot = self._validated()
+            if return_ref != record["snapshot_ref"]:
+                raise SkillError("snapshot_scope_mismatch", "Content authority changed before resource return.")
             name = "read-" + content_digest(_bytes([record["context_id"], call_id]))[7:] + ".json"
             encoded = _bytes(receipt)
             _publish_immutable(fd, name, encoded, code="content_call_conflict")
