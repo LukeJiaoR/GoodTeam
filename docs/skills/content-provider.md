@@ -85,6 +85,12 @@ panel. No Work conversation message is emitted for each resource read.
 
 ## Still required in this same S5 issue
 
+See [Runtime readiness and S5 implementation decision](runtime-readiness.md)
+for the concrete version/platform plan, executable offline checks, remaining
+integration points and separately required provider limits. The discovered
+binary and available Docker engine remove environment-discovery work from the
+operator's input list; they do not certify an adapter.
+
 The #440-approved actual adapter, version-specific prompt/environment/CLI
 integration, isolated package materialization and authenticated resource transport,
 independent context-bound delivery/read observations, final report return, and
