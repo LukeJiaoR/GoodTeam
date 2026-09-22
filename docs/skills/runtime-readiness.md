@@ -84,9 +84,16 @@ configuration may be used as the required strict execution boundary. Do not
 drop failed checks, reinterpret missing access as success, or silently use a
 broader profile to make a smoke run pass.
 
+The committed [offline evidence record](runtime-readiness-evidence.json) includes
+positive controls, actual helper observations, original/after byte digests,
+binary/config/source identities and the Linux container policy. Host paths and
+container IDs are omitted; SHA-256 values of the original local reports remain
+available for reconciliation. The recorded source commit identifies the exact
+diagnostic code; later documentation/evidence commits do not change those bytes.
+
 ## Disposable Linux envelope
 
-The offline container uses an existing pinned Python image, the integrity-checked
+The offline container uses an existing pinned image with Python, the integrity-checked
 Linux binary/resources, and only the two diagnostic modules. It has no real
 repository, personal HOME, SSH agent, Docker socket, credential, published port
 or production service mount. Package acquisition occurs before sandbox testing;
@@ -105,10 +112,36 @@ Required creation policy:
 read-only mounts: /runtime (pinned CLI), /offline (diagnostic code)
 ```
 
-Run the same module as `python -m goodteam_os.skill_runtime_readiness` with
+Run the same module with the image's Python as `-m goodteam_os.skill_runtime_readiness`, with
 `PYTHONPATH=/offline`, `--codex /runtime/bin/codex`, `--output /tmp/evidence`, and
 `--sandbox-checks`. Capture the stopped container's image ID, creation policy,
-exit code and `/tmp/evidence` before removing only that owned container.
+exit code and `/tmp/evidence` before removing only that owned container. Export
+tmpfs evidence while the container is still running (for example, stream a tar
+from its parent process after the diagnostic finishes); tmpfs content disappears
+on stop. Export the expected regular report files only, never follow CLI-created
+runtime symlinks when extracting evidence on the host.
+
+### Linux observations, 2026-09-22
+
+The ARM64 run used existing `node:22-bookworm` image
+`sha256:a3c1fdb42dec69ca84c34f4574aa5bf79d9df36a7ae9220cb2c5eec0c9abda70`
+and its `/usr/bin/python3`, with the creation policy above and explicit
+`--platform linux/arm64`. CLI help/version passed. Both nested sandbox modes
+exited 1 before the helper ran: **bubblewrap could not create a new namespace**.
+All nine boundary checks in each mode correctly remained **unverified**. The
+positive control was runnable; a setup failure was not mistaken for a denial.
+
+This replaces the vague "no Codex environment" blocker with a concrete platform
+prerequisite: provide a disposable execution envelope that permits Codex's
+unprivileged namespace setup while preserving the outer read/network boundary,
+then rerun both the allowed-read and denied-access controls. This is still
+engineering work, not a reason to request credentials prematurely. No host
+sysctl, Docker daemon policy or existing container was changed.
+
+The first preparatory attempt used an amd64 Python image on the ARM64 host;
+that mixed-architecture result is excluded from selected-platform evidence.
+Its stopped tmpfs export failed, so the corrected ARM64 run exports its reports
+before exit. Neither preparatory failure is presented as acceptance.
 
 A container envelope is not proof of native Skill inventory or the nested Codex
 sandbox. If the nested sandbox cannot start under this policy, mark its checks

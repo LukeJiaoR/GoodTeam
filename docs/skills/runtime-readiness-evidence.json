@@ -1,0 +1,468 @@
+{
+  "schema_version": "skill_runtime_readiness_evidence.v1",
+  "observed_on": "2026-09-22",
+  "source_commit": "bc42d3ea21bb3f2ebc9ec28676cd0319ac0c4b86",
+  "base_commit": "f4d58d02d3741271ba48d1381819c95d21775f43",
+  "scope": "Offline fixed-helper observations, not model conformance or production authority",
+  "redaction": "Host binary/root paths and container IDs omitted; original report digests retained. All sentinels and loopback markers are generated non-secret fixtures.",
+  "observations": [
+    {
+      "platform": "macos_arm64",
+      "original_report_sha256": "4172b0e8e502aec78c7e57faa710a85e1f059919cf2ee5214dfbc9264b8f9f8d",
+      "inspection_code": {
+        "conformance": "sha256:c97e65ae220787699d63e3ee8ddd6e10d8ddf46079e9dddac14dbf591b883b69",
+        "readiness": "sha256:68c0aad925ad6952ed8e8926b0619cba767e8af1dbdb668cc0149ca5ad235487"
+      },
+      "runtime": {
+        "binary_digest": "sha256:8eaf1ad12fe6bf89b1710330f58900014322c7c5af677e43be116d8ac5fc0a9e",
+        "help_digest": "sha256:0e82cfde0122715250e93dc65866caa956b2ac5b9d0b20ec4ad4f9e81486509e",
+        "missing_flags": [],
+        "reason": "CLI syntax advertised; runtime effects unverified",
+        "status": "supported",
+        "version": "0.155.1"
+      },
+      "live_ready": false,
+      "strict_binding_supported": false,
+      "model_invocations": 0,
+      "provider_requests": 0,
+      "provider_cost_usd": 0,
+      "modes": {
+        "legacy_read_only": {
+          "exit_code": 0,
+          "status": "completed",
+          "stderr": "",
+          "helper_observations": {
+            "network_loopback": {
+              "errno": 1,
+              "succeeded": false
+            },
+            "read_control": {
+              "succeeded": true,
+              "value": "086a9d8c76a309cb2dfd46139e3f7e9b34dd00aa89c37aebc4c8bd77972f3636"
+            },
+            "read_outside": {
+              "succeeded": true,
+              "value": "7c68d2f3a36cbad2d24a5f0b3a18e6d63c10ba93df201297086cc2b59dd34bec"
+            },
+            "read_package": {
+              "succeeded": true,
+              "value": "1452ec830ea3bfaa27dfad4c654a482ecf7327e8670584575c982a7109375c91"
+            },
+            "read_source": {
+              "succeeded": true,
+              "value": "10148fc33e63b258aef521eaf7288508dc0b48a5eb2f2c209f213a36708ceb33"
+            },
+            "write_control": {
+              "errno": 1,
+              "succeeded": false
+            },
+            "write_outside": {
+              "errno": 1,
+              "succeeded": false
+            },
+            "write_package": {
+              "errno": 1,
+              "succeeded": false
+            },
+            "write_source": {
+              "errno": 1,
+              "succeeded": false
+            }
+          },
+          "checks": {
+            "network_loopback": {
+              "reason": "Actual permission denial with a working positive control",
+              "status": "supported"
+            },
+            "read_control": {
+              "reason": "Forbidden operation succeeded on a disposable sentinel",
+              "status": "unsupported"
+            },
+            "read_outside": {
+              "reason": "Forbidden operation succeeded on a disposable sentinel",
+              "status": "unsupported"
+            },
+            "read_package": {
+              "reason": "Exact allowed bytes read",
+              "status": "supported"
+            },
+            "read_source": {
+              "reason": "Exact allowed bytes read",
+              "status": "supported"
+            },
+            "write_control": {
+              "reason": "Actual permission denial with a working positive control",
+              "status": "supported"
+            },
+            "write_outside": {
+              "reason": "Actual permission denial with a working positive control",
+              "status": "supported"
+            },
+            "write_package": {
+              "reason": "Actual permission denial with a working positive control",
+              "status": "supported"
+            },
+            "write_source": {
+              "reason": "Actual permission denial with a working positive control",
+              "status": "supported"
+            }
+          },
+          "after_digests": {
+            "control/state.json": "sha256:086a9d8c76a309cb2dfd46139e3f7e9b34dd00aa89c37aebc4c8bd77972f3636",
+            "outside/sentinel.txt": "sha256:7c68d2f3a36cbad2d24a5f0b3a18e6d63c10ba93df201297086cc2b59dd34bec",
+            "packages/method/references/marker.txt": "sha256:1452ec830ea3bfaa27dfad4c654a482ecf7327e8670584575c982a7109375c91",
+            "repo/source.txt": "sha256:10148fc33e63b258aef521eaf7288508dc0b48a5eb2f2c209f213a36708ceb33"
+          }
+        },
+        "restricted_profile": {
+          "exit_code": 0,
+          "status": "completed",
+          "stderr": "",
+          "helper_observations": {
+            "network_loopback": {
+              "errno": 1,
+              "succeeded": false
+            },
+            "read_control": {
+              "succeeded": true,
+              "value": "086a9d8c76a309cb2dfd46139e3f7e9b34dd00aa89c37aebc4c8bd77972f3636"
+            },
+            "read_outside": {
+              "succeeded": true,
+              "value": "7c68d2f3a36cbad2d24a5f0b3a18e6d63c10ba93df201297086cc2b59dd34bec"
+            },
+            "read_package": {
+              "succeeded": true,
+              "value": "1452ec830ea3bfaa27dfad4c654a482ecf7327e8670584575c982a7109375c91"
+            },
+            "read_source": {
+              "succeeded": true,
+              "value": "10148fc33e63b258aef521eaf7288508dc0b48a5eb2f2c209f213a36708ceb33"
+            },
+            "write_control": {
+              "succeeded": true,
+              "value": true
+            },
+            "write_outside": {
+              "succeeded": true,
+              "value": true
+            },
+            "write_package": {
+              "succeeded": true,
+              "value": true
+            },
+            "write_source": {
+              "succeeded": true,
+              "value": true
+            }
+          },
+          "checks": {
+            "network_loopback": {
+              "reason": "Actual permission denial with a working positive control",
+              "status": "supported"
+            },
+            "read_control": {
+              "reason": "Forbidden operation succeeded on a disposable sentinel",
+              "status": "unsupported"
+            },
+            "read_outside": {
+              "reason": "Forbidden operation succeeded on a disposable sentinel",
+              "status": "unsupported"
+            },
+            "read_package": {
+              "reason": "Exact allowed bytes read",
+              "status": "supported"
+            },
+            "read_source": {
+              "reason": "Exact allowed bytes read",
+              "status": "supported"
+            },
+            "write_control": {
+              "reason": "Parent observed changed sentinel bytes",
+              "status": "unsupported"
+            },
+            "write_outside": {
+              "reason": "Parent observed changed sentinel bytes",
+              "status": "unsupported"
+            },
+            "write_package": {
+              "reason": "Parent observed changed sentinel bytes",
+              "status": "unsupported"
+            },
+            "write_source": {
+              "reason": "Parent observed changed sentinel bytes",
+              "status": "unsupported"
+            }
+          },
+          "after_digests": {
+            "control/state.json": "sha256:753a61455ced7e14eee0527a09169f6268efa9bbc96b4e0bc72fd41d0df2421d",
+            "outside/sentinel.txt": "sha256:7ce4361141cafd1a173a40d2d9b6e74bf953d07eb285794017e09acbad41a53d",
+            "packages/method/references/marker.txt": "sha256:8f30b37d7da0af524fd63c9f4565087f8234948477220aa803324dcb468a04cf",
+            "repo/source.txt": "sha256:e6e266c5566264fe22d8ed1a3aaca4969a17c5f9830d898954320a0194e4455d"
+          }
+        }
+      },
+      "positive_control": {
+        "exit_code": 0,
+        "reason": "",
+        "status": "completed",
+        "stderr": "",
+        "helper_observations": {
+          "network_loopback": {
+            "succeeded": true,
+            "value": "HTTP/1.0 200 OK\r\nServer: BaseHTTP/0.6 Python/3.14.7\r\nDate: Tue, 22 Sep 2026 12:24:57 GMT\r\n\r\nNETWORK_8bf0176cf2934eec9b2f589697a9f6ff"
+          },
+          "read_control": {
+            "succeeded": true,
+            "value": "086a9d8c76a309cb2dfd46139e3f7e9b34dd00aa89c37aebc4c8bd77972f3636"
+          },
+          "read_outside": {
+            "succeeded": true,
+            "value": "7c68d2f3a36cbad2d24a5f0b3a18e6d63c10ba93df201297086cc2b59dd34bec"
+          },
+          "read_package": {
+            "succeeded": true,
+            "value": "1452ec830ea3bfaa27dfad4c654a482ecf7327e8670584575c982a7109375c91"
+          },
+          "read_source": {
+            "succeeded": true,
+            "value": "10148fc33e63b258aef521eaf7288508dc0b48a5eb2f2c209f213a36708ceb33"
+          },
+          "write_control": {
+            "succeeded": true,
+            "value": true
+          },
+          "write_outside": {
+            "succeeded": true,
+            "value": true
+          },
+          "write_package": {
+            "succeeded": true,
+            "value": true
+          },
+          "write_source": {
+            "succeeded": true,
+            "value": true
+          }
+        }
+      },
+      "fixture_manifest": {
+        "control/state.json": "sha256:086a9d8c76a309cb2dfd46139e3f7e9b34dd00aa89c37aebc4c8bd77972f3636",
+        "outside/sentinel.txt": "sha256:7c68d2f3a36cbad2d24a5f0b3a18e6d63c10ba93df201297086cc2b59dd34bec",
+        "packages/method/references/marker.txt": "sha256:1452ec830ea3bfaa27dfad4c654a482ecf7327e8670584575c982a7109375c91",
+        "repo/source.txt": "sha256:10148fc33e63b258aef521eaf7288508dc0b48a5eb2f2c209f213a36708ceb33"
+      },
+      "candidate_config_sha256": "85b7e929301fa77e6630bf142dd0ba3321eeb14980e34ab05499ebb75ebcc65c"
+    },
+    {
+      "platform": "linux_arm64",
+      "original_report_sha256": "dbc569647d6b2f854b41ea000332912886c5cc614b870df1a9309e1c80d68f2a",
+      "inspection_code": {
+        "conformance": "sha256:c97e65ae220787699d63e3ee8ddd6e10d8ddf46079e9dddac14dbf591b883b69",
+        "readiness": "sha256:68c0aad925ad6952ed8e8926b0619cba767e8af1dbdb668cc0149ca5ad235487"
+      },
+      "runtime": {
+        "binary_digest": "sha256:298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335",
+        "help_digest": "sha256:0e82cfde0122715250e93dc65866caa956b2ac5b9d0b20ec4ad4f9e81486509e",
+        "missing_flags": [],
+        "reason": "CLI syntax advertised; runtime effects unverified",
+        "status": "supported",
+        "version": "0.155.1"
+      },
+      "live_ready": false,
+      "strict_binding_supported": false,
+      "model_invocations": 0,
+      "provider_requests": 0,
+      "provider_cost_usd": 0,
+      "modes": {
+        "legacy_read_only": {
+          "exit_code": 1,
+          "status": "completed",
+          "stderr": "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\n",
+          "helper_observations": null,
+          "checks": {
+            "network_loopback": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "read_control": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "read_outside": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "read_package": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "read_source": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "write_control": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "write_outside": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "write_package": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "write_source": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            }
+          },
+          "after_digests": {
+            "control/state.json": "sha256:5b23e43de8f3c2d0a6b2c001ad0df8a2fed8aa0517c531d1c79c1a15ac674d3b",
+            "outside/sentinel.txt": "sha256:4238c3417ba341e00eed3e5559c0234056934eef593dfe7542132a7f8037ffbc",
+            "packages/method/references/marker.txt": "sha256:c811e721491f078a4ca00bcf406deaa85c0b941c97ad86aac85ae09fae29fff6",
+            "repo/source.txt": "sha256:c39f46075d2bf8ea2dc2987e8c5bc779907f0de621cd5c12336452a9d06984bc"
+          }
+        },
+        "restricted_profile": {
+          "exit_code": 1,
+          "status": "completed",
+          "stderr": "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\n",
+          "helper_observations": null,
+          "checks": {
+            "network_loopback": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "read_control": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "read_outside": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "read_package": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "read_source": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "write_control": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "write_outside": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "write_package": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            },
+            "write_source": {
+              "reason": "Missing complete helper/positive-control evidence",
+              "status": "unverified"
+            }
+          },
+          "after_digests": {
+            "control/state.json": "sha256:5b23e43de8f3c2d0a6b2c001ad0df8a2fed8aa0517c531d1c79c1a15ac674d3b",
+            "outside/sentinel.txt": "sha256:4238c3417ba341e00eed3e5559c0234056934eef593dfe7542132a7f8037ffbc",
+            "packages/method/references/marker.txt": "sha256:c811e721491f078a4ca00bcf406deaa85c0b941c97ad86aac85ae09fae29fff6",
+            "repo/source.txt": "sha256:c39f46075d2bf8ea2dc2987e8c5bc779907f0de621cd5c12336452a9d06984bc"
+          }
+        }
+      },
+      "container_policy": {
+        "image": "sha256:a3c1fdb42dec69ca84c34f4574aa5bf79d9df36a7ae9220cb2c5eec0c9abda70",
+        "platform": "linux/arm64",
+        "exit_code": 0,
+        "network": "none",
+        "read_only": true,
+        "cap_drop": [
+          "ALL"
+        ],
+        "security_opt": [
+          "no-new-privileges=true"
+        ],
+        "user": "65534:65534",
+        "mounts": [
+          {
+            "destination": "/runtime",
+            "writable": false,
+            "source": "owned runtime package"
+          },
+          {
+            "destination": "/offline",
+            "writable": false,
+            "source": "owned diagnostic code"
+          }
+        ]
+      },
+      "package_provenance": {
+        "package": "@openai/codex",
+        "version": "0.155.1-linux-arm64",
+        "metadata_url": "https://registry.npmjs.org/@openai/codex/0.155.1-linux-arm64",
+        "tarball_url": "https://registry.npmjs.org/@openai/codex/-/codex-0.155.1-linux-arm64.tgz",
+        "npm_integrity": "sha512-X3fRXm2orhJ3KeB8LgKym4XDUiQaqaOGuaa181bcHTsQI7C8m6tcQQbQsKDzT/2IibikzgYL82jvsgMbq43jww==",
+        "binary_sha256": "298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335",
+        "binary_bytes": 232726912,
+        "archive_bytes": 135126766
+      },
+      "positive_control": {
+        "exit_code": 0,
+        "reason": "",
+        "status": "completed",
+        "stderr": "",
+        "helper_observations": {
+          "network_loopback": {
+            "succeeded": true,
+            "value": "HTTP/1.0 200 OK\r\nServer: BaseHTTP/0.6 Python/3.11.2\r\nDate: Tue, 22 Sep 2026 12:30:15 GMT\r\n\r\nNETWORK_f2d6356ade7f42e9b48016151f0bed1d"
+          },
+          "read_control": {
+            "succeeded": true,
+            "value": "5b23e43de8f3c2d0a6b2c001ad0df8a2fed8aa0517c531d1c79c1a15ac674d3b"
+          },
+          "read_outside": {
+            "succeeded": true,
+            "value": "4238c3417ba341e00eed3e5559c0234056934eef593dfe7542132a7f8037ffbc"
+          },
+          "read_package": {
+            "succeeded": true,
+            "value": "c811e721491f078a4ca00bcf406deaa85c0b941c97ad86aac85ae09fae29fff6"
+          },
+          "read_source": {
+            "succeeded": true,
+            "value": "c39f46075d2bf8ea2dc2987e8c5bc779907f0de621cd5c12336452a9d06984bc"
+          },
+          "write_control": {
+            "succeeded": true,
+            "value": true
+          },
+          "write_outside": {
+            "succeeded": true,
+            "value": true
+          },
+          "write_package": {
+            "succeeded": true,
+            "value": true
+          },
+          "write_source": {
+            "succeeded": true,
+            "value": true
+          }
+        }
+      },
+      "fixture_manifest": {
+        "control/state.json": "sha256:5b23e43de8f3c2d0a6b2c001ad0df8a2fed8aa0517c531d1c79c1a15ac674d3b",
+        "outside/sentinel.txt": "sha256:4238c3417ba341e00eed3e5559c0234056934eef593dfe7542132a7f8037ffbc",
+        "packages/method/references/marker.txt": "sha256:c811e721491f078a4ca00bcf406deaa85c0b941c97ad86aac85ae09fae29fff6",
+        "repo/source.txt": "sha256:c39f46075d2bf8ea2dc2987e8c5bc779907f0de621cd5c12336452a9d06984bc"
+      },
+      "candidate_config_sha256": "01adde45a9c7f6cb5a5a3e12afda0308a2d407d1af3753b13d62fdae13e45295"
+    }
+  ]
+}
