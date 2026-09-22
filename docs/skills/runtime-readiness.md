@@ -290,9 +290,21 @@ lists multiple discovery roots and per-Skill disabling; those settings alone do
 not prove a task-specific allowlist.
 
 Verification tier: Tier 3 for diagnostic evidence classification and Tier 4 for
-actual offline CLI boundaries. Product regression tests remain on the authorized
-CI runner: focused readiness/conformance contracts, full backend/Ruff and the
-required HTTP/browser checks for this PR. Native/container diagnostics are
-separate, credential-free prerequisite observations. The PR records exact
-commands, source identity, counts, failures and retained artifacts; all paid
-and real-model acceptance remains NOT RUN.
+actual offline CLI boundaries. On 2026-09-22 the operator accepted complete local
+validation in place of waiting for remote CI. The local run uses an isolated
+Python 3.12.11 environment, Node20, fresh test HOME/state directories and the
+same full backend, HTTP recovery, frontend build/unit/lint and browser commands.
+This does not turn a cancelled remote gate into a successful GitHub check.
+Native/container diagnostics remain separate, credential-free prerequisites.
+The PR records exact commands, source identity, counts, failures and retained
+artifacts; all paid and real-model acceptance remains NOT RUN.
+
+The first full macOS run exposed concurrent first-open failures in the existing
+Skill/task/reviewer lock paths: `O_CREAT|O_NOFOLLOW` sometimes returned ENOENT
+while another caller created the same file. A shared anchored lock-file opener
+now elects one creator with `O_EXCL` and opens an existing file without
+`O_CREAT`. It preserves nonblocking, no-follow, singly-linked regular-file and
+`flock` checks. It never replaces a lock or recreates a missing read-path lock.
+The proposal, availability, content, Worker request/creation, package, task and
+Reviewer retry paths all use it. Regression coverage includes actual concurrent
+opens and cross-process handoff plus unsafe/disappearing-file rejection.

@@ -18,7 +18,7 @@ import stat
 from typing import Iterator
 from uuid import uuid4
 
-from .filesystem import directory, regular_file, subdirectory, write_new
+from .filesystem import directory, open_lock_file, regular_file, subdirectory, write_new
 from .models import (
     InstalledSkill, PackageLimits, Publication, SkillConflict, SkillDiagnostic,
     SkillError, SkillPackageVersion, SkillScope, SkillSource, bounded_text,
@@ -92,11 +92,8 @@ class SkillStore:
     def _locked(self) -> Iterator[int]:
         with directory(self.root) as root:
             with subdirectory(root, self.scope.namespace) as fd:
-                lock = os.open(".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+                lock = open_lock_file(fd, ".lock")
                 try:
-                    info = os.fstat(lock)
-                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                        raise SkillError("unsafe_file", "Skill store lock is unsafe.")
                     fcntl.flock(lock, fcntl.LOCK_EX)
                     yield fd
                 finally:

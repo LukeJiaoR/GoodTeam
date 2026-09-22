@@ -13,10 +13,9 @@ import json
 import os
 from pathlib import Path
 import re
-import stat
 from typing import Any, Mapping
 
-from goodteam_os.skills.filesystem import directory, regular_file, subdirectory
+from goodteam_os.skills.filesystem import directory, open_lock_file, regular_file, subdirectory
 from goodteam_os.skills.models import SkillConflict, SkillError, canonical_json, content_digest, resource_path
 
 MAX_REVIEW_INPUT_BYTES = 8 * 1024 * 1024
@@ -122,11 +121,8 @@ def _retry_lock(store, job_id: str):
     # replace the universal Worker idempotency contract required by S4.
     with directory(Path(store.root)) as jobs:
         with subdirectory(jobs, job_id) as fd:
-            lock = os.open(".review-retry.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+            lock = open_lock_file(fd, ".review-retry.lock")
             try:
-                info = os.fstat(lock)
-                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                    raise SkillError("unsafe_file", "Reviewer retry lock is unsafe.")
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 yield
             finally:

@@ -12,11 +12,10 @@ from dataclasses import asdict, dataclass
 import fcntl
 import json
 import os
-import stat
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .filesystem import directory, regular_file, write_new
+from .filesystem import directory, open_lock_file, regular_file, write_new
 from .models import SkillConflict, SkillError, bounded_text, canonical_json, content_digest, identifier, resource_path
 from .task_locks import TaskSkillIdentity
 from . import worker_requests as requests
@@ -175,11 +174,8 @@ class SkillContextProvider:
         name = content_digest(_bytes([self.job_id, context_id]))[7:]
         # The Operator root was checked against the actual Worker root by _services.
         with directory(operator / "skills" / "content-contexts" / self.job_id, create=create) as fd:
-            lock = os.open(name + ".lock", (os.O_CREAT if create else 0) | os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+            lock = open_lock_file(fd, name + ".lock", create=create)
             try:
-                info = os.fstat(lock)
-                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                    raise SkillError("unsafe_file", "Unsafe content context lock.")
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 yield fd, name + ".json"
             finally:
