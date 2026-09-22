@@ -94,10 +94,10 @@ def continue_conversation(service, *, store, project_key, root, text, message_id
     clarifying_worker = bool(detection and detection.candidates)
     if clarifying_worker:
         turn = {"intent": "ambiguous", "response": detection.reply}
-    elif service.project_config is not None and not service._manager_runtime_is_builtin():
+    elif service.project_config is not None and (not service._manager_runtime_is_builtin() or service._manager_requires_skills(project_key, root, message_id)):
         turn = service.manager_turn(
             project_config=service.project_config, project_key=project_key,
-            message_id=attempt_id, text=text, context=context,
+            message_id=attempt_id, logical_message_id=message_id, text=text, context=context,
         )
     reply = str(turn.get("response") or "").strip() or _snapshot_reply(scope, text)
     execution = dict(turn.get("manager_execution") or {})

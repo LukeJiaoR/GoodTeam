@@ -662,7 +662,12 @@ class LocalOperatorActions:
         reviewer_key = f"operator-review:{item['id']}:{head_sha}"
         api = ExecutionAPI(self._project(item), github_client=self._client(item))
         diff_artifact = api.persist_pr_diff(execution_id)
+        from goodteam_os.skills.task_start import execution_job_fields
+
+        methods = execution_job_fields(store, execution_id=execution_id, project_key=str(item["project_key"]), role="qa")
         job, _created = store.create_or_reuse_job(
+            **methods,
+            execution_policy="read_only",
             run_id=execution_id,
             role="qa",
             adapter=str(metadata.get("worker_backend", "codex")),
@@ -785,7 +790,11 @@ class LocalOperatorActions:
             reason = "\n".join(str(blocker) for blocker in blockers)
         store = WorkerJobStore(self._project(item))
         key = f"operator-fix:{item['id']}:{item['attempt']}:{metadata.get('head_sha', '')}"
+        from goodteam_os.skills.task_start import execution_job_fields
+
+        methods = execution_job_fields(store, execution_id=execution_id, project_key=str(item["project_key"]), role="implementation")
         job, _created = store.create_or_reuse_job(
+            **methods,
             run_id=execution_id,
             role="implementation",
             adapter=str(metadata.get("worker_backend", "codex")),

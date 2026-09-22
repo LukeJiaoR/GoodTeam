@@ -39,6 +39,12 @@ class TaskAssistantSessionStore:
         if version != SCHEMA_VERSION:
             raise ValueError("Task Assistant session is invalid")
         payload.setdefault("archived_task_proposals", [])
+        from goodteam_os.skills.task_context import workflow_skill_context
+
+        for proposal in [payload.get("proposed_task"), *payload["archived_task_proposals"]]:
+            if isinstance(proposal, dict) and "task_skill_context" in proposal:
+                workflow_skill_context(proposal["task_skill_context"],
+                                       run_id=f"task-{proposal['id']}", project_key=self.project_key)
         return payload
 
     def append_message(
@@ -279,7 +285,12 @@ class TaskAssistantSessionStore:
 
         return self._mutate(mutate)
 
-    def confirm_task(self, proposal_id: str, *, expected_revision=None) -> dict[str, object]:
+    def confirm_task(self, proposal_id: str, *, expected_revision=None, task_skill_context=None) -> dict[str, object]:
+        from goodteam_os.skills.task_context import workflow_skill_context
+
+        context = None if task_skill_context is None else workflow_skill_context(
+            task_skill_context, run_id=f"task-{proposal_id}", project_key=self.project_key,
+        )
         def mutate(session: dict[str, object]) -> dict[str, object]:
             proposal = dict(session.get("proposed_task") or {})
             if proposal.get("id") != proposal_id or proposal.get("status") == "cancelled":
@@ -289,7 +300,10 @@ class TaskAssistantSessionStore:
             if proposal.get("pending_change"):
                 raise ValueError("Resolve the pending draft change before confirming.")
             if proposal.get("run_id") or proposal.get("confirmed"):
+                if context is not None and proposal.get("task_skill_context", {}) != context:
+                    raise ValueError("Confirmed task methods cannot be replaced during retry.")
                 return session
+            proposal["task_skill_context"] = context if context is not None else {}
             proposal["confirmed"] = True
             session["proposed_task"] = proposal
             session["status"] = "preparing_to_start"

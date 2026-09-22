@@ -16,6 +16,7 @@ from shutil import copy2, which
 from typing import Any
 from uuid import uuid4
 
+from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
 from goodteam_os.memory import RoleMemoryStore, default_embedder
 from goodteam_os.roles import role_definition, stable_role_prompt
 from goodteam_os.pi_rpc import PiRpcError
@@ -840,11 +841,15 @@ def _invocation_command(command: object) -> str:
     return ""
 
 
+_NO_TASK_SKILL_CONTEXT = object()
+
+
 class WorkerJobStore:
     def __init__(self, project_root: Path):
         self.project_root = project_root
         self.root = project_root / ".goodteam" / "workers" / "jobs"
 
+    @serialized_worker_creation
     def create_job(
         self,
         *,
@@ -887,7 +892,25 @@ class WorkerJobStore:
         execution_policy: str = "standard",
         worker_id: str = "",
         worker_name: str = "",
+        task_skill_context: object = _NO_TASK_SKILL_CONTEXT,
+        skill_subject: str = "",
+        skill_loader_version: str = "goodteam.worker-metadata.v1",
+        required_skill_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
+        if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
+            skill_request = locals().copy()
+            from goodteam_os.skills.worker_requests import create_skill_worker_job
+
+            return create_skill_worker_job(self, skill_request)[0]
+        if skill_subject or required_skill_ids or skill_loader_version != "goodteam.worker-metadata.v1":
+            raise ValueError("Skill Worker input requires an explicit task Skill context; legacy fallback is forbidden.")
+        if idempotency_key:
+            from goodteam_os.skills.worker_requests import reject_legacy_key_collision
+
+            reject_legacy_key_collision(self, idempotency_key)
+        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
+
+        reject_legacy_task_downgrade(self, {"run_id": run_id, "project_key": project_key, "execution_id": execution_id})
         job_id = f"job-{uuid4()}"
         job_root = self.root / job_id
         job_root.mkdir(parents=True, exist_ok=True)
@@ -970,11 +993,31 @@ class WorkerJobStore:
         (job_root / "result.md").write_text("", encoding="utf-8")
         return job
 
+    @serialized_worker_creation
     def create_or_reuse_job(self, **job_spec: Any) -> tuple[dict[str, Any], bool]:
+        if job_spec.get("task_skill_context") is not None:
+            import inspect
+            from goodteam_os.skills.worker_requests import create_skill_worker_job
+
+            bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
+            bound.apply_defaults()
+            return create_skill_worker_job(self, dict(bound.arguments))
+        from goodteam_os.skills.worker_requests import has_skill_fields, is_skill_job_id
+
+        if has_skill_fields(job_spec) or job_spec.get("required_skill_ids"):
+            raise ValueError("Skill Worker input requires its explicit original task context.")
+        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
+
+        reject_legacy_task_downgrade(self, job_spec)
         idempotency_key = str(job_spec.get("idempotency_key", "") or "").strip()
         if idempotency_key:
+            from goodteam_os.skills.worker_requests import reject_legacy_key_collision
+
+            reject_legacy_key_collision(self, idempotency_key)
             existing = self.find_job_by_idempotency_key(idempotency_key)
             if existing is not None:
+                if is_skill_job_id(existing.get("id")) or has_skill_fields(existing):
+                    raise ValueError("A Skill-backed job cannot be replayed as legacy input.")
                 return existing, False
         return self.create_job(**job_spec), True
 
@@ -996,6 +1039,9 @@ class WorkerJobStore:
             if not job_path.is_file():
                 continue
             job = self._read_json(job_path)
+            # Routing keeps the protected Skill identity even if job.json was altered.
+            if path.name.startswith("job-skill-"):
+                job["id"] = path.name
             status_path = path / "status.json"
             if status_path.is_file():
                 status_payload = self._read_json(status_path)
@@ -1032,6 +1078,10 @@ class WorkerJobStore:
                             "original_failed_job_id",
                             "retry_attempt",
                             "retry_of_idempotency_key",
+                            "skill_preflight_status",
+                            "skill_preflight_attempt_id",
+                            "skill_error_code",
+                            "skill_runtime_status",
                             "sandbox_context",
                             "runtime_cwd",
                             "runtime_adapter",
@@ -1080,8 +1130,17 @@ class WorkerJobStore:
         return jobs
 
     def run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import has_skill_fields, is_skill_job_id, run_skill_worker_job
+
+        if is_skill_job_id(job_id):
+            return run_skill_worker_job(self, job_id, sandbox_context=sandbox_context)
         job_root = self.root / job_id
         job = self._read_json(job_root / "job.json")
+        if has_skill_fields(job):
+            raise ValueError("Unregistered Skill Worker input cannot enter the legacy Runtime path.")
+        from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
+
+        reject_legacy_task_downgrade(self, job)
         if sandbox_context is not None:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
         memory_citations = self._memory_citations_from_pickup_packet(job_root)
@@ -1158,6 +1217,9 @@ class WorkerJobStore:
 
     def _run_session_backend(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         """Run a persistent session backend without entering the one-shot CLI loop."""
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         runtime_context = self._worker_runtime_cwd(job)
         config = pi_runtime_config(self.project_root, job)
         preflight = pi_backend_doctor(self.project_root, job)
@@ -1836,6 +1898,9 @@ class WorkerJobStore:
         if not path.is_file():
             raise ValueError(f"Worker job not found: {job_id}")
         job = self._read_json(path)
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         if str(job.get("adapter")) not in SESSION_BACKENDS:
             raise ValueError(f"Worker job {job_id} is not a persistent-session backend")
         return job_root, job
@@ -1959,11 +2024,17 @@ class WorkerJobStore:
         }
 
     def _complete_noop(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         summary = "Completed by noop adapter. No external CLI was invoked."
         (job_root / "result.md").write_text(f"# Worker Result\n\n{summary}\n", encoding="utf-8")
         return self._write_status(job_root, job, "completed", summary)
 
     def _complete_fake(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         summary = "Completed by fake smoke adapter. No external CLI was invoked."
         (job_root / "result.md").write_text(
             f"# Worker Result\n\nStatus: pass\n\n{summary}\n",
@@ -1972,6 +2043,9 @@ class WorkerJobStore:
         return self._write_status(job_root, job, "completed", summary)
 
     def _wait_for_human(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         summary = "Fill result.md manually, then update status.json when ready."
         return self._write_status(job_root, job, "needs_review", summary)
 
@@ -1983,6 +2057,9 @@ class WorkerJobStore:
     ) -> dict[str, Any]:
         """Run any registered agentic coding CLI (codex, claude, ...). Adding a
         new CLI means adding a CliBackendSpec to CLI_BACKENDS — no new branch."""
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         binary = which(spec.which_name) or spec.default_path()
         raw = str(job.get("model", ""))
         bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
@@ -2135,6 +2212,9 @@ class WorkerJobStore:
         ``capture`` controls where the worker result comes from: ``output_file``
         means the CLI wrote it (codex ``--output-last-message``); ``stdout`` means
         the final message is printed to stdout (claude ``-p``)."""
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"

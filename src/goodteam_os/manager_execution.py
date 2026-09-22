@@ -30,6 +30,7 @@ def run_manager_chat_turn(
     message_id: str,
     text: str,
     context: str,
+    logical_message_id: str = "",
 ) -> dict[str, object]:
     target = load_project_target(project_config)
     project_root = resolve_project_runtime_root(dict(target.get("repos", {})))
@@ -40,29 +41,36 @@ def run_manager_chat_turn(
     configured_model = _configured_manager_model(target)
     model = _model_name(configured_model)
     settings = _manager_settings(target)
-    with _manager_turn_lock(project_root, message_id):
+    with _manager_turn_lock(project_root, "message:" + (logical_message_id or message_id)):
         store = WorkerJobStore(project_root)
-        job, created = store.create_or_reuse_job(
-            run_id=f"task-assistant:{project_key}",
-            role="orchestrator",
-            adapter=adapter,
-            model=model,
-            task=_manager_chat_task(text),
-            context=context,
-            constraints=[
-                "Classify the user's current message without performing consequential actions.",
-                "Do not modify project files, workflow state, artifacts, approvals, or external systems.",
-                "Return exactly one JSON object and no prose or markdown outside it.",
-            ],
-            expected_artifacts=[],
-            project_key=project_key,
-            phase="task_assistant_chat",
-            execution_policy="read_only",
-            idempotency_key=f"task-assistant-turn:{message_id}",
-            **settings,
+        job, created = _create_manager_job(
+            store, project_config=project_config, project_root=project_root, project_key=project_key,
+            logical_id="message:" + (logical_message_id or message_id),
+            preserve_captured_context=bool(logical_message_id), spec=dict(
+                run_id=f"task-assistant:{project_key}",
+                role="orchestrator",
+                adapter=adapter,
+                model=model,
+                task=_manager_chat_task(text),
+                context=context,
+                constraints=[
+                    "Classify the user's current message without performing consequential actions.",
+                    "Do not modify project files, workflow state, artifacts, approvals, or external systems.",
+                    "Return exactly one JSON object and no prose or markdown outside it.",
+                ],
+                expected_artifacts=[],
+                project_key=project_key,
+                phase="task_assistant_chat",
+                execution_policy="read_only",
+                idempotency_key=f"task-assistant-turn:{message_id}",
+                **settings,
+            ),
         )
         job_id = str(job["id"])
-        result = store.run_job(job_id) if created or job.get("status") == "queued" else job
+        result = store.run_job(job_id) if created or job.get("status") == "queued" or job.get("task_skill_context") else job
+    if result.get("skill_error_code"):
+        raise ManagerExecutionError("The configured Manager methods are blocked before Runtime execution.",
+                                    code=str(result["skill_error_code"]))
     if str(result.get("status", "")) != "completed":
         from goodteam_os.assistant_runtime import safe_failure
 
@@ -83,7 +91,9 @@ def run_manager_chat_turn(
     return {
         "schema_version": "task_assistant_turn.v1",
         **parsed,
-        "manager_execution": _manager_execution_evidence(job_id, adapter, model, settings, result),
+        "manager_execution": _manager_execution_evidence(
+            job_id, str(job.get("adapter", adapter)), str(job.get("model", model)),
+            {**settings, **{k: job[k] for k in ("reasoning_depth", "additional_prompt") if k in job}}, result),
     }
 
 
@@ -95,6 +105,7 @@ def run_manager_interpretation(
     intent_id: str,
     change_request: str,
     context: str,
+    logical_intent_id: str = "",
 ) -> dict[str, object]:
     target = load_project_target(project_config)
     project_root = resolve_project_runtime_root(dict(target.get("repos", {})))
@@ -106,28 +117,35 @@ def run_manager_interpretation(
     model = _model_name(configured_model)
     settings = _manager_settings(target)
 
-    store = WorkerJobStore(project_root)
-    job = store.create_job(
-        run_id=run_id,
-        role="orchestrator",
-        adapter=adapter,
-        model=model,
-        task=_manager_interpretation_task(change_request),
-        context=context,
-        constraints=[
-            "Interpret only the user's explicit request; do not add requirements.",
-            "Do not modify project files, workflow state, artifacts, approvals, or external systems.",
-            "Return exactly one JSON object and no prose or markdown outside it.",
-        ],
-        expected_artifacts=[],
-        project_key=project_key,
-        phase="manager_intent",
-        execution_policy="read_only",
-        idempotency_key=f"manager-intent:{intent_id}",
-        **settings,
-    )
-    job_id = str(job["id"])
-    result = store.run_job(job_id)
+    with _manager_turn_lock(project_root, "intent:" + (logical_intent_id or intent_id)):
+        store = WorkerJobStore(project_root)
+        job, created = _create_manager_job(
+            store, project_config=project_config, project_root=project_root, project_key=project_key,
+            logical_id="intent:" + (logical_intent_id or intent_id), spec=dict(
+                run_id=run_id,
+                role="orchestrator",
+                adapter=adapter,
+                model=model,
+                task=_manager_interpretation_task(change_request),
+                context=context,
+                constraints=[
+                    "Interpret only the user's explicit request; do not add requirements.",
+                    "Do not modify project files, workflow state, artifacts, approvals, or external systems.",
+                    "Return exactly one JSON object and no prose or markdown outside it.",
+                ],
+                expected_artifacts=[],
+                project_key=project_key,
+                phase="manager_intent",
+                execution_policy="read_only",
+                idempotency_key=f"manager-intent:{logical_intent_id or intent_id}",
+                **settings,
+            ),
+        )
+        job_id = str(job["id"])
+        result = store.run_job(job_id) if created or job.get("status") == "queued" or job.get("task_skill_context") else job
+    if result.get("skill_error_code"):
+        raise ManagerExecutionError("The configured Manager methods are blocked before Runtime execution.",
+                                    code=str(result["skill_error_code"]))
     if str(result.get("status", "")) != "completed":
         summary = str(result.get("summary", "") or "Task Assistant worker failed.").strip()
         raise ManagerExecutionError(f"The configured Task Assistant could not complete: {summary}")
@@ -147,9 +165,103 @@ def run_manager_interpretation(
             for item in parsed["items"]
         ],
         "request": change_request,
-        "manager_execution": _manager_execution_evidence(job_id, adapter, model, settings, result),
+        "manager_execution": _manager_execution_evidence(
+            job_id, str(job.get("adapter", adapter)), str(job.get("model", model)),
+            {**settings, **{k: job[k] for k in ("reasoning_depth", "additional_prompt") if k in job}}, result),
     }
 
+
+def _create_manager_job(store, *, project_config: Path, project_root: Path, project_key: str,
+                        logical_id: str, spec: dict[str, Any], preserve_captured_context: bool = False) -> tuple[dict[str, Any], bool]:
+    """Bind the actual logical message/intent, not the shared conversation run."""
+    from goodteam_os.skills.models import SkillConflict, SkillError
+    from goodteam_os.skills.task_locks import TaskSkillIdentity
+    from goodteam_os.skills.task_start import capture_task_start
+    from goodteam_os.skills.worker_requests import (
+        WORKER_METADATA_LOADER, has_skill_fields, is_skill_job_id, original_worker_request,
+    )
+
+    config = Path(project_config).expanduser().resolve()
+    if config.parent.name == "projects":
+        # A completed legacy message remains legacy when project configuration
+        # changes later. It is not a fresh authorization to invoke new methods.
+        existing = store.find_job_by_idempotency_key(spec["idempotency_key"])
+        if existing is None and preserve_captured_context and logical_id.startswith("message:"):
+            from goodteam_os.assistant_requests import worker_attempt_id
+
+            first_key = "task-assistant-turn:" + worker_attempt_id(project_key, logical_id[len("message:"):], 1)
+            first = store.find_job_by_idempotency_key(first_key)
+            if first is not None and not is_skill_job_id(first.get("id")) and not has_skill_fields(first):
+                return _replay_legacy_manager_request(store, first, spec)
+        if existing is not None and not is_skill_job_id(existing.get("id")) and not has_skill_fields(existing):
+            job_root = store.root / str(existing["id"])
+            if (existing.get("project_key") != project_key or existing.get("phase") != spec["phase"]
+                    or existing.get("run_id") != spec["run_id"]
+                    or (job_root / "task.md").read_text(encoding="utf-8") != spec["task"]
+                    or (not preserve_captured_context
+                        and (job_root / "context.md").read_text(encoding="utf-8") != spec["context"])):
+                raise SkillConflict("operation_conflict", "Manager message key already owns different original inputs.")
+            return existing, False
+        task = TaskSkillIdentity("manager_message", project_key, logical_id)
+        start_key = "manager-start:" + project_key + ":" + logical_id
+        confirmed = {key: spec[key] for key in ("run_id", "phase", "task", "context", "constraints", "expected_artifacts")}
+        if preserve_captured_context:
+            from goodteam_os.service import service_state_dir
+            from goodteam_os.skills.task_service import ProjectTaskSkillService
+
+            if (Path(service_state_dir()) / "skills" / "task-locks").exists():
+                service = ProjectTaskSkillService(config.parent.parent, project_key, worker_roots=(project_root,))
+                previous = service.locks.find_task(task=task, command_key=start_key)
+                if previous is not None:
+                    start = previous["lock"].get("start_input")
+                    if not isinstance(start, dict) or start.get("schema_version") != "task_skill_start_input.v1":
+                        raise SkillError("task_start_input_missing", "The original Manager confirmation is unavailable.")
+                    original = start["request"]["confirmed_input"]
+                    if any(original.get(key) != confirmed[key] for key in ("run_id", "phase", "task", "constraints", "expected_artifacts")):
+                        raise SkillConflict("operation_conflict", "Logical Manager message already owns another request.")
+                    # TaskAssistant's context is server-derived and changes as the
+                    # timeline/Team updates. Its explicit logical retry must use
+                    # the first captured context, not the newly rendered one.
+                    confirmed = {key: value for key, value in original.items() if key != "producer_binding"}
+                    spec = {**spec, "context": original["context"]}
+        context = capture_task_start(
+            workspace=config.parent.parent, project_key=project_key, worker_root=project_root,
+            task=task, command_key=start_key, confirmed_input=confirmed,
+            subjects=("manager:orchestrator",),
+        )
+        if context:
+            spec = {**spec, "idempotency_key": "manager-job:" + project_key + ":" + logical_id}
+            original = original_worker_request(store, command_key=spec["idempotency_key"], context=context)
+            spec = original if original is not None else {
+                **spec, "task_skill_context": context, "skill_subject": "manager:orchestrator",
+                "skill_loader_version": WORKER_METADATA_LOADER,
+            }
+    return store.create_or_reuse_job(**spec)
+
+
+
+def _replay_legacy_manager_request(store, first: dict[str, Any], spec: dict[str, Any]):
+    """Retry an already in-flight legacy message without adopting a new binding.
+
+    Legacy files remain legacy evidence, not a tamper-proof Skill contract. Reuse
+    the captured input/runtime/policy, retaining distinct physical attempt jobs.
+    """
+    from goodteam_os.reviewer_retry_inputs import JOB_REQUEST_FIELDS, _load_request
+    from goodteam_os.skills.models import SkillConflict
+    from goodteam_os.workers import _role_prompt_for_job
+
+    saved, files, research = _load_request(store, first)
+    if (any(saved.get(key) != spec.get(key) for key in ("run_id", "project_key", "role", "phase", "expected_artifacts"))
+            or files["task.md"] != spec["task"]
+            or files["role_prompt.md"] != _role_prompt_for_job(saved["role"])[1]):
+        raise SkillConflict("operation_conflict", "Legacy Manager retry no longer matches its original task/Role contract.")
+    request = {key: saved[key] for key in JOB_REQUEST_FIELDS if key in saved}
+    constraints = files["constraints.md"]
+    request.update(task=files["task.md"], context=files["context.md"],
+                   constraints=[constraints[2:]] if constraints else [], idempotency_key=spec["idempotency_key"])
+    if research is not None:
+        request["research_report_source"] = str(store.root / saved["id"] / "research-report.md")
+    return store.create_or_reuse_job(**request)
 
 def _model_name(configured_model: str) -> str:
     if ":" not in configured_model:

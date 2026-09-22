@@ -41,6 +41,7 @@ def test_failed_message_is_durable_and_retry_preserves_one_user_message(tmp_path
     final = assistant.session("DEMO", root)
     assert 2 == len(calls)
     assert calls[0]["message_id"] != calls[1]["message_id"]
+    assert calls[0]["logical_message_id"] == calls[1]["logical_message_id"] == "msg-1"
     assert "  My request  " == calls[1]["text"]
     assert 1 == len([item for item in final["timeline"] if item["actor"] == "user"])
     assert "succeeded" == final["assistant_requests"]["msg-1"]["status"]

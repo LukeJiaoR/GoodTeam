@@ -122,6 +122,7 @@ def dispatch_tracks(
     research_report_file: Path | None = None,
     projects_dir: Path | None = None,
     allow_unsafe: bool = False,
+    logical_task_id: str = "",
 ) -> dict[str, object]:
     safety_kwargs: dict[str, object] = {"allow_unsafe": allow_unsafe}
     if projects_dir is not None:
@@ -130,7 +131,24 @@ def dispatch_tracks(
     if not safety["safe"]:
         raise ValueError(str(safety["reason"]))
     constraints = _constraints_from_file(constraints_file)
-    run_id = f"dispatch-{uuid4()}"
+    from goodteam_os.skills.models import content_digest
+    from goodteam_os.skills.task_locks import TaskSkillIdentity
+    from goodteam_os.skills.task_start import capture_task_start, registered_project_scope
+
+    logical_id = logical_task_id or str(uuid4())
+    run_id = "dispatch-" + content_digest(logical_id.encode("utf-8"))[7:]
+    scope = registered_project_scope(project_root)
+    context = {}
+    key = ""
+    if scope is not None:
+        workspace, key = scope
+        context = capture_task_start(
+            workspace=workspace, project_key=key, worker_root=project_root,
+            task=TaskSkillIdentity("direct_task", key, logical_id), command_key=f"direct-start:{key}:{logical_id}",
+            confirmed_input={"tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},
+                             "constraints_source": str(constraints_file) if constraints_file else "",
+                             "research_report_source": str(research_report_file) if research_report_file else ""},
+        )
     store = WorkerJobStore(project_root)
     jobs_by_role = [
         _create_track_job(
@@ -140,8 +158,10 @@ def dispatch_tracks(
             constraints=constraints,
             constraints_source=str(constraints_file) if constraints_file else "",
             research_report_source=str(research_report_file) if research_report_file else "",
+            method_context=context, project_key=key,
+            command_key=f"direct-job:{key}:{logical_id}:{index}",
         )
-        for track in tracks
+        for index, track in enumerate(tracks)
     ]
     results_by_role: dict[str, dict[str, object]] = {}
     max_workers = max(1, len(jobs_by_role))
@@ -191,8 +211,19 @@ def _create_track_job(
     constraints: list[str],
     constraints_source: str = "",
     research_report_source: str = "",
+    method_context: dict[str, Any] | None = None,
+    project_key: str = "",
+    command_key: str = "",
 ) -> dict[str, Any]:
-    return store.create_job(
+    from goodteam_os.skills.worker_requests import WORKER_METADATA_LOADER, subject_for_role
+
+    fields = {}
+    if method_context:
+        fields = {"task_skill_context": method_context, "skill_subject": subject_for_role(str(track["role"])),
+                  "skill_loader_version": WORKER_METADATA_LOADER, "project_key": project_key,
+                  "idempotency_key": command_key}
+    job, _created = store.create_or_reuse_job(
+        **fields,
         run_id=run_id,
         role=str(track["role"]),
         adapter=str(track["adapter"]),
@@ -205,6 +236,7 @@ def _create_track_job(
         constraints=[*constraints, *[str(item) for item in track.get("constraints", [])]],
         expected_artifacts=[str(item) for item in track.get("expected_artifacts", [])],
     )
+    return job
 
 
 def _run_dispatched_job(project_root: Path, job: dict[str, Any], verify_commands: dict[str, str]) -> dict[str, object]:
@@ -245,6 +277,8 @@ def _job_report(
     outcome = "ok" if worker_ok and verify_ok else "needs_human"
     job_root = project_root / ".goodteam" / "workers" / "jobs" / str(job["id"])
     return {
+        **{key: job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref") if key in job},
+        **{key: status[key] for key in ("skill_error_code", "skill_preflight_status", "skill_runtime_status", "invocation_evidence") if key in status},
         "job_id": str(job["id"]),
         "role": str(job["role"]),
         "adapter": str(job["adapter"]),

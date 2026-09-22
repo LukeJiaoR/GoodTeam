@@ -30,7 +30,16 @@ def build_reviewer_provenance(
     evidence_payload = dict(evidence) if isinstance(evidence, Mapping) else {}
     badge = _badge_payload(status_payload, evidence_payload, profile)
     invocation = _invocation_payload(status_payload, evidence_payload, badge["kind"])
+    skill = {}
+    if status_payload.get("task_skill_context"):
+        from goodteam_os.skills.task_context import validate_task_skill_context
+
+        skill = {"skill_execution": {"schema_version": "skill_execution_evidence.v1",
+                 "task_skill_context": validate_task_skill_context(status_payload["task_skill_context"]),
+                 **{key: status_payload[key] for key in ("skill_execution_snapshot_ref", "skill_preflight_status",
+                    "skill_preflight_attempt_id", "skill_error_code", "skill_runtime_status") if key in status_payload}}}
     return {
+        **skill,
         "reviewer": _reviewer_payload(profile),
         "badge": badge,
         "invocation": invocation,
@@ -97,6 +106,8 @@ def _badge_payload(
     adapter = _first_text(evidence.get("adapter"), status.get("adapter"), _profile_value(profile, "adapter"), "unknown")
     provider = _first_text(evidence.get("provider"), "unknown")
     kind = str(evidence.get("kind", "") or "").lower()
+    if kind == "blocked":
+        return _badge("blocked before invocation", "blocked", provider, adapter)
     if status_value == "failed":
         return _badge("failed invocation", "failed", provider, adapter)
     if not evidence:

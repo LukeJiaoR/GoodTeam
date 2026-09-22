@@ -190,6 +190,23 @@ def default_debate_dispatch(
     *,
     adapter: str = "codex",
 ) -> DispatchFn:
+    from goodteam_os.skills.models import SkillError
+    from goodteam_os.skills.task_start import workflow_job_fields
+    from goodteam_os.state import StateStore
+
+    original_state = StateStore(workspace).read_project_current(project_key)
+    if original_state is not None and original_state.run_id == run_id:
+        workflow_job_fields(original_state, role="review", command_key="debate-reference-check")
+        if original_state.task_skill_context:
+            raise SkillError("skill_debate_not_connected", "Skill-backed debate is not connected; no legacy discussion was dispatched.")
+    else:
+        from goodteam_os.skills.task_locks import TaskSkillIdentity
+        from goodteam_os.skills.task_start import reject_missing_task_context
+
+        # Missing/currently different state cannot erase a registered task's
+        # method identity, even after the project restores default methods.
+        reject_missing_task_context(TaskSkillIdentity("workflow_run", project_key, run_id))
+
     def dispatch(**kwargs: Any) -> list[str]:
         try:
             role = str(kwargs["role"])
@@ -208,6 +225,13 @@ def default_debate_dispatch(
                 challenges=challenges,
             )
             store = WorkerJobStore(workspace)
+            if original_state is None or original_state.run_id != run_id:
+                from goodteam_os.team_control_plane import TeamControlPlaneStore
+                from goodteam_os.skills.worker_requests import subject_for_role
+
+                team = TeamControlPlaneStore(workspace, project_key).read()
+                if team and team.get("skill_bindings", {}).get(subject_for_role(role), {}).get("mode") == "custom":
+                    raise SkillError("skill_debate_not_connected", "Custom-method debate requires an explicit supported task context.")
             try:
                 worker_runtime = _team_worker_runtime(workspace, project_key, role, fallback_adapter=adapter)
             except DebateGated:
@@ -236,6 +260,8 @@ def default_debate_dispatch(
             if not result_path.is_file():
                 return []
             return _parse_debate_objections(result_path.read_text(encoding="utf-8"), allowed=allowed)
+        except SkillError:
+            raise
         except Exception:
             return []
 

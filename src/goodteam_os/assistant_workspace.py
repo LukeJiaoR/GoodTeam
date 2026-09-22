@@ -37,7 +37,9 @@ def build_project_assistant(session, workspace, *, project_key, workflow_active=
         "can_select_task": not workflow_active and not editable_draft and active_mission.get("source") != "operator_queue",
         "suggestions": session.get("suggestions", []) if not workflow_active else [],
         "activity": [
-            {key: job.get(key, "") for key in ("id", "role", "phase", "status", "updated_at")}
+            {**{key: job.get(key, "") for key in ("id", "role", "phase", "status", "updated_at")},
+             **{key: job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref",
+                "skill_preflight_status", "skill_error_code", "skill_runtime_status") if key in job}}
             for job in jobs if is_assistant_activity(job)
         ],
     }
