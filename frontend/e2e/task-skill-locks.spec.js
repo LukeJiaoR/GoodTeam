@@ -11,7 +11,7 @@ test('confirmed custom-method task persists its lock and cannot execute through 
   const evidence = [];
   try {
     await importProject(page, fixture);
-    await sendTask(page, fixture, 'Prepare the project for a separate method-bound task.');
+    await sendTask(page, fixture, 'Implement the baseline task before testing separate task-bound methods.');
     await prepareFirstTask(page, fixture, evidence);
     for (const gate of ['takeover', 'prd', 'rfc', 'security', 'release']) {
       await approveGate(page, fixture, gate);
@@ -42,7 +42,7 @@ test('confirmed custom-method task persists its lock and cannot execute through 
       `/api/projects/${fixture.key}/team/commands`);
     await expect(qa.getByText('Saved only · execution not connected', { exact: true })).toBeVisible();
 
-    const proposal = await sendTask(page, fixture, 'Review using the explicitly selected task methods.');
+    const proposal = await sendTask(page, fixture, 'Implement a change using the explicitly selected task methods.');
     const started = await clickMutation(page, page.getByRole('button', { name: 'Start this task', exact: true }),
       `/api/projects/${fixture.key}/task-assistant/actions`);
     expect(started.workflow_started).toBe(true);
